@@ -306,7 +306,12 @@ def main():
             raise RuntimeError("This client uses a different data directory from the launch profile; select its ADE_RUNTIME_HOME before recovery")
         existing = hello(sock)
         if existing:
-            identity = rpc(existing["runtime_socket"], {"op":"hello"})
+            if existing.get("application_protocol") != APPLICATION_PROTOCOL:
+                compatible(existing)
+            runtime_socket = existing.get("runtime_socket")
+            if not isinstance(runtime_socket, str):
+                raise RuntimeError("Running daemon omitted its runtime endpoint; it was left running")
+            identity = rpc(runtime_socket, {"op":"hello"})
             if Path(identity["data_directory"]).resolve() != data:
                 raise RuntimeError("Running supervisor belongs to a different data directory; recovery refused")
         if args.action == "status":
