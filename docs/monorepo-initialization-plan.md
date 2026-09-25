@@ -1,6 +1,8 @@
 # Electron and Rust monorepo initialization plan
 
-Status: implementation plan, 26 September 2026. No scaffolding has been performed.
+Status: implementation plan, 26 September 2026. The pnpm/Electron foundation and
+read-only daemon attachment are implemented; terminal, CLI, and provider migration
+remain open.
 The [proposed architecture](proposed-architecture.md) defines the product and
 ownership requirements. This plan establishes its first runnable vertical slice.
 The [complete v1 specifications](../.scratch/ade-v1/README.md) define the full

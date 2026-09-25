@@ -22,7 +22,7 @@ test('opens the real Electron desktop with an isolated profile', async () => {
   try {
     const window = await application.firstWindow()
     await expect(window.getByRole('heading', { name: 'Work across agents, in one place.' })).toBeVisible()
-    await expect(window.getByText('Desktop foundation')).toBeVisible()
+    await expect(window.locator('header').getByRole('status')).toHaveText('unconfigured')
     expect(await window.evaluate(() => (window as typeof window & {
       adeHost: { getAppVersion: () => Promise<string> }
     }).adeHost.getAppVersion())).toBe('0.1.0')

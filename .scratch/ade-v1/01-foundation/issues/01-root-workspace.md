@@ -1,6 +1,6 @@
 # Root pnpm workspace and development entry
 
-Status: claimed
+Status: done
 Type: implementation ticket
 Owner: coordinator
 Requirements: F139, R020 (foundational portion)
@@ -22,3 +22,10 @@ may show an unavailable backend state before the connection ticket lands.
 
 Completion evidence: committed files, clean install/build, E2E run and recorded
 limits. A build alone does not mark F139 or R020 complete.
+
+Evidence (26 September 2026): `pnpm check` passes with three real-process E2E
+tests. `pnpm dev` launched Electron against a stable development profile. Editing
+renderer CSS produced a Vite HMR update while the daemon boot ID, runtime
+instance and shell PID stayed unchanged. The test-started processes were stopped
+through their public lifecycle protocol. Provider lockfile consolidation remains
+the separate `04-provider-lockfile-migration` ticket.
