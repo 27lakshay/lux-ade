@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import type { ClientState } from '@ade/client'
+import type { ClientState, Workspace } from '@ade/client'
+import { mountTerminal, type TerminalBridge } from '@ade/terminal'
 import './style.css'
 
 declare global {
@@ -9,8 +10,29 @@ declare global {
       getAppVersion(): Promise<string>
       getClientState(): Promise<ClientState>
       onClientState(listener: (state: ClientState) => void): () => void
+      terminal: TerminalBridge
     }
   }
+}
+
+function TerminalPane({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  const container = React.useRef<HTMLDivElement>(null)
+  const [message, setMessage] = React.useState('')
+
+  React.useEffect(() => {
+    if (!container.current) return
+    const view = mountTerminal(container.current, window.adeHost.terminal,
+      workspace.id, workspace.terminal_id, setMessage)
+    return () => view.dispose()
+  }, [workspace.id, workspace.terminal_id])
+
+  return (
+    <section className="terminal-pane" aria-label={`${workspace.name} terminal`}>
+      <h2>Terminal · {workspace.name}</h2>
+      {message && <p role="alert">{message}</p>}
+      <div className="terminal-surface" ref={container} />
+    </section>
+  )
 }
 
 function WorkspaceList({ state }: { state: ClientState }): React.JSX.Element {
@@ -35,6 +57,7 @@ function ConnectedContent({ state }: { state: ClientState }): React.JSX.Element 
       <p>Connected to the profile daemon.</p>
       <p className="connection-meta">Daemon boot: {state.bootId}</p>
       <WorkspaceList state={state} />
+      {state.catalog?.workspaces[0] && <TerminalPane workspace={state.catalog.workspaces[0]} />}
     </>
   )
 }

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ade/terminal": "workspace:*",
     "@ade/client": "workspace:*",
     "react": "19.3.0",
     "react-dom": "19.3.0"

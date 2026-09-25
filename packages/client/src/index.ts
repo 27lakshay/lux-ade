@@ -1,5 +1,7 @@
 import { createConnection, type Socket } from 'node:net'
 
+export { openTerminalConnection, type TerminalConnection, type TerminalFrame } from './terminal.js'
+
 const APPLICATION_PROTOCOL = 'ade-application-v1'
 const SESSION_PROTOCOL = 'ade-sessions-v1'
 const MAX_FRAME_BYTES = 32 * 1024 * 1024
@@ -9,6 +11,7 @@ export interface Workspace {
   id: string
   root: string
   name: string
+  terminal_id: string
 }
 
 export interface Conversation {
@@ -55,8 +58,8 @@ function stringFields(value: unknown, keys: string[]): string[] | null {
 }
 
 function parseWorkspace(value: unknown): Workspace | null {
-  const fields = stringFields(value, ['id', 'root', 'name'])
-  return fields ? { id: fields[0], root: fields[1], name: fields[2] } : null
+  const fields = stringFields(value, ['id', 'root', 'name', 'terminal_id'])
+  return fields ? { id: fields[0], root: fields[1], name: fields[2], terminal_id: fields[3] } : null
 }
 
 function parseConversation(value: unknown): Conversation | null {

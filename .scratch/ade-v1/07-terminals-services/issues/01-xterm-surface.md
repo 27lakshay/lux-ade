@@ -16,6 +16,10 @@ Stress slow and multiple subscribers; report overflow honestly.
 Evidence (26 September 2026): the Rust runtime offers negotiated
 `xterm-replay-v1` in parallel with the existing Ghostty snapshot. Two
 real-process E2E cases prove output/resize replay after detach and an explicit
-`replay_limit_exceeded` result after 4 MiB while the shell remains alive. xterm
-mount/input, alternate-screen restoration, generated reply handling, slow-client
-behavior and host/profile memory budgets remain open; F081/F082 are not complete.
+`replay_limit_exceeded` result after 4 MiB while the shell remains alive. A
+real-Electron E2E sends shell input through xterm, checks one cursor-position
+reply, reloads during an alternate-screen program, restores that screen and
+returns to the same shell PID. The UI currently attaches the first workspace's
+primary terminal. Search, links, selection/IME, WebGL fallback, terminal
+reconnect, slow-client behavior and host/profile memory budgets remain open;
+F081/F082 are not complete.

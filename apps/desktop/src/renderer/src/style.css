@@ -17,7 +17,7 @@ header {
 }
 .brand { font-weight: 700; letter-spacing: .12em; }
 .status { color: #a5adae; font-size: 13px; }
-.welcome { margin: min(20vh, 160px) auto; max-width: 650px; padding: 0 24px; }
+.welcome { margin: min(12vh, 96px) auto; max-width: 1100px; padding: 0 24px 48px; }
 .eyebrow { color: #84c8aa; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
 h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.08; }
 .welcome > p:last-child { color: #a5adae; line-height: 1.5; }
@@ -26,3 +26,7 @@ h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.0
 .workspace-list li { background: #202425; border: 1px solid #323637; border-radius: 12px; display: grid; gap: 6px; padding: 16px; }
 .workspace-list span { color: #a5adae; font-size: 13px; overflow-wrap: anywhere; }
 .workspace-list small { color: #84c8aa; }
+.terminal-pane { margin-top: 32px; }
+.terminal-pane h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
+.terminal-pane [role="alert"] { color: #eeb87b; font-size: 13px; }
+.terminal-surface { background: #101213; border: 1px solid #323637; border-radius: 12px; height: 390px; overflow: hidden; padding: 10px; }
