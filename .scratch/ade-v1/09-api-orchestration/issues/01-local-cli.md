@@ -31,3 +31,13 @@ PID; shell output submitted by CLI appeared in Electron. Missing and
 incompatible endpoints returned stable structured errors. Terminal input
 acknowledgement does not prove shell command completion. Profile discovery,
 remote transport, attach mode, and stable public schemas remain open.
+
+Additional partial F085/F086/F102 evidence, 26 September 2026: named
+`listener list` and `service inspect WORKSPACE_ID NAME [TAIL_BYTES]` commands
+use the existing daemon operations and report JSON. The real-daemon/Electron
+scenario in `e2e/specs/desktop-services.spec.ts` observed the same managed
+HTTP service through CLI and desktop, verified direct-process TCP listener
+evidence, and read a bounded PTY output tail. It kept application readiness
+`unverified`. Invalid byte limits and extra operands returned structured
+`usage` errors. These commands do not complete port discovery, health checks
+or the full CLI acceptance.

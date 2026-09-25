@@ -50,7 +50,7 @@ test('CLI and Electron share a managed workspace service across app closure', as
     expect(String(invalid.message)).toContain('Invalid service executable')
     const config = {
       program: process.execPath,
-      args: ['-e', 'require("http").createServer((_,res)=>res.end("ade-service-ready")).listen(Number(process.env.PORT),"127.0.0.1")'],
+      args: ['-e', 'require("http").createServer((_,res)=>res.end("ade-service-ready")).listen(Number(process.env.PORT),"127.0.0.1",()=>console.log("__ADE_SERVICE_LOG__"))'],
       cwd: '.', env: {}, ports: ['PORT'],
     }
     const configured = await runCli(daemon.socket, 'service', 'configure', workspace.id, 'web', JSON.stringify(config))
@@ -69,6 +69,26 @@ test('CLI and Electron share a managed workspace service across app closure', as
       try { return await (await fetch(`http://127.0.0.1:${port}`)).text() }
       catch { return '' }
     }).toBe('ade-service-ready')
+    await expect.poll(async () => {
+      const inspection = await runCli(daemon.socket, 'service', 'inspect', workspace.id, 'web', '1024')
+      return (inspection.readiness as { state: string }).state
+    }).toBe('tcp_listening')
+    const inspection = await runCli(daemon.socket, 'service', 'inspect', workspace.id, 'web', '1024')
+    expect(inspection).toMatchObject({ type: 'service_inspection', execution_state: 'running',
+      readiness: { application_ready: 'unverified' }, logs: { available: true } })
+    expect(Buffer.from((inspection.logs as { bytes_base64: string }).bytes_base64, 'base64').toString())
+      .toContain('__ADE_SERVICE_LOG__')
+    const listeners = await runCli(daemon.socket, 'listener', 'list')
+    expect(listeners).toMatchObject({ type: 'listeners', scope: 'local_host', coverage: 'partial' })
+    expect(listeners.listeners).toEqual(expect.arrayContaining([expect.objectContaining({
+      port, workspace_id: workspace.id, service_name: 'web', ownership: 'managed_service',
+    })]))
+    expect(await runCliFailure(daemon.socket, 'service', 'inspect', workspace.id, 'web', '0'))
+      .toMatchObject({ type: 'error', code: 'usage' })
+    expect(await runCliFailure(daemon.socket, 'service', 'inspect', workspace.id, 'web', '1024', 'extra'))
+      .toMatchObject({ type: 'error', code: 'usage' })
+    expect(await runCliFailure(daemon.socket, 'listener', 'list', 'extra'))
+      .toMatchObject({ type: 'error', code: 'usage' })
 
     await application.close()
     const afterClose = await runCli(daemon.socket, 'service', 'list', workspace.id)
@@ -84,6 +104,9 @@ test('CLI and Electron share a managed workspace service across app closure', as
     await expect(window.getByRole('article', { name: 'Service web' })).toContainText('stopped')
     const stopped = await runCli(daemon.socket, 'service', 'list', workspace.id)
     expect((stopped.states as Record<string, { state: string }>).web.state).toBe('stopped')
+    const stoppedInspection = await runCli(daemon.socket, 'service', 'inspect', workspace.id, 'web')
+    expect(stoppedInspection).toMatchObject({ type: 'service_inspection', execution_state: 'stopped',
+      readiness: { state: 'stopped' } })
     await expect.poll(async () => {
       try { await fetch(`http://127.0.0.1:${port}`); return false }
       catch { return true }

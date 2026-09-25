@@ -31,6 +31,9 @@ Commands:
                                         Save a service recipe; revision defaults to 0
   service start WORKSPACE_ID NAME       Launch a configured service
   service stop WORKSPACE_ID NAME        Stop and reap a managed service
+  service inspect WORKSPACE_ID NAME [TAIL_BYTES]
+                                        Read execution, listener evidence and bounded output
+  listener list                         Observe local TCP listeners and service assignments
   request OP [JSON_OBJECT]              Call another daemon command
 
 All command results are JSON on stdout. Errors are JSON on stderr.
@@ -82,6 +85,15 @@ function revision(value: string | undefined): number {
   if (value === undefined) return 0
   const number = Number(value)
   if (!Number.isSafeInteger(number) || number < 0) throw new CliError('usage', 'REVISION must be a nonnegative integer.')
+  return number
+}
+
+function tailBytes(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const number = Number(value)
+  if (!Number.isSafeInteger(number) || number < 1 || number > 32768) {
+    throw new CliError('usage', 'TAIL_BYTES must be an integer from 1 to 32768.')
+  }
   return number
 }
 
@@ -216,6 +228,13 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
   if (area === 'service' && action === 'list') {
     return requestDaemon(socketPath, 'service.list', { workspace_id: required(rest[0], 'WORKSPACE_ID') })
   }
+  if (area === 'service' && action === 'inspect') {
+    if (rest.length > 3) throw new CliError('usage', 'service inspect accepts WORKSPACE_ID NAME [TAIL_BYTES].')
+    return requestDaemon(socketPath, 'service.inspect', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      tail_bytes: tailBytes(rest[2]),
+    })
+  }
   if (area === 'service' && action === 'configure') {
     return requestDaemon(socketPath, 'service.configure', {
       workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
@@ -226,6 +245,10 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     return requestDaemon(socketPath, `service.${action}`, {
       workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
     })
+  }
+  if (area === 'listener' && action === 'list') {
+    if (rest.length) throw new CliError('usage', 'listener list does not accept arguments.')
+    return requestDaemon(socketPath, 'listener.list')
   }
   if (area === 'request') {
     const op = required(action, 'OP')
