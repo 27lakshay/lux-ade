@@ -1,6 +1,7 @@
 //! Daemon-owned durable Conversations attached to supervisor-owned Agent processes.
 //! Identity follows Paseo; interrupted execution follows opencode's write-ahead
 //! claim; provider protocol handling follows T3 Code. Windows never author process state.
+use crate::listeners;
 use crate::services::ServiceExt;
 use crate::{
     agent_runtime::{Envelope, Remote, Spec},
@@ -423,6 +424,7 @@ impl Sessions {
             }
             "service.start" => self.start_service(string("workspace_id")?, string("name")?),
             "service.stop" => self.stop_service(string("workspace_id")?, string("name")?),
+            "listener.list" => self.list_listeners(),
             "service.list" => {
                 let services = self
                     .data
@@ -839,6 +841,106 @@ impl Sessions {
         self.changed(&mut d, &current, &[])?;
         Ok(())
     }
+    fn list_listeners(&self) -> Result<Value> {
+        let services = {
+            let d = self.data.lock().unwrap();
+            let workspaces = d.store.catalog()?.workspaces;
+            let mut services = Vec::new();
+            for workspace in workspaces {
+                services.extend(d.store.services(&workspace.id)?);
+                ensure!(
+                    services.len() <= 512,
+                    "Too many service assignments to inspect"
+                );
+            }
+            services
+        };
+        let before = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let observed = listeners::observe()?;
+        let after = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let terminal_metrics = |snapshot: &Value, terminal_id: &str| -> Option<Value> {
+            snapshot["terminals"]
+                .as_array()?
+                .iter()
+                .find(|item| item["workspace"]["terminal_id"] == terminal_id)
+                .map(|item| item["metrics"].clone())
+        };
+        let mut managed = HashMap::<u32, (String, String)>::new();
+        for service in &services {
+            let (Some(owner), Some(terminal_id)) = (&service.terminal_owner, &service.terminal_id)
+            else {
+                continue;
+            };
+            if owner.runtime_instance != self.runtime.instance {
+                continue;
+            }
+            let (Some(first), Some(last)) = (
+                terminal_metrics(&before, terminal_id),
+                terminal_metrics(&after, terminal_id),
+            ) else {
+                continue;
+            };
+            let pid = first["shell_pid"]
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok());
+            if first["shell_running"] != true
+                || last["shell_running"] != true
+                || first["transfer_id"] != owner.transfer_id
+                || last["transfer_id"] != owner.transfer_id
+                || first["shell_pid"] != last["shell_pid"]
+                || first["run_id"] != last["run_id"]
+                || first["run_id"].as_str().is_none_or(str::is_empty)
+            {
+                continue;
+            }
+            if let Some(pid) = pid {
+                // A shared PID would make attribution ambiguous; direct service
+                // processes should each have a distinct identity.
+                managed
+                    .entry(pid)
+                    .and_modify(|entry| entry.0.clear())
+                    .or_insert_with(|| (service.workspace_id.clone(), service.name.clone()));
+            }
+        }
+        managed.retain(|_, (workspace, _)| !workspace.is_empty());
+        let listener_rows = observed.iter().map(|listener| {
+            let owner = managed.get(&listener.pid);
+            json!({"protocol":"tcp","address":listener.address,"port":listener.port,
+                "pid":listener.pid,"ownership":if owner.is_some(){"managed_service"}else{"unknown"},
+                "workspace_id":owner.map(|value| &value.0),"service_name":owner.map(|value| &value.1)})
+        }).collect::<Vec<_>>();
+        let assignments = services
+            .iter()
+            .flat_map(|service| {
+                service.ports.iter().map(|(variable, port)| {
+                    let mut own = false;
+                    let mut other = false;
+                    for listener in observed.iter().filter(|item| item.port == *port) {
+                        if managed.get(&listener.pid)
+                            == Some(&(service.workspace_id.clone(), service.name.clone()))
+                        {
+                            own = true;
+                        } else {
+                            other = true;
+                        }
+                    }
+                    let observation = match (own, other) {
+                        (true, false) => "verified_managed",
+                        (true, true) => "contested",
+                        (false, true) => "observed_other",
+                        (false, false) => "unobserved",
+                    };
+                    json!({"workspace_id":service.workspace_id,"service_name":service.name,
+                    "variable":variable,"port":port,"observation":observation})
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(
+            json!({"type":"listeners","scope":"local_host","coverage":"partial",
+            "listeners":listener_rows,"assignments":assignments}),
+        )
+    }
+
     fn start_service(&self, workspace: &str, name: &str) -> Result<Value> {
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
