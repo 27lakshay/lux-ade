@@ -14,6 +14,7 @@ let socket = fixedSocket
 let client = new AdeClient(socket)
 let clientGeneration = 0
 let unsubscribeClient: (() => void) | null = null
+let unsubscribeFeed: (() => void) | null = null
 let switching = false
 let profileState: ProfileState = { managed: managedProfiles, profiles: [], selectedId: null, activeId: null, error: '' }
 const execFileAsync = promisify(execFile)
@@ -161,12 +162,21 @@ function publishProfile(update: Partial<ProfileState>): ProfileState {
 }
 
 async function launcher(action: string, ...args: string[]): Promise<Record<string, unknown>> {
-  const script = resolve(app.getAppPath(), '../../scripts/profiles.py')
-  const binary = process.env.ADE_DAEMON_BIN ?? resolve(app.getAppPath(), '../../target/debug/ade-daemon')
-  const result = await execFileAsync('python3', [script, '--daemon', binary, action, ...args], {
+  const script = app.isPackaged ? join(process.resourcesPath, 'profiles.py') : resolve(app.getAppPath(), '../../scripts/profiles.py')
+  const binary = process.env.ADE_DAEMON_BIN ?? (app.isPackaged
+    ? resolve(process.resourcesPath, '../MacOS/ade-daemon')
+    : resolve(app.getAppPath(), '../../target/debug/ade-daemon'))
+  const environment = app.isPackaged ? {
+    ...process.env,
+    ADE_NODE_BIN: process.execPath,
+    ADE_BUN_BIN: join(process.resourcesPath, 'bin/bun'),
+    ELECTRON_RUN_AS_NODE: '1',
+  } : process.env
+  const python = app.isPackaged ? '/usr/bin/python3' : 'python3'
+  const result = await execFileAsync(python, [script, '--daemon', binary, action, ...args], {
     timeout: 35_000,
     maxBuffer: 1024 * 1024,
-    env: process.env,
+    env: environment,
   })
   const value: unknown = JSON.parse(result.stdout)
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Profile launcher returned an invalid response')
@@ -183,6 +193,7 @@ async function refreshProfiles(): Promise<ProfileState> {
 function attachClient(endpoint: string, profileId: string): void {
   const previous = client
   const previousSubscription = unsubscribeClient
+  const previousFeed = unsubscribeFeed
   const next = new AdeClient(endpoint)
   const generation = ++clientGeneration
   client = next
@@ -190,9 +201,13 @@ function attachClient(endpoint: string, profileId: string): void {
   publishProfile({ activeId: profileId, error: '' })
   for (const window of BrowserWindow.getAllWindows()) closeSenderTerminals(window.webContents.id)
   previousSubscription?.()
+  previousFeed?.()
   previous.stop()
   unsubscribeClient = next.subscribe((state) => {
     if (generation === clientGeneration) broadcast('ade:client-state-changed', state)
+  })
+  unsubscribeFeed = next.subscribeFeed((frame) => {
+    if (generation === clientGeneration) broadcast('ade:feed-frame', frame)
   })
   next.start()
 }
@@ -447,6 +462,7 @@ function openMainWindow(): void {
 
 app.whenReady().then(() => {
   unsubscribeClient = client.subscribe((state) => broadcast('ade:client-state-changed', state))
+  unsubscribeFeed = client.subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
   client.start()
   openMainWindow()
   if (managedProfiles) {
@@ -494,6 +510,7 @@ app.on('before-quit', (event) => {
   for (const terminal of terminals.values()) terminal.dispose()
   terminals.clear()
   unsubscribeClient?.()
+  unsubscribeFeed?.()
   client.stop()
 })
 

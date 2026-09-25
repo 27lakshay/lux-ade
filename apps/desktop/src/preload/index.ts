@@ -59,5 +59,10 @@ contextBridge.exposeInMainWorld('adeHost', {
     ipcRenderer.on('ade:client-state-changed', receive)
     return () => ipcRenderer.removeListener('ade:client-state-changed', receive)
   },
+  onFeedFrame: (listener: (frame: unknown) => void): (() => void) => {
+    const receive = (_event: Electron.IpcRendererEvent, frame: unknown): void => listener(frame)
+    ipcRenderer.on('ade:feed-frame', receive)
+    return () => ipcRenderer.removeListener('ade:feed-frame', receive)
+  },
   terminal,
 })

@@ -1,6 +1,6 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import type { ClientState, Workspace, Conversation } from '@ade/client'
+import type { ClientState, Workspace, Conversation, FeedFrame } from '@ade/client'
 import { mountTerminal, type TerminalBridge } from '@ade/terminal'
 import './style.css'
 
@@ -18,6 +18,7 @@ declare global {
       getAppVersion(): Promise<string>
       getClientState(): Promise<ClientState>
       onClientState(listener: (state: ClientState) => void): () => void
+      onFeedFrame(listener: (frame: FeedFrame) => void): () => void
       getProfileState(): Promise<ProfileState>
       listProfiles(): Promise<ProfileState>
       createProfile(name: string): Promise<ProfileState>
@@ -115,7 +116,7 @@ function RequestForm({ request, busy, onAnswer }: {
   </section>
 }
 
-function ConversationView({ conversation, revision, bootId }: { conversation: Conversation; revision: number | null; bootId: string | null }): React.JSX.Element {
+function ConversationView({ conversation, bootId }: { conversation: Conversation; bootId: string | null }): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<Snapshot | null>(null)
   const [draft, setDraft] = React.useState('')
   const [draftLoaded, setDraftLoaded] = React.useState(false)
@@ -153,18 +154,66 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
 
   React.useEffect(() => {
     let disposed = false
+    let current: Snapshot | null = null
+    let loading = false
+    let reloadRequested = false
+    let buffered: FeedFrame[] = []
+    const apply = (frame: FeedFrame): void => {
+      if (!current) { buffered.push(frame); if (!loading) void load(); return }
+      if (frame.boot_id === current.boot_id && frame.revision <= current.revision) return
+      if (frame.boot_id !== current.boot_id || frame.revision !== current.revision + 1) {
+        current = null
+        buffered = []
+        reloadRequested = true
+        if (!loading) { reloadRequested = false; void load() }
+        return
+      }
+      if (frame.type !== 'conversation_changed') {
+        current = { ...current, revision: frame.revision }
+        return
+      }
+      const changed = frame.conversation as Conversation | undefined
+      if (!changed || changed.id !== conversation.id || !Array.isArray(frame.messages) || !Array.isArray(frame.requests)) {
+        current = { ...current, revision: frame.revision }
+        return
+      }
+      const messages = new Map(current.messages.map((message) => [message.id, message]))
+      for (const item of frame.messages as Message[]) {
+        if (item && typeof item.id === 'string') messages.set(item.id, item)
+      }
+      current = { ...current, conversation: changed,
+        messages: [...messages.values()].sort((left, right) => left.sequence - right.sequence).slice(-200),
+        requests: frame.requests as PendingRequest[], revision: frame.revision }
+      setSnapshot(current)
+    }
     const load = async (): Promise<void> => {
+      if (loading || disposed) return
+      loading = true
       try {
         const value = await window.adeHost.requestConversation('conversation.get', { conversation_id: conversation.id }) as Snapshot
-        if (!disposed) { setSnapshot(value); setError('') }
+        if (!disposed) {
+          current = value
+          setSnapshot(value)
+          setError('')
+          const pending = buffered
+          buffered = []
+          for (const frame of pending) {
+            if (frame.boot_id === value.boot_id && frame.revision <= (current?.revision ?? -1)) continue
+            apply(frame)
+            if (!current) break
+          }
+        }
       } catch (reason) {
         if (!disposed) setError(String(reason))
+      } finally {
+        loading = false
+        if (!disposed && reloadRequested) { reloadRequested = false; void load() }
       }
     }
+    const unsubscribe = window.adeHost.onFeedFrame(apply)
     void load()
-    const timer = setInterval(() => { void load() }, 2_000)
-    return () => { disposed = true; clearInterval(timer) }
-  }, [conversation.id, revision, bootId, refresh])
+    return () => { disposed = true; unsubscribe() }
+  }, [conversation.id, bootId, refresh])
 
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
@@ -365,7 +414,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         {error && <p role="alert" className="inline-error">{error}</p>}
       </aside>
       <div className="work-area">
-        {conversation ? <ConversationView key={conversation.id} conversation={conversation} revision={state.revision} bootId={state.bootId} />
+        {conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId} />
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
         {workspace && <TerminalPane workspace={workspace} />}
       </div>

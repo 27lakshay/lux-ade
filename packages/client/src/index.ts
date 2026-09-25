@@ -40,6 +40,8 @@ export interface ClientState {
 }
 
 type Listener = (state: ClientState) => void
+export type FeedFrame = Record<string, unknown> & { type: string; boot_id: string; revision: number }
+type FeedListener = (frame: FeedFrame) => void
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -103,6 +105,7 @@ export class AdeClient {
     catalog: null,
   }
   private readonly listeners = new Set<Listener>()
+  private readonly feedListeners = new Set<FeedListener>()
   private socket: Socket | null = null
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private generation = 0
@@ -119,6 +122,11 @@ export class AdeClient {
     this.listeners.add(listener)
     listener(this.state)
     return () => { this.listeners.delete(listener) }
+  }
+
+  subscribeFeed(listener: FeedListener): () => void {
+    this.feedListeners.add(listener)
+    return () => { this.feedListeners.delete(listener) }
   }
 
   start(): void {
@@ -179,9 +187,13 @@ export class AdeClient {
         const frame = parseFrame(line)
         if (!frame) return fail('Daemon sent an invalid JSON frame.')
         if (frame.type === 'error') return fail(requiredString(frame.message) ?? 'Daemon returned an error.')
+        const previousPhase = phase
         const result = this.applyFrame(frame, phase, socket)
         if (result === 'invalid') return fail('Daemon sent an invalid or discontinuous state frame.')
         phase = result
+        if (previousPhase !== 'hello' && typeof frame.type === 'string') {
+          for (const listener of this.feedListeners) listener(frame as FeedFrame)
+        }
       }
     })
     socket.on('error', (error: NodeJS.ErrnoException) => {
