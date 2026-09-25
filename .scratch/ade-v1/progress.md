@@ -21,8 +21,8 @@ full acceptance in its owning spec:
 |---|---|---|
 | Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged app, one profile, shell and deterministic turns pass; installed multi-profile and real-agent continuity remain |
 | Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live prompts passed; Oh My Pi lacks configured account; account and full control flows remain |
-| Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder opens; diff review and feedback are next |
-| Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell and managed-service controls pass; listener discovery, readiness and embedded browser remain |
+| Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
+| Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, managed-service controls, listener observation and bounded status/log inspection pass; service UI/readiness health and embedded browser remain |
 | Shared control: F101, F102, F103 | CLI and Electron target the same profile/workspace/conversation/terminal with structured outcomes | Local CLI subset works; public command coverage remains |
 
 Each row needs running-app E2E evidence on the integrated revision before the
@@ -53,28 +53,38 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `8ffdf3f` | Durable prompt-send intent | Electron crash/relaunch and lost prepare/send/complete replies; daemon request-ID conflicts E2E |
 | `4e7d91c` | Local services and conversation selection | Real HTTP service across app closure; immediate new-conversation typing retained E2E |
 | `814975c` | Packaged macOS app | Installed resources, bundled provider fixtures, incompatible owner and hidden E2E windows |
+| `ae71d0b` | Local listener observation | Managed, unrelated, assigned, contested and stopped port states through real daemon E2E |
+| `9ae5a3f` | Embedded browser slice ticket | Profile-partitioned preview and untrusted-page E2E contract defined |
+| `4a19993` | Managed service inspection | Direct-process TCP evidence, bounded PTY output and runtime-loss fallback E2E |
+| `438e90c` | Diff review feedback and hidden E2E close | Anchored feedback, stale/selection/retry guards and hidden uncertain-send close/reopen E2E |
+| `05c3064` | Folder selection race | New conversation waits for the selected folder; integrated 31/31 E2E |
 
-At integrated revision `814975c` on macOS arm64, `pnpm check` passed TypeScript
-type checking, Fallow, backend and desktop/CLI builds, and 25/25 real-process
-E2Es in `e2e/specs/`. `pnpm test:e2e:package` passed 3/3 running-packaged-app
-E2Es in `e2e/packaged/macos.spec.ts`; the provider/new-draft scenario passed
-5/5 repeated runs. `node scripts/cargo.mjs fmt --all -- --check` and strict
+At integrated revision `05c3064` on macOS arm64, `pnpm check` passed TypeScript
+type checking, Fallow, backend and desktop/CLI builds, and 31/31 real-process
+E2Es in `e2e/specs/`. The rebuilt package
+passed `pnpm test:e2e:package` 3/3 in `e2e/packaged/macos.spec.ts`; the earlier
+provider/new-draft scenario passed 5/5 repeated runs before this revision.
+`node scripts/cargo.mjs fmt --all -- --check` and strict
 Clippy passed. `pnpm --filter ade-claude-adapter test` passed 9/9 legacy bridge
 cases; `pnpm --filter ade-omp-bridge test` passed 37 with 3 live-only skips.
 `PATH="$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:$PATH" bash scripts/run.sh
 --build-only` built and packaged the GPUI prototype; its GUI startup was not
 verified. Build output is local and unsigned.
 
-| Requirement slice | Implementation commit | Reproducible acceptance at `814975c` | Result and evidence |
+| Requirement slice | Implementation commit | Reproducible acceptance | Result and evidence |
 |---|---|---|---|
 | R001/R002/F036, partial | `8ffdf3f` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/daemon-send-intent.spec.ts`, `desktop-send-recovery.spec.ts`; Electron SIGKILL/relaunch, lost replies and one provider turn. Daemon SIGKILL boundaries remain. |
 | F031/F036, partial | `4e7d91c` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/desktop-conversation-switch.spec.ts`; new-conversation typing survives catalog catch-up. |
 | F085/F086, partial | `4e7d91c` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/desktop-services.spec.ts`; real HTTP process survives UI closure and stops. Listener discovery/readiness remain. |
 | F005/F007/R020/01-S16, partial | `814975c` | `pnpm package:mac`, `pnpm test:e2e:package` on macOS arm64 | Pass: `e2e/packaged/macos.spec.ts`, local `.app` and ZIP; provider fixtures are not live accounts. |
+| F085, partial | `ae71d0b` | `pnpm build:backend`, focused real-daemon E2E on macOS arm64 | Pass: `e2e/specs/listener-discovery.spec.ts`; assigned and verified ports are distinct, unrelated PID stays unknown. UI and broader host attribution remain. |
+| F086, partial | `4a19993` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/service-inspection.spec.ts`; direct-process TCP observation is separate from application health, logs are bounded PTY tail, runtime loss is unavailable. UI, health probes and persistent logs remain. |
+| F074/R010/R011, partial | `438e90c` | `pnpm check` and final focused review E2E on macOS arm64 | Pass: `e2e/specs/desktop-review-feedback.spec.ts`; stale diff, selection race, ordinary draft, definite rejection and same-ID uncertain recovery. Atomic validate/send and large diff acceptance remain. |
+| Hidden E2E close | `438e90c` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/desktop-send-recovery.spec.ts`; hidden ADE closes with uncertain send, reopens and retries original ID. Normal close guard remains. |
 
 The packaged `.app` is 2.4 GB unpacked and the local ZIP is 790 MB at
 `dist/electron/Lux-ADE-local-verified.zip`, SHA-256
-`24e407ad8dabd5abfae96f52d9b77f7ccb44d4f507dc29f6f29e52796591724d`.
+`7c6b61a53b7b1af411e8a3ab17b7cf33b01e226e878e4d6147cd65f63a997041`.
 Oh My Pi uses about 1.5 GB unpacked and Claude about 515 MB. The package is
 unsigned; signing and notarization remain release work.
 
@@ -85,7 +95,7 @@ returned the expected answer in 5.9 seconds; Claude Code 2.1.282 did so in
 the failure may have another cause and needs a configured-account rerun.
 The repeatable command is `pnpm test:e2e:live codex claude omp`.
 
-The 25 main E2E cases and 3 packaged cases are narrow slices. No entire v1
+The 31 main E2E cases and 3 packaged cases are narrow slices. No entire v1
 domain or 140-item requirement
 register is marked complete by this record.
 
@@ -97,19 +107,22 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 
 ## Active and next work
 
-- No worker is active. `durable_send_intent`, `package_macos` and
-  `service_daily_flow` delivered their slices. `send_reconciliation` and
-  `client_connection` independently reviewed the send/service, package and
-  conversation-selection changes and prepared the F074 ticket. All shared
-  this checkout; no worker worktree was created. Root integrated and committed
-  on `codex/architecture-proposal`.
+- No worker is active. `client_connection` delivered the F074 daily-use slice;
+  `service_daily_flow` delivered the F085/F086 daemon slices and independently
+  reviewed review-feedback races; `package_macos` reviewed daemon attribution,
+  runtime-loss and identity boundaries. Root integrated, fixed hidden E2E
+  teardown and ran source/package checks. All shared this checkout; no worker
+  worktree was created.
 - Send-intent review closed altered/rejected/aborted request-ID dispatch,
   delayed prepare and accepted-message ID reuse holes. Concurrent completion
   across separate draft reads and daemon-crash boundary acceptance remain.
   No R001/R002/R010 criterion is closed.
 - Managed-service CLI/Electron control passes a real HTTP process E2E through
-  full app closure and restart, with an invalid recipe error. F085 arbitrary
-  listener discovery and F086 readiness/log acceptance remain open.
+  full app closure and restart, with an invalid recipe error. Daemon
+  `listener.list` reports partial local TCP observation and conservative direct
+  process attribution; `service.inspect` adds bounded PTY output and execution
+  state without calling a TCP listener application-ready. F085 UI/complete
+  discovery and F086 health/persistent-log acceptance remain open.
 - Electron profile creation/switching works in local development; the packaged
   app bundles the profile launcher. Installed multi-profile continuity remains.
 - Workspace opening works for local folders; repository and worktree lifecycle
@@ -122,9 +135,9 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 - Account management, extensible providers/plugins, worktrees, dev services,
   browsers, notifications, remote hosts, unified catalogs/history, customization,
   operations and reliability acceptance remain in the v1 register.
-- Next daily-use work: implement `06-files-git/issues/01-diff-review-feedback.md`,
-  then embedded browser preview, listener discovery/readiness, and real-agent
-  account/control acceptance. Continue through the full V1 register afterward.
+- Next daily-use work: implement `08-browser-devices/issues/01-embedded-browser-preview.md`,
+  listener UI/health and real-agent account/control acceptance. Continue
+  through the full V1 register afterward.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
   not establish live-account compatibility or quality.
 

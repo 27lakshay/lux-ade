@@ -34,10 +34,10 @@ The provider resources account for most of the unpacked size: Oh My Pi is
 1.5 GB and Claude is 515 MB. Within Oh My Pi, `onnxruntime-node` is 287 MB,
 `@oh-my-pi/pi-natives-darwin-arm64` is 161 MB, and `onnxruntime-web` is 139 MB.
 The ZIP at `dist/electron/Lux-ADE-local-verified.zip` has SHA-256
-`24e407ad8dabd5abfae96f52d9b77f7ccb44d4f507dc29f6f29e52796591724d`.
+`7c6b61a53b7b1af411e8a3ab17b7cf33b01e226e878e4d6147cd65f63a997041`.
 It is a local measurement only; this ticket does not sign or notarize it.
 
-Packaged acceptance on the integrated build branch after `4e7d91c` used
+Packaged acceptance on the integrated build branch after `05c3064` used
 `pnpm package:mac` (exit 0) and `pnpm test:e2e:package`
 (3/3 passed). The three Playwright scenarios exercise a fresh profile, folder,
 PTY, deterministic provider turn and reopen; bundled Codex relay/Bun, Claude
