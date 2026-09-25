@@ -50,8 +50,15 @@ ipcMain.handle('ade:conversation-request', async (_event, op: unknown, fields: u
     }
     return requestDaemon(process.env.ADE_SOCKET, op, { conversation_id: args.conversation_id, request_id: args.request_id, text: args.text })
   }
-  if (!validId(args.request_id) || !['accept', 'decline'].includes(String(args.decision))) throw new Error('Invalid answer')
-  return requestDaemon(process.env.ADE_SOCKET, op, { conversation_id: args.conversation_id, request_id: args.request_id, decision: args.decision })
+  if (!validId(args.request_id) || !['accept', 'decline', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
+  if (args.decision === 'answer') {
+    if (!args.answers || typeof args.answers !== 'object' || Array.isArray(args.answers)
+      || Buffer.byteLength(JSON.stringify(args.answers)) > 64 * 1024) throw new Error('Invalid question answers')
+  }
+  return requestDaemon(process.env.ADE_SOCKET, op, {
+    conversation_id: args.conversation_id, request_id: args.request_id,
+    decision: args.decision, ...(args.decision === 'answer' ? { answers: args.answers } : {}),
+  })
 })
 ipcMain.handle('ade:terminal-attach', (event, connectionId: unknown, workspaceId: unknown, terminalId: unknown) => {
   if (!validId(connectionId) || !validId(workspaceId) || !validId(terminalId)) throw new Error('Invalid terminal identity')

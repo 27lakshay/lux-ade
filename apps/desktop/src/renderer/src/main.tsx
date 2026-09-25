@@ -60,6 +60,51 @@ function requestSummary(request: PendingRequest): string {
   return request.method
 }
 
+type Question = { id: string; question: string; options?: Array<{ label: string }>; multiSelect?: boolean; isSecret?: boolean }
+
+function RequestForm({ request, busy, onAnswer }: {
+  request: PendingRequest
+  busy: boolean
+  onAnswer: (decision: 'accept' | 'decline' | 'answer', answers?: Record<string, string | string[]>) => Promise<void>
+}): React.JSX.Element {
+  const [answers, setAnswers] = React.useState<Record<string, string | string[]>>({})
+  const questions = Array.isArray(request.params.questions)
+    ? request.params.questions.filter((item): item is Question =>
+      typeof item === 'object' && item !== null && typeof item.id === 'string' && typeof item.question === 'string')
+    : []
+  const isQuestion = questions.length > 0
+  const complete = questions.every((question) => {
+    const value = answers[question.id]
+    return Array.isArray(value) ? value.length > 0 : typeof value === 'string' && value.trim().length > 0
+  })
+  return <section className="approval" aria-label="Pending approval">
+    <strong>{isQuestion ? 'Agent has a question' : 'Agent needs your approval'}</strong>
+    {!isQuestion && <p>{requestSummary(request)}</p>}
+    {questions.map((question) => <fieldset key={question.id}>
+      <legend>{question.question}</legend>
+      {question.multiSelect && question.options ? question.options.map((option) => {
+        const current = Array.isArray(answers[question.id]) ? answers[question.id] as string[] : []
+        return <label className="choice" key={option.label}><input type="checkbox" checked={current.includes(option.label)}
+          onChange={(event) => setAnswers((prior) => ({ ...prior, [question.id]: event.target.checked
+            ? [...current, option.label] : current.filter((value) => value !== option.label) }))} />{option.label}</label>
+      }) : <>
+        {question.options && <datalist id={`choices-${request.id}-${question.id}`}>
+          {question.options.map((option) => <option key={option.label} value={option.label} />)}
+        </datalist>}
+        <input type={question.isSecret ? 'password' : 'text'} value={typeof answers[question.id] === 'string' ? answers[question.id] as string : ''}
+          list={question.options ? `choices-${request.id}-${question.id}` : undefined}
+          aria-label={question.question} onChange={(event) => setAnswers((prior) => ({ ...prior, [question.id]: event.target.value }))} />
+      </>}
+    </fieldset>)}
+    <div className="approval-actions">
+      {request.method !== 'item/tool/requestUserInput' && <button disabled={busy} onClick={() => void onAnswer('decline')}>Decline</button>}
+      <button disabled={busy || (isQuestion && !complete)} onClick={() => void onAnswer(isQuestion ? 'answer' : 'accept', isQuestion ? answers : undefined)}>
+        {isQuestion ? 'Submit answer' : 'Approve'}
+      </button>
+    </div>
+  </section>
+}
+
 function ConversationView({ conversation, revision, bootId }: { conversation: Conversation; revision: number | null; bootId: string | null }): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<Snapshot | null>(null)
   const [draft, setDraft] = React.useState('')
@@ -97,11 +142,11 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
     } catch (reason) { setError(String(reason)) }
     finally { setBusy(false) }
   }
-  const answer = async (request: PendingRequest, decision: 'accept' | 'decline'): Promise<void> => {
+  const answer = async (request: PendingRequest, decision: 'accept' | 'decline' | 'answer', answers?: Record<string, string | string[]>): Promise<void> => {
     setBusy(true)
     try {
       await window.adeHost.requestConversation('agent.answer', {
-        conversation_id: conversation.id, request_id: request.id, decision,
+        conversation_id: conversation.id, request_id: request.id, decision, answers,
       })
       setError('')
       setRefresh((value) => value + 1)
@@ -125,17 +170,8 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
             <pre>{contentSummary(message)}</pre>
           </article>
         ))}
-        {snapshot?.requests.map((request) => (
-          <section className="approval" key={request.id} aria-label="Pending approval">
-            <strong>Agent needs your input</strong>
-            <p>{requestSummary(request)}</p>
-            {Array.isArray(request.params.questions) && <p className="muted">This question needs a structured answer. Use the existing app until this form is available here.</p>}
-            {!Array.isArray(request.params.questions) && <div className="approval-actions">
-              <button disabled={busy} onClick={() => void answer(request, 'decline')}>Decline</button>
-              <button disabled={busy} onClick={() => void answer(request, 'accept')}>Approve</button>
-            </div>}
-          </section>
-        ))}
+        {snapshot?.requests.map((request) => <RequestForm key={request.id} request={request} busy={busy}
+          onAnswer={(decision, answers) => answer(request, decision, answers)} />)}
       </div>
       <form className="composer" onSubmit={(event) => void send(event)}>
         <label htmlFor="prompt">Prompt</label>

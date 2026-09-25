@@ -26,6 +26,7 @@ This first slice alone does not complete the full F021/F031/F038/F101 specs.
 Recorded evidence: `e2e/specs/desktop-conversation.spec.ts` passed against a
 real isolated daemon/runtime and deterministic Codex fixture. It observed
 structured tool content, stable message IDs after renderer reload, one native
-dispatch, and one resolved approval. The UI currently supports text prompts,
-command approvals, and the first 200 transcript records. Native questions,
-attachments, pagination, drafts, and live-provider verification remain open.
+dispatch, and resolved command approval and Codex native question answers. The
+UI currently supports text prompts, native approvals/questions, and the first
+200 transcript records. Attachments, pagination, drafts, and live-provider
+verification remain open.

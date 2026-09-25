@@ -65,6 +65,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2p
 .approval p { font-size: 13px; overflow-wrap: anywhere; }
 .approval-actions { display: flex; gap: 8px; }
 .approval-actions button:first-child { background: #36393a; color: #e8e9e9; }
+.approval fieldset { border: 0; margin: 12px 0; padding: 0; }
+.approval legend { font-size: 12px; margin-bottom: 7px; }
+.approval fieldset > input { background: #222627; border: 1px solid #746b60; border-radius: 6px; color: inherit; padding: 8px; width: 100%; }
+.approval .choice { align-items: center; display: flex; font-size: 12px; gap: 7px; margin: 5px 0; }
 .composer { border-top: 1px solid #323637; display: grid; gap: 8px; padding-top: 12px; }
 .composer label { font-size: 12px; }
 .composer textarea { background: #222627; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 9px; resize: vertical; width: 100%; }
