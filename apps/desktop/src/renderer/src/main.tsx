@@ -26,6 +26,7 @@ declare global {
       openWorkspace(folder: string): Promise<Frame>
       chooseWorkspace(): Promise<Frame | null>
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
+      onDraftError(listener: (value: { conversationId: string; message: string }) => void): () => void
       terminal: TerminalBridge
     }
   }
@@ -117,9 +118,36 @@ function RequestForm({ request, busy, onAnswer }: {
 function ConversationView({ conversation, revision, bootId }: { conversation: Conversation; revision: number | null; bootId: string | null }): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<Snapshot | null>(null)
   const [draft, setDraft] = React.useState('')
+  const [draftLoaded, setDraftLoaded] = React.useState(false)
+  const [draftError, setDraftError] = React.useState('')
+  const [sentDraftPendingClear, setSentDraftPendingClear] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
   const [refresh, setRefresh] = React.useState(0)
+
+  React.useEffect(() => {
+    let disposed = false
+    const unsubscribe = window.adeHost.onDraftError((value) => {
+      if (value.conversationId === conversation.id) setDraftError(value.message)
+    })
+    void window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id }).then((response) => {
+      if (disposed) return
+      const saved = response.draft as { text: string }
+      const sentText = typeof response.sent_text === 'string' ? response.sent_text : ''
+      setDraft(sentText || saved.text)
+      setSentDraftPendingClear(Boolean(sentText))
+      setDraftError(typeof response.error === 'string' ? response.error : '')
+      setDraftLoaded(true)
+    }).catch((reason) => { if (!disposed) setDraftError(`Draft could not be loaded: ${String(reason)}`) })
+    return () => { disposed = true; unsubscribe() }
+  }, [conversation.id])
+
+  const updateDraft = (text: string): void => {
+    setDraft(text)
+    void window.adeHost.requestConversation('draft.save', { conversation_id: conversation.id, text })
+      .then((response) => { if (typeof response.error === 'string' && response.error) setDraftError(response.error) })
+      .catch((reason) => setDraftError(`Draft could not be saved: ${String(reason)}`))
+  }
 
   React.useEffect(() => {
     let disposed = false
@@ -139,16 +167,29 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
     const text = draft.trim()
-    if (!text || busy) return
+    if (!text || busy || sentDraftPendingClear) return
     setBusy(true)
     try {
-      await window.adeHost.requestConversation('agent.send', {
+      const response = await window.adeHost.requestConversation('agent.send', {
         conversation_id: conversation.id, request_id: crypto.randomUUID(), text,
       })
-      setDraft('')
+      const clearError = typeof response.draft_error === 'string' ? response.draft_error : ''
+      if (!clearError) setDraft('')
+      setSentDraftPendingClear(Boolean(clearError))
+      setDraftError(clearError)
       setError('')
       setRefresh((value) => value + 1)
     } catch (reason) { setError(String(reason)) }
+    finally { setBusy(false) }
+  }
+  const retryClear = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      await window.adeHost.requestConversation('draft.flush', { conversation_id: conversation.id })
+      setDraft('')
+      setDraftError('')
+      setSentDraftPendingClear(false)
+    } catch (reason) { setDraftError(`Sent prompt draft could not be cleared: ${String(reason)}`) }
     finally { setBusy(false) }
   }
   const answer = async (request: PendingRequest, decision: 'accept' | 'decline' | 'answer', answers?: Record<string, string | string[]>): Promise<void> => {
@@ -170,6 +211,7 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
         <div><h2>{conversation.title}</h2><p>{conversation.provider} · {status}</p></div>
       </div>
       {error && <p role="alert" className="inline-error">{error}</p>}
+      {draftError && <p role="alert" className="inline-error">{draftError}</p>}
       <div className="transcript" role="log" aria-label="Conversation transcript" aria-live="polite">
         {!snapshot && !error && <p className="muted">Loading conversation…</p>}
         {snapshot?.messages.length === 0 && <p className="muted">Send a prompt to start this conversation.</p>}
@@ -184,8 +226,9 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
       </div>
       <form className="composer" onSubmit={(event) => void send(event)}>
         <label htmlFor="prompt">Prompt</label>
-        <textarea id="prompt" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask your agent…" rows={3} />
-        <button type="submit" disabled={busy || !draft.trim() || !snapshot || !['idle', 'ready', 'error', 'interrupted'].includes(status)}>Send</button>
+        <textarea id="prompt" value={draft} disabled={busy || !draftLoaded || sentDraftPendingClear} onChange={(event) => updateDraft(event.target.value)} placeholder="Ask your agent…" rows={3} />
+        <button type="submit" disabled={busy || sentDraftPendingClear || !draftLoaded || !draft.trim() || !snapshot || !['idle', 'ready', 'error', 'interrupted'].includes(status)}>Send</button>
+        {sentDraftPendingClear && <button type="button" disabled={busy} onClick={() => void retryClear()}>Retry clearing sent draft</button>}
       </form>
     </section>
   )

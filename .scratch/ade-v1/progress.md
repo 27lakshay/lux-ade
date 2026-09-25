@@ -19,10 +19,11 @@ configured. This is a checkpoint, not a claim that the v1 register is complete.
 | `4678d37` | Native question form | Codex structured answer E2E |
 | `f11e28a` | Local profile launcher | Two-profile isolation/restart and incompatible-owner E2E |
 | `60fa747` | Electron profile selection | Two-daemon UI switch and catalog isolation E2E |
-| pending | Open local folder | Stable workspace selection and terminal E2E |
+| `1083d5d` | Open local folder | Stable workspace selection and terminal E2E |
+| pending | Renderer-reload drafts | Separate drafts and acknowledged-send clear E2E |
 
 Latest full check: `pnpm check` passed typecheck, Fallow, backend build,
-desktop/CLI build, and 13/13 running-process E2E tests. Existing provider
+desktop/CLI build, and 14/14 running-process E2E tests. Existing provider
 fixture suite passed after root lockfile migration. The old GPUI app built and
 packaged successfully in build-only mode; its GUI startup was not verified.
 
@@ -42,7 +43,9 @@ register is marked complete by this record.
   launcher requires `scripts/profiles.py`; packaging it for a distributable app remains.
 - Workspace opening works for local folders; repository and worktree lifecycle
   acceptance remains.
-- Draft recovery, conversation pagination, native attachments/context, queues,
+- Drafts survive renderer reload and clear after acknowledged send; process
+  crash recovery, lost acknowledgements, recall/stash and transfer remain.
+- Conversation pagination, native attachments/context, queues,
   broader approval forms, and live Oh My Pi verification remain.
 - Account management, extensible providers/plugins, worktrees, dev services,
   browsers, notifications, remote hosts, unified catalogs/history, customization,

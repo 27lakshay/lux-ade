@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld('adeHost', {
   },
   requestConversation: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:conversation-request', op, fields),
+  onDraftError: (listener: (value: { conversationId: string; message: string }) => void): (() => void) => {
+    const receive = (_event: Electron.IpcRendererEvent, value: { conversationId: string; message: string }): void => listener(value)
+    ipcRenderer.on('ade:draft-error', receive)
+    return () => ipcRenderer.removeListener('ade:draft-error', receive)
+  },
   onClientState: (listener: (state: unknown) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
     ipcRenderer.on('ade:client-state-changed', receive)

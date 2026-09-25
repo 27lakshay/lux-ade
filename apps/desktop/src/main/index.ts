@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -17,6 +18,11 @@ let switching = false
 let profileState: ProfileState = { managed: managedProfiles, profiles: [], selectedId: null, activeId: null, error: '' }
 const execFileAsync = promisify(execFile)
 const terminals = new Map<string, TerminalConnection>()
+type Draft = { text: string; revision: number; attachments: unknown[] }
+type DraftEntry = { senderId: number; endpoint: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string }
+const windowIds = new Map<number, string>()
+const drafts = new Map<string, DraftEntry>()
+const draftKey = (senderId: number, endpoint: string, conversationId: string): string => `${senderId}:${endpoint}:${conversationId}`
 const terminalKey = (senderId: number, connectionId: string): string => `${senderId}:${connectionId}`
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
 
@@ -26,6 +32,56 @@ function closeSenderTerminals(senderId: number): void {
     terminal.dispose()
     terminals.delete(key)
   }
+}
+
+function publishDraftError(entry: DraftEntry, message: string): void {
+  const window = BrowserWindow.getAllWindows().find((item) => item.webContents.id === entry.senderId)
+  if (window && !window.isDestroyed()) window.webContents.send('ade:draft-error', { conversationId: entry.conversationId, message })
+}
+
+function flushDraft(entry: DraftEntry): Promise<void> {
+  if (entry.timer) { clearTimeout(entry.timer); entry.timer = null }
+  if (entry.savedRevision >= entry.draft.revision) return entry.pending
+  const draft = { ...entry.draft }
+  entry.pending = entry.pending.catch(() => undefined).then(async () => {
+    if (entry.savedRevision >= draft.revision) return
+    const response = await requestDaemon(entry.endpoint, 'draft.save', {
+      conversation_id: entry.conversationId, window_id: entry.windowId,
+      text: draft.text, revision: draft.revision, attachments: draft.attachments,
+    })
+    const saved = response.draft as Draft
+    if (!saved || saved.revision < draft.revision) throw new Error('Draft was not saved')
+    entry.savedRevision = saved.revision
+    entry.error = ''
+    publishDraftError(entry, '')
+  }).catch((error: unknown) => {
+    entry.error = `Draft could not be saved: ${String(error)}`
+    publishDraftError(entry, entry.error)
+    throw error
+  })
+  return entry.pending
+}
+
+function scheduleDraft(entry: DraftEntry): void {
+  if (entry.timer) clearTimeout(entry.timer)
+  entry.timer = setTimeout(() => { void flushDraft(entry).catch(() => undefined) }, 250)
+}
+
+async function loadDraft(senderId: number, endpoint: string, conversationId: string): Promise<DraftEntry> {
+  const key = draftKey(senderId, endpoint, conversationId)
+  const cached = drafts.get(key)
+  if (cached) return cached
+  const windowId = windowIds.get(senderId)
+  if (!windowId) throw new Error('Window is unavailable')
+  const response = await requestDaemon(endpoint, 'draft.get', { conversation_id: conversationId, window_id: windowId })
+  const value = response.draft as Draft
+  if (!value || typeof value.text !== 'string' || !Number.isSafeInteger(value.revision)) throw new Error('Invalid draft response')
+  const entry: DraftEntry = { senderId, endpoint, conversationId, windowId, draft: value, timer: null,
+    pending: Promise.resolve(), savedRevision: value.revision, error: '', unclearedText: '' }
+  const concurrent = drafts.get(key)
+  if (concurrent) return concurrent
+  drafts.set(key, entry)
+  return entry
 }
 
 function broadcast(channel: string, value: unknown): void {
@@ -128,8 +184,8 @@ ipcMain.handle('ade:workspace-choose', async (event) => {
   if (result.canceled || !result.filePaths[0]) return null
   return openWorkspace(result.filePaths[0])
 })
-const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.answer'])
-ipcMain.handle('ade:conversation-request', async (_event, op: unknown, fields: unknown) => {
+const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
+ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !conversationOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid conversation request')
   }
@@ -151,12 +207,38 @@ ipcMain.handle('ade:conversation-request', async (_event, op: unknown, fields: u
   if (!validId(args.conversation_id) || !catalog?.conversations.some((item) => item.id === args.conversation_id)) {
     throw new Error('Conversation is unavailable in this profile')
   }
+  if (op === 'draft.get' || op === 'draft.save' || op === 'draft.flush') {
+    const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
+    if (op === 'draft.save') {
+      if (entry.unclearedText) throw new Error('Finish clearing the sent draft before editing')
+      if (typeof args.text !== 'string' || Buffer.byteLength(args.text) > 120 * 1024) throw new Error('Invalid draft')
+      entry.draft = { text: args.text, revision: entry.draft.revision + 1, attachments: [] }
+      scheduleDraft(entry)
+    }
+    if (op === 'draft.flush') {
+      await flushDraft(entry)
+      entry.unclearedText = ''
+    }
+    return { type: 'draft', draft: entry.draft, error: entry.error, sent_text: entry.unclearedText }
+  }
   if (op === 'conversation.get') return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
   if (op === 'agent.send') {
     if (!validId(args.request_id) || typeof args.text !== 'string' || !args.text.trim() || Buffer.byteLength(args.text) > 120 * 1024) {
       throw new Error('Invalid prompt')
     }
-    return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, request_id: args.request_id, text: args.text })
+    const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
+    if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
+    await flushDraft(entry)
+    const response = await requestDaemon(endpoint, op, { conversation_id: args.conversation_id, request_id: args.request_id, text: args.text })
+    entry.draft = { text: '', revision: entry.draft.revision + 1, attachments: [] }
+    try { await flushDraft(entry) }
+    catch {
+      entry.unclearedText = args.text
+      entry.error = 'Prompt was sent, but its draft could not be cleared. Retry clearing before sending again.'
+      publishDraftError(entry, entry.error)
+      return { ...response, draft_error: entry.error }
+    }
+    return response
   }
   if (!validId(args.request_id) || !['accept', 'decline', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
   if (args.decision === 'answer') {
@@ -227,8 +309,39 @@ function openMainWindow(): void {
       sandbox: true,
     },
   })
+  windowIds.set(window.webContents.id, randomUUID())
+  let readyForClose = false
+  let closeFlushInProgress = false
+  window.on('close', (event) => {
+    if (readyForClose) return
+    if (closeFlushInProgress) { event.preventDefault(); return }
+    const pending = [...drafts.entries()].filter(([key, entry]) =>
+      key.startsWith(`${window.webContents.id}:`) && (entry.timer || entry.savedRevision < entry.draft.revision))
+      .map(([, entry]) => entry)
+    if (!pending.length) return
+    event.preventDefault()
+    closeFlushInProgress = true
+    void Promise.allSettled(pending.map(flushDraft)).then((results) => {
+      closeFlushInProgress = false
+      if (results.some((result) => result.status === 'rejected')) {
+        void dialog.showMessageBox(window, { type: 'error', title: 'Draft was not saved',
+          message: 'This window is staying open because a draft could not be saved.',
+          detail: 'Restore the profile daemon and try closing the window again.' })
+        return
+      }
+      readyForClose = true
+      window.close()
+    })
+  })
   window.webContents.on('did-start-navigation', () => closeSenderTerminals(window.webContents.id))
-  window.webContents.on('destroyed', () => closeSenderTerminals(window.webContents.id))
+  window.webContents.on('destroyed', () => {
+    closeSenderTerminals(window.webContents.id)
+    for (const [key, entry] of drafts) {
+      if (!key.startsWith(`${window.webContents.id}:`)) continue
+      void flushDraft(entry).then(() => drafts.delete(key)).catch(() => undefined)
+    }
+    windowIds.delete(window.webContents.id)
+  })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) void shell.openExternal(url)
@@ -256,7 +369,25 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => {
+let readyToQuit = false
+app.on('before-quit', (event) => {
+  if (!readyToQuit) {
+    const pending = [...drafts.values()].filter((entry) => entry.timer || entry.savedRevision < entry.draft.revision)
+    if (pending.length) {
+      event.preventDefault()
+      void Promise.allSettled(pending.map(flushDraft)).then((results) => {
+        if (results.some((result) => result.status === 'rejected')) {
+          void dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
+            message: 'ADE is staying open because a draft could not be saved.',
+            detail: 'Restore the profile daemon and try closing ADE again.' })
+          return
+        }
+        readyToQuit = true
+        app.quit()
+      })
+      return
+    }
+  }
   for (const terminal of terminals.values()) terminal.dispose()
   terminals.clear()
   unsubscribeClient?.()
