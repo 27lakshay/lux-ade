@@ -7,7 +7,8 @@ export type TerminalFrame = Record<string, unknown> & { type: string }
 export interface TerminalConnection {
   input(data: string): void
   binary(bytes: number[]): void
-  resize(cols: number, rows: number, widthPx: number, heightPx: number): void
+  resize(cols: number, rows: number, widthPx: number, heightPx: number, claim?: boolean): void
+  ping(): void
   dispose(): void
 }
 
@@ -56,8 +57,9 @@ export function openTerminalConnection(
   return {
     input: (data) => send({ op: 'input', data }),
     binary: (bytes) => send({ op: 'input', bytes }),
-    resize: (cols, rows, widthPx, heightPx) =>
-      send({ op: 'resize', cols, rows, width_px: widthPx, height_px: heightPx }),
+    resize: (cols, rows, widthPx, heightPx, claim = false) =>
+      send({ op: 'resize', cols, rows, width_px: widthPx, height_px: heightPx, claim }),
+    ping: () => send({ op: 'ping' }),
     dispose: () => {
       closed = true
       socket.destroy()

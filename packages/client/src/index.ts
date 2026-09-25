@@ -1,6 +1,7 @@
 import { createConnection, type Socket } from 'node:net'
 
 export { openTerminalConnection, type TerminalConnection, type TerminalFrame } from './terminal.js'
+export { requestDaemon, DaemonRequestError, type DaemonErrorCode, type DaemonResponse, type RequestOptions } from './request.js'
 
 const APPLICATION_PROTOCOL = 'ade-application-v1'
 const SESSION_PROTOCOL = 'ade-sessions-v1'
