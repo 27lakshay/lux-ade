@@ -21,7 +21,7 @@ test('Electron attaches to a real profile daemon and recovers after renderer rel
   try {
     const window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
-    await expect(window.getByText('Connected to the profile daemon.')).toBeVisible()
+    await expect(window.getByRole('complementary', { name: 'Workspace navigation' })).toBeVisible()
     const bootId = String(daemon.hello.boot_id)
     await expect(window.getByText(bootId)).toBeVisible()
 

@@ -36,6 +36,8 @@ const terminal: TerminalBridge = {
 contextBridge.exposeInMainWorld('adeHost', {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('ade:app-version'),
   getClientState: () => ipcRenderer.invoke('ade:client-state'),
+  requestConversation: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('ade:conversation-request', op, fields),
   onClientState: (listener: (state: unknown) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
     ipcRenderer.on('ade:client-state-changed', receive)

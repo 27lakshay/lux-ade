@@ -45,7 +45,7 @@ export type RunningDaemon = {
   stop: () => Promise<void>
 }
 
-export async function startDaemon(): Promise<RunningDaemon> {
+export async function startDaemon(extraEnvironment: Record<string, string> = {}): Promise<RunningDaemon> {
   const rootDirectory = await mkdtemp(join(tmpdir(), 'ade-e2e-'))
   const dataDirectory = join(rootDirectory, 'data')
   const socket = join(rootDirectory, 'daemon.sock')
@@ -58,6 +58,7 @@ export async function startDaemon(): Promise<RunningDaemon> {
       ADE_SOCKET: socket,
       ADE_ROOT: rootDirectory,
       SHELL: '/bin/sh',
+      ...extraEnvironment,
     },
     stdio: ['ignore', 'ignore', 'pipe'],
   })

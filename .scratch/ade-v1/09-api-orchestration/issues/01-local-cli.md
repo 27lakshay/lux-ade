@@ -1,6 +1,6 @@
 # Local CLI over the shared command protocol
 
-Status: claimed
+Status: initial local slice implemented; full CLI/API acceptance remains open
 Type: implementation ticket
 Owner: CLI worker
 Requirements: F101, F102, F103, F083 (initial local slice)
@@ -24,3 +24,10 @@ case is separate.
 Completion evidence: committed implementation, full checks, observed shared
 terminal identity and explicit limits. F101/F102/F103 remain open until their
 full v1 surfaces pass their spec acceptance.
+
+Recorded evidence: `e2e/specs/local-cli.spec.ts` passed against a real isolated
+daemon and Electron. CLI and desktop observed the same terminal ID and shell
+PID; shell output submitted by CLI appeared in Electron. Missing and
+incompatible endpoints returned stable structured errors. Terminal input
+acknowledgement does not prove shell command completion. Profile discovery,
+remote transport, attach mode, and stable public schemas remain open.

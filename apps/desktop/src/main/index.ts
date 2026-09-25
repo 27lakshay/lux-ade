@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
-import { AdeClient, openTerminalConnection, type TerminalConnection } from '@ade/client'
+import { AdeClient, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
 
 const client = new AdeClient(process.env.ADE_SOCKET)
 const terminals = new Map<string, TerminalConnection>()
@@ -21,6 +21,38 @@ if (process.env.ADE_E2E_USER_DATA_DIR) {
 
 ipcMain.handle('ade:app-version', () => app.getVersion())
 ipcMain.handle('ade:client-state', () => client.getState())
+const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.answer'])
+ipcMain.handle('ade:conversation-request', async (_event, op: unknown, fields: unknown) => {
+  if (typeof op !== 'string' || !conversationOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    throw new Error('Invalid conversation request')
+  }
+  if (client.getState().status !== 'connected' || !process.env.ADE_SOCKET) {
+    throw new Error('Profile daemon is unavailable')
+  }
+  const args = fields as Record<string, unknown>
+  const catalog = client.getState().catalog
+  if (op === 'provider.list') return requestDaemon(process.env.ADE_SOCKET, op)
+  if (op === 'conversation.create') {
+    const providers = await requestDaemon(process.env.ADE_SOCKET, 'provider.list')
+    const available = Array.isArray(providers.providers) ? providers.providers : []
+    if (!validId(args.workspace_id) || !catalog?.workspaces.some((item) => item.id === args.workspace_id)
+      || !available.some((item) => item && typeof item === 'object' && 'id' in item && item.id === args.provider)
+      || typeof args.title !== 'string' || args.title.length > 256) throw new Error('Invalid conversation creation')
+    return requestDaemon(process.env.ADE_SOCKET, op, { workspace_id: args.workspace_id, provider: args.provider, title: args.title })
+  }
+  if (!validId(args.conversation_id) || !catalog?.conversations.some((item) => item.id === args.conversation_id)) {
+    throw new Error('Conversation is unavailable in this profile')
+  }
+  if (op === 'conversation.get') return requestDaemon(process.env.ADE_SOCKET, op, { conversation_id: args.conversation_id, limit: 200 })
+  if (op === 'agent.send') {
+    if (!validId(args.request_id) || typeof args.text !== 'string' || !args.text.trim() || Buffer.byteLength(args.text) > 120 * 1024) {
+      throw new Error('Invalid prompt')
+    }
+    return requestDaemon(process.env.ADE_SOCKET, op, { conversation_id: args.conversation_id, request_id: args.request_id, text: args.text })
+  }
+  if (!validId(args.request_id) || !['accept', 'decline'].includes(String(args.decision))) throw new Error('Invalid answer')
+  return requestDaemon(process.env.ADE_SOCKET, op, { conversation_id: args.conversation_id, request_id: args.request_id, decision: args.decision })
+})
 ipcMain.handle('ade:terminal-attach', (event, connectionId: unknown, workspaceId: unknown, terminalId: unknown) => {
   if (!validId(connectionId) || !validId(workspaceId) || !validId(terminalId)) throw new Error('Invalid terminal identity')
   const workspace = client.getState().catalog?.workspaces.find((item) => item.id === workspaceId)
