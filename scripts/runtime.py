@@ -160,7 +160,10 @@ def build_identity(binary, providers=None):
         digest.update(label.encode() + b'\0')
         # File digests delimit contents and keep memory independent of binary size.
         with source.open('rb') as stream:
-            digest.update(hashlib.file_digest(stream, 'sha256').digest())
+            file_digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                file_digest.update(chunk)
+            digest.update(file_digest.digest())
     return digest.hexdigest()
 
 

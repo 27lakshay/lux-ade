@@ -4,6 +4,7 @@ packages:
   - providers/claude
   - providers/omp
 allowBuilds:
+  electron-winstaller: false
   esbuild: false
   onnxruntime-node: false
   protobufjs: false

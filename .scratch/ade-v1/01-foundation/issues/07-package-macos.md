@@ -1,9 +1,9 @@
 # Package the new Electron desktop for local macOS use
 
-Status: ready after desktop drafts and profile selection
+Status: packaged local-use slice accepted; full F005/F007/R020 remain open
 Type: implementation ticket
-Owner: unassigned
-Requirements: F005, F007, 01-S15/16 (distribution slice)
+Owner: package_macos, integrated by coordinator
+Requirements: F005, F007, R020, 01-S16 (distribution slice)
 
 Problem: development Electron resolves `scripts/profiles.py` and
 `target/debug/ade-daemon` relative to the repository. The Rust executables,
@@ -27,3 +27,28 @@ Candidate from `docs/monorepo-initialization-plan.md`: electron-builder. Verify
 its current official packaging guidance and agent-facing resources before
 integrating it. Do not copy the existing GPUI `scripts/package.py` assumptions
 into the Electron build.
+
+Local arm64 size measurement, 26 September 2026: the unpacked final `.app` is
+2.4 GB; `ditto -c -k --sequesterRsrc --keepParent` produces a 790 MB ZIP.
+The provider resources account for most of the unpacked size: Oh My Pi is
+1.5 GB and Claude is 515 MB. Within Oh My Pi, `onnxruntime-node` is 287 MB,
+`@oh-my-pi/pi-natives-darwin-arm64` is 161 MB, and `onnxruntime-web` is 139 MB.
+The ZIP at `dist/electron/Lux-ADE-local-verified.zip` has SHA-256
+`24e407ad8dabd5abfae96f52d9b77f7ccb44d4f507dc29f6f29e52796591724d`.
+It is a local measurement only; this ticket does not sign or notarize it.
+
+Packaged acceptance on the integrated build branch after `4e7d91c` used
+`pnpm package:mac` (exit 0) and `pnpm test:e2e:package`
+(3/3 passed). The three Playwright scenarios exercise a fresh profile, folder,
+PTY, deterministic provider turn and reopen; bundled Codex relay/Bun, Claude
+bridge and Oh My Pi bridge through ADE's public protocol; and an incompatible
+live-owner refusal. `pnpm exec playwright test --config playwright.package.config.ts
+--grep 'packaged provider entry points' --repeat-each=5` passed 5/5, including
+new-conversation draft retention and Send availability. Packaged Playwright
+launches the app with its test-only hidden-window mode, so acceptance does not
+raise a desktop window in the active macOS Space.
+
+Signing, notarization and app updates remain separate release work. Renderer HMR
+belongs to 01-S15 and is not covered by this packaged-app check. Primary
+providers still need the full live-account and daily-use acceptance before
+F005/F007/R020 can be marked complete in the register.

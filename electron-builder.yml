@@ -1,0 +1,30 @@
+appId: dev.lux.ade
+productName: Lux ADE
+electronVersion: 44.4.5
+directories:
+  app: apps/desktop
+  output: dist/electron
+files:
+  - out/**/*
+  - package.json
+asar: true
+npmRebuild: false
+mac:
+  target: dir
+  identity: null
+extraFiles:
+  - from: target/release/ade-daemon
+    to: MacOS/ade-daemon
+  - from: target/release/ade-runtime
+    to: MacOS/ade-runtime
+extraResources:
+  - from: scripts/profiles.py
+    to: profiles.py
+  - from: scripts/runtime.py
+    to: runtime.py
+  - from: pnpm-lock.yaml
+    to: pnpm-lock.yaml
+  - from: .ade/package-stage/providers
+    to: providers
+  - from: .ade/package-stage/bin
+    to: bin

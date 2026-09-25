@@ -95,7 +95,11 @@ def run_start(home, item, daemon, selected_id):
     environment = dict(os.environ)
     for name in ("ADE_SOCKET", "ADE_DATA_DIR", "ADE_RUNTIME_HOME"):
         environment.pop(name, None)
-    environment["ADE_ROOT"] = str(workspace_root)
+    if SCRIPT.parent.name == "Resources" and SCRIPT.parent.parent.name == "Contents":
+        environment.pop("ADE_ROOT", None)
+        environment["ADE_WORKSPACE_SELECTION"] = "1"
+    else:
+        environment["ADE_ROOT"] = str(workspace_root)
     command = [sys.executable, str(RUNTIME), "start", "--home", str(runtime_home)]
     if daemon is not None:
         command.extend(["--daemon", str(daemon)])
