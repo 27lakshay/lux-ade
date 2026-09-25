@@ -11,6 +11,9 @@ type Snapshot = { conversation: Conversation; messages: Message[]; requests: Pen
 type Provider = { id: string; name: string }
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
+type Service = { name: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>; config: { program: string } }
+type ServiceState = { state: string; metrics: Frame | null }
+type ServiceList = { services: Service[]; states: Record<string, ServiceState> }
 
 declare global {
   interface Window {
@@ -27,10 +30,60 @@ declare global {
       openWorkspace(folder: string): Promise<Frame>
       chooseWorkspace(): Promise<Frame | null>
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
+      requestService(op: string, fields: Record<string, unknown>): Promise<Frame>
       onDraftError(listener: (value: { conversationId: string; message: string }) => void): () => void
       terminal: TerminalBridge
     }
   }
+}
+
+function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element {
+  const [list, setList] = React.useState<ServiceList | null>(null)
+  const [busy, setBusy] = React.useState('')
+  const [error, setError] = React.useState('')
+  const [refresh, setRefresh] = React.useState(0)
+  React.useEffect(() => {
+    let disposed = false
+    const load = async (): Promise<void> => {
+      try {
+        const response = await window.adeHost.requestService('service.list', { workspace_id: workspace.id })
+        if (!disposed) { setList(response as ServiceList); setError('') }
+      } catch (reason) { if (!disposed) setError(String(reason)) }
+    }
+    void load()
+    const timer = setInterval(() => { void load() }, 3000)
+    return () => { disposed = true; clearInterval(timer) }
+  }, [workspace.id, refresh])
+  const change = async (name: string, action: 'start' | 'stop'): Promise<void> => {
+    if (busy) return
+    setBusy(name)
+    try {
+      await window.adeHost.requestService(`service.${action}`, { workspace_id: workspace.id, name })
+      setError('')
+      setRefresh((value) => value + 1)
+    } catch (reason) { setError(String(reason)) }
+    finally { setBusy('') }
+  }
+  return <section className="service-pane" aria-label="Workspace services">
+    <div className="service-heading"><h2>Services</h2><button onClick={() => setRefresh((value) => value + 1)}>Refresh</button></div>
+    <p className="muted">Configured services keep running when this window closes. Assigned ports do not confirm a listener.</p>
+    {error && <p role="alert" className="inline-error">{error}</p>}
+    {!list && !error && <p className="muted">Loading services…</p>}
+    {list?.services.length === 0 && <p className="muted">No services configured in this workspace. Use the ADE CLI to add one.</p>}
+    {list?.services.map((service) => {
+      const state = list.states[service.name]?.state ?? 'unavailable'
+      const owned = Boolean(service.terminal_owner)
+      return <article className="service-row" key={service.name} aria-label={`Service ${service.name}`}>
+        <div><strong>{service.name}</strong><span className="service-state">{state}</span></div>
+        <p>{service.config.program}</p>
+        <p className="service-ports">{Object.entries(service.ports).map(([variable, port]) => `${variable}=${port}`).join(' · ') || 'No assigned ports'}</p>
+        <div className="service-actions">
+          <button disabled={Boolean(busy) || owned} onClick={() => void change(service.name, 'start')}>Start</button>
+          <button disabled={Boolean(busy) || !owned} onClick={() => void change(service.name, 'stop')}>Stop</button>
+        </div>
+      </article>
+    })}
+  </section>
 }
 
 function TerminalPane({ workspace }: { workspace: Workspace }): React.JSX.Element {
@@ -339,10 +392,16 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const [folderPath, setFolderPath] = React.useState('')
   const [opening, setOpening] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
+  const [pendingCreatedId, setPendingCreatedId] = React.useState<string | null>(null)
   const [error, setError] = React.useState('')
   const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0]
   const workspaceConversations = conversations.filter((item) => item.workspace_id === workspace?.id)
-  const conversation = workspaceConversations.find((item) => item.id === conversationId) ?? workspaceConversations[0]
+  const selectedConversation = workspaceConversations.find((item) => item.id === conversationId)
+  const awaitingCreated = pendingCreatedId === conversationId && !selectedConversation
+  const conversation = awaitingCreated ? undefined : selectedConversation ?? workspaceConversations[0]
+  React.useEffect(() => {
+    if (pendingCreatedId && conversations.some((item) => item.id === pendingCreatedId)) setPendingCreatedId(null)
+  }, [pendingCreatedId, conversations])
   React.useEffect(() => {
     let disposed = false
     void window.adeHost.requestConversation('provider.list', {}).then((response) => {
@@ -362,6 +421,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         workspace_id: workspace.id, title: 'New Conversation', provider,
       })
       const created = response.conversation as Conversation
+      setPendingCreatedId(created.id)
       setConversationId(created.id)
       localStorage.setItem(conversationStorageKey, created.id)
       setError('')
@@ -370,7 +430,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   }
   const openFolder = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
-    if (opening || !folderPath.trim()) return
+    if (opening || creating || !folderPath.trim()) return
     setOpening(true)
     try {
       const result = await window.adeHost.openWorkspace(folderPath.trim())
@@ -384,7 +444,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     finally { setOpening(false) }
   }
   const chooseFolder = async (): Promise<void> => {
-    if (opening) return
+    if (opening || creating) return
     setOpening(true)
     try {
       const result = await window.adeHost.chooseWorkspace()
@@ -405,7 +465,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         <p className="connection-meta">Daemon boot: {state.bootId}</p>
         {workspaces.length === 0 && <p>No workspaces are registered in this profile yet.</p>}
         {workspaces.length > 0 && <label className="field-label" htmlFor="workspace">Workspace</label>}
-        {workspaces.length > 0 && <select id="workspace" value={workspace?.id} onChange={(event) => {
+        {workspaces.length > 0 && <select id="workspace" value={workspace?.id} disabled={creating} onChange={(event) => {
           setWorkspaceId(event.target.value); localStorage.setItem(workspaceStorageKey, event.target.value); setConversationId('')
         }}>
           {workspaces.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
@@ -414,18 +474,18 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         <form className="open-workspace" onSubmit={(event) => void openFolder(event)}>
           <label className="field-label" htmlFor="folder-path">Open folder</label>
           <input id="folder-path" value={folderPath} placeholder="/path/to/project" onChange={(event) => setFolderPath(event.target.value)} />
-          <div><button type="submit" disabled={opening || !folderPath.trim()}>Open folder</button>
-            <button type="button" disabled={opening} onClick={() => void chooseFolder()}>Browse…</button></div>
+          <div><button type="submit" disabled={opening || creating || !folderPath.trim()}>Open folder</button>
+            <button type="button" disabled={opening || creating} onClick={() => void chooseFolder()}>Browse…</button></div>
         </form>
         <h2>Conversations</h2>
         <nav aria-label="Conversations"><ul className="conversation-list">
-          {workspaceConversations.map((item) => <li key={item.id}><button className={conversation?.id === item.id ? 'selected' : ''} onClick={() => {
+          {workspaceConversations.map((item) => <li key={item.id}><button disabled={creating} className={conversation?.id === item.id ? 'selected' : ''} onClick={() => {
             setConversationId(item.id); localStorage.setItem(conversationStorageKey, item.id)
           }}>{item.title}<small>{item.provider} · {item.status}</small></button></li>)}
         </ul></nav>
         <div className="new-conversation">
           <label className="field-label" htmlFor="provider">New conversation provider</label>
-          <select id="provider" value={provider} onChange={(event) => setProvider(event.target.value)}>
+          <select id="provider" value={provider} disabled={creating} onChange={(event) => setProvider(event.target.value)}>
             {providers.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
           </select>
           <button disabled={creating || !workspace || providers.length === 0} onClick={() => void create()}>New conversation</button>
@@ -433,9 +493,10 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         {error && <p role="alert" className="inline-error">{error}</p>}
       </aside>
       <div className="work-area">
-        {conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId} />
+        {creating || awaitingCreated ? <section className="empty-conversation" role="status">Creating conversation…</section>
+          : conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId} />
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
-        {workspace && <TerminalPane workspace={workspace} />}
+        {workspace && <><ServicePane key={workspace.id} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
       </div>
     </div>
   )

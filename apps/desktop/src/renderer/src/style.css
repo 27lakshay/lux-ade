@@ -36,6 +36,18 @@ h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.0
 .workspace-list span { color: #a5adae; font-size: 13px; overflow-wrap: anywhere; }
 .workspace-list small { color: #84c8aa; }
 .terminal-pane { margin-top: 32px; }
+.service-pane { border-top: 1px solid #323637; margin-top: 28px; padding-top: 18px; }
+.service-heading, .service-row > div:first-child, .service-actions { align-items: center; display: flex; gap: 10px; }
+.service-heading { justify-content: space-between; }
+.service-heading h2 { font-size: 15px; margin: 0; }
+.service-heading button, .service-actions button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
+.service-pane > .muted { margin: 10px 0; }
+.service-row { background: #202425; border: 1px solid #323637; border-radius: 9px; margin-top: 8px; padding: 12px; }
+.service-row strong { font-size: 13px; }
+.service-row p { color: #a5adae; font-size: 12px; margin: 7px 0; overflow-wrap: anywhere; }
+.service-row .service-ports { color: #c5cfcb; font-family: ui-monospace, monospace; }
+.service-state { color: #84c8aa; font-size: 12px; }
+.service-actions { margin-top: 10px; }
 .terminal-pane h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
 .terminal-pane [role="alert"] { color: #eeb87b; font-size: 13px; }
 .terminal-surface { background: #101213; border: 1px solid #323637; border-radius: 12px; height: 390px; overflow: hidden; padding: 10px; }

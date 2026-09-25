@@ -26,6 +26,11 @@ Commands:
   terminal inspect WORKSPACE_ID TERMINAL_ID
   terminal send WORKSPACE_ID TERMINAL_ID TEXT
   terminal resize WORKSPACE_ID TERMINAL_ID COLS ROWS
+  service list WORKSPACE_ID             List managed services and execution state
+  service configure WORKSPACE_ID NAME JSON_CONFIG [REVISION]
+                                        Save a service recipe; revision defaults to 0
+  service start WORKSPACE_ID NAME       Launch a configured service
+  service stop WORKSPACE_ID NAME        Stop and reap a managed service
   request OP [JSON_OBJECT]              Call another daemon command
 
 All command results are JSON on stdout. Errors are JSON on stderr.
@@ -71,6 +76,21 @@ function integer(value: string | undefined, label: string): number {
     throw new CliError('usage', `${label} must be an integer from 2 to 1000.`)
   }
   return number
+}
+
+function revision(value: string | undefined): number {
+  if (value === undefined) return 0
+  const number = Number(value)
+  if (!Number.isSafeInteger(number) || number < 0) throw new CliError('usage', 'REVISION must be a nonnegative integer.')
+  return number
+}
+
+function jsonObject(value: string | undefined, label: string): Record<string, unknown> {
+  let parsed: unknown
+  try { parsed = JSON.parse(required(value, label)) }
+  catch { throw new CliError('usage', `${label} must be valid JSON.`) }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new CliError('usage', `${label} must be an object.`)
+  return parsed as Record<string, unknown>
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -193,15 +213,23 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     const result = await terminalAction(socketPath, workspaceId, terminalId, 'resize', undefined, { cols, rows })
     return { type: 'terminal_resize_submitted', workspace_id: workspaceId, terminal_id: terminalId, cols, rows, metrics: result.metrics }
   }
+  if (area === 'service' && action === 'list') {
+    return requestDaemon(socketPath, 'service.list', { workspace_id: required(rest[0], 'WORKSPACE_ID') })
+  }
+  if (area === 'service' && action === 'configure') {
+    return requestDaemon(socketPath, 'service.configure', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      config: jsonObject(rest[2], 'JSON_CONFIG'), revision: revision(rest[3]),
+    })
+  }
+  if (area === 'service' && (action === 'start' || action === 'stop')) {
+    return requestDaemon(socketPath, `service.${action}`, {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+    })
+  }
   if (area === 'request') {
     const op = required(action, 'OP')
-    let fields: unknown = {}
-    if (rest[0]) {
-      try { fields = JSON.parse(rest[0]) }
-      catch { throw new CliError('usage', 'JSON_OBJECT must be valid JSON.') }
-    }
-    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new CliError('usage', 'JSON_OBJECT must be an object.')
-    return requestDaemon(socketPath, op, fields as Record<string, unknown>)
+    return requestDaemon(socketPath, op, rest[0] ? jsonObject(rest[0], 'JSON_OBJECT') : {})
   }
   throw new CliError('usage', 'Unknown command or missing arguments. Run ade --help for usage.')
 }

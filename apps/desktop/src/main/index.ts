@@ -349,6 +349,38 @@ ipcMain.handle('ade:workspace-choose', async (event) => {
   if (result.canceled || !result.filePaths[0]) return null
   return openWorkspace(result.filePaths[0])
 })
+const serviceOps = new Set(['service.list', 'service.configure', 'service.start', 'service.stop', 'service.remove'])
+ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknown) => {
+  if (typeof op !== 'string' || !serviceOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    throw new Error('Invalid service request')
+  }
+  const args = fields as Record<string, unknown>
+  const endpoint = socket
+  const generation = clientGeneration
+  const state = client.getState()
+  if (state.status !== 'connected' || !endpoint) throw new Error('Profile daemon is unavailable')
+  if (!validId(args.workspace_id) || !state.catalog?.workspaces.some((item) => item.id === args.workspace_id)) {
+    throw new Error('Workspace is unavailable in this profile')
+  }
+  const request: Record<string, unknown> = { workspace_id: args.workspace_id }
+  if (op !== 'service.list') {
+    if (typeof args.name !== 'string' || !args.name.trim() || args.name.length > 80) throw new Error('Invalid service name')
+    request.name = args.name
+  }
+  if (op === 'service.configure' || op === 'service.remove') {
+    if (!Number.isSafeInteger(args.revision) || (args.revision as number) < 0) throw new Error('Invalid service revision')
+    request.revision = args.revision
+  }
+  if (op === 'service.configure') {
+    if (!args.config || typeof args.config !== 'object' || Array.isArray(args.config)) throw new Error('Invalid service configuration')
+    request.config = args.config
+  }
+  const result = await requestDaemon(endpoint, op, request)
+  if (generation !== clientGeneration || socket !== endpoint) {
+    throw new Error('Profile changed while the service request completed; inspect the original profile before retrying')
+  }
+  return result
+})
 const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.retry_send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
 ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !conversationOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
