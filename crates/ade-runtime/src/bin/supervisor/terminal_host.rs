@@ -17,6 +17,7 @@ mod terminal_state;
 use terminal_state::TerminalState;
 
 const SCROLLBACK: usize = 256 * 1024;
+const XTERM_REPLAY_LIMIT: usize = 4 * 1024 * 1024;
 const CONVERSATION: usize = 64 * 1024;
 const MAX_REQUEST: u64 = 128 * 1024;
 
@@ -36,9 +37,32 @@ struct Controller {
     registered: u64,
 }
 
+enum ReplayEvent {
+    Output { offset: u64, bytes: Vec<u8> },
+    Resize { offset: u64, cols: u16, rows: u16 },
+}
+
+impl ReplayEvent {
+    fn value(&self) -> Value {
+        match self {
+            Self::Output { offset, bytes } => {
+                use base64::Engine as _;
+                json!({"type":"output","offset":offset,
+                    "bytes_base64":base64::engine::general_purpose::STANDARD.encode(bytes)})
+            }
+            Self::Resize { offset, cols, rows } => {
+                json!({"type":"resize","offset":offset,"cols":cols,"rows":rows})
+            }
+        }
+    }
+}
+
 struct State {
     started: Instant,
     terminal: VecDeque<u8>,
+    xterm_replay: Vec<ReplayEvent>,
+    xterm_replay_bytes: usize,
+    xterm_replay_complete: bool,
     screen: TerminalState,
     conversation: String,
     streaming: bool,
@@ -90,6 +114,31 @@ impl State {
             event["terminal_snapshot_bytes"] = json!(bytes);
         }
         Ok(event)
+    }
+    fn xterm_snapshot(&self) -> Value {
+        json!({"type":"snapshot","conversation":self.conversation,
+            "streaming":self.streaming,"metrics":self.metrics(),
+            "response_owner":"daemon-v1",
+            "terminal_snapshot_format":"xterm-replay-v1",
+            "terminal_recovery":{"complete":self.xterm_replay_complete,
+                "reason":if self.xterm_replay_complete { Value::Null } else { json!("replay_limit_exceeded") },
+                "initial_cols":100,"initial_rows":30,
+                "through_offset":self.bytes,
+                "limit_bytes":XTERM_REPLAY_LIMIT,
+                "events":self.xterm_replay.iter().map(ReplayEvent::value).collect::<Vec<_>>()}})
+    }
+    fn record_replay(&mut self, event: ReplayEvent, size: usize) {
+        if !self.xterm_replay_complete {
+            return;
+        }
+        if self.xterm_replay_bytes.saturating_add(size) > XTERM_REPLAY_LIMIT {
+            self.xterm_replay_complete = false;
+            self.xterm_replay.clear();
+            self.xterm_replay_bytes = 0;
+            return;
+        }
+        self.xterm_replay_bytes += size;
+        self.xterm_replay.push(event);
     }
     fn snapshot_for(&self, terminal: bool, raw: bool) -> Value {
         let mut event = json!({"type":"snapshot","conversation":self.conversation,
@@ -161,14 +210,24 @@ impl State {
     fn append_terminal(&mut self, data: &[u8]) {
         self.screen.write(data);
         self.flush_replies();
+        let offset = self.bytes;
         self.bytes += data.len() as u64;
+        if self.xterm_replay_complete {
+            self.record_replay(
+                ReplayEvent::Output {
+                    offset,
+                    bytes: data.to_vec(),
+                },
+                data.len(),
+            );
+        }
         self.terminal.extend(data);
         if self.terminal.len() > SCROLLBACK {
             self.terminal.drain(..self.terminal.len() - SCROLLBACK);
         }
         self.broadcast(
             json!({"type":"terminal","data":String::from_utf8_lossy(data),"bytes":data,
-                "offset":self.bytes - data.len() as u64}),
+                "offset":offset}),
         );
     }
 }
@@ -246,6 +305,7 @@ fn apply_size(
     state.flush_replies();
     // Resize-driven reports are handled by the same sole daemon response path.
     let offset = state.bytes;
+    state.record_replay(ReplayEvent::Resize { offset, cols, rows }, 8);
     state.broadcast(json!({"type":"terminal_resize","cols":cols,"rows":rows,"offset":offset}));
     Ok(())
 }
@@ -326,7 +386,7 @@ fn handle_client(
                     .binary_snapshot(request["snapshot_encoding"] == "base64")
                     .map(Some),
                 "hello" => Ok(Some(
-                    json!({"type":"hello", "session_protocol":"ade-sessions-v1","worktree_protocol":"ade-worktrees-v1","review_protocol":"ade-review-v1", "response_owner":"daemon-v1", "terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d"}),
+                    json!({"type":"hello", "session_protocol":"ade-sessions-v1","worktree_protocol":"ade-worktrees-v1","review_protocol":"ade-review-v1", "response_owner":"daemon-v1", "terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d", "terminal_snapshot_formats":["ghostty-snapshot-v1-herdr-9c96f7d","xterm-replay-v1"]}),
                 )),
                 "ping" => Ok(Some(
                     json!({"type":"metrics","metrics":state.lock().unwrap().metrics()}),
@@ -336,20 +396,23 @@ fn handle_client(
                     if !subscribed {
                         // Snapshot and registration share a lock so no output falls in between.
                         let terminal = request["terminal"].as_bool().unwrap_or(true);
-                        let snapshot = if terminal && request["snapshot_format"] == "binary" {
-                            match s.binary_snapshot(request["snapshot_encoding"] == "base64") {
-                                Ok(snapshot) => snapshot,
-                                Err(error) => {
-                                    let _ = tx.try_send(
-                                        json!({"type":"error","message":error}).to_string(),
-                                    );
-                                    // No live output can follow a failed restore.
-                                    continue;
+                        let snapshot =
+                            if terminal && request["snapshot_format"] == "xterm-replay-v1" {
+                                s.xterm_snapshot()
+                            } else if terminal && request["snapshot_format"] == "binary" {
+                                match s.binary_snapshot(request["snapshot_encoding"] == "base64") {
+                                    Ok(snapshot) => snapshot,
+                                    Err(error) => {
+                                        let _ = tx.try_send(
+                                            json!({"type":"error","message":error}).to_string(),
+                                        );
+                                        // No live output can follow a failed restore.
+                                        continue;
+                                    }
                                 }
-                            }
-                        } else {
-                            s.snapshot_for(terminal, false)
-                        };
+                            } else {
+                                s.snapshot_for(terminal, false)
+                            };
                         let _ = tx.try_send(snapshot.to_string());
                         s.clients.insert(
                             id,
@@ -551,6 +614,9 @@ pub fn spawn_runtime(
     let state = Arc::new(Mutex::new(State {
         started: Instant::now(),
         terminal: VecDeque::new(),
+        xterm_replay: Vec::new(),
+        xterm_replay_bytes: 0,
+        xterm_replay_complete: true,
         screen: TerminalState::new(100, 30).map_err(anyhow::Error::msg)?,
         conversation: String::new(),
         streaming: false,
@@ -704,6 +770,9 @@ mod tests {
             session_subscribers: Arc::new(AtomicUsize::new(0)),
             started: Instant::now(),
             terminal: VecDeque::new(),
+            xterm_replay: Vec::new(),
+            xterm_replay_bytes: 0,
+            xterm_replay_complete: true,
             screen: TerminalState::new(80, 24).unwrap(),
             conversation: String::new(),
             streaming: false,
@@ -744,6 +813,9 @@ mod tests {
             session_subscribers: Arc::new(AtomicUsize::new(0)),
             started: Instant::now(),
             terminal: VecDeque::new(),
+            xterm_replay: Vec::new(),
+            xterm_replay_bytes: 0,
+            xterm_replay_complete: true,
             screen: TerminalState::new(100, 30).unwrap(),
             conversation: String::new(),
             streaming: false,
@@ -798,6 +870,9 @@ mod tests {
             session_subscribers: Arc::new(AtomicUsize::new(0)),
             started: Instant::now(),
             terminal: VecDeque::new(),
+            xterm_replay: Vec::new(),
+            xterm_replay_bytes: 0,
+            xterm_replay_complete: true,
             screen: TerminalState::new(100, 30).unwrap(),
             conversation: String::new(),
             streaming: false,

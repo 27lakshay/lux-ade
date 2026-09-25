@@ -305,7 +305,7 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
         }
         if op == "hello" || op.contains('.') {
             let event = if op == "hello" {
-                json!({"type":"hello","build_id":std::env::var("ADE_BUILD_ID").ok(),"application_protocol":runtime::APPLICATION_PROTOCOL,"runtime_protocol":runtime::PROTOCOL,"runtime_instance":host.runtime.instance,"runtime_pid":host.runtime.pid,"runtime_socket":host.runtime.socket,"pid":std::process::id(),"session_protocol":"ade-sessions-v1","worktree_protocol":"ade-worktrees-v1","review_protocol":"ade-review-v1","response_owner":"daemon-v1","terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d","boot_id":host.sessions.boot_id})
+                json!({"type":"hello","build_id":std::env::var("ADE_BUILD_ID").ok(),"application_protocol":runtime::APPLICATION_PROTOCOL,"runtime_protocol":runtime::PROTOCOL,"runtime_instance":host.runtime.instance,"runtime_pid":host.runtime.pid,"runtime_socket":host.runtime.socket,"pid":std::process::id(),"session_protocol":"ade-sessions-v1","worktree_protocol":"ade-worktrees-v1","review_protocol":"ade-review-v1","response_owner":"daemon-v1","terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d","terminal_snapshot_formats":["ghostty-snapshot-v1-herdr-9c96f7d","xterm-replay-v1"],"boot_id":host.sessions.boot_id})
             } else {
                 if op == "worktree.remove" {
                     host.refresh_leases()?;
