@@ -1,0 +1,740 @@
+diff --git a/crates/base/src/dock/panel.rs b/crates/base/src/dock/panel.rs
+--- a/crates/base/src/dock/panel.rs
++++ b/crates/base/src/dock/panel.rs
+@@ -51,6 +51,12 @@
+     /// still receives `true` even though rendering falls back to the first
+     /// visible panel.
+     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {}
++
++    /// Explicit user focus request, separate from visibility or background updates.
++    /// Native child surfaces may defer their platform first-responder handoff here.
++    fn on_focus_requested(&mut self, window: &mut Window, cx: &mut Context<Self>) {
++        self.focus_handle(cx).focus(window, cx);
++    }
+ 
+     /// Called when the group displaying this panel zooms in or out.
+     ///
+@@ -107,6 +113,9 @@
+     fn on_removed(&self, window: &mut Window, cx: &mut App);
+     fn view(&self) -> AnyView;
+     fn focus_handle(&self, cx: &App) -> FocusHandle;
++    fn on_focus_requested(&self, window: &mut Window, cx: &mut App) {
++        self.focus_handle(cx).focus(window, cx);
++    }
+     fn dump(&self, cx: &App) -> PanelState;
+ 
+     /// The concrete value behind this handle.
+@@ -166,6 +175,10 @@
+ 
+     fn on_added_to(&self, group: WeakEntity<TabGroup>, window: &mut Window, cx: &mut App) {
+         self.update(cx, |this, cx| this.on_added_to(group, window, cx));
++    }
++
++    fn on_focus_requested(&self, window: &mut Window, cx: &mut App) {
++        self.update(cx, |this, cx| this.on_focus_requested(window, cx));
+     }
+ 
+     fn on_removed(&self, window: &mut Window, cx: &mut App) {
+diff --git a/crates/base/src/dock/tab_group.rs b/crates/base/src/dock/tab_group.rs
+--- a/crates/base/src/dock/tab_group.rs
++++ b/crates/base/src/dock/tab_group.rs
+@@ -230,7 +230,11 @@
+ 
+     /// Display `ix`, if it names a tab that is not already displayed.
+     pub fn select_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+-        if ix >= self.panels.len() || ix == self.active_ix {
++        if ix >= self.panels.len() {
++            return;
++        }
++        if ix == self.active_ix {
++            self.focus_active_panel(window, cx);
+             return;
+         }
+ 
+@@ -461,7 +465,7 @@
+ 
+     fn focus_active_panel(&self, window: &mut Window, cx: &mut Context<Self>) {
+         if let Some(panel) = self.active_panel(cx) {
+-            panel.focus_handle(cx).focus(window, cx);
++            panel.on_focus_requested(window, cx);
+         }
+     }
+ 
+diff --git a/crates/base/src/resizable/mod.rs b/crates/base/src/resizable/mod.rs
+--- a/crates/base/src/resizable/mod.rs
++++ b/crates/base/src/resizable/mod.rs
+@@ -55,6 +55,22 @@
+     /// Get the size of the panels.
+     pub fn sizes(&self) -> &Vec<Pixels> {
+         &self.sizes
++    }
++
++    /// Apply exact geometry computed by a layout owner without a drag event.
++    /// The owner must provide one finite, positive size per existing slot and
++    /// fit the sizes to its container and panel constraints. A mismatched slot
++    /// count is rejected without mutation; this never adds or removes panels.
++    pub fn set_sizes(&mut self, sizes: &[Pixels], cx: &mut Context<Self>) -> bool {
++        if sizes.len() != self.panels.len()
++            || sizes
++                .iter()
++                .any(|size| !size.as_f32().is_finite() || *size <= px(0.))
++        {
++            return false;
++        }
++        self.adopt_sizes(&sizes.iter().copied().map(Some).collect::<Vec<_>>(), cx);
++        true
+     }
+ 
+     /// Programmatically resize the panel at `ix` to `size`, redistributing
+@@ -555,6 +571,31 @@
+         cx.update(|window, cx| window.draw(cx).clear(cx));
+         cx.update(|window, cx| window.draw(cx).clear(cx));
+         (cx, state, resizes)
++    }
++
++    #[gpui::test]
++    fn owner_geometry_preserves_slots_identity_and_emits_no_resize(cx: &mut TestAppContext) {
++        let (cx, state, callbacks) = harness(cx);
++        let identity = state.entity_id();
++        let events = Rc::new(Cell::new(0));
++        let subscription = cx.update(|_, cx| {
++            let events = events.clone();
++            cx.subscribe(&state, move |_, _: &super::ResizablePanelEvent, _| {
++                events.set(events.get() + 1)
++            })
++        });
++        state.update(cx, |state, cx| {
++            assert!(!state.set_sizes(&[px(400.)], cx));
++            assert_eq!(state.sizes().len(), 2);
++            assert!(state.set_sizes(&[px(200.), px(200.)], cx));
++            assert_eq!(state.sizes(), &vec![px(200.), px(200.)]);
++        });
++        cx.update(|window, cx| window.draw(cx).clear(cx));
++        assert_eq!(cx.debug_bounds("first-panel").unwrap().size.width, px(200.));
++        assert_eq!(state.entity_id(), identity);
++        assert_eq!(events.get(), 0);
++        assert_eq!(callbacks.get(), 0);
++        drop(subscription);
+     }
+ 
+     #[gpui::test]
+diff --git a/crates/base/src/text/inline.rs b/crates/base/src/text/inline.rs
+--- a/crates/base/src/text/inline.rs
++++ b/crates/base/src/text/inline.rs
+@@ -24,6 +24,13 @@
+     text::state::LineSpan,
+     text::text_view::{LinkClickHandlerFn, handle_link_click},
+ };
++
++#[cfg(test)]
++thread_local! {
++    // Counts actual glyph-position work, not elapsed time, so viewport complexity
++    // has a deterministic regression check independent of the test machine.
++    static SELECTION_ROW_MEASUREMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
+ 
+ /// The style applied to one range of inline text.
+ ///
+@@ -253,10 +260,6 @@
+     static RETAINED_LAYOUTS: RefCell<HashMap<usize, RetainedLayout>> = RefCell::new(HashMap::new());
+ }
+ 
+-/// Dead entries (states that were dropped without a final paint, e.g. a
+-/// replaced document) are swept once the table grows past this many.
+-const RETAINED_SWEEP_AT: usize = 4096;
+-
+ fn state_key(state: &Arc<Mutex<InlineState>>) -> usize {
+     Arc::as_ptr(state) as usize
+ }
+@@ -284,9 +287,10 @@
+ fn retain_layout(state: &Arc<Mutex<InlineState>>, retained: RetainedLayout) {
+     RETAINED_LAYOUTS.with(|layouts| {
+         let mut layouts = layouts.borrow_mut();
+-        if layouts.len() >= RETAINED_SWEEP_AT {
+-            layouts.retain(|_, retained| retained.state.strong_count() > 0);
+-        }
++        // Replaced streaming paragraphs leave shaped prefixes behind. An
++        // entry-count threshold retains thousands of increasingly large dead
++        // layouts, so release obsolete states whenever we hand over a layout.
++        layouts.retain(|_, retained| retained.state.strong_count() > 0);
+         layouts.insert(state_key(state), retained);
+     });
+ }
+@@ -597,8 +601,18 @@
+                 .map(|boundary| layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index)
+                 .chain([line.len()]);
+             for row_end in row_ends {
++                row_ix += 1;
++                // Glyph lookup scans the unwrapped line. Do it only for rows
++                // intersecting the viewport; a long streamed paragraph can have
++                // thousands of wrapped rows with only a handful visible.
++                if y + line_height <= mask_bounds.top() || y >= mask_bounds.bottom() {
++                    y += line_height;
++                    row_start = row_end;
++                    continue;
++                }
++                #[cfg(test)]
++                SELECTION_ROW_MEASUREMENTS.with(|count| count.set(count.get() + 1));
+                 let mut width = layout.x_for_index(row_end) - layout.x_for_index(row_start);
+-                row_ix += 1;
+                 if row_ix < row_count {
+                     width += line_height.half();
+                 }
+@@ -1192,6 +1206,55 @@
+     }
+ 
+     #[test]
++    fn invisible_wrapped_rows_do_not_measure_glyph_positions() {
++        let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
++        in_prepaint(&mut app, |window, cx| {
++            let text = "a long paragraph with wrapped rows ".repeat(100);
++            let style = TextStyle {
++                font_family: BODY.into(),
++                font_size: px(16.).into(),
++                ..Default::default()
++            };
++            let styled = StyledText::new(SharedString::from(text.clone())).with_runs(text_runs(
++                text.len(),
++                &style,
++                &[],
++            ));
++            let layout = styled.layout().clone();
++            let mut element = styled.into_any_element();
++            element.layout_as_root(
++                size(
++                    AvailableSpace::Definite(px(100.)),
++                    AvailableSpace::MinContent,
++                ),
++                window,
++                cx,
++            );
++            element.prepaint_at(point(px(0.), px(0.)), window, cx);
++            let line_height = layout.line_height();
++            SELECTION_ROW_MEASUREMENTS.with(|count| count.set(0));
++            let hidden = Bounds::new(point(px(0.), px(-100.)), size(px(100.), px(10.)));
++            assert!(Inline::text_line_bounds(&layout, line_height, hidden).is_empty());
++            assert_eq!(
++                SELECTION_ROW_MEASUREMENTS.with(|count| count.get()),
++                0,
++                "fully clipped text must not scan glyph positions"
++            );
++            SELECTION_ROW_MEASUREMENTS.with(|count| count.set(0));
++            let visible = Bounds::new(point(px(0.), px(0.)), size(px(100.), line_height));
++            assert_eq!(
++                Inline::text_line_bounds(&layout, line_height, visible).len(),
++                1
++            );
++            assert_eq!(
++                SELECTION_ROW_MEASUREMENTS.with(|count| count.get()),
++                1,
++                "measure only the visible row, not every row of the paragraph"
++            );
++        });
++    }
++
++    #[test]
+     fn row_walk_matches_the_character_walk() {
+         let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
+         in_prepaint(&mut app, |window, cx| {
+@@ -1227,7 +1290,13 @@
+                     );
+                     element.prepaint_at(origin, window, cx);
+                     let line_height = layout.line_height();
+-                    for mask in [mask, clipped] {
++                    let above = Bounds::new(point(px(0.), px(-100.)), size(px(1000.), px(10.)));
++                    let below = Bounds::new(point(px(0.), px(10_000.)), size(px(1000.), px(10.)));
++                    let boundary = Bounds::new(
++                        point(origin.x, origin.y + line_height),
++                        size(px(1000.), line_height),
++                    );
++                    for mask in [mask, clipped, above, below, boundary] {
+                         let expected = by_character(text, &layout, line_height, mask);
+                         let actual = Inline::text_line_bounds(&layout, line_height, mask);
+                         let context = format!("{text:?} at {wrap_width}px in {mask:?}");
+@@ -1940,5 +2009,10 @@
+                 .count()
+         });
+         assert_eq!(alive, 3, "one live layout per remaining fragment");
+-    }
+-}
++        let total = RETAINED_LAYOUTS.with(|layouts| layouts.borrow().len());
++        assert_eq!(
++            total, alive,
++            "obsolete shaped layouts must not remain cached after replacement"
++        );
++    }
++}
+diff --git a/crates/component/src/dock/panel.rs b/crates/component/src/dock/panel.rs
+--- a/crates/component/src/dock/panel.rs
++++ b/crates/component/src/dock/panel.rs
+@@ -83,6 +83,11 @@
+         t!("Dock.Unnamed")
+     }
+ 
++    /// Accessible tab name, independent of a custom visual title.
++    fn tab_aria_label(&self, cx: &App) -> Option<SharedString> {
++        self.tab_name(cx)
++    }
++
+     /// Colors for the title, for a panel that wants its tab to stand out.
+     fn title_style(&self, cx: &App) -> Option<TitleStyle> {
+         None
+@@ -105,6 +110,9 @@
+     ) -> Option<Vec<Button>> {
+         None
+     }
++
++    /// Notify native-backed content that a GPUI menu covers its window.
++    fn set_overlay_open(&mut self, _open: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
+ 
+     /// Entries the panel adds to the title bar's ellipsis menu.
+     fn dropdown_menu(
+@@ -151,7 +159,9 @@
+ /// Object-safe counterpart of [`Panel`], and the presentation half of the
+ /// handle a skin holds.
+ pub trait PanelView: gpui_base::dock::PanelView {
++    fn set_overlay_open(&self, open: bool, window: &mut Window, cx: &mut App);
+     fn tab_name(&self, cx: &App) -> Option<SharedString>;
++    fn tab_aria_label(&self, cx: &App) -> Option<SharedString>;
+     fn title(&self, window: &mut Window, cx: &mut App) -> AnyElement;
+     fn title_style(&self, cx: &App) -> Option<TitleStyle>;
+     fn title_suffix(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement>;
+@@ -163,6 +173,12 @@
+ }
+ 
+ impl<T: Panel> PanelView for Entity<T> {
++    fn tab_aria_label(&self, cx: &App) -> Option<SharedString> {
++        self.read(cx).tab_aria_label(cx)
++    }
++    fn set_overlay_open(&self, open: bool, window: &mut Window, cx: &mut App) {
++        self.update(cx, |this, cx| this.set_overlay_open(open, window, cx));
++    }
+     fn tab_name(&self, cx: &App) -> Option<SharedString> {
+         self.read(cx).tab_name(cx)
+     }
+@@ -257,6 +273,9 @@
+ }
+ 
+ impl gpui_base::dock::PanelView for PanelHandle {
++    fn on_focus_requested(&self, window: &mut Window, cx: &mut App) {
++        self.0.on_focus_requested(window, cx);
++    }
+     fn panel_name(&self, cx: &App) -> &'static str {
+         self.0.panel_name(cx)
+     }
+diff --git a/crates/component/src/dock/tab_panel.rs b/crates/component/src/dock/tab_panel.rs
+--- a/crates/component/src/dock/tab_panel.rs
++++ b/crates/component/src/dock/tab_panel.rs
+@@ -327,27 +327,37 @@
+             )
+             .child(
+                 Button::new("menu")
++                    .accessibility_label("Panel options")
++                    .tooltip("Panel options")
+                     .icon(IconName::Ellipsis)
+                     .xsmall()
+                     .ghost()
+                     .tab_stop(false)
+-                    .dropdown_menu(move |menu, window, cx| {
+-                        menu.when_some(panel.clone(), |menu, panel| {
+-                            panel.dropdown_menu(menu, window, cx)
+-                        })
+-                        .separator()
+-                        .menu_with_disabled(
+-                            match zoomed {
+-                                true => t!("Dock.Zoom Out"),
+-                                false => t!("Dock.Zoom In"),
+-                            },
+-                            Box::new(ToggleZoom),
+-                            !menu_zoom,
+-                        )
+-                        .when(closable, |menu| {
+-                            menu.separator()
+-                                .menu(t!("Dock.Close"), Box::new(ClosePanel))
+-                        })
++                    .dropdown_menu({
++                        let panel = panel.clone();
++                        move |menu, window, cx| {
++                            menu.when_some(panel.clone(), |menu, panel| {
++                                panel.dropdown_menu(menu, window, cx)
++                            })
++                            .separator()
++                            .menu_with_disabled(
++                                match zoomed {
++                                    true => t!("Dock.Zoom Out"),
++                                    false => t!("Dock.Zoom In"),
++                                },
++                                Box::new(ToggleZoom),
++                                !menu_zoom,
++                            )
++                            .when(closable, |menu| {
++                                menu.separator()
++                                    .menu(t!("Dock.Close"), Box::new(ClosePanel))
++                            })
++                        }
++                    })
++                    .on_open_change(move |open, window, cx| {
++                        if let Some(panel) = &panel {
++                            panel.set_overlay_open(*open, window, cx);
++                        }
+                     })
+                     .anchor(Anchor::TopRight),
+             )
+@@ -495,7 +505,41 @@
+ 
+                         Tab::new()
+                             .ix(ix)
++                            .context_menu({
++                                let panel = panel.clone();
++                                let group = group.clone();
++                                move |menu, window, cx| {
++                                    let handle = PanelHandle::of(&panel);
++                                    menu.when_some(handle, |menu, handle| {
++                                        handle.dropdown_menu(menu, window, cx)
++                                    })
++                                    .separator()
++                                    .item(
++                                        crate::menu::PopupMenuItem::new(t!("Dock.Close"))
++                                            .disabled(
++                                                !group.is_panel_closable(panel.panel_id(cx), cx),
++                                            )
++                                            .on_click({
++                                                let group = group.clone();
++                                                let id = panel.panel_id(cx);
++                                                move |_, window, cx| group.close(id, window, cx)
++                                            }),
++                                    )
++                                }
++                            })
++                            .context_menu_on_open_change({
++                                let panel = panel.clone();
++                                move |open, window, cx| {
++                                    if let Some(handle) = PanelHandle::of(&panel) {
++                                        handle.set_overlay_open(*open, window, cx);
++                                    }
++                                }
++                            })
+                             .tab_bar_prefix(has_leading)
++                            .when_some(
++                                handle.and_then(|handle| handle.tab_aria_label(cx)),
++                                |tab, label| tab.aria_label(label),
++                            )
+                             .map(|this| match handle.and_then(|handle| handle.tab_name(cx)) {
+                                 Some(tab_name) => this.child(tab_name),
+                                 None => this.child(panel_title(panel, window, cx)),
+@@ -767,19 +811,29 @@
+         &self,
+         panel: AnyView,
+         group: &TabGroupContext,
+-        _: &mut Window,
++        window: &mut Window,
+         _: &mut App,
+     ) -> AnyElement {
+         if group.is_collapsed() {
+             return Empty.into_any_element();
+         }
+ 
++        // GPUI's cached view replays paint/dispatch state but not accessibility
++        // nodes. Render the content while an accessibility tree is being built
++        // so controls remain exposed after otherwise unchanged frames.
++        let content = if window.is_a11y_active() {
++            div().absolute().size_full().child(panel).into_any_element()
++        } else {
++            panel
++                .cached(StyleRefinement::default().absolute().size_full())
++                .into_any_element()
++        };
+         div()
+             .id("tab-content")
+             .overflow_y_scroll()
+             .overflow_x_hidden()
+             .flex_1()
+-            .child(panel.cached(StyleRefinement::default().absolute().size_full()))
++            .child(content)
+             .into_any_element()
+     }
+ 
+diff --git a/crates/component/src/menu/context_menu.rs b/crates/component/src/menu/context_menu.rs
+--- a/crates/component/src/menu/context_menu.rs
++++ b/crates/component/src/menu/context_menu.rs
+@@ -47,6 +47,7 @@
+     id: ElementId,
+     element: Option<E>,
+     menu: Option<Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>>,
++    on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+     // This is not in use, just for style refinement forwarding.
+     _ignore_style: StyleRefinement,
+     anchor: Anchor,
+@@ -59,6 +60,7 @@
+             id: id.into(),
+             element: Some(element),
+             menu: None,
++            on_open_change: None,
+             anchor: Anchor::TopLeft,
+             _ignore_style: StyleRefinement::default(),
+         }
+@@ -71,6 +73,16 @@
+         F: Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
+     {
+         self.menu = Some(Rc::new(builder));
++        self
++    }
++
++    /// Reports whether this context menu has visible items. Native child views
++    /// can use this to yield their surface while the GPUI overlay is open.
++    pub fn on_open_change(
++        mut self,
++        callback: impl Fn(&bool, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.on_open_change = Some(Rc::new(callback));
+         self
+     }
+ 
+@@ -378,6 +390,7 @@
+ 
+         // Take the builder before setting up element state to avoid borrow issues
+         let builder = self.menu.clone();
++        let on_open_change = self.on_open_change.clone();
+ 
+         self.with_element_state(
+             id.unwrap(),
+@@ -419,6 +432,7 @@
+                         window.defer(cx, {
+                             let shared_state = shared_state.clone();
+                             let builder = builder.clone();
++                            let on_open_change = on_open_change.clone();
+                             move |window, cx| {
+                                 let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
+                                     let Some(build) = &builder else {
+@@ -433,11 +447,21 @@
+                                     menu.set_previous_focus(previous_focus_handle, cx);
+                                 });
+ 
++                                if let Some(callback) = &on_open_change {
++                                    callback(&!menu.read(cx).is_empty(), window, cx);
++                                }
+                                 // Set up the subscription for dismiss handling
+                                 let _subscription = window.subscribe(&menu, cx, {
+                                     let shared_state = shared_state.clone();
+-                                    move |_, _: &DismissEvent, window, _cx| {
++                                    let on_open_change = on_open_change.clone();
++                                    move |_, _: &DismissEvent, window, cx| {
++                                        let was_open = shared_state.borrow().open;
+                                         shared_state.borrow_mut().open = false;
++                                        if was_open {
++                                            if let Some(callback) = &on_open_change {
++                                                callback(&false, window, cx);
++                                            }
++                                        }
+                                         window.refresh();
+                                     }
+                                 });
+@@ -477,11 +501,13 @@
+     struct TestRoot {
+         content_focus: FocusHandle,
+         received: Rc<Cell<bool>>,
++        open_changes: Rc<RefCell<Vec<bool>>>,
+     }
+ 
+     impl Render for TestRoot {
+         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+             let received = self.received.clone();
++            let open_changes = self.open_changes.clone();
+             div()
+                 .size_full()
+                 .child(
+@@ -499,7 +525,10 @@
+                             div()
+                                 .id("tab")
+                                 .size_full()
+-                                .context_menu(|menu, _, _| menu.menu("Close", Box::new(RemoveTab))),
++                                .context_menu(|menu, _, _| menu.menu("Close", Box::new(RemoveTab)))
++                                .on_open_change(move |open, _, _| {
++                                    open_changes.borrow_mut().push(*open)
++                                }),
+                         ),
+                 )
+         }
+@@ -513,14 +542,17 @@
+         });
+ 
+         let received = Rc::new(Cell::new(false));
++        let open_changes = Rc::new(RefCell::new(Vec::new()));
+         let (root, cx) = cx.add_window_view({
+             let received = received.clone();
++            let open_changes = open_changes.clone();
+             move |window, cx| {
+                 let content_focus = cx.focus_handle();
+                 content_focus.focus(window, cx);
+                 TestRoot {
+                     content_focus,
+                     received,
++                    open_changes,
+                 }
+             }
+         });
+@@ -554,6 +586,7 @@
+         // The action must reach the handler on the trigger's ancestor chain,
+         // even though the action bar was never on the focus path.
+         assert!(received.get());
++        assert_eq!(&*open_changes.borrow(), &[true, false]);
+         // And dismiss must restore focus to where it was before the menu
+         // opened, keeping the dangling-focus fix (#2614).
+         cx.update(|window, cx| {
+diff --git a/crates/component/src/tab/tab.rs b/crates/component/src/tab/tab.rs
+--- a/crates/component/src/tab/tab.rs
++++ b/crates/component/src/tab/tab.rs
+@@ -1,6 +1,7 @@
+ use std::{rc::Rc, time::Duration};
+ 
+ use crate::animation::{Lerp, ease_in_out_cubic};
++use crate::menu::{ContextMenuExt as _, PopupMenu};
+ use crate::{ActiveTheme, Icon, IconName, Selectable, Sizable, Size, StyledExt, h_flex};
+ use gpui::prelude::FluentBuilder as _;
+ use gpui::{
+@@ -416,6 +417,8 @@
+     pub(super) indicator_epoch: u64,
+     pub(super) max_width: Option<Pixels>,
+     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
++    context_menu: Option<Rc<dyn Fn(PopupMenu, &mut Window, &mut App) -> PopupMenu>>,
++    context_menu_open: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+ }
+ 
+ impl From<&'static str> for Tab {
+@@ -469,6 +472,8 @@
+             size: Size::default(),
+             max_width: None,
+             on_click: None,
++            context_menu: None,
++            context_menu_open: None,
+         }
+     }
+ }
+@@ -477,6 +482,24 @@
+     /// Create a new tab with a label.
+     pub fn new() -> Self {
+         Self::default()
++    }
++
++    /// Build a context menu for this specific tab without changing tab selection.
++    pub fn context_menu(
++        mut self,
++        build: impl Fn(PopupMenu, &mut Window, &mut App) -> PopupMenu + 'static,
++    ) -> Self {
++        self.context_menu = Some(Rc::new(build));
++        self
++    }
++
++    /// Observe context-menu visibility, including dismissal.
++    pub fn context_menu_on_open_change(
++        mut self,
++        callback: impl Fn(&bool, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.context_menu_open = Some(Rc::new(callback));
++        self
+     }
+ 
+     /// Set label for the tab.
+@@ -871,6 +894,15 @@
+             .when_some(self.on_click.clone(), |this, on_click| {
+                 this.on_click(move |event, window, cx| on_click(event, window, cx))
+             })
++            .map(|element| match self.context_menu {
++                Some(build) => element
++                    .context_menu(move |menu, window, cx| build(menu, window, cx))
++                    .when_some(self.context_menu_open, |menu, callback| {
++                        menu.on_open_change(move |open, window, cx| callback(open, window, cx))
++                    })
++                    .into_any_element(),
++                None => element.into_any_element(),
++            })
+     }
+ }
+ 
+diff --git a/crates/component/src/highlighter/languages.rs b/crates/component/src/highlighter/languages.rs
+--- a/crates/component/src/highlighter/languages.rs
++++ b/crates/component/src/highlighter/languages.rs
+@@ -606,6 +606,26 @@
+             ),
+         };
+ 
++        // TypeScript's query adds type constructs; JavaScript and JSX captures
++        // must be composed explicitly (tree-sitter Query has no inheritance).
++        #[cfg(feature = "tree-sitter-javascript")]
++        let inherited_query = match self.name() {
++            "typescript" => Some(format!(
++                "{}\n{}",
++                tree_sitter_javascript::HIGHLIGHT_QUERY,
++                query
++            )),
++            "tsx" => Some(format!(
++                "{}\n{}\n{}",
++                tree_sitter_javascript::HIGHLIGHT_QUERY,
++                tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
++                query
++            )),
++            _ => None,
++        };
++        #[cfg(feature = "tree-sitter-javascript")]
++        let query = inherited_query.as_deref().unwrap_or(query);
++
+         let language = tree_sitter::Language::new(language);
+ 
+         GrammarConfig::new(
+diff --git a/crates/base/src/root.rs b/crates/base/src/root.rs
+--- a/crates/base/src/root.rs
++++ b/crates/base/src/root.rs
+@@ -264,9 +264,7 @@
+     fn on_action_copy(&mut self, _: &Copy, window: &mut Window, cx: &mut Context<Self>) {
+-        let text = crate::TextSelection::selected_text(window, cx)
+-            .trim()
+-            .to_string();
+-        if text.is_empty() {
++        let text = crate::TextSelection::selected_text(window, cx);
++        if text.is_empty() {
+             cx.propagate();
+             return;
+         }
+         cx.write_to_clipboard(ClipboardItem::new_string(text));
+diff --git a/crates/base/src/text/text_view.rs b/crates/base/src/text/text_view.rs
+--- a/crates/base/src/text/text_view.rs
++++ b/crates/base/src/text/text_view.rs
+@@ -617,8 +617,8 @@
+             .relative()
+             .text_color(foreground)
+             .on_action(move |_: &crate::input::Copy, window, cx| {
+-                let text = TextSelection::selected_text(window, cx).trim().to_string();
+-                if text.is_empty() {
++                let text = TextSelection::selected_text(window, cx);
++                if text.is_empty() {
+                     cx.propagate();
+                     return;
+                 }
+diff --git a/crates/base/src/text/document.rs b/crates/base/src/text/document.rs
+--- a/crates/base/src/text/document.rs
++++ b/crates/base/src/text/document.rs
+@@ -111,6 +111,13 @@
+                     text.push_str(&block.text());
+                 }
+             }
++            // Each block adds a separator newline after its rendered text.
++            // Keep separators between selected blocks, but not after the
++            // endpoint when the drag stops inside the final block. An actual
++            // selected newline remains because the block added another one.
++            if text.ends_with('\n') {
++                text.pop();
++            }
+             return text;
+         }
+ 
+diff --git a/crates/base/src/text_selection.rs b/crates/base/src/text_selection.rs
+--- a/crates/base/src/text_selection.rs
++++ b/crates/base/src/text_selection.rs
+@@ -589,6 +589,6 @@
+                 .unwrap_or(item.fallback)
+         })
+-        .filter(|text| !text.trim().is_empty())
++        .filter(|text| !text.is_empty())
+         .collect::<Vec<_>>()
+         .join("\n")
+ }

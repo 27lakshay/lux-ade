@@ -1,0 +1,122 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -295,3 +295,7 @@
+ [lints.rust.unexpected_cfgs]
+ level = "allow"
+ priority = 0
++
++[[example]]
++name = "menu_callback_regression"
++path = "examples/menu_callback_regression.rs"
+--- a/src/platform.rs
++++ b/src/platform.rs
+@@ -1516,9 +1516,11 @@
+         if let Some(mut callback) = lock.menu_command.take() {
+             let tag: NSInteger = msg_send![item, tag];
+             let index = tag as usize;
+-            if let Some(action) = lock.menu_actions.get(index) {
+-                let action = action.boxed_clone();
+-                drop(lock);
++            let action = lock.menu_actions.get(index).map(|action| action.boxed_clone());
++            // Native menu items may not have a GPUI action. Release the guard
++            // even then: restoring the callback below locks the platform again.
++            drop(lock);
++            if let Some(action) = action {
+                 callback(&*action);
+             }
+             platform.0.lock().menu_command.get_or_insert(callback);
+@@ -1534,9 +1536,11 @@
+         if let Some(mut callback) = lock.validate_menu_command.take() {
+             let tag: NSInteger = msg_send![item, tag];
+             let index = tag as usize;
+-            if let Some(action) = lock.menu_actions.get(index) {
+-                let action = action.boxed_clone();
+-                drop(lock);
++            let action = lock.menu_actions.get(index).map(|action| action.boxed_clone());
++            // Native menu items may not have a GPUI action. Release the guard
++            // even then: restoring the callback below locks the platform again.
++            drop(lock);
++            if let Some(action) = action {
+                 result = callback(action.as_ref());
+             }
+             platform
+--- /dev/null
++++ b/examples/menu_callback_regression.rs
+@@ -0,0 +1,77 @@
++//! Exercise the actual Objective-C delegate entry points on the main thread.
++//! Run each mode (`validate` and `handle`) separately; the watchdog bounds deadlocks.
++use cocoa::base::{id, nil};
++use cocoa::foundation::NSAutoreleasePool;
++use gpui::{Keymap, Menu, MenuItem, NoAction, Platform};
++use gpui_macos::MacPlatform;
++use objc::{class, msg_send, sel, sel_impl};
++use std::{cell::Cell, ffi::c_void, rc::Rc, time::Duration};
++
++fn main() {
++    let mode = std::env::args().nth(1).expect("validate or handle");
++    assert!(mode == "validate" || mode == "handle");
++    std::thread::spawn(|| {
++        std::thread::sleep(Duration::from_secs(8));
++        eprintln!("FAIL: native menu callback did not return within 8 seconds");
++        std::process::exit(124);
++    });
++    unsafe {
++        let pool = NSAutoreleasePool::new(nil);
++        let platform = Rc::new(MacPlatform::new(true));
++        let delegate: id = msg_send![class!(GPUIApplicationDelegate), new];
++        (*delegate).set_ivar("platform", Rc::as_ptr(&platform) as *const c_void);
++        let item: id = msg_send![class!(NSMenuItem), new];
++        let calls = Rc::new(Cell::new(0));
++        let callback_calls = calls.clone();
++        let reentrant_platform = platform.clone();
++        if mode == "validate" {
++            platform.on_validate_app_menu_command(Box::new(move |_| {
++                // Re-enter platform state, as real callbacks can do.
++                let _ = reentrant_platform.get_menus();
++                callback_calls.set(callback_calls.get() + 1);
++                true
++            }));
++        } else {
++            platform.on_app_menu_action(Box::new(move |_| {
++                let _ = reentrant_platform.get_menus();
++                callback_calls.set(callback_calls.get() + 1);
++            }));
++        }
++        // There are no actions yet. Both a default native tag and negative tag
++        // must return without dispatch, and must retain the callback for later.
++        for tag in [0_isize, -1, 10000] {
++            let _: () = msg_send![item, setTag: tag];
++            if mode == "validate" {
++                let enabled: bool = msg_send![delegate, validateMenuItem: item];
++                assert!(!enabled);
++            } else {
++                let _: () = msg_send![delegate, handleGPUIMenuItem: item];
++            }
++        }
++        assert_eq!(calls.get(), 0);
++        platform.set_menus(vec![Menu {
++            name: "Regression".into(),
++            disabled: false,
++            items: vec![MenuItem::action("Probe", NoAction)],
++        }], &Keymap::new(vec![]));
++        let _: () = msg_send![item, setTag: 0_isize];
++        for _ in 0..2 {
++            if mode == "validate" {
++                let enabled: bool = msg_send![delegate, validateMenuItem: item];
++                assert!(enabled);
++            } else {
++                let _: () = msg_send![delegate, handleGPUIMenuItem: item];
++            }
++        }
++        assert_eq!(calls.get(), 2, "callback must survive invalid tags and dispatch");
++        // Break the intentional callback Rc cycles before dropping the platform.
++        platform.on_app_menu_action(Box::new(|_| {}));
++        platform.on_validate_app_menu_command(Box::new(|_| false));
++        (*delegate).set_ivar("platform", std::ptr::null::<c_void>());
++        let _: () = msg_send![item, release];
++        let _: () = msg_send![delegate, release];
++        drop(platform);
++        pool.drain();
++    }
++    println!("PASS: {mode} returns for unmatched tags, restores callbacks, permits reentry");
++}

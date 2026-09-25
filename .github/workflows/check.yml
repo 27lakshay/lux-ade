@@ -1,0 +1,38 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - run: python3 scripts/install_tools.py
+      - run: python3 scripts/bootstrap.py --sources-only
+      - run: PATH="$PWD/.ade/tools/bin:$PATH" cargo nextest run --locked -p ade-core --profile ci
+      - run: cargo test --locked -p ade-core --doc
+      - run: python3 -m unittest discover -s scripts -p 'test_bootstrap.py'
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@10.17.1
+      - run: rustup show
+      - run: python3 scripts/install_tools.py
+      - run: xcodebuild -downloadComponent MetalToolchain
+      - run: python3 scripts/bootstrap.py
+      - run: bash scripts/run.sh --build-only
+      - run: bash scripts/check.sh
+      - run: ADE_TEST_DAEMON="$PWD/target/debug/ade-daemon" python3 scripts/test_diagnostic_correlation.py
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - run: python3 scripts/bootstrap.py --sources-only
+      - run: python3 scripts/install_tools.py
+      - run: bash scripts/check_dependencies.sh

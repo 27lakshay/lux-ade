@@ -1,0 +1,9 @@
+/.ade/
+/target/
+/dist/
+/*.app/
+**/node_modules/
+**/__pycache__/
+*.pyc
+.DS_Store
+/preview.png

@@ -1,0 +1,507 @@
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1881,6 +1881,101 @@
+         return readTextLocked(surface, core_sel, result);
+     }
+ 
++    /// ADE prototype: caller is the UI thread; no inspector/search may be active.
++    /// Decode transactionally before acquiring render lock. Subsequent subprocess
++    /// output is ignored; the host must feed only bytes after this snapshot cut.
++    export fn ghostty_surface_restore_snapshot(
++        surface: *Surface,
++        bytes: [*]const u8,
++        len: usize,
++    ) bool {
++        if (len == 0 or len > 64 * 1024 * 1024) return false;
++        const core = &surface.core_surface;
++        if (core.inspector != null or core.search != null) return false;
++        var reader: std.Io.Reader = .fixed(bytes[0..len]);
++        var decoded = terminal.snapshot.decodeExact(core.alloc, global.io(), &reader, .{
++            .max_continuation_bytes = 1024 * 1024,
++        }) catch |err| {
++            log.warn("ADE snapshot rejected: {}", .{err});
++            return false;
++        };
++        defer decoded.deinit(core.alloc);
++        const state = &core.renderer_state;
++        state.mutex.lockUncancelable(global.io());
++        defer state.mutex.unlock(global.io());
++        const io = &core.io;
++        const Handler = @import("../termio/stream_handler.zig").StreamHandler;
++        const handler: Handler = .{
++            .external_view = true,
++            .alloc = io.alloc,
++            .termio_mailbox = &io.mailbox,
++            .surface_mailbox = io.surface_mailbox,
++            .renderer_state = io.renderer_state,
++            .renderer_wakeup = io.renderer_wakeup,
++            .renderer_mailbox = io.renderer_mailbox,
++            .size = &io.size,
++            .terminal = &io.terminal,
++            .osc_color_report_format = io.config.osc_color_report_format,
++            .clipboard_write = io.config.clipboard_write,
++            .clipboard_write_limit = io.config.clipboard_write_limit,
++            .enquiry_response = io.config.enquiry_response,
++        };
++        // Release every host-owned tracked pin before disposing old pages.
++        core.mouse.selection_gesture.deinit(&io.terminal);
++        core.mouse.selection_gesture = .init;
++        core.selection_scroll_active = false;
++        core.mouse.link_point = null;
++        if (state.preedit) |*preedit| preedit.deinit(core.alloc);
++        state.preedit = null;
++        io.terminal_stream.deinit();
++        io.terminal.deinit(io.alloc);
++        io.terminal = decoded.toOwned();
++        io.external_output = true;
++        // Address of io.terminal stays stable for renderer and handler.
++        io.terminal_stream = .init(.{
++            .allocator = io.alloc,
++            .handler = handler,
++        });
++        switch (decoded.continuation) {
++            .ground => {},
++            .bytes => |pending| io.terminal_stream.nextSlice(pending),
++        }
++        io.terminal.flags.dirty = .{
++            .palette = true,
++            .reverse_colors = true,
++            .clear = true,
++            .preedit = true,
++            .glyph_glossary = true,
++        };
++        io.renderer_wakeup.notify() catch {};
++        return true;
++    }
++
++    /// ADE: daemon-authoritative grid resize, independent of local view pixels.
++    export fn ghostty_surface_resize_terminal(surface: *Surface, cols: u16, rows: u16) bool {
++        if (cols < 2 or rows < 2 or cols > 1000 or rows > 1000) return false;
++        const core = &surface.core_surface;
++        const io = &core.io;
++        core.renderer_state.mutex.lockUncancelable(global.io());
++        defer core.renderer_state.mutex.unlock(global.io());
++        if (!io.external_output) return false;
++        io.terminal.resize(io.alloc, .{
++            .cols = cols,
++            .rows = rows,
++            .cell_size_px = .{ .width = core.size.cell.width, .height = core.size.cell.height },
++        }) catch return false;
++        io.renderer_wakeup.notify() catch {};
++        return true;
++    }
++
++    /// ADE prototype: feeds ordered post-snapshot output under renderer lock.
++    /// Returns false until a valid snapshot has switched the surface to external
++    /// output mode. Input still uses the surface's attach subprocess PTY.
++    export fn ghostty_surface_feed_output(surface: *Surface, bytes: [*]const u8, len: usize) bool {
++        if (len > 4 * 1024 * 1024) return false;
++        return surface.core_surface.io.processExternalOutput(bytes[0..len]);
++    }
++
+     /// Read some arbitrary text from the surface.
+     ///
+     /// This is an expensive operation so it shouldn't be called too
+--- a/src/termio/Termio.zig
++++ b/src/termio/Termio.zig
+@@ -64,6 +64,9 @@
+ /// The stream parser. This parses the stream of escape codes and so on
+ /// from the child process and calls callbacks in the stream handler.
+ terminal_stream: StreamHandler.Stream,
++
++/// ADE: once externally restored, subprocess output must not race ordered feeds.
++external_output: bool = false,
+ 
+ /// Last time the cursor was reset. This is used to prevent message
+ /// flooding with cursor resets.
+@@ -510,20 +513,24 @@
+         defer self.renderer_state.mutex.unlock(global.io());
+ 
+         // Update the size of our terminal state
+-        try self.terminal.resize(
+-            self.alloc,
+-            .{
+-                .cols = grid_size.columns,
+-                .rows = grid_size.rows,
+-                .cell_size_px = .{
+-                    .width = self.size.cell.width,
+-                    .height = self.size.cell.height,
++        // ADE: viewport geometry still updates graphics and the attach PTY,
++        // but only daemon-authoritative events may reflow an external terminal.
++        if (!self.external_output) {
++            try self.terminal.resize(
++                self.alloc,
++                .{
++                    .cols = grid_size.columns,
++                    .rows = grid_size.rows,
++                    .cell_size_px = .{
++                        .width = self.size.cell.width,
++                        .height = self.size.cell.height,
++                    },
+                 },
+-            },
+-        );
++            );
++        }
+ 
+         // If we have size reporting enabled we need to send a report.
+-        if (self.terminal.modes.get(.in_band_size_reports)) {
++        if (!self.external_output and self.terminal.modes.get(.in_band_size_reports)) {
+             try self.sizeReportLocked(td, .mode_2048);
+         }
+     }
+@@ -541,6 +548,7 @@
+ }
+ 
+ fn sizeReportLocked(self: *Termio, td: *ThreadData, style: termio.Message.SizeReport) !void {
++    if (self.external_output) return;
+     const grid_size = self.size.grid();
+     const report_size: terminalpkg.size_report.Size = .{
+         .rows = grid_size.rows,
+@@ -651,7 +659,7 @@
+ /// Called when focus is gained or lost (when focus events are enabled)
+ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
+     self.renderer_state.mutex.lockUncancelable(global.io());
+-    const focus_event = self.renderer_state.terminal.modes.get(.focus_event);
++    const focus_event = !self.external_output and self.renderer_state.terminal.modes.get(.focus_event);
+     self.renderer_state.mutex.unlock(global.io());
+ 
+     // If we have focus events enabled, we send the focus event.
+@@ -677,7 +685,16 @@
+     // the lock to grab our read data.
+     self.renderer_state.mutex.lockUncancelable(global.io());
+     defer self.renderer_state.mutex.unlock(global.io());
++    if (!self.external_output) self.processOutputLocked(buf);
++}
++
++/// ADE: ordered bytes supplied by the embedding host after a binary snapshot.
++pub fn processExternalOutput(self: *Termio, buf: []const u8) bool {
++    self.renderer_state.mutex.lockUncancelable(global.io());
++    defer self.renderer_state.mutex.unlock(global.io());
++    if (!self.external_output) return false;
+     self.processOutputLocked(buf);
++    return true;
+ }
+ 
+ /// Process output from readdata but the lock is already held.
+@@ -753,6 +770,7 @@
+ }
+ 
+ pub fn colorSchemeReportLocked(self: *Termio, td: *ThreadData, force: bool) !void {
++    if (self.external_output) return;
+     if (!force and !self.renderer_state.terminal.modes.get(.report_color_scheme)) {
+         return;
+     }
+@@ -778,6 +796,7 @@
+     self.renderer_state.mutex.lockUncancelable(global.io());
+     defer self.renderer_state.mutex.unlock(global.io());
+ 
++    if (self.external_output) return;
+     if (!force and !self.renderer_state.terminal.modes.get(.report_visibility)) {
+         return;
+     }
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -21,6 +21,9 @@
+ /// It is NOT VALID to stop a stream handler, create a new one, and use that
+ /// unless all of the member fields are copied.
+ pub const StreamHandler = struct {
++    /// ADE external views render daemon-owned state; they never answer VT queries
++    /// or execute clipboard escape effects. User input has a separate Surface path.
++    external_view: bool = false,
+     alloc: Allocator,
+     size: *renderer.Size,
+     terminal: *terminal.Terminal,
+@@ -141,6 +144,20 @@
+     }
+ 
+     inline fn messageWriter(self: *StreamHandler, msg: termio.Message) void {
++        if (self.external_view) switch (msg) {
++            .write_small,
++            .write_stable,
++            .write_alloc,
++            .color_scheme_report,
++            .visibility_report,
++            .size_report,
++            .focused,
++            => {
++                msg.deinit();
++                return;
++            },
++            else => {},
++        };
+         self.termio_mailbox.send(msg, self.renderer_state.mutex);
+         self.termio_messaged = true;
+     }
+@@ -990,6 +1007,7 @@
+     }
+ 
+     fn clipboardContents(self: *StreamHandler, kind: u8, data: []const u8) !void {
++        if (self.external_view) return;
+         // Note: we ignore the "kind" field and always use the standard clipboard.
+         // iTerm also appears to do this but other terminals seem to only allow
+         // certain. Let's investigate more.
+@@ -1024,6 +1042,7 @@
+         self: *StreamHandler,
+         v: terminal.osc.Command.KittyClipboardProtocol,
+     ) error{ OutOfMemory, WriteFailed }!void {
++        if (self.external_view) return;
+         const kitty_clipboard = terminal.kitty.clipboard;
+ 
+         // Decode and validate the metadata. Malformed structure drops
+--- a/src/renderer/metal/Frame.zig
++++ b/src/renderer/metal/Frame.zig
+@@ -76,6 +76,8 @@
+         .@"error" => .unhealthy,
+         else => .healthy,
+     };
++
++    GpuBench.record(buffer, health);
+ 
+     // If the frame is healthy, present it.
+     if (health == .healthy) {
+@@ -129,3 +131,109 @@
+         CompletionBlock.invoke(&self.block, .{self.buffer.value});
+     }
+ }
++
++// Opt-in prototype instrumentation. Apple's command-buffer timestamps measure
++// GPU execution, not CPU encoding, queue wait, or on-screen presentation.
++const GpuBench = struct {
++    extern "c" fn getenv([*:0]const u8) ?[*:0]const u8;
++    extern "c" fn fopen([*:0]const u8, [*:0]const u8) ?*anyopaque;
++    extern "c" fn fwrite([*]const u8, usize, usize, *anyopaque) usize;
++    extern "c" fn fclose(*anyopaque) c_int;
++    extern "c" fn atexit(*const fn () callconv(.c) void) c_int;
++    extern "c" fn CFAbsoluteTimeGetCurrent() f64;
++
++    var locked = std.atomic.Value(bool).init(false);
++    var initialized = false;
++    var destination: ?[*:0]const u8 = null;
++    var bins: [10001]u64 = @splat(0);
++    var valid: u64 = 0;
++    var invalid: u64 = 0;
++    var errors: u64 = 0;
++    var overflow: u64 = 0;
++    var maximum_ms: f64 = 0;
++    var last_write: f64 = 0;
++
++    fn lock() void {
++        while (locked.cmpxchgWeak(false, true, .acquire, .monotonic) != null)
++            std.atomic.spinLoopHint();
++    }
++    fn unlock() void {
++        locked.store(false, .release);
++    }
++
++    fn record(buffer: objc.Object, health: Health) void {
++        lock();
++        defer unlock();
++        if (!initialized) {
++            initialized = true;
++            destination = getenv("ADE_GPU_BENCH_LOG");
++            if (destination) |dest| {
++                if (dest[0] == 0) {
++                    destination = null;
++                    return;
++                }
++                _ = atexit(&atExit);
++            }
++        }
++        if (destination == null) return;
++        if (health == .unhealthy) {
++            errors += 1;
++            invalid += 1;
++        } else if (!buffer.msgSend(bool, objc.sel("respondsToSelector:"), .{objc.sel("GPUStartTime")}) or
++            !buffer.msgSend(bool, objc.sel("respondsToSelector:"), .{objc.sel("GPUEndTime")}))
++        {
++            invalid += 1;
++        } else {
++            const start = buffer.getProperty(f64, "GPUStartTime");
++            const end = buffer.getProperty(f64, "GPUEndTime");
++            if (start > 0 and end >= start and std.math.isFinite(start) and std.math.isFinite(end)) {
++                const ms = (end - start) * 1000;
++                valid += 1;
++                maximum_ms = @max(maximum_ms, ms);
++                if (ms > 100) {
++                    overflow += 1;
++                } else {
++                    const bin: usize = @intFromFloat(@ceil(ms * 100));
++                    bins[@min(bin, bins.len - 1)] += 1;
++                }
++            } else {
++                invalid += 1;
++            }
++        }
++        const now = CFAbsoluteTimeGetCurrent();
++        if (now - last_write >= 1) {
++            dump();
++            last_write = now;
++        }
++    }
++
++    fn percentile(percent: u64) f64 {
++        if (valid == 0) return 0;
++        const threshold = (valid * percent + 99) / 100;
++        var sum: u64 = 0;
++        for (bins, 0..) |count, i| {
++            sum += count;
++            if (sum >= threshold) return @as(f64, @floatFromInt(i)) / 100;
++        }
++        return maximum_ms; // Conservative upper bound for overflow bucket.
++    }
++
++    fn dump() void {
++        const dest = destination orelse return;
++        var storage: [1024]u8 = undefined;
++        const data = std.fmt.bufPrint(
++            &storage,
++            "{{\"metric\":\"ghostty_gpu_command_buffer_ms\",\"valid\":{d},\"invalid\":{d},\"errors\":{d},\"overflow_gt_100ms\":{d},\"bin_width_ms\":0.01,\"p50_upper_ms\":{d:.4},\"p95_upper_ms\":{d:.4},\"max_ms\":{d:.4}}}\n",
++            .{ valid, invalid, errors, overflow, percentile(50), percentile(95), maximum_ms },
++        ) catch return;
++        const file = fopen(dest, "w") orelse return;
++        defer _ = fclose(file);
++        _ = fwrite(data.ptr, 1, data.len, file);
++    }
++
++    fn atExit() callconv(.c) void {
++        lock();
++        defer unlock();
++        dump();
++    }
++};
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1176,6 +1176,10 @@
+ GHOSTTY_API void ghostty_surface_update_config(ghostty_surface_t, ghostty_config_t);
+ GHOSTTY_API bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
+ GHOSTTY_API bool ghostty_surface_process_exited(ghostty_surface_t);
++// ADE prototype extensions. UI-thread only. Snapshot must precede ordered feeds.
++GHOSTTY_API bool ghostty_surface_restore_snapshot(ghostty_surface_t, const uint8_t*, size_t);
++GHOSTTY_API bool ghostty_surface_feed_output(ghostty_surface_t, const uint8_t*, size_t);
++GHOSTTY_API bool ghostty_surface_resize_terminal(ghostty_surface_t, uint16_t cols, uint16_t rows);
+ GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_draw(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+--- a/src/font/SharedGrid.zig
++++ b/src/font/SharedGrid.zig
+@@ -38,6 +38,10 @@
+ 
+ const log = std.log.scoped(.font_shared_grid);
+ 
++// ADE: successful shared-cache entries are immutable for a grid's lifetime.
++// Keep a bounded copy per thread to avoid a shared atomic lock for every cell.
++// A unique lifetime id prevents stale hits when an allocator reuses a grid address.
++cache_id: u64,
+ /// Cache for codepoints to font indexes in a group.
+ codepoints: std.AutoHashMapUnmanaged(CodepointKey, ?Collection.Index) = .{},
+ 
+@@ -62,6 +66,18 @@
+ /// callers can use this lock directly, maintainers need to be extra careful
+ /// to review call sites to ensure they are using the lock correctly.
+ lock: std.Io.RwLock,
++
++var next_cache_id: std.atomic.Value(u64) = .init(1);
++threadlocal var local_codepoints: [256]struct {
++    grid_id: u64 = 0,
++    key: CodepointKey = undefined,
++    value: ?Collection.Index = undefined,
++} = @splat(.{});
++threadlocal var local_glyphs: [256]struct {
++    grid_id: u64 = 0,
++    key: u64 = 0,
++    value: Render = undefined,
++} = @splat(.{});
+ 
+ pub const init_tw = tripwire.module(enum {
+     codepoints_capacity,
+@@ -95,6 +111,7 @@
+     errdefer atlas_color.deinit(alloc);
+ 
+     var result: SharedGrid = .{
++        .cache_id = next_cache_id.fetchAdd(1, .monotonic),
+         .resolver = resolver,
+         .atlas_grayscale = atlas_grayscale,
+         .atlas_color = atlas_color,
+@@ -154,6 +171,21 @@
+ /// loading the font in this function we can ensure thread-safety on the
+ /// load without complicating future calls.
+ pub fn getIndex(
++    self: *SharedGrid,
++    alloc: Allocator,
++    cp: u32,
++    style: Style,
++    p: ?Presentation,
++) !?Collection.Index {
++    const key: CodepointKey = .{ .style = style, .codepoint = cp, .presentation = p };
++    const slot = &local_codepoints[cp % local_codepoints.len];
++    if (slot.grid_id == self.cache_id and std.meta.eql(slot.key, key)) return slot.value;
++    const value = try self.getIndexShared(alloc, cp, style, p);
++    slot.* = .{ .grid_id = self.cache_id, .key = key, .value = value };
++    return value;
++}
++
++fn getIndexShared(
+     self: *SharedGrid,
+     alloc: Allocator,
+     cp: u32,
+@@ -383,6 +415,22 @@
+     glyph_index: u32,
+     opts: RenderOptions,
+ ) RenderGlyphError!Render {
++    const key = GlyphKey.Packed.from(.{ .index = index, .glyph = glyph_index, .opts = opts });
++    const bits: u64 = @bitCast(key);
++    const slot = &local_glyphs[std.hash.int(bits) % local_glyphs.len];
++    if (slot.grid_id == self.cache_id and slot.key == bits) return slot.value;
++    const value = try self.renderGlyphShared(alloc, index, glyph_index, opts);
++    slot.* = .{ .grid_id = self.cache_id, .key = bits, .value = value };
++    return value;
++}
++
++fn renderGlyphShared(
++    self: *SharedGrid,
++    alloc: Allocator,
++    index: Collection.Index,
++    glyph_index: u32,
++    opts: RenderOptions,
++) RenderGlyphError!Render {
+     const tw = renderGlyph_tw;
+ 
+     const key: GlyphKey = .{ .index = index, .glyph = glyph_index, .opts = opts };
+@@ -662,3 +710,36 @@
+         );
+     }
+ }
++
++test "ADE local font cache matches shared lookups and survives grid replacement" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    var lib = try Library.init(alloc);
++    defer lib.deinit();
++    var grid = try testGrid(.normal, alloc, lib);
++    const old_id = grid.cache_id;
++    _ = try grid.getIndex(alloc, 'A', .regular, null);
++    grid.deinit(alloc);
++    // Reuse exactly the same address; lifetime identity must reject TLS hits.
++    grid = try testGrid(.normal, alloc, lib);
++    defer grid.deinit(alloc);
++    try testing.expect(grid.cache_id != old_id);
++    _ = try grid.getIndex(alloc, 'A', .regular, null);
++    try testing.expect(grid.codepoints.count() > 0);
++    // Colliding direct-map slots, styles, missing codepoints, and repeated hits.
++    for ([_]u32{ 'A', 'A' + 256, 0x10ffff, 'A' }) |cp| {
++        for ([_]Style{ .regular, .bold }) |style| {
++            const expected = try grid.getIndexShared(alloc, cp, style, null);
++            try testing.expectEqual(expected, try grid.getIndex(alloc, cp, style, null));
++            try testing.expectEqual(expected, try grid.getIndex(alloc, cp, style, null));
++        }
++    }
++    const idx = (try grid.getIndex(alloc, 'A', .regular, null)).?;
++    const face = try grid.resolver.collection.getFace(idx);
++    const glyph = face.glyphIndex('A').?;
++    const opts: RenderOptions = .{ .grid_metrics = grid.metrics };
++    const expected = try grid.renderGlyphShared(alloc, idx, glyph, opts);
++    try testing.expectEqualDeep(expected, try grid.renderGlyph(alloc, idx, glyph, opts));
++    try grid.atlas_grayscale.grow(alloc, grid.atlas_grayscale.size * 2);
++    try testing.expectEqualDeep(expected, try grid.renderGlyph(alloc, idx, glyph, opts));
++}

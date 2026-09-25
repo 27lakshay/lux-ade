@@ -1,0 +1,24 @@
+{
+  "sources": {
+    "gpui-kit": {
+      "url": "https://codeload.github.com/longbridge/gpui-kit/tar.gz/ce9267130ae030db4fc3bdec263212a0ab16045c",
+      "sha256": "325cbf109a0135fdc4cef829bea0e0ae1ccb1f20ab6c3a0291d7a98ba8d24cfc",
+      "subdirectory": "gpui-kit-ce9267130ae030db4fc3bdec263212a0ab16045c"
+    },
+    "gpui-pre-macos": {
+      "url": "https://static.crates.io/crates/gpui-pre-macos/gpui-pre-macos-0.3.6.crate",
+      "sha256": "951d17e41a72067ad2d35c60e08a62e8ad7fa9400b41c802e26cfb459f6c05da",
+      "subdirectory": "gpui-pre-macos-0.3.6"
+    },
+    "libghostty-vt": {
+      "url": "https://codeload.github.com/herdrdev/herdr/tar.gz/9c96f7ddb3be2cc575a159d4d1f1d49fb10d7006",
+      "sha256": "1b4023753e6420072a3836f33318d807b3387e6940a10ad996ff84880645d070",
+      "subdirectory": "herdr-9c96f7ddb3be2cc575a159d4d1f1d49fb10d7006/vendor/libghostty-vt"
+    }
+  },
+  "zig": {
+    "url": "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz",
+    "sha256": "b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489",
+    "subdirectory": "zig-aarch64-macos-0.16.0"
+  }
+}

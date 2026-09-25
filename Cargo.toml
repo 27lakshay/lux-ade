@@ -1,0 +1,16 @@
+[workspace]
+members = ["crates/ade-core", "crates/ade-client", "crates/ade-daemon", "crates/ade-runtime", "crates/ade-platform"]
+default-members = ["crates/ade-core", "crates/ade-daemon"]
+exclude = [".ade"]
+resolver = "3"
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+opt-level = 2
+debug = 1
+strip = "none"
+
+[patch.crates-io]
+gpui-pre-macos = { path = ".ade/vendor/gpui-pre-macos" }

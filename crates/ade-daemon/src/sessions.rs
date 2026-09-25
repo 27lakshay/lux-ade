@@ -1,0 +1,1648 @@
+//! Daemon-owned durable Conversations attached to supervisor-owned Agent processes.
+//! Identity follows Paseo; interrupted execution follows opencode's write-ahead
+//! claim; provider protocol handling follows T3 Code. Windows never author process state.
+use crate::services::ServiceExt;
+use crate::{
+    agent_runtime::{Envelope, Remote, Spec},
+    model::*,
+    provider::{self, Event, Provider},
+    runtime::Supervisor,
+    store::Store,
+};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use serde_json::{Value, json};
+use std::{
+    collections::HashMap,
+    path::Path,
+    process::Command,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
+};
+
+struct Agent {
+    run_id: String,
+    rpc: Option<Arc<dyn Provider>>,
+    submission: Option<String>,
+    _lease: crate::worktrees::Lease,
+}
+struct Data {
+    draining: bool,
+    store: Store,
+    agents: HashMap<String, Agent>,
+    terminal_leases: HashMap<String, crate::worktrees::Lease>,
+    subscribers: HashMap<String, mpsc::SyncSender<Value>>,
+    revision: u64,
+}
+pub struct Sessions {
+    pub review: Arc<crate::review::Review>,
+    pub worktrees: Arc<crate::worktrees::Worktrees>,
+    data: Mutex<Data>,
+    pub subscribers: Arc<AtomicUsize>,
+    pub boot_id: String,
+    runtime: Arc<Supervisor>,
+    queue_wake: mpsc::SyncSender<()>,
+}
+impl Sessions {
+    /// A bounded join key for local diagnostics; never expose the Conversation contents.
+    pub fn diagnostic_run(&self, id: &str) -> Option<String> {
+        let data = self.data.lock().ok()?;
+        let run = data.store.conversation(id).ok()?.runtime_run?;
+        ade_core::diagnostics::valid_run_id(&run).then_some(run)
+    }
+    pub fn open(path: &Path, runtime: Arc<Supervisor>) -> Result<Arc<Self>> {
+        let store = Store::open(path)?;
+        let (queue_wake, queue_rx) = mpsc::sync_channel(1);
+
+        let worktrees = crate::worktrees::Worktrees::open(&path.with_extension("worktrees"))?;
+        let review =
+            crate::review::Review::open(&path.with_extension("review.sqlite3"), worktrees.clone())?;
+        let sessions = Arc::new(Self {
+            runtime,
+            queue_wake,
+            worktrees,
+            review,
+            data: Mutex::new(Data {
+                draining: false,
+                store,
+                agents: HashMap::new(),
+                terminal_leases: HashMap::new(),
+                subscribers: HashMap::new(),
+                revision: 0,
+            }),
+            subscribers: Arc::new(AtomicUsize::new(0)),
+            boot_id: new_id("boot"),
+        });
+        sessions.restore()?;
+        let weak = Arc::downgrade(&sessions);
+        std::thread::spawn(move || {
+            loop {
+                if let Err(mpsc::RecvTimeoutError::Disconnected) =
+                    queue_rx.recv_timeout(std::time::Duration::from_secs(30))
+                {
+                    break;
+                }
+                let Some(hub) = weak.upgrade() else {
+                    break;
+                };
+                if let Err(error) = hub.dispatch_queued() {
+                    eprintln!("Prompt queue: {error}");
+                }
+            }
+        });
+        let _ = sessions.queue_wake.try_send(());
+        Ok(sessions)
+    }
+    fn dispatch_queued(self: &Arc<Self>) -> Result<()> {
+        let heads = {
+            let d = self.data.lock().unwrap();
+            if d.draining {
+                return Ok(());
+            }
+            d.store.queue_heads()?
+        };
+        for head in heads {
+            {
+                let d = self.data.lock().unwrap();
+                if !d.agents.contains_key(&head.conversation_id) && d.agents.len() >= 16 {
+                    continue;
+                }
+            }
+            if let Err(error) = self.send(
+                &head.conversation_id,
+                &head.id,
+                &head.text,
+                &head.attachments,
+                true,
+            ) {
+                let mut d = self.data.lock().unwrap();
+                if d.draining {
+                    return Ok(());
+                }
+                if !d.agents.contains_key(&head.conversation_id) && d.agents.len() >= 16 {
+                    continue;
+                }
+                let mut c = d.store.conversation(&head.conversation_id)?;
+                let current = d.store.queued(&c.id)?;
+                if matches!(c.status.as_str(), "idle" | "ready")
+                    && !c.queue_paused
+                    && current
+                        .first()
+                        .is_some_and(|item| item.id == head.id && item.text == head.text)
+                {
+                    c.queue_paused = true;
+                    c.error = Some(format!("Prompt queue paused: {error}"));
+                    d.store.commit_conversation(&c, &[], &[])?;
+                    self.changed(&mut d, &c, &[])?;
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn prepare_restart(&self) -> Result<()> {
+        let mut d = self.data.lock().unwrap();
+        for id in d.agents.keys() {
+            let c = d.store.conversation(id)?;
+            ensure!(
+                !matches!(c.status.as_str(), "starting" | "cancelling")
+                    && !d
+                        .store
+                        .pending(id)?
+                        .iter()
+                        .any(|request| request.status == "responding"),
+                "An Agent command is still being admitted; retry shortly"
+            );
+        }
+        d.draining = true;
+        Ok(())
+    }
+    pub fn abort_restart(&self) {
+        self.data.lock().unwrap().draining = false;
+        let _ = self.queue_wake.try_send(());
+    }
+    fn restore(self: &Arc<Self>) -> Result<()> {
+        // Retire only identity-checked terminal attachments from older builds.
+        // Ordinary shell terminals and services are independent of Conversations.
+        let conversations = self.data.lock().unwrap().store.catalog()?.conversations;
+        for c in conversations {
+            if c.view_terminal.is_some() || c.terminal_owner.is_some() {
+                self.clear_view_terminal(&c.id)?;
+            }
+        }
+        let response = self.runtime.agent(json!({"op":"agent.list"}))?;
+        let mut live = std::collections::HashSet::new();
+        let mut runs = Vec::new();
+        {
+            let mut d = self.data.lock().unwrap();
+            for w in d.store.catalog()?.workspaces {
+                for service in d.store.services(&w.id)? {
+                    if let Some(owner) = service.terminal_owner {
+                        d.terminal_leases
+                            .insert(owner.terminal_id, self.worktrees.lease(&w.root)?);
+                    }
+                }
+            }
+            for c in d.store.catalog()?.conversations {
+                if c.terminal_owner.is_some() {
+                    let w = d.store.workspace(&c.workspace_id)?;
+                    d.terminal_leases
+                        .insert(c.id, self.worktrees.lease(&w.root)?);
+                }
+            }
+            for record in response["agents"]
+                .as_array()
+                .context("Invalid Agent catalogue")?
+            {
+                let spec: Spec = serde_json::from_value(record["spec"].clone())?;
+                let c = d.store.conversation(&spec.conversation)?;
+                let w = d.store.workspace(&c.workspace_id)?;
+                ensure!(
+                    c.runtime_run.as_deref() == Some(&spec.run)
+                        && c.provider == spec.provider
+                        && w.root == spec.root,
+                    "Runtime Agent does not match its durable Conversation; preserve the runtime for recovery"
+                );
+                if c.terminal_owner.is_some() {
+                    continue;
+                }
+                let lease = self.worktrees.lease(&w.root)?;
+                live.insert(c.id.clone());
+                d.agents.insert(
+                    c.id.clone(),
+                    Agent {
+                        run_id: spec.run.clone(),
+                        rpc: None,
+                        submission: c.runtime_submission.clone(),
+                        _lease: lease,
+                    },
+                );
+                runs.push((spec, record["commands"].clone()));
+            }
+            d.store.recover_except(&live)?;
+        }
+        for (spec, commands) in runs {
+            let result = self.attach_agent(&spec.conversation, &spec.run, true);
+            match result {
+                Ok(_) => {
+                    let d = self.data.lock().unwrap();
+                    let mut c = d.store.conversation(&spec.conversation)?;
+                    // A durable intent alone is not proof that the runtime admitted a send.
+                    if c.status == "starting"
+                        && c.active_turn_id.is_none()
+                        && c.runtime_submission.as_ref().is_some_and(|s| {
+                            !commands
+                                .as_array()
+                                .unwrap()
+                                .contains(&json!(format!("send:{s}")))
+                        })
+                    {
+                        c.status = "interrupted".into();
+                        // Reconnecting must not silently skip this unconfirmed
+                        // instruction and dispatch the next queued prompt.
+                        c.queue_paused = true;
+                        c.error = Some("Daemon stopped before prompt delivery was confirmed. The prompt was not resent; review it before continuing the queue.".into());
+                    }
+                    if c.status == "starting" && c.runtime_submission.is_none() {
+                        c.status = "ready".into();
+                    }
+                    if c.status == "cancelling"
+                        && c.active_turn_id.as_ref().is_some_and(|t| {
+                            !commands
+                                .as_array()
+                                .unwrap()
+                                .contains(&json!(format!("cancel:{t}")))
+                        })
+                    {
+                        c.status = "running".into();
+                        c.error = Some("Cancellation was not delivered before daemon loss; cancel again if needed.".into());
+                    }
+                    let mut requests = d.store.pending(&c.id)?;
+                    for p in &mut requests {
+                        if p.status == "responding"
+                            && !commands
+                                .as_array()
+                                .unwrap()
+                                .contains(&json!(format!("answer:{}", p.id)))
+                        {
+                            p.status = "pending".into();
+                        }
+                    }
+                    d.store.commit_conversation(&c, &[], &requests)?;
+                }
+                Err(e) => self.fail(&spec.conversation, &spec.run, e.to_string()),
+            }
+        }
+        Ok(())
+    }
+    pub fn connected_agents(&self) -> usize {
+        self.data.lock().unwrap().agents.len()
+    }
+    pub fn workspace(&self, id: &str) -> Result<WorkspaceRecord> {
+        self.data.lock().unwrap().store.workspace(id)
+    }
+    pub fn terminal_reserved(&self, terminal: &str) -> Result<bool> {
+        self.data.lock().unwrap().store.terminal_reserved(terminal)
+    }
+    pub fn retire_terminal(&self, workspace: &str, terminal: &str) -> Result<()> {
+        let mut d = self.data.lock().unwrap();
+        ensure!(
+            !d.store.terminal_reserved(terminal)?,
+            "Remove its service, or return the Conversation to the GUI before retiring this terminal"
+        );
+        d.store.retire_terminal(workspace, terminal)?;
+        self.catalog_changed(&mut d)
+    }
+    pub fn open_workspace(&self, path: &str) -> Result<WorkspaceRecord> {
+        let root = std::fs::canonicalize(path).context("Workspace directory is unavailable")?;
+        ensure!(root.is_dir(), "Workspace must be a directory");
+        let root = root
+            .to_str()
+            .ok_or_else(|| anyhow!("Workspace path must be UTF-8"))?;
+        // A Git common directory identifies one repository across its worktrees.
+        // No worktree is created, moved, pruned, or removed by this operation.
+        let repo = Command::new("git")
+            .args([
+                "-C",
+                root,
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_owned());
+        let mut d = self.data.lock().unwrap();
+        let w = d.store.workspace_open(root, repo.as_deref())?;
+        self.catalog_changed(&mut d)?;
+        Ok(w)
+    }
+    fn publish(&self, d: &mut Data, mut event: Value) {
+        d.revision += 1;
+        event["revision"] = json!(d.revision);
+        event["boot_id"] = json!(self.boot_id);
+        d.subscribers
+            .retain(|_, tx| tx.try_send(event.clone()).is_ok());
+        self.subscribers
+            .store(d.subscribers.len(), Ordering::Relaxed);
+    }
+    fn catalog_changed(&self, d: &mut Data) -> Result<()> {
+        let catalog = d.store.catalog()?;
+        self.publish(
+            d,
+            json!({"type":"catalog","catalog":catalog,"providers":provider::descriptors()}),
+        );
+        Ok(())
+    }
+    fn changed(&self, d: &mut Data, c: &Conversation, messages: &[Message]) -> Result<()> {
+        let requests: Vec<_> = d
+            .store
+            .pending(&c.id)?
+            .into_iter()
+            .filter(|r| r.status == "pending")
+            .collect();
+        crate::bench::agent_messages("provider_to_durable_us", messages);
+        let queued = d.store.queued(&c.id)?;
+        self.publish(d,json!({"type":"conversation_changed","conversation":c,"messages":messages,"requests":requests,"queued":queued}));
+        let _ = self.queue_wake.try_send(());
+        Ok(())
+    }
+    pub fn subscribe(&self) -> Result<(String, mpsc::Receiver<Value>)> {
+        let (tx, rx) = mpsc::sync_channel(128);
+        let id = new_id("subscriber");
+        let mut d = self.data.lock().unwrap();
+        tx.send(json!({"type":"catalog","catalog":d.store.catalog()?,"providers":provider::descriptors(),"boot_id":self.boot_id,"revision":d.revision}))?;
+        d.subscribers.insert(id.clone(), tx);
+        self.subscribers
+            .store(d.subscribers.len(), Ordering::Relaxed);
+        Ok((id, rx))
+    }
+    pub fn unsubscribe(&self, id: &str) {
+        let mut d = self.data.lock().unwrap();
+        d.subscribers.remove(id);
+        self.subscribers
+            .store(d.subscribers.len(), Ordering::Relaxed);
+    }
+    pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
+        let string = |key: &str| {
+            request[key]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("Missing {key}"))
+        };
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("worktree."))
+        {
+            return self.worktrees.command(request);
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("review."))
+        {
+            let workspace = self.workspace(string("workspace_id")?)?;
+            return self.review.command(&workspace.root, request);
+        }
+        match request["op"].as_str().unwrap_or("") {
+            "attachment.import" | "attachment.put" => {
+                use base64::Engine;
+                use std::io::Read;
+                let (name, bytes) = if request["op"] == "attachment.import" {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let path = std::path::Path::new(string("path")?);
+                    let file = std::fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(path)?;
+                    ensure!(file.metadata()?.is_file(), "Attach a regular file");
+                    let mut bytes = Vec::new();
+                    file.take(crate::prompt::ATTACHMENT_LIMIT as u64 + 1)
+                        .read_to_end(&mut bytes)?;
+                    (
+                        path.file_name()
+                            .and_then(|n| n.to_str())
+                            .context("Invalid file name")?
+                            .to_owned(),
+                        bytes,
+                    )
+                } else {
+                    let bytes =
+                        base64::engine::general_purpose::STANDARD.decode(string("data")?)?;
+                    (string("name")?.to_owned(), bytes)
+                };
+                let attachment = self.data.lock().unwrap().store.attach(
+                    string("conversation_id")?,
+                    string("request_id")?,
+                    &name,
+                    &bytes,
+                )?;
+                Ok(json!({"type":"attachment","attachment":attachment}))
+            }
+            "service.start" => self.start_service(string("workspace_id")?, string("name")?),
+            "service.stop" => self.stop_service(string("workspace_id")?, string("name")?),
+            "service.list" => {
+                let services = self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .services(string("workspace_id")?)?;
+                let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
+                let terminals = terminals["terminals"]
+                    .as_array()
+                    .context("Invalid terminal catalogue")?;
+                let states = services
+                    .iter()
+                    .map(|service| {
+                        let terminal = service.terminal_id.as_ref().and_then(|id| {
+                            terminals
+                                .iter()
+                                .find(|t| t["workspace"]["terminal_id"] == *id)
+                        });
+                        let state = match &service.terminal_owner {
+                            None => "stopped",
+                            Some(owner) if owner.runtime_instance != self.runtime.instance => {
+                                "unavailable"
+                            }
+                            Some(owner) => match terminal {
+                                Some(t) if t["metrics"]["transfer_id"] == owner.transfer_id => {
+                                    if t["metrics"]["shell_running"] == true {
+                                        "running"
+                                    } else {
+                                        "exited"
+                                    }
+                                }
+                                _ => "unavailable",
+                            },
+                        };
+                        (
+                            service.name.clone(),
+                            json!({"state":state,"metrics":terminal.map(|t| t["metrics"].clone())}),
+                        )
+                    })
+                    .collect::<serde_json::Map<String, Value>>();
+                Ok(json!({"type":"services","services":services,"states":states}))
+            }
+            "service.configure" => {
+                let config = serde_json::from_value(request["config"].clone())?;
+                let d = self.data.lock().unwrap();
+                ensure!(!d.draining, "Application daemon is restarting");
+                let service = d.store.configure_service(
+                    string("workspace_id")?,
+                    string("name")?,
+                    request["revision"]
+                        .as_i64()
+                        .context("Missing service revision")?,
+                    config,
+                )?;
+                Ok(json!({"type":"service", "service":service}))
+            }
+            "service.remove" => {
+                let mut d = self.data.lock().unwrap();
+                ensure!(!d.draining, "Application daemon is restarting");
+                let workspace = string("workspace_id")?;
+                let name = string("name")?;
+                let revision = request["revision"]
+                    .as_i64()
+                    .context("Missing service revision")?;
+                if let Some(service) = d
+                    .store
+                    .services(workspace)?
+                    .into_iter()
+                    .find(|s| s.name == name)
+                {
+                    ensure!(
+                        service.terminal_owner.is_none(),
+                        "Stop the service before removing it"
+                    );
+                    ensure!(
+                        service.revision == revision,
+                        "Service changed; reload before removing"
+                    );
+                    if let Some(terminal) = service.terminal_id {
+                        self.runtime.command(json!({"op":"terminal.retire","workspace_id":workspace,"terminal_id":terminal}))?;
+                    }
+                }
+                d.store.remove_service(workspace, name, revision)?;
+                self.catalog_changed(&mut d)?;
+                Ok(json!({"type":"ack"}))
+            }
+            "provider.list" => Ok(provider::catalogue()),
+            "catalog.get" => Ok(
+                json!({"type":"catalog","catalog":self.data.lock().unwrap().store.catalog()?,"providers":provider::descriptors(),"boot_id":self.boot_id}),
+            ),
+            "workspace.open" => {
+                Ok(json!({"type":"ack","workspace":self.open_workspace(string("path")?)?}))
+            }
+            "terminal.create" => {
+                let mut d = self.data.lock().unwrap();
+                let terminal = d.store.create_terminal(string("workspace_id")?)?;
+                self.catalog_changed(&mut d)?;
+                Ok(json!({"type":"ack", "terminal_id":terminal}))
+            }
+            "conversation.create" => {
+                let mut d = self.data.lock().unwrap();
+                let title = request["title"].as_str().unwrap_or("New Conversation");
+                ensure!(title.len() <= 256, "Title is too long");
+                let c = d.store.create_with_provider(
+                    string("workspace_id")?,
+                    title,
+                    request["provider"].as_str().unwrap_or("codex"),
+                    serde_json::from_value(
+                        request
+                            .get("provider_config")
+                            .cloned()
+                            .unwrap_or_else(|| json!({})),
+                    )?,
+                )?;
+                self.catalog_changed(&mut d)?;
+                Ok(json!({"type":"ack","conversation":c}))
+            }
+            "conversation.get" => {
+                let d = self.data.lock().unwrap();
+                let id = string("conversation_id")?;
+                Ok(
+                    json!({"type":"conversation_snapshot","conversation":d.store.conversation(id)?,"messages":d.store.messages(id,request["before"].as_i64(),request["limit"].as_u64().unwrap_or(50) as usize)?,"requests":d.store.pending(id)?,"queued":d.store.queued(id)?,"boot_id":self.boot_id,"revision":d.revision}),
+                )
+            }
+            "agent.child_transcript" => {
+                let id = string("conversation_id")?;
+                let child = string("child_id")?;
+                let offset = request["offset"].as_u64().unwrap_or(0);
+                ensure!(offset <= 100_000, "Child transcript offset is too large");
+                let cursor = request["cursor"].as_str();
+                ensure!(
+                    cursor.is_none_or(|c| !c.is_empty() && c.len() <= 4096),
+                    "Invalid child transcript cursor"
+                );
+                let (rpc, session) = {
+                    let d = self.data.lock().unwrap();
+                    let c = d.store.conversation(id)?;
+                    let message = d
+                        .store
+                        .message(string("message_id")?)?
+                        .context("Child record is unavailable")?;
+                    ensure!(
+                        message.conversation_id == id,
+                        "Child record belongs to another Conversation"
+                    );
+                    ensure!(
+                        matches!(&message.content, Some(crate::transcript::Content::Subagents { agents, .. }) if agents.iter().any(|a| a.id == child)),
+                        "Child is not in this record"
+                    );
+                    let agent = d
+                        .agents
+                        .get(id)
+                        .context("Connect the parent Agent before reading its child transcript")?;
+                    (
+                        agent
+                            .rpc
+                            .clone()
+                            .context("Parent Agent is still connecting")?,
+                        c.provider_thread_id
+                            .context("Parent session is unavailable")?,
+                    )
+                };
+                rpc.child_transcript(&session, child, offset, cursor)
+            }
+            "draft.get" => Ok(
+                json!({"type":"draft","draft":self.data.lock().unwrap().store.draft(string("conversation_id")?,string("window_id")?)?}),
+            ),
+            "draft.save" => {
+                let draft = crate::model::Draft {
+                    attachments: serde_json::from_value(
+                        request.get("attachments").cloned().unwrap_or(json!([])),
+                    )?,
+                    text: request["text"]
+                        .as_str()
+                        .context("Missing draft text")?
+                        .into(),
+                    revision: request["revision"]
+                        .as_i64()
+                        .context("Missing draft revision")?,
+                };
+                let data = self.data.lock().unwrap();
+                let conversation = string("conversation_id")?;
+                let window = string("window_id")?;
+                // Explicit conflict resolution must not overwrite a third writer
+                // that saved after the user reviewed the conflicting draft.
+                let saved = if let Some(expected) = request["expected_revision"].as_i64() {
+                    data.store
+                        .resolve_draft(conversation, window, &draft, expected)
+                } else {
+                    data.store.save_draft(conversation, window, &draft)
+                };
+                Ok(json!({"type":"draft","draft":persistence_result(saved)?}))
+            }
+            "agent.send" => {
+                self.send(
+                    string("conversation_id")?,
+                    string("request_id")?,
+                    request["text"].as_str().context("Missing prompt text")?,
+                    &serde_json::from_value::<Vec<crate::model::Attachment>>(
+                        request.get("attachments").cloned().unwrap_or(json!([])),
+                    )?,
+                    false,
+                )?;
+                Ok(json!({"type":"ack"}))
+            }
+            "queue.enqueue" | "queue.cancel" | "queue.pause" => {
+                let mut d = self.data.lock().unwrap();
+                let id = string("conversation_id")?;
+                let mut c = d.store.conversation(id)?;
+                match request["op"].as_str().unwrap() {
+                    "queue.enqueue" => d.store.enqueue_content(
+                        id,
+                        string("request_id")?,
+                        request["text"].as_str().context("Missing prompt text")?,
+                        &serde_json::from_value::<Vec<crate::model::Attachment>>(
+                            request.get("attachments").cloned().unwrap_or(json!([])),
+                        )?,
+                    )?,
+                    "queue.cancel" => d.store.cancel_queued(id, string("request_id")?)?,
+                    _ => {
+                        c.queue_paused =
+                            request["paused"].as_bool().context("Missing paused flag")?;
+                        ensure!(
+                            c.queue_paused || c.terminal_owner.is_none(),
+                            "Return this Conversation from its terminal before unpausing"
+                        );
+                        if c.error
+                            .as_deref()
+                            .is_some_and(|message| message.starts_with("Prompt queue paused:"))
+                        {
+                            c.error = None;
+                        }
+                        if !c.queue_paused
+                            && c.provider_thread_id.is_none()
+                            && !d.agents.contains_key(id)
+                            && matches!(c.status.as_str(), "error" | "interrupted" | "disconnected")
+                        {
+                            c.status = "idle".into();
+                        }
+                        d.store.commit_conversation(&c, &[], &[])?;
+                    }
+                }
+                self.changed(&mut d, &c, &[])?;
+                Ok(json!({"type":"ack"}))
+            }
+            "agent.disconnect" => {
+                let id = string("conversation_id")?;
+                let mut d = self.data.lock().unwrap();
+                let mut c = d.store.conversation(id)?;
+                ensure!(
+                    c.terminal_owner.is_none(),
+                    "Return this Conversation from its terminal before disconnecting"
+                );
+                ensure!(
+                    !matches!(
+                        c.status.as_str(),
+                        "starting" | "running" | "waiting" | "cancelling"
+                    ),
+                    "Cancel the active turn before disconnecting"
+                );
+                if let Some(rpc) = d.agents.get(id).and_then(|agent| agent.rpc.as_ref()) {
+                    rpc.stop_confirmed()?;
+                }
+                d.agents.remove(id);
+                c.status = "disconnected".into();
+                c.updated_at = now_ms();
+                d.store.commit_conversation(&c, &[], &[])?;
+                self.changed(&mut d, &c, &[])?;
+                Ok(json!({"type":"ack"}))
+            }
+            "agent.resume" => {
+                self.resume(string("conversation_id")?)?;
+                Ok(json!({"type":"ack"}))
+            }
+            "agent.cancel" => {
+                self.cancel(string("conversation_id")?)?;
+                Ok(json!({"type":"ack"}))
+            }
+            "agent.answer" => {
+                self.answer(
+                    string("conversation_id")?,
+                    string("request_id")?,
+                    string("decision")?,
+                    request.get("answers"),
+                )?;
+                Ok(json!({"type":"ack"}))
+            }
+            "window.save" => {
+                let window: WindowRecord = serde_json::from_value(request["window"].clone())?;
+                let d = self.data.lock().unwrap();
+                persistence_result(d.store.save_window(&window))?;
+                // Layout acknowledgements do not refresh all other windows.
+                Ok(json!({"type":"ack"}))
+            }
+            "window.close" => {
+                self.data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .close_window(string("window_id")?)?;
+                Ok(json!({"type":"ack"}))
+            }
+            _ => bail!("Unknown session operation"),
+        }
+    }
+    fn clear_view_terminal(&self, id: &str) -> Result<()> {
+        let c = self.data.lock().unwrap().store.conversation(id)?;
+        let Some(owner) = c.view_terminal.clone().or(c.terminal_owner.clone()) else {
+            return Ok(());
+        };
+        if owner.runtime_instance == self.runtime.instance {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut stopped = false;
+            loop {
+                let state = self.runtime.command(json!({"op":"terminal.list"}))?;
+                let terminal = state["terminals"]
+                    .as_array()
+                    .context("Invalid terminal catalogue")?
+                    .iter()
+                    .find(|t| t["workspace"]["terminal_id"] == owner.terminal_id);
+                let Some(terminal) = terminal else { break };
+                ensure!(
+                    terminal["metrics"]["transfer_id"] == owner.transfer_id,
+                    "Terminal view ownership changed"
+                );
+                if terminal["metrics"]["shell_running"] == false {
+                    self.runtime.command(json!({"op":"terminal.retire","workspace_id":c.workspace_id,"terminal_id":owner.terminal_id}))?;
+                    break;
+                }
+                if !stopped {
+                    self.runtime.command(json!({"op":"terminal.stop","workspace_id":c.workspace_id,"terminal_id":owner.terminal_id}))?;
+                    stopped = true;
+                }
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "Terminal view is still stopping; retry resume"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        let mut d = self.data.lock().unwrap();
+        let mut current = d.store.conversation(id)?;
+        ensure!(
+            current
+                .view_terminal
+                .as_ref()
+                .or(current.terminal_owner.as_ref())
+                == Some(&owner),
+            "Terminal view changed during recovery"
+        );
+        current.view_terminal = None;
+        if current.terminal_owner.take().is_some() {
+            current.status = "disconnected".into();
+            current.runtime_run = None;
+            current.runtime_submission = None;
+            current.runtime_cursor = 0;
+            current.error = None;
+        }
+        d.store.commit_conversation(&current, &[], &[])?;
+        d.store
+            .retire_terminal(&c.workspace_id, &owner.terminal_id)?;
+        self.catalog_changed(&mut d)?;
+        self.changed(&mut d, &current, &[])?;
+        Ok(())
+    }
+    fn start_service(&self, workspace: &str, name: &str) -> Result<Value> {
+        let mut d = self.data.lock().unwrap();
+        ensure!(!d.draining, "Application daemon is restarting");
+        let mut w = d.store.workspace(workspace)?;
+        let before = d.store.service(workspace, name)?;
+        let lease = self.worktrees.agent_lease(&w.root)?;
+        if before.terminal_owner.is_none() {
+            before.config.directory(&w.root)?;
+            before.check_ports()?;
+            if let Some(terminal) = &before.terminal_id {
+                self.runtime.command(
+                    json!({"op":"terminal.retire","workspace_id":workspace,"terminal_id":terminal}),
+                )?;
+            }
+        }
+        let service = d
+            .store
+            .reserve_service(workspace, name, &self.runtime.instance)?;
+        let owner = service.terminal_owner.as_ref().unwrap();
+        ensure!(
+            owner.runtime_instance == self.runtime.instance,
+            "Service supervisor was replaced; stop the service before starting a new run"
+        );
+        d.terminal_leases.insert(owner.terminal_id.clone(), lease);
+        self.catalog_changed(&mut d)?;
+        let launch = service.launch(&w.root)?;
+        w.terminal_id = owner.terminal_id.clone();
+        let result = self.runtime.command(json!({"op":"terminal.launch","workspace":w,"terminal_key":owner.terminal_id,"launch":launch,"session_subscribers":self.subscribers.load(Ordering::Relaxed)}))?;
+        self.publish(
+            &mut d,
+            json!({"type":"service_changed","service":service,"metrics":result["metrics"]}),
+        );
+        Ok(
+            json!({"type":"service","service":service,"terminal_id":owner.terminal_id,"metrics":result["metrics"]}),
+        )
+    }
+    fn stop_service(&self, workspace: &str, name: &str) -> Result<Value> {
+        let owner = {
+            let d = self.data.lock().unwrap();
+            ensure!(!d.draining, "Application daemon is restarting");
+            let service = d.store.service(workspace, name)?;
+            let Some(owner) = service.terminal_owner else {
+                return Ok(json!({"type":"service","service":service}));
+            };
+            owner
+        };
+        // Do not hold the application state lock while waiting for process reap.
+        // The durable reservation fences editing, removal and replacement runs.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut sent = false;
+        loop {
+            let state = self.runtime.command(json!({"op":"terminal.list"}))?;
+            let terminal = state["terminals"]
+                .as_array()
+                .context("Invalid terminal catalogue")?
+                .iter()
+                .find(|t| t["workspace"]["terminal_id"] == owner.terminal_id);
+            let Some(terminal) = terminal else {
+                break;
+            };
+            ensure!(
+                owner.runtime_instance == self.runtime.instance
+                    && terminal["metrics"]["transfer_id"] == owner.transfer_id,
+                "Service terminal ownership changed"
+            );
+            if terminal["metrics"]["shell_running"] == false {
+                break;
+            }
+            if !sent {
+                self.runtime.command(json!({"op":"terminal.stop","workspace_id":workspace,"terminal_id":owner.terminal_id}))?;
+                sent = true;
+            }
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "Service has not exited; retry stop to confirm cleanup"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let mut d = self.data.lock().unwrap();
+        ensure!(
+            !d.draining,
+            "Application daemon is restarting; retry service stop"
+        );
+        let current = d.store.service(workspace, name)?;
+        if current.terminal_owner.is_none() {
+            return Ok(json!({"type":"service","service":current}));
+        }
+        let service = d.store.release_service(workspace, name, &owner)?;
+        d.terminal_leases.remove(&owner.terminal_id);
+        self.publish(&mut d, json!({"type":"service_changed","service":service}));
+        Ok(json!({"type":"service","service":service}))
+    }
+    fn send(
+        self: &Arc<Self>,
+        id: &str,
+        key: &str,
+        text: &str,
+        attachments: &[crate::model::Attachment],
+        queued: bool,
+    ) -> Result<()> {
+        ensure!(text.len() <= 64 * 1024, "Prompt exceeds 64 KiB");
+        let (c, run, rpc, prompt) = {
+            let mut d = self.data.lock().unwrap();
+            ensure!(
+                !d.draining,
+                "Application daemon is restarting; prompt remains queued"
+            );
+            ensure!(
+                d.agents.contains_key(id) || d.agents.len() < 16,
+                "Limit of 16 connected Agents reached"
+            );
+            // Reconcile the provider history before accepting any new prompt after reconnect.
+            // An idempotent retry of an already accepted submission still succeeds.
+            if !d.agents.contains_key(id) && d.store.conversation(id)?.provider_thread_id.is_some()
+            {
+                let existing = d.store.message(key)?;
+                ensure!(
+                    existing.is_some_and(|m| m.conversation_id == id
+                        && m.role == "user"
+                        && m.text == text
+                        && m.attachments == attachments),
+                    "Resume this Conversation before sending another prompt"
+                );
+            }
+            let workspace = d.store.workspace(&d.store.conversation(id)?.workspace_id)?;
+            let lease = self.worktrees.agent_lease(&workspace.root)?;
+            let prompt = d.store.prompt(id, text, attachments)?;
+            let mut begin = d
+                .store
+                .begin_content_turn(id, key, text, attachments, queued)?;
+            if begin.duplicate {
+                return Ok(());
+            }
+            let run = d.agents.entry(id.into()).or_insert_with(|| Agent {
+                run_id: new_id("run"),
+                rpc: None,
+                submission: None,
+                _lease: lease,
+            });
+            run.submission = Some(key.into());
+            begin.conversation.runtime_run = Some(run.run_id.clone());
+            begin.conversation.runtime_submission = Some(key.into());
+            if run.rpc.is_none() {
+                begin.conversation.runtime_cursor = 0;
+            }
+            let result = (
+                begin.conversation.clone(),
+                run.run_id.clone(),
+                run.rpc.clone(),
+                prompt,
+            );
+            d.store.commit_conversation(&begin.conversation, &[], &[])?;
+            self.changed(&mut d, &begin.conversation, &[begin.message])?;
+            result
+        };
+        let hub = self.clone();
+        let key = key.to_owned();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                let rpc = match rpc {
+                    Some(rpc) => rpc,
+                    None => hub.connect_agent(&c.id, &run)?,
+                };
+                {
+                    let d = hub.data.lock().unwrap();
+                    ensure!(Self::owns(&d, &c.id, &run), "Agent was cancelled");
+                }
+                let thread = hub
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .conversation(&c.id)?
+                    .provider_thread_id
+                    .ok_or_else(|| anyhow!("Missing provider Conversation"))?;
+                let message_id = {
+                    let d = hub.data.lock().unwrap();
+                    ensure!(
+                        Self::owns(&d, &c.id, &run)
+                            && d.agents[&c.id].submission.as_deref() == Some(&key),
+                        "Agent submission was cancelled"
+                    );
+                    let mut message = d
+                        .store
+                        .message(&key)?
+                        .ok_or_else(|| anyhow!("Missing submission"))?;
+                    if message.provider_item_id.is_none() {
+                        message.provider_item_id = rpc.prepare_submission();
+                        let current = d.store.conversation(&c.id)?;
+                        d.store
+                            .commit_conversation(&current, &[message.clone()], &[])?;
+                    }
+                    message.provider_item_id
+                };
+                let turn = rpc.send(&thread, &key, message_id.as_deref(), &prompt)?;
+                let mut d = hub.data.lock().unwrap();
+                if !Self::owns(&d, &c.id, &run)
+                    || d.agents[&c.id].submission.as_deref() != Some(&key)
+                {
+                    return Ok(());
+                }
+                let mut current = d.store.conversation(&c.id)?;
+                // Notification may arrive before the RPC response. Never regress a completed turn.
+                if current.status == "starting" {
+                    current.status = "running".into();
+                    current.active_turn_id = Some(turn);
+                    current.updated_at = now_ms();
+                    d.store.commit_conversation(&current, &[], &[])?;
+                    hub.changed(&mut d, &current, &[])?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                hub.fail_if(&c.id, &run, error.to_string(), Some(&key));
+            }
+        });
+        Ok(())
+    }
+    fn resume(self: &Arc<Self>, id: &str) -> Result<()> {
+        let clear_view = {
+            let d = self.data.lock().unwrap();
+            !d.agents.contains_key(id) && d.store.conversation(id)?.view_terminal.is_some()
+        };
+        if clear_view {
+            self.clear_view_terminal(id)?;
+        }
+        let run = {
+            let mut d = self.data.lock().unwrap();
+            let mut c = d.store.conversation(id)?;
+            ensure!(
+                c.terminal_owner.is_none(),
+                "Return this Conversation from its terminal before resuming"
+            );
+            if let Some(agent) = d.agents.get(id) {
+                ensure!(
+                    agent.rpc.is_some()
+                        && !matches!(
+                            c.status.as_str(),
+                            "starting" | "running" | "waiting" | "cancelling"
+                        ),
+                    "Agent already has an active operation"
+                );
+                c.status = "ready".into();
+                c.error = None;
+                c.updated_at = now_ms();
+                d.store.commit_conversation(&c, &[], &[])?;
+                self.changed(&mut d, &c, &[])?;
+                return Ok(());
+            }
+            ensure!(d.agents.len() < 16, "Limit of 16 connected Agents reached");
+            let workspace = d.store.workspace(&c.workspace_id)?;
+            let lease = self.worktrees.agent_lease(&workspace.root)?;
+            c.status = "starting".into();
+            c.error = None;
+            c.updated_at = now_ms();
+            let run = new_id("run");
+            c.runtime_run = Some(run.clone());
+            c.runtime_cursor = 0;
+            c.runtime_submission = None;
+            d.store.commit_conversation(&c, &[], &[])?;
+            d.agents.insert(
+                id.into(),
+                Agent {
+                    run_id: run.clone(),
+                    rpc: None,
+                    submission: None,
+                    _lease: lease,
+                },
+            );
+            self.changed(&mut d, &c, &[])?;
+            run
+        };
+        let hub = self.clone();
+        let id = id.to_owned();
+        std::thread::spawn(move || match hub.connect_agent(&id, &run) {
+            Ok(_) => {
+                let result = (|| -> Result<()> {
+                    let mut d = hub.data.lock().unwrap();
+                    if !Self::owns(&d, &id, &run) {
+                        return Ok(());
+                    }
+                    let mut c = d.store.conversation(&id)?;
+                    if c.status == "starting" {
+                        c.status = "ready".into();
+                    }
+                    c.updated_at = now_ms();
+                    d.store.commit_conversation(&c, &[], &[])?;
+                    hub.changed(&mut d, &c, &[])
+                })();
+                if let Err(error) = result {
+                    hub.fail(&id, &run, error.to_string());
+                }
+            }
+            Err(error) => hub.fail(&id, &run, error.to_string()),
+        });
+        Ok(())
+    }
+    fn owns(d: &Data, id: &str, run: &str) -> bool {
+        d.agents.get(id).is_some_and(|a| a.run_id == run)
+    }
+    fn connect_agent(self: &Arc<Self>, id: &str, run: &str) -> Result<Arc<dyn Provider>> {
+        self.attach_agent(id, run, false)
+    }
+    fn attach_agent(
+        self: &Arc<Self>,
+        id: &str,
+        run: &str,
+        restore: bool,
+    ) -> Result<Arc<dyn Provider>> {
+        let (c, w) = {
+            let d = self.data.lock().unwrap();
+            ensure!(Self::owns(&d, id, run), "Agent was cancelled");
+            let c = d.store.conversation(id)?;
+            let w = d.store.workspace(&c.workspace_id)?;
+            (c, w)
+        };
+        ensure!(
+            Path::new(&w.root).is_dir(),
+            "Workspace directory is unavailable: {}",
+            w.root
+        );
+        let rpc = Remote::new(
+            self.runtime.clone(),
+            Spec {
+                conversation: id.into(),
+                run: run.into(),
+                provider: c.provider.clone(),
+                root: w.root,
+            },
+        );
+        if !restore {
+            rpc.create()?;
+        }
+        {
+            let mut d = self.data.lock().unwrap();
+            if !Self::owns(&d, id, run) {
+                rpc.stop();
+                bail!("Agent was cancelled");
+            }
+            d.agents.get_mut(id).unwrap().rpc = Some(rpc.clone());
+        }
+        let connected = if restore {
+            rpc.connected()?
+        } else {
+            rpc.open(c.provider_thread_id.as_deref(), &c.provider_config)?
+        };
+        {
+            let mut d = self.data.lock().unwrap();
+            ensure!(Self::owns(&d, id, run), "Agent was cancelled");
+            let mut current = d.store.conversation(id)?;
+            ensure!(
+                current
+                    .provider_thread_id
+                    .as_ref()
+                    .is_none_or(|id| id == &connected.session),
+                "Runtime provider identity changed"
+            );
+            let needs_history = !restore || current.provider_thread_id.is_none();
+            current.provider_thread_id = Some(connected.session);
+            current.error = None;
+            current.updated_at = now_ms();
+            let messages: Vec<_> = if needs_history {
+                connected
+                    .history
+                    .iter()
+                    .map(|item| item.message(id))
+                    .collect()
+            } else {
+                vec![]
+            };
+            d.store.commit_conversation(&current, &messages, &[])?;
+            self.publish(
+                &mut d,
+                json!({"type":"conversation_reload","conversation":current}),
+            );
+        }
+        let hub = Arc::downgrade(self);
+        let event_id = id.to_owned();
+        let event_run = run.to_owned();
+        let remote = rpc.clone();
+        std::thread::spawn(move || {
+            let mut cursor = c.runtime_cursor;
+            let mut acknowledge = None;
+            loop {
+                let Some(hub) = hub.upgrade() else { break };
+                if !Self::owns(&hub.data.lock().unwrap(), &event_id, &event_run) {
+                    break;
+                }
+                let result = (|| -> Result<Vec<Envelope>> {
+                    if let Some(cursor) = acknowledge {
+                        remote.acknowledge(cursor)?;
+                        acknowledge = None;
+                    }
+                    remote.events(cursor)
+                })();
+                let batch = match result {
+                    Ok(batch) => {
+                        hub.runtime_connection(&event_id, &event_run, false);
+                        batch
+                    }
+                    Err(error) => {
+                        if hub.runtime.draining() {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            continue;
+                        }
+                        if hub.runtime.gone() {
+                            hub.fail(&event_id, &event_run, "Runtime supervisor exited. Restart lux-ade, then resume this Conversation. No prompt was resent.".into());
+                            break;
+                        }
+                        if error.downcast_ref::<crate::runtime::Rejected>().is_some() {
+                            hub.fail(&event_id, &event_run, error.to_string());
+                            break;
+                        }
+                        hub.runtime_connection(&event_id, &event_run, true);
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        continue;
+                    }
+                };
+                if batch.is_empty() {
+                    continue;
+                }
+                let next = batch.last().unwrap().sequence;
+                if let Err(error) = hub.events(&event_id, &event_run, batch) {
+                    hub.fail(&event_id, &event_run, error.to_string());
+                    break;
+                }
+                cursor = next;
+                // Retrying an acknowledgement is safe; a failed socket never advances
+                // the cursor without committing the corresponding projection first.
+                acknowledge = Some(cursor);
+            }
+        });
+        Ok(rpc)
+    }
+    fn runtime_connection(&self, id: &str, run: &str, unavailable: bool) {
+        const NOTICE: &str = "Runtime connection unavailable; reconnecting without resending work.";
+        let result = (|| -> Result<()> {
+            let mut d = self.data.lock().unwrap();
+            if !Self::owns(&d, id, run) {
+                return Ok(());
+            }
+            let mut c = d.store.conversation(id)?;
+            if unavailable && c.error.is_none() {
+                c.error = Some(NOTICE.into());
+            } else if !unavailable && c.error.as_deref() == Some(NOTICE) {
+                c.error = None;
+            } else {
+                return Ok(());
+            }
+            d.store.commit_conversation(&c, &[], &[])?;
+            self.changed(&mut d, &c, &[])
+        })();
+        if let Err(error) = result {
+            eprintln!("Could not persist runtime connection state: {error}");
+        }
+    }
+    fn fail(&self, id: &str, run: &str, error: String) {
+        self.fail_if(id, run, error, None);
+    }
+    fn fail_if(&self, id: &str, run: &str, error: String, submission: Option<&str>) {
+        let error = if self.runtime.gone() {
+            "Runtime supervisor exited. Restart lux-ade, then resume this Conversation. No prompt was resent.".into()
+        } else {
+            error
+        };
+        let result = (|| -> Result<()> {
+            let mut d = self.data.lock().unwrap();
+            if !Self::owns(&d, id, run)
+                || submission.is_some_and(|key| d.agents[id].submission.as_deref() != Some(key))
+            {
+                return Ok(());
+            }
+            let agent = d.agents.remove(id).unwrap();
+            if let Some(rpc) = agent.rpc {
+                rpc.stop();
+            }
+            let mut c = d.store.conversation(id)?;
+            c.status = "error".into();
+            c.queue_paused = true;
+            c.error = Some(error);
+            c.active_turn_id = None;
+            c.updated_at = now_ms();
+            let mut requests = d.store.pending(id)?;
+            for p in &mut requests {
+                p.status = "interrupted".into();
+            }
+            d.store.commit_conversation(&c, &[], &requests)?;
+            self.changed(&mut d, &c, &[])
+        })();
+        if let Err(error) = result {
+            eprintln!("Could not persist Agent failure: {error}");
+        }
+    }
+    fn events(&self, id: &str, run: &str, batch: Vec<Envelope>) -> Result<()> {
+        let lock_started = std::time::Instant::now();
+        let mut d = self.data.lock().unwrap();
+        crate::bench::elapsed("event_lock_wait_us", lock_started);
+        if !Self::owns(&d, id, run) {
+            return Ok(());
+        }
+        let mut c = d.store.conversation(id)?;
+        let mut changed = false;
+        let mut order = Vec::new();
+        let mut exit_error = None;
+        let mut messages: HashMap<String, Message> = HashMap::new();
+        let mut requests: HashMap<String, PendingRequest> = d
+            .store
+            .pending(id)?
+            .into_iter()
+            .map(|p| (p.id.clone(), p))
+            .collect();
+        for envelope in batch {
+            if envelope.sequence <= c.runtime_cursor {
+                continue;
+            }
+            ensure!(
+                envelope.sequence == c.runtime_cursor + 1,
+                "Agent event journal has a gap"
+            );
+            c.runtime_cursor = envelope.sequence;
+            changed = true;
+            match envelope.event {
+                Event::OperationFailed { submission, error } => {
+                    if submission
+                        .as_ref()
+                        .is_none_or(|s| c.runtime_submission.as_ref() == Some(s))
+                    {
+                        exit_error = Some(error);
+                        break;
+                    }
+                }
+                Event::Submitted { submission, turn } => {
+                    if c.runtime_submission.as_deref() == Some(&submission)
+                        && c.status == "starting"
+                    {
+                        c.status = "running".into();
+                        c.active_turn_id = Some(turn);
+                    }
+                }
+                Event::Exited { error } => {
+                    exit_error = Some(error);
+                    break;
+                }
+                Event::Request {
+                    session,
+                    turn,
+                    id: rpc_id,
+                    method,
+                    mut params,
+                    supported,
+                } => {
+                    let rpc = d.agents[id]
+                        .rpc
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("Missing Agent runtime"))?;
+                    if !supported {
+                        rpc.reject(rpc_id, &format!("lux-ade does not support {method}"))?;
+                        c.error =
+                            Some(format!("Agent requested unsupported interaction: {method}"));
+                        changed = true;
+                        continue;
+                    }
+                    if Some(session.as_str()) != c.provider_thread_id.as_deref()
+                        || Some(turn.as_str()) != c.active_turn_id.as_deref()
+                    {
+                        rpc.reject(rpc_id, "Request does not belong to this Conversation")?;
+                        continue;
+                    }
+                    params["threadId"] = json!(session);
+                    params["turnId"] = json!(turn);
+                    let p = PendingRequest {
+                        id: new_id("request"),
+                        conversation_id: id.into(),
+                        run_id: run.into(),
+                        rpc_id,
+                        method,
+                        params,
+                        status: "pending".into(),
+                    };
+                    requests.insert(p.id.clone(), p);
+                    c.status = "waiting".into();
+                    changed = true;
+                }
+                Event::Started { session, turn } => {
+                    if !session.is_empty()
+                        && Some(session.as_str()) != c.provider_thread_id.as_deref()
+                    {
+                        continue;
+                    }
+                    c.active_turn_id = Some(turn);
+                    c.status = "running".into();
+                    c.error = None;
+                    changed = true;
+                }
+                Event::Finished {
+                    session,
+                    turn,
+                    status,
+                    error,
+                } => {
+                    if !session.is_empty()
+                        && Some(session.as_str()) != c.provider_thread_id.as_deref()
+                    {
+                        continue;
+                    }
+                    if c.active_turn_id.is_some() && c.active_turn_id.as_deref() != Some(&turn) {
+                        continue;
+                    }
+                    c.status = match status.as_str() {
+                        "failed" => "error",
+                        "interrupted" => "interrupted",
+                        _ => "ready",
+                    }
+                    .into();
+                    c.error = error;
+                    if c.status != "ready" {
+                        c.queue_paused = true;
+                    }
+                    c.active_turn_id = None;
+                    for r in requests.values_mut() {
+                        if matches!(r.status.as_str(), "pending" | "responding")
+                            && r.params["turnId"] == turn
+                        {
+                            r.status = "resolved".into();
+                        }
+                    }
+                    changed = true;
+                }
+                Event::Item { session, item } => {
+                    if !session.is_empty()
+                        && Some(session.as_str()) != c.provider_thread_id.as_deref()
+                    {
+                        continue;
+                    }
+                    let m = item.message(id);
+                    if !messages.contains_key(&m.id) {
+                        order.push(m.id.clone());
+                    }
+                    messages.insert(m.id.clone(), m);
+                    changed = true;
+                }
+                Event::Delta {
+                    session,
+                    turn,
+                    id: item,
+                    role,
+                    kind,
+                    text,
+                } => {
+                    if !session.is_empty()
+                        && Some(session.as_str()) != c.provider_thread_id.as_deref()
+                    {
+                        continue;
+                    }
+                    let mid = format!("{id}:{item}");
+                    if !messages.contains_key(&mid) {
+                        let m = d.store.message(&mid)?.unwrap_or_else(|| Message {
+                            content: None,
+                            attachments: vec![],
+                            id: mid.clone(),
+                            conversation_id: id.into(),
+                            role,
+                            kind,
+                            text: String::new(),
+                            status: "streaming".into(),
+                            turn_id: turn,
+                            provider_item_id: Some(item),
+                            sequence: 0,
+                        });
+                        order.push(mid.clone());
+                        messages.insert(mid.clone(), m);
+                    }
+                    let m = messages.get_mut(&mid).unwrap();
+                    m.text.push_str(&text);
+                    if let Some(crate::transcript::Content::Tool { output, .. }) = &mut m.content {
+                        output.get_or_insert_with(String::new).push_str(&text);
+                    }
+                    ensure!(m.text.len() <= 1024 * 1024, "Agent message exceeds 1 MiB");
+                    changed = true;
+                }
+                Event::Resolved { id: request_id } => {
+                    for r in requests.values_mut() {
+                        if r.rpc_id == request_id {
+                            r.status = "resolved".into();
+                            changed = true;
+                        }
+                    }
+                    if c.status == "waiting" && !requests.values().any(|r| r.status == "pending") {
+                        c.status = "running".into();
+                    }
+                }
+                Event::Error { error } => {
+                    c.error = Some(error);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            c.updated_at = now_ms();
+            let messages: Vec<_> = order
+                .into_iter()
+                .filter_map(|id| messages.remove(&id))
+                .collect();
+            let requests: Vec<_> = requests.into_values().collect();
+            persistence_result(d.store.commit_conversation(&c, &messages, &requests))?;
+            let saved: Vec<_> = messages
+                .iter()
+                .filter_map(|m| d.store.message(&m.id).ok().flatten())
+                .collect();
+            self.changed(&mut d, &c, &saved)?;
+        }
+        drop(d);
+        if let Some(error) = exit_error {
+            self.fail(id, run, error);
+        }
+        Ok(())
+    }
+    fn cancel(self: &Arc<Self>, id: &str) -> Result<()> {
+        let (run, rpc, thread, turn) = {
+            let mut d = self.data.lock().unwrap();
+            let mut c = d.store.conversation(id)?;
+            ensure!(
+                matches!(
+                    c.status.as_str(),
+                    "starting" | "running" | "waiting" | "cancelling"
+                ),
+                "Agent has no active turn"
+            );
+            let a = d
+                .agents
+                .get(id)
+                .ok_or_else(|| anyhow!("Agent is not connected"))?;
+            let run = a.run_id.clone();
+            let rpc = a.rpc.clone();
+            let thread = c.provider_thread_id.clone();
+            let turn = c.active_turn_id.clone();
+            c.status = "cancelling".into();
+            c.queue_paused = true;
+            d.store.commit_conversation(&c, &[], &[])?;
+            self.changed(&mut d, &c, &[])?;
+            (run, rpc, thread, turn)
+        };
+        if let (Some(rpc), Some(thread), Some(turn)) = (rpc, thread, turn) {
+            let hub = self.clone();
+            let id = id.to_owned();
+            std::thread::spawn(move || {
+                if let Err(error) = rpc.cancel(&thread, &turn) {
+                    hub.fail(&id, &run, error.to_string());
+                }
+            });
+        } else {
+            self.fail(
+                id,
+                &run,
+                "Cancelled while the Agent was starting; resume the Conversation to continue."
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+    fn answer(
+        &self,
+        id: &str,
+        request_id: &str,
+        decision: &str,
+        answers: Option<&Value>,
+    ) -> Result<()> {
+        let d = self.data.lock().unwrap();
+        let mut c = d.store.conversation(id)?;
+        let mut p = d
+            .store
+            .pending(id)?
+            .into_iter()
+            .find(|p| p.id == request_id && p.status == "pending")
+            .ok_or_else(|| anyhow!("Request is stale or already answered"))?;
+        ensure!(
+            Self::owns(&d, id, &p.run_id),
+            "Request belongs to a previous Agent run"
+        );
+        ensure!(
+            p.params["threadId"].as_str() == c.provider_thread_id.as_deref()
+                && p.params["turnId"].as_str() == c.active_turn_id.as_deref(),
+            "Request no longer belongs to the active turn"
+        );
+        let rpc = d.agents[id]
+            .rpc
+            .as_ref()
+            .ok_or_else(|| anyhow!("Agent is unavailable"))?
+            .clone();
+
+        rpc.validate_answer(&p, decision, answers)?;
+        p.status = "responding".into();
+        d.store.commit_conversation(&c, &[], &[p.clone()])?;
+        drop(d);
+        if let Err(error) = rpc.answer(&p, decision, answers) {
+            self.fail(id, &p.run_id, error.to_string());
+            return Err(error);
+        }
+        let mut d = self.data.lock().unwrap();
+        ensure!(
+            Self::owns(&d, id, &p.run_id),
+            "Agent disconnected while answering"
+        );
+        c = d.store.conversation(id)?;
+        p.status = "resolved".into();
+        if c.status == "waiting" && !d.store.pending(id)?.iter().any(|r| r.id != p.id) {
+            c.status = "running".into();
+        }
+        c.updated_at = now_ms();
+        d.store.commit_conversation(&c, &[], &[p])?;
+        self.changed(&mut d, &c, &[])?;
+        Ok(())
+    }
+}
+
+/// Preserve actionable validation errors, but never expose raw database errors
+/// (which may contain SQL values or paths) as a persistence failure.
+fn persistence_result<T>(result: anyhow::Result<T>) -> anyhow::Result<T> {
+    result.map_err(|error| {
+        if error.downcast_ref::<rusqlite::Error>().is_some() {
+            tracing::error!(target: "ade", event = "persistence_failed", code = "save_failed");
+            ade_core::error::Failure::SaveFailed.into()
+        } else {
+            error
+        }
+    })
+}
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    #[test]
+    fn readonly_database_failure_is_safe_and_not_reported_as_success() {
+        let database = rusqlite::Connection::open_in_memory().unwrap();
+        database
+            .execute_batch("CREATE TABLE private_data (text TEXT); PRAGMA query_only=ON;")
+            .unwrap();
+        let result = database
+            .execute("INSERT INTO private_data VALUES (?1)", ["secret prompt"])
+            .map_err(anyhow::Error::from);
+        let error = persistence_result(result).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<ade_core::error::Failure>(),
+            Some(&ade_core::error::Failure::SaveFailed)
+        );
+        assert!(!error.to_string().contains("secret"));
+        let rows: i64 = database
+            .query_row("SELECT count(*) FROM private_data", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+    #[test]
+    fn persistence_validation_errors_remain_actionable() {
+        let error =
+            persistence_result::<()>(Err(anyhow::anyhow!("Invalid draft revision"))).unwrap_err();
+        assert_eq!(error.to_string(), "Invalid draft revision");
+    }
+}

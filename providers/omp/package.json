@@ -1,0 +1,11 @@
+{
+  "name": "ade-omp-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.3.0"
+  }
+}
