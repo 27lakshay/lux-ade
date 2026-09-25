@@ -21,14 +21,110 @@ const execFileAsync = promisify(execFile)
 const terminals = new Map<string, TerminalConnection>()
 type Draft = { text: string; revision: number; attachments: unknown[] }
 type SendIntent = { requestId: string; draftText: string; revision: number; text: string; attachments: unknown[];
-  state: 'pending' | 'rejected'; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null }
+  state: 'pending' | 'rejected'; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null;
+  reviewSelection?: { senderId: number; workspaceId: string; conversationId: string; epoch: number } }
 type DraftEntry = { senderId: number; endpoint: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string; send: SendIntent | null }
 const windowIds = new Map<number, string>()
+const selectedWorkspaces = new Map<number, { workspaceId: string; conversationId: string | null; generation: number; epoch: number }>()
+const selectionRequests = new Map<number, number>()
 let singleWindowId = ''
 const drafts = new Map<string, DraftEntry>()
 const draftKey = (senderId: number, endpoint: string, conversationId: string): string => `${senderId}:${endpoint}:${conversationId}`
 const terminalKey = (senderId: number, connectionId: string): string => `${senderId}:${connectionId}`
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
+type ReviewFile = { path: string; staged: boolean; unstaged: boolean }
+type ReviewStatus = { revision: string; files: ReviewFile[] }
+type ReviewDiff = { token: string; hunks: string[] }
+type ReviewAnchor = { workspace_id: string; path: string; staged: boolean; revision: string;
+  token: string; hunk: string; line: number; text: string }
+
+function reviewPath(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 4096 &&
+    !value.includes('\0') && !value.startsWith('/') &&
+    value.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+}
+
+type ReviewContext = { endpoint: string; generation: number; senderId: number; epoch: number }
+
+function activeReviewContext(senderId: number, workspaceId: unknown): ReviewContext {
+  const endpoint = socket
+  const state = client.getState()
+  if (!endpoint || state.status !== 'connected') throw new Error('Profile daemon is unavailable')
+  if (!validId(workspaceId) || !state.catalog?.workspaces.some((item) => item.id === workspaceId)) {
+    throw new Error('Workspace is unavailable in this profile')
+  }
+  const selection = selectedWorkspaces.get(senderId)
+  if (!selection || selection.workspaceId !== workspaceId || selection.generation !== clientGeneration) {
+    throw new Error('Selected workspace changed; return to Changes and try again')
+  }
+  return { endpoint, generation: clientGeneration, senderId, epoch: selection.epoch }
+}
+
+function assertReviewContext(context: ReviewContext, workspaceId: string, conversationId?: string): void {
+  const selection = selectedWorkspaces.get(context.senderId)
+  if (socket !== context.endpoint || clientGeneration !== context.generation ||
+    !client.getState().catalog?.workspaces.some((item) => item.id === workspaceId) ||
+    selection?.workspaceId !== workspaceId || selection.generation !== context.generation ||
+    selection.epoch !== context.epoch || (conversationId !== undefined && selection.conversationId !== conversationId)) {
+    throw new Error('Profile, workspace, or conversation changed while review loaded; refresh Changes')
+  }
+}
+
+async function reviewStatus(context: ReviewContext, workspaceId: string): Promise<ReviewStatus> {
+  const response = await requestDaemon(context.endpoint, 'review.status', { workspace_id: workspaceId, force: true })
+  assertReviewContext(context, workspaceId)
+  if (typeof response.revision !== 'string' || !Array.isArray(response.files)) throw new Error('Invalid review status')
+  return response as unknown as ReviewStatus
+}
+
+async function reviewDiff(context: ReviewContext, workspaceId: string,
+  path: string, staged: boolean): Promise<ReviewDiff> {
+  const response = await requestDaemon(context.endpoint, 'review.diff', { workspace_id: workspaceId, path, staged })
+  assertReviewContext(context, workspaceId)
+  if (typeof response.token !== 'string' || !Array.isArray(response.hunks)) throw new Error('Invalid review diff')
+  return response as unknown as ReviewDiff
+}
+
+function lineInHunk(hunk: string, lineNumber: number, text: string): boolean {
+  const lines = hunk.split('\n')
+  const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(lines[0] ?? '')
+  if (!match) return false
+  let next = Number(match[1])
+  for (const line of lines.slice(1)) {
+    if (line.startsWith(' ') || (line.startsWith('+') && !line.startsWith('+++'))) {
+      if (next === lineNumber && line === text) return true
+      next += 1
+    }
+  }
+  return false
+}
+
+async function reviewPrompt(context: ReviewContext, conversationId: string,
+  value: unknown, note: unknown): Promise<string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid review anchor')
+  const anchor = value as ReviewAnchor
+  assertReviewContext(context, anchor.workspace_id, conversationId)
+  const conversation = client.getState().catalog?.conversations.find((item) => item.id === conversationId)
+  if (!conversation || conversation.workspace_id !== anchor.workspace_id) throw new Error('Review feedback must target a conversation in this workspace')
+  if (!reviewPath(anchor.path) || typeof anchor.staged !== 'boolean' ||
+    typeof anchor.revision !== 'string' || !/^[0-9a-f]{16}$/.test(anchor.revision) ||
+    typeof anchor.token !== 'string' || !/^[0-9a-f]{16}$/.test(anchor.token) ||
+    typeof anchor.hunk !== 'string' || !anchor.hunk.startsWith('@@ ') || anchor.hunk.length > 512 ||
+    !Number.isSafeInteger(anchor.line) || anchor.line < 1 ||
+    typeof anchor.text !== 'string' || anchor.text.length > 8192 ||
+    typeof note !== 'string' || !note.trim() || Buffer.byteLength(note) > 64 * 1024) throw new Error('Invalid review feedback')
+  const status = await reviewStatus(context, anchor.workspace_id)
+  if (status.revision !== anchor.revision) throw new Error('Stale diff: workspace changes have moved; refresh Changes and select the line again')
+  if (!status.files.some((file) => file.path === anchor.path && (anchor.staged ? file.staged : file.unstaged))) {
+    throw new Error('Stale diff: file or side changed; refresh Changes and select the line again')
+  }
+  const diff = await reviewDiff(context, anchor.workspace_id, anchor.path, anchor.staged)
+  if (diff.token !== anchor.token || !diff.hunks.some((hunk) => hunk.split('\n')[0] === anchor.hunk &&
+    lineInHunk(hunk, anchor.line, anchor.text))) {
+    throw new Error('Stale diff: selected line changed; refresh Changes and select the line again')
+  }
+  return `Review feedback for workspace ${anchor.workspace_id}\nFile: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\nDiff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\nLine: +${anchor.line}\nSelected text: ${anchor.text}\n\nFeedback:\n${note.trim()}`
+}
 
 async function persistentWindowId(): Promise<string> {
   const directory = app.getPath('userData')
@@ -147,7 +243,14 @@ async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Rec
 function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<string, unknown>> {
   if (intent.inFlight) return intent.inFlight
   const generation = clientGeneration
-  const activeProfile = (): boolean => socket === entry.endpoint && clientGeneration === generation
+  const activeProfile = (): boolean => {
+    if (socket !== entry.endpoint || clientGeneration !== generation) return false
+    if (!intent.reviewSelection) return true
+    const selection = selectedWorkspaces.get(intent.reviewSelection.senderId)
+    return selection?.workspaceId === intent.reviewSelection.workspaceId &&
+      selection.conversationId === intent.reviewSelection.conversationId &&
+      selection.generation === generation && selection.epoch === intent.reviewSelection.epoch
+  }
   const uncertain = (): Record<string, unknown> => ({ type: 'send_pending', request_id: intent.requestId, text: intent.text,
     message: 'Prompt delivery is unconfirmed. Retry will use the same request ID.' })
   const work = (async (): Promise<Record<string, unknown>> => {
@@ -282,6 +385,8 @@ function attachClient(endpoint: string, profileId: string): void {
   const previousFeed = unsubscribeFeed
   const next = new AdeClient(endpoint)
   const generation = ++clientGeneration
+  selectedWorkspaces.clear()
+  selectionRequests.clear()
   client = next
   socket = endpoint
   publishProfile({ activeId: profileId, error: '' })
@@ -349,6 +454,32 @@ ipcMain.handle('ade:workspace-choose', async (event) => {
   if (result.canceled || !result.filePaths[0]) return null
   return openWorkspace(result.filePaths[0])
 })
+ipcMain.handle('ade:workspace-select', async (event, workspaceId: unknown, conversationId: unknown) => {
+  if (!validId(workspaceId) || (conversationId !== null && !validId(conversationId))) {
+    throw new Error('Invalid selected workspace or conversation')
+  }
+  const endpoint = socket
+  const generation = clientGeneration
+  const request = (selectionRequests.get(event.sender.id) ?? 0) + 1
+  selectionRequests.set(event.sender.id, request)
+  let available = false
+  for (let attempt = 0; attempt < 120; attempt++) {
+    if (socket !== endpoint || clientGeneration !== generation) throw new Error('Profile changed while selecting a workspace')
+    if (selectionRequests.get(event.sender.id) !== request) throw new Error('Workspace selection was superseded')
+    const state = client.getState()
+    available = state.status === 'connected' && Boolean(state.catalog?.workspaces.some((item) => item.id === workspaceId)) &&
+      (conversationId === null || Boolean(state.catalog?.conversations.some((item) => item.id === conversationId && item.workspace_id === workspaceId)))
+    if (available) break
+    await new Promise<void>((done) => setTimeout(done, 25))
+  }
+  if (!available) throw new Error('Selected workspace or conversation is unavailable in this profile')
+  if (selectionRequests.get(event.sender.id) !== request) throw new Error('Workspace selection was superseded')
+  const prior = selectedWorkspaces.get(event.sender.id)
+  if (prior?.workspaceId === workspaceId && prior.conversationId === conversationId && prior.generation === clientGeneration) return true
+  selectedWorkspaces.set(event.sender.id, { workspaceId, conversationId: conversationId as string | null,
+    generation: clientGeneration, epoch: (prior?.epoch ?? 0) + 1 })
+  return true
+})
 const serviceOps = new Set(['service.list', 'service.configure', 'service.start', 'service.stop', 'service.remove'])
 ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !serviceOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
@@ -380,6 +511,21 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
     throw new Error('Profile changed while the service request completed; inspect the original profile before retrying')
   }
   return result
+})
+ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
+  if ((op !== 'review.status' && op !== 'review.diff') || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    throw new Error('Invalid review request')
+  }
+  const args = fields as Record<string, unknown>
+  const context = activeReviewContext(event.sender.id, args.workspace_id)
+  const workspaceId = args.workspace_id as string
+  const status = await reviewStatus(context, workspaceId)
+  if (op === 'review.status') return status
+  if (!reviewPath(args.path) || typeof args.staged !== 'boolean' ||
+    !status.files.some((file) => file.path === args.path && (args.staged ? file.staged : file.unstaged))) {
+    throw new Error('File or side is unavailable in this workspace; refresh Changes')
+  }
+  return reviewDiff(context, workspaceId, args.path, args.staged)
 })
 const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.retry_send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
 ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
@@ -426,26 +572,54 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
   }
   if (op === 'conversation.get') return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
   if (op === 'agent.send' || op === 'agent.retry_send') {
+    try {
+    const reviewContext = args.review_anchor === undefined ? null : activeReviewContext(event.sender.id,
+      (args.review_anchor as Record<string, unknown> | null)?.workspace_id)
+    let text = args.text
+    if (op === 'agent.send' && reviewContext) {
+      text = await reviewPrompt(reviewContext, args.conversation_id, args.review_anchor, args.note)
+      assertReviewContext(reviewContext, (args.review_anchor as ReviewAnchor).workspace_id, args.conversation_id)
+    }
     const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
     if (op === 'agent.retry_send') {
       if (!entry.send) throw new Error('No prompt is awaiting confirmation')
+      if (args.request_id !== undefined && args.request_id !== entry.send.requestId) {
+        throw new Error('A different prompt is awaiting confirmation')
+      }
+      if (entry.send.reviewSelection) {
+        const selection = selectedWorkspaces.get(event.sender.id)
+        if (!selection || selection.workspaceId !== entry.send.reviewSelection.workspaceId ||
+          selection.conversationId !== entry.send.reviewSelection.conversationId ||
+          selection.generation !== clientGeneration) throw new Error('Return to the feedback workspace before retrying')
+        entry.send.reviewSelection.epoch = selection.epoch
+      }
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
-      return dispatchSend(entry, entry.send)
+      return await dispatchSend(entry, entry.send)
     }
-    if (!validId(args.request_id) || typeof args.text !== 'string' || !args.text.trim() || Buffer.byteLength(args.text) > 120 * 1024) {
+    if (!validId(args.request_id) || typeof text !== 'string' || !text.trim() || Buffer.byteLength(text) > 120 * 1024) {
       throw new Error('Invalid prompt')
     }
+    if (reviewContext && (entry.draft.text.length || (Array.isArray(entry.draft.attachments) && entry.draft.attachments.length))) {
+      throw new Error('Send or clear the ordinary conversation draft before sending review feedback')
+    }
     if (entry.send) {
-      if (entry.send.requestId !== args.request_id || entry.send.text !== args.text) {
+      if (entry.send.requestId !== args.request_id || entry.send.text !== text) {
         throw new Error('Resolve the previous prompt before starting another')
       }
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
-      return dispatchSend(entry, entry.send)
+      return await dispatchSend(entry, entry.send)
     }
     if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
-    const intent: SendIntent = { requestId: args.request_id, text: args.text, draftText: entry.draft.text,
+    if (reviewContext && entry.draft.revision === 0) {
+      entry.draft = { text: '', revision: 1, attachments: [] }
+    }
+    if (reviewContext) assertReviewContext(reviewContext, (args.review_anchor as ReviewAnchor).workspace_id, args.conversation_id)
+    const intent: SendIntent = { requestId: args.request_id, text, draftText: entry.draft.text,
       revision: entry.draft.revision, attachments: entry.draft.attachments,
-      state: 'pending', preparing: true, inFlight: null }
+      state: 'pending', preparing: true, inFlight: null,
+      reviewSelection: reviewContext ? { senderId: event.sender.id,
+        workspaceId: (args.review_anchor as ReviewAnchor).workspace_id,
+        conversationId: args.conversation_id, epoch: reviewContext.epoch } : undefined }
     entry.send = intent
     try { await flushDraft(entry) }
     catch { entry.send = null; throw new Error('Draft could not be saved; prompt was not sent') }
@@ -453,7 +627,15 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
     intent.revision = entry.draft.revision
     intent.attachments = entry.draft.attachments
     intent.preparing = false
-    return dispatchSend(entry, intent)
+    return await dispatchSend(entry, intent)
+    } catch (error) {
+      if (op !== 'agent.send' || args.review_anchor === undefined) throw error
+      const entry = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
+      if (entry && entry.send?.requestId === args.request_id) {
+        return { type: 'send_pending', ...pendingSend(entry) }
+      }
+      return { type: 'review_rejected', message: String(error) }
+    }
   }
   if (!validId(args.request_id) || !['accept', 'decline', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
   if (args.decision === 'answer') {
@@ -529,6 +711,10 @@ function openMainWindow(): void {
   let readyForClose = false
   let closeFlushInProgress = false
   window.on('close', (event) => {
+    // E2E teardown must not surface a native modal over the user's active Space.
+    // The test process owns this isolated profile and may deliberately leave an
+    // uncertain send to verify recovery after process exit.
+    if (process.env.ADE_E2E_HIDE_WINDOW === '1') return
     if (readyForClose) return
     if (closeFlushInProgress) { event.preventDefault(); return }
     if ([...drafts.entries()].some(([key, entry]) => key.startsWith(`${window.webContents.id}:`) && entry.send)) {
@@ -565,6 +751,8 @@ function openMainWindow(): void {
   window.webContents.on('did-start-navigation', () => closeSenderTerminals(window.webContents.id))
   window.webContents.on('destroyed', () => {
     closeSenderTerminals(window.webContents.id)
+    selectedWorkspaces.delete(window.webContents.id)
+    selectionRequests.delete(window.webContents.id)
     for (const [key, entry] of drafts) {
       if (!key.startsWith(`${window.webContents.id}:`)) continue
       void flushDraft(entry).then(() => drafts.delete(key)).catch(() => undefined)
@@ -609,7 +797,7 @@ app.whenReady().then(async () => {
 
 let readyToQuit = false
 app.on('before-quit', (event) => {
-  if (!readyToQuit) {
+  if (!readyToQuit && process.env.ADE_E2E_HIDE_WINDOW !== '1') {
     if ([...drafts.values()].some((entry) => entry.send)) {
       event.preventDefault()
       void dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',

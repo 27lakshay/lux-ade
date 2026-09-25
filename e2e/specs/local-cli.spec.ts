@@ -55,6 +55,13 @@ test('CLI and Electron control one runtime-owned workspace terminal', async () =
     expect(sent.code).toBe(0)
     expect(sent.output.type).toBe('terminal_input_submitted')
     expect((sent.output.metrics as { shell_pid: number }).shell_pid).toBe(shellPid)
+    await expect.poll(async () => {
+      const snapshot = await runCli(daemon.socket, 'terminal', 'inspect', workspace.id, workspace.terminal_id)
+      const events = (snapshot.output.terminal_recovery as { events: Array<{ type: string; bytes_base64?: string }> }).events
+      return events.filter((event) => event.type === 'output' && event.bytes_base64)
+        .map((event) => Buffer.from(event.bytes_base64!, 'base64').toString('utf8')).join('')
+    }).toContain('__ADE_CLI_SHARED_TERMINAL__')
+    await window.locator('.terminal-surface').scrollIntoViewIfNeeded()
     await expect(window.locator('.terminal-surface .xterm-rows')).toContainText('__ADE_CLI_SHARED_TERMINAL__')
 
     const resized = await runCli(daemon.socket, 'terminal', 'resize', workspace.id, workspace.terminal_id, '90', '31')

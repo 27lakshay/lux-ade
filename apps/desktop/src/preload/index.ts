@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('adeHost', {
   selectProfile: (id: string) => ipcRenderer.invoke('ade:profile-select', id),
   openWorkspace: (folder: string) => ipcRenderer.invoke('ade:workspace-open', folder),
   chooseWorkspace: () => ipcRenderer.invoke('ade:workspace-choose'),
+  selectWorkspace: (id: string, conversationId: string | null): Promise<boolean> =>
+    ipcRenderer.invoke('ade:workspace-select', id, conversationId),
   onProfileState: (listener: (state: unknown) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
     ipcRenderer.on('ade:profile-state-changed', receive)
@@ -51,6 +53,8 @@ contextBridge.exposeInMainWorld('adeHost', {
     ipcRenderer.invoke('ade:conversation-request', op, fields),
   requestService: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:service-request', op, fields),
+  requestReview: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('ade:review-request', op, fields),
   onDraftError: (listener: (value: { conversationId: string; message: string }) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, value: { conversationId: string; message: string }): void => listener(value)
     ipcRenderer.on('ade:draft-error', receive)

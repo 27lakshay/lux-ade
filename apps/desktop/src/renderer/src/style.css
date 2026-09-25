@@ -102,6 +102,26 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .muted, .empty-conversation p { color: #a5adae; font-size: 13px; }
 .empty-conversation { min-height: 340px; padding: 48px 12px; }
 .inline-error { color: #eeb87b; font-size: 12px; overflow-wrap: anywhere; }
+.review-pane { border-top: 1px solid #323637; margin-top: 28px; padding-top: 18px; }
+.review-heading { align-items: center; display: flex; justify-content: space-between; }
+.review-heading h2 { font-size: 15px; margin: 0; }
+.review-heading button, .review-file button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
+.review-files { border: 1px solid #323637; border-radius: 8px; margin-top: 12px; max-height: 180px; overflow: auto; }
+.review-file { align-items: center; border-bottom: 1px solid #323637; display: flex; gap: 8px; min-width: 0; padding: 8px 10px; }
+.review-file:last-child { border-bottom: 0; }
+.review-file span { flex: 1; font-family: ui-monospace, monospace; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.review-diff { background: #101213; border: 1px solid #323637; border-radius: 8px; margin-top: 12px; max-height: 360px; overflow: auto; }
+.review-diff-header, .review-hunk-heading { color: #a5adae; font-family: ui-monospace, monospace; font-size: 11px; margin: 0; overflow-wrap: anywhere; padding: 8px 10px; white-space: pre-wrap; }
+.review-hunk-heading { background: #24302c; color: #84c8aa; }
+.review-line { background: transparent; border: 0; color: inherit; display: flex; font-family: ui-monospace, monospace; font-size: 12px; min-height: 21px; padding: 1px 8px; text-align: left; white-space: pre; width: 100%; }
+.review-line span { color: #879190; flex: 0 0 45px; text-align: right; padding-right: 12px; }
+.review-line code { font: inherit; }
+button.review-line:hover, button.review-line.selected { background: #263d34; }
+.review-feedback { display: grid; gap: 8px; margin-top: 12px; }
+.review-feedback p { color: #a5adae; font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.review-feedback label { font-size: 12px; }
+.review-feedback textarea { background: #222627; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 9px; resize: vertical; width: 100%; }
+.review-feedback button { background: #84c8aa; border: 0; border-radius: 7px; color: #132019; font-size: 13px; font-weight: 600; justify-self: end; padding: 9px 12px; }
 @media (max-width: 780px) {
   .profile-bar { padding: 10px 16px; }
   .workspace-layout { grid-template-columns: 1fr; }

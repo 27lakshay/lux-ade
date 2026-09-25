@@ -2,6 +2,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import type { ClientState, Workspace, Conversation, FeedFrame } from '@ade/client'
 import { mountTerminal, type TerminalBridge } from '@ade/terminal'
+import { ReviewPane } from './review'
 import './style.css'
 
 type Frame = Record<string, unknown>
@@ -29,8 +30,10 @@ declare global {
       onProfileState(listener: (state: ProfileState) => void): () => void
       openWorkspace(folder: string): Promise<Frame>
       chooseWorkspace(): Promise<Frame | null>
+      selectWorkspace(id: string, conversationId: string | null): Promise<boolean>
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestService(op: string, fields: Record<string, unknown>): Promise<Frame>
+      requestReview(op: string, fields: Record<string, unknown>): Promise<Frame>
       onDraftError(listener: (value: { conversationId: string; message: string }) => void): () => void
       terminal: TerminalBridge
     }
@@ -393,12 +396,36 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const [opening, setOpening] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [pendingCreatedId, setPendingCreatedId] = React.useState<string | null>(null)
+  const [acknowledgedSelection, setAcknowledgedSelection] = React.useState('')
+  const selectionSequence = React.useRef(0)
+  const visibleSelectionRequest = React.useRef(0)
   const [error, setError] = React.useState('')
   const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0]
   const workspaceConversations = conversations.filter((item) => item.workspace_id === workspace?.id)
   const selectedConversation = workspaceConversations.find((item) => item.id === conversationId)
   const awaitingCreated = pendingCreatedId === conversationId && !selectedConversation
   const conversation = awaitingCreated ? undefined : selectedConversation ?? workspaceConversations[0]
+  const targetConversationId = awaitingCreated ? pendingCreatedId : conversation?.id ?? null
+  const selectionKey = workspace ? `${workspace.id}:${targetConversationId ?? ''}` : ''
+  React.useEffect(() => {
+    if (!workspace) return
+    const sequence = ++selectionSequence.current
+    void window.adeHost.selectWorkspace(workspace.id, targetConversationId).then(() => {
+      if (sequence === selectionSequence.current) setAcknowledgedSelection(selectionKey)
+    }).catch((reason) => { if (sequence === selectionSequence.current) setError(String(reason)) })
+    return () => { selectionSequence.current++ }
+  }, [workspace?.id, targetConversationId, state.bootId])
+  const selectVisible = async (workspaceId: string, nextConversationId: string | null): Promise<void> => {
+    const request = ++visibleSelectionRequest.current
+    ++selectionSequence.current
+    await window.adeHost.selectWorkspace(workspaceId, nextConversationId)
+    if (request !== visibleSelectionRequest.current) return
+    setAcknowledgedSelection(`${workspaceId}:${nextConversationId ?? ''}`)
+    setWorkspaceId(workspaceId)
+    localStorage.setItem(workspaceStorageKey, workspaceId)
+    setConversationId(nextConversationId ?? '')
+    localStorage.setItem(conversationStorageKey, nextConversationId ?? '')
+  }
   React.useEffect(() => {
     if (pendingCreatedId && conversations.some((item) => item.id === pendingCreatedId)) setPendingCreatedId(null)
   }, [pendingCreatedId, conversations])
@@ -421,9 +448,8 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         workspace_id: workspace.id, title: 'New Conversation', provider,
       })
       const created = response.conversation as Conversation
+      await selectVisible(workspace.id, created.id)
       setPendingCreatedId(created.id)
-      setConversationId(created.id)
-      localStorage.setItem(conversationStorageKey, created.id)
       setError('')
     } catch (reason) { setError(String(reason)) }
     finally { setCreating(false) }
@@ -435,9 +461,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     try {
       const result = await window.adeHost.openWorkspace(folderPath.trim())
       const opened = result.workspace as Workspace
-      setWorkspaceId(opened.id)
-      localStorage.setItem(workspaceStorageKey, opened.id)
-      setConversationId('')
+      await selectVisible(opened.id, null)
       setFolderPath('')
       setError('')
     } catch (reason) { setError(String(reason)) }
@@ -450,9 +474,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
       const result = await window.adeHost.chooseWorkspace()
       if (result) {
         const opened = result.workspace as Workspace
-        setWorkspaceId(opened.id)
-        localStorage.setItem(workspaceStorageKey, opened.id)
-        setConversationId('')
+        await selectVisible(opened.id, null)
         setError('')
       }
     } catch (reason) { setError(String(reason)) }
@@ -466,7 +488,9 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         {workspaces.length === 0 && <p>No workspaces are registered in this profile yet.</p>}
         {workspaces.length > 0 && <label className="field-label" htmlFor="workspace">Workspace</label>}
         {workspaces.length > 0 && <select id="workspace" value={workspace?.id} disabled={creating} onChange={(event) => {
-          setWorkspaceId(event.target.value); localStorage.setItem(workspaceStorageKey, event.target.value); setConversationId('')
+          const nextId = event.target.value
+          const firstConversation = conversations.find((item) => item.workspace_id === nextId)
+          void selectVisible(nextId, firstConversation?.id ?? null).catch((reason) => setError(String(reason)))
         }}>
           {workspaces.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
         </select>}
@@ -480,7 +504,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         <h2>Conversations</h2>
         <nav aria-label="Conversations"><ul className="conversation-list">
           {workspaceConversations.map((item) => <li key={item.id}><button disabled={creating} className={conversation?.id === item.id ? 'selected' : ''} onClick={() => {
-            setConversationId(item.id); localStorage.setItem(conversationStorageKey, item.id)
+            if (workspace) void selectVisible(workspace.id, item.id).catch((reason) => setError(String(reason)))
           }}>{item.title}<small>{item.provider} · {item.status}</small></button></li>)}
         </ul></nav>
         <div className="new-conversation">
@@ -496,7 +520,9 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         {creating || awaitingCreated ? <section className="empty-conversation" role="status">Creating conversation…</section>
           : conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId} />
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
-        {workspace && <><ServicePane key={workspace.id} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
+        {workspace && <>{acknowledgedSelection === selectionKey && <ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
+          workspace={workspace} conversation={conversation} profileKey={profileKey} />}
+          <ServicePane key={workspace.id} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
       </div>
     </div>
   )

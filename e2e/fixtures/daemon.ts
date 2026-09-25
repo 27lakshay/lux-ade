@@ -74,7 +74,7 @@ export async function startDaemon(extraEnvironment: Record<string, string> = {})
       hello,
       stop: async () => {
         try {
-          await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id })
+          await prepareRestart(socket, hello.boot_id)
           await waitForExit(child)
           const runtimeSocket = hello.runtime_socket
           if (typeof runtimeSocket === 'string') {
@@ -93,6 +93,18 @@ export async function startDaemon(extraEnvironment: Record<string, string> = {})
     const runtimeLog = await readFile(join(dataDirectory, 'runtime.log'), 'utf8').catch(() => '')
     await rm(rootDirectory, { recursive: true, force: true })
     throw new Error(`ADE daemon failed to start: ${String(error)}\n${stderr}\n${runtimeLog}`)
+  }
+}
+
+async function prepareRestart(socket: string, bootId: unknown): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try {
+      await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
+      return
+    } catch (error) {
+      if (attempt === 49 || !String(error).includes('A command is still being admitted')) throw error
+      await delay(100)
+    }
   }
 }
 

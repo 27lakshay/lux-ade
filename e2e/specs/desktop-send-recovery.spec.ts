@@ -10,7 +10,7 @@ const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
 const electronExecutable = requireDesktop('electron') as string
 
-test('a dropped send reply keeps one prompt across retry and renderer reload', async () => {
+test('a dropped send reply keeps one prompt across renderer reload, hidden app close and retry', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'ade-send-recovery-'))
   const mockDirectory = join(userData, 'codex')
   const daemon = await startDaemon({
@@ -70,13 +70,14 @@ test('a dropped send reply keeps one prompt across retry and renderer reload', a
     upstream.on('close', () => { peers.delete(upstream); downstream.destroy() })
   })
   await new Promise<void>((resolveListen) => proxy.listen(proxySocket, resolveListen))
-  const application = await electron.launch({
+  const launch = () => electron.launch({
     executablePath: electronExecutable,
     args: [desktopDirectory],
     env: { ...process.env, ADE_SOCKET: proxySocket, ADE_E2E_USER_DATA_DIR: userData },
   })
+  let application = await launch()
   try {
-    const window = await application.firstWindow()
+    let window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     await window.getByRole('button', { name: 'New conversation' }).click()
     const conversation = window.getByRole('region', { name: 'Conversation' })
@@ -89,10 +90,17 @@ test('a dropped send reply keeps one prompt across retry and renderer reload', a
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     await expect(conversation.getByText('Prompt delivery is unconfirmed.', { exact: false })).toBeVisible()
     await expect(prompt).toHaveValue('typed-tool')
+    await application.close()
+    application = await launch()
+    window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const restored = window.getByRole('region', { name: 'Conversation' })
+    await expect(restored.getByText('Prompt delivery is unconfirmed.', { exact: false })).toBeVisible()
+    await expect(restored.getByRole('textbox', { name: 'Prompt' })).toHaveValue('typed-tool')
     blockSnapshots = false
-    await conversation.getByRole('button', { name: 'Retry prompt delivery' }).click()
-    await expect(prompt).toHaveValue('')
-    await expect(conversation.locator('.message-assistant')).toContainText('Hello world')
+    await restored.getByRole('button', { name: 'Retry prompt delivery' }).click()
+    await expect(restored.getByRole('textbox', { name: 'Prompt' })).toHaveValue('')
+    await expect(restored.locator('.message-assistant')).toContainText('Hello world')
     const calls = (await readFile(join(mockDirectory, 'calls.jsonl'), 'utf8')).split('\n').filter(Boolean)
     expect(calls.filter((line) => JSON.parse(line).method === 'turn/start')).toHaveLength(1)
   } finally {
