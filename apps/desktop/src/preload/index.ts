@@ -36,6 +36,15 @@ const terminal: TerminalBridge = {
 contextBridge.exposeInMainWorld('adeHost', {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('ade:app-version'),
   getClientState: () => ipcRenderer.invoke('ade:client-state'),
+  getProfileState: () => ipcRenderer.invoke('ade:profile-state'),
+  listProfiles: () => ipcRenderer.invoke('ade:profile-list'),
+  createProfile: (name: string) => ipcRenderer.invoke('ade:profile-create', name),
+  selectProfile: (id: string) => ipcRenderer.invoke('ade:profile-select', id),
+  onProfileState: (listener: (state: unknown) => void): (() => void) => {
+    const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
+    ipcRenderer.on('ade:profile-state-changed', receive)
+    return () => ipcRenderer.removeListener('ade:profile-state-changed', receive)
+  },
   requestConversation: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:conversation-request', op, fields),
   onClientState: (listener: (state: unknown) => void): (() => void) => {

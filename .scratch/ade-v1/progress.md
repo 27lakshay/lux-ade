@@ -18,9 +18,10 @@ configured. This is a checkpoint, not a claim that the v1 register is complete.
 | `ccfc06b` | Electron conversation slice | Create/send/structured transcript/reload/approval E2E |
 | `4678d37` | Native question form | Codex structured answer E2E |
 | `f11e28a` | Local profile launcher | Two-profile isolation/restart and incompatible-owner E2E |
+| pending | Electron profile selection | Two-daemon UI switch and catalog isolation E2E |
 
 Latest full check: `pnpm check` passed typecheck, Fallow, backend build,
-desktop/CLI build, and 11/11 running-process E2E tests. Existing provider
+desktop/CLI build, and 12/12 running-process E2E tests. Existing provider
 fixture suite passed after root lockfile migration. The old GPUI app built and
 packaged successfully in build-only mode; its GUI startup was not verified.
 
@@ -36,8 +37,8 @@ register is marked complete by this record.
 
 ## Active and next work
 
-- Electron profile creation/switching is in progress. Profile launcher currently
-  requires `scripts/profiles.py`; packaging it for a distributable app remains.
+- Electron profile creation/switching works in local development. The profile
+  launcher requires `scripts/profiles.py`; packaging it for a distributable app remains.
 - Draft recovery, conversation pagination, native attachments/context, queues,
   broader approval forms, and live Oh My Pi verification remain.
 - Account management, extensible providers/plugins, worktrees, dev services,

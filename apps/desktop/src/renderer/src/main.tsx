@@ -9,6 +9,8 @@ type Message = { id: string; role: string; kind: string; text: string; status: s
 type PendingRequest = { id: string; method: string; params: Frame }
 type Snapshot = { conversation: Conversation; messages: Message[]; requests: PendingRequest[]; revision: number; boot_id: string }
 type Provider = { id: string; name: string }
+type Profile = { id: string; name: string; selected: boolean; home: string }
+type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
 
 declare global {
   interface Window {
@@ -16,6 +18,11 @@ declare global {
       getAppVersion(): Promise<string>
       getClientState(): Promise<ClientState>
       onClientState(listener: (state: ClientState) => void): () => void
+      getProfileState(): Promise<ProfileState>
+      listProfiles(): Promise<ProfileState>
+      createProfile(name: string): Promise<ProfileState>
+      selectProfile(id: string): Promise<ProfileState>
+      onProfileState(listener: (state: ProfileState) => void): () => void
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
       terminal: TerminalBridge
     }
@@ -256,15 +263,71 @@ function ConnectedContent({ state }: { state: ClientState }): React.JSX.Element 
 
 function App(): React.JSX.Element {
   const [state, setState] = React.useState<ClientState | null>(null)
+  const [profile, setProfile] = React.useState<ProfileState | null>(null)
+  const [newProfile, setNewProfile] = React.useState('')
+  const [profileBusy, setProfileBusy] = React.useState(false)
+  const [profileError, setProfileError] = React.useState('')
+  const activeProfileId = React.useRef<string | null>(null)
   React.useEffect(() => {
-    const update = (next: ClientState): void => setState((previous) =>
-      !previous || next.sequence >= previous.sequence ? next : previous)
-    const unsubscribe = window.adeHost.onClientState(update)
-    void window.adeHost.getClientState().then(update)
-    return unsubscribe
+    const unsubscribeClient = window.adeHost.onClientState(setState)
+    const updateProfile = (next: ProfileState): void => {
+      if (activeProfileId.current !== next.activeId) {
+        activeProfileId.current = next.activeId
+        setState(null)
+      }
+      setProfile(next)
+    }
+    let profileEventSeen = false
+    const unsubscribeProfile = window.adeHost.onProfileState((next) => {
+      profileEventSeen = true
+      updateProfile(next)
+    })
+    void window.adeHost.getProfileState().then((next) => { if (!profileEventSeen) updateProfile(next) })
+    const initialProfileId = activeProfileId.current
+    void window.adeHost.getClientState().then((next) => {
+      if (activeProfileId.current === initialProfileId) setState(next)
+    })
+    return () => { unsubscribeClient(); unsubscribeProfile() }
   }, [])
-  return <main><header><span className="brand">ADE</span><span className="status" role="status">{state?.status ?? 'connecting'}</span></header>
-    {state?.status === 'connected' ? <ConnectedContent state={state} /> : <section className="welcome">
+  const switchProfile = async (id: string): Promise<void> => {
+    if (!id || profileBusy || id === profile?.activeId) return
+    setProfileBusy(true)
+    try { await window.adeHost.selectProfile(id); setProfileError('') }
+    catch (error) { setProfileError(String(error)) }
+    finally { setProfileBusy(false) }
+  }
+  const createProfile = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault()
+    const name = newProfile.trim()
+    if (!name || profileBusy) return
+    setProfileBusy(true)
+    try {
+      const priorIds = new Set(profile?.profiles.map((item) => item.id))
+      const next = await window.adeHost.createProfile(name)
+      const created = next.profiles.find((item) => !priorIds.has(item.id))
+      if (!created) throw new Error('Created profile was not returned by the launcher')
+      await window.adeHost.selectProfile(created.id)
+      setNewProfile('')
+      setProfileError('')
+    } catch (error) { setProfileError(String(error)) }
+    finally { setProfileBusy(false) }
+  }
+  const active = profile?.profiles.find((item) => item.id === profile.activeId)
+  return <main><header><span className="brand">ADE</span><div className="header-controls">
+    {profile?.managed && <label className="profile-picker">Profile <select aria-label="Profile" value={profile.activeId ?? ''}
+      disabled={profileBusy} onChange={(event) => void switchProfile(event.target.value)}>
+      <option value="">Choose profile</option>
+      {profile.profiles.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+    </select></label>}
+    <span className="status" role="status">{state?.status ?? 'connecting'}</span></div></header>
+    {profile?.managed && <div className="profile-bar">
+      <span>{active ? `Active profile: ${active.name}` : 'No active profile'}</span>
+      <form onSubmit={(event) => void createProfile(event)}><label htmlFor="new-profile">New profile</label>
+        <input id="new-profile" value={newProfile} maxLength={80} onChange={(event) => setNewProfile(event.target.value)} placeholder="Profile name" />
+        <button type="submit" disabled={profileBusy || !newProfile.trim()}>Create</button></form>
+      {(profileError || profile.error) && <span role="alert" className="inline-error">{profileError || profile.error}</span>}
+    </div>}
+    {state?.status === 'connected' ? <ConnectedContent key={profile?.activeId ?? 'fixed'} state={state} /> : <section className="welcome">
       <h1>Work across agents, in one place.</h1><p role="status">{state?.detail ?? 'Checking profile daemon…'}</p>
     </section>}</main>
 }

@@ -17,6 +17,15 @@ header {
 }
 .brand { font-weight: 700; letter-spacing: .12em; }
 .status { color: #a5adae; font-size: 13px; }
+.header-controls { align-items: center; display: flex; gap: 18px; }
+.profile-picker { align-items: center; color: #a5adae; display: flex; font-size: 12px; gap: 8px; }
+.profile-picker select, .profile-bar input { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: #e8e9e9; padding: 7px 9px; }
+.profile-picker select { max-width: 170px; }
+.profile-bar { align-items: center; background: #1b1e1f; border-bottom: 1px solid #323637; display: flex; flex-wrap: wrap; gap: 12px 22px; min-height: 52px; padding: 8px 24px; }
+.profile-bar > span:first-child { color: #c5cfcb; font-size: 13px; font-weight: 600; }
+.profile-bar form { align-items: center; display: flex; gap: 8px; }
+.profile-bar form label { color: #a5adae; font-size: 12px; }
+.profile-bar button { background: #84c8aa; border: 0; border-radius: 7px; color: #132019; font-size: 12px; font-weight: 600; padding: 8px 10px; }
 .welcome { margin: min(12vh, 96px) auto; max-width: 1100px; padding: 0 24px 48px; }
 .eyebrow { color: #84c8aa; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
 h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.08; }
@@ -30,10 +39,10 @@ h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.0
 .terminal-pane h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
 .terminal-pane [role="alert"] { color: #eeb87b; font-size: 13px; }
 .terminal-surface { background: #101213; border: 1px solid #323637; border-radius: 12px; height: 390px; overflow: hidden; padding: 10px; }
-button, select, textarea { font: inherit; }
+button, select, textarea, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .5; }
-button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #84c8aa; outline-offset: 2px; }
+button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid #84c8aa; outline-offset: 2px; }
 .workspace-layout { display: grid; grid-template-columns: 258px minmax(0, 1fr); min-height: calc(100vh - 54px); }
 .sidebar { background: #1b1e1f; border-right: 1px solid #323637; padding: 24px 16px; min-width: 0; }
 .sidebar h1 { font-size: 19px; letter-spacing: -.025em; margin: 0 0 8px; }
@@ -77,6 +86,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2p
 .empty-conversation { min-height: 340px; padding: 48px 12px; }
 .inline-error { color: #eeb87b; font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 780px) {
+  .profile-bar { padding: 10px 16px; }
   .workspace-layout { grid-template-columns: 1fr; }
   .sidebar { border-bottom: 1px solid #323637; border-right: 0; }
   .work-area { padding: 16px; }

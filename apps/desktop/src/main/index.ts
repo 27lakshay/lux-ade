@@ -1,8 +1,20 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { AdeClient, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
 
-const client = new AdeClient(process.env.ADE_SOCKET)
+type Profile = { id: string; name: string; selected: boolean; home: string }
+type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
+const fixedSocket = process.env.ADE_SOCKET
+const managedProfiles = !fixedSocket
+let socket = fixedSocket
+let client = new AdeClient(socket)
+let clientGeneration = 0
+let unsubscribeClient: (() => void) | null = null
+let switching = false
+let profileState: ProfileState = { managed: managedProfiles, profiles: [], selectedId: null, activeId: null, error: '' }
+const execFileAsync = promisify(execFile)
 const terminals = new Map<string, TerminalConnection>()
 const terminalKey = (senderId: number, connectionId: string): string => `${senderId}:${connectionId}`
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
@@ -15,47 +27,125 @@ function closeSenderTerminals(senderId: number): void {
   }
 }
 
+function broadcast(channel: string, value: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(channel, value)
+  }
+}
+
+function publishProfile(update: Partial<ProfileState>): ProfileState {
+  profileState = { ...profileState, ...update }
+  broadcast('ade:profile-state-changed', profileState)
+  return profileState
+}
+
+async function launcher(action: string, ...args: string[]): Promise<Record<string, unknown>> {
+  const script = resolve(app.getAppPath(), '../../scripts/profiles.py')
+  const binary = process.env.ADE_DAEMON_BIN ?? resolve(app.getAppPath(), '../../target/debug/ade-daemon')
+  const result = await execFileAsync('python3', [script, '--daemon', binary, action, ...args], {
+    timeout: 35_000,
+    maxBuffer: 1024 * 1024,
+    env: process.env,
+  })
+  const value: unknown = JSON.parse(result.stdout)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Profile launcher returned an invalid response')
+  return value as Record<string, unknown>
+}
+
+async function refreshProfiles(): Promise<ProfileState> {
+  if (!managedProfiles) return profileState
+  const response = await launcher('list')
+  if (response.type !== 'profiles' || !Array.isArray(response.profiles)) throw new Error('Invalid profile list')
+  return publishProfile({ profiles: response.profiles as Profile[], selectedId: response.selected_id as string | null, error: '' })
+}
+
+function attachClient(endpoint: string, profileId: string): void {
+  const previous = client
+  const previousSubscription = unsubscribeClient
+  const next = new AdeClient(endpoint)
+  const generation = ++clientGeneration
+  client = next
+  socket = endpoint
+  publishProfile({ activeId: profileId, error: '' })
+  for (const window of BrowserWindow.getAllWindows()) closeSenderTerminals(window.webContents.id)
+  previousSubscription?.()
+  previous.stop()
+  unsubscribeClient = next.subscribe((state) => {
+    if (generation === clientGeneration) broadcast('ade:client-state-changed', state)
+  })
+  next.start()
+}
+
+async function selectProfile(id: string, updateDefault: boolean): Promise<ProfileState> {
+  if (!managedProfiles) throw new Error('The socket is fixed by ADE_SOCKET')
+  if (switching) throw new Error('A profile switch is already in progress')
+  if (!profileState.profiles.some((item) => item.id === id)) throw new Error('Unknown profile')
+  switching = true
+  try {
+    const result = await launcher('start', id)
+    if (result.type !== 'profile_started' || typeof result.socket !== 'string' || !result.socket) {
+      throw new Error('Profile launcher did not return a daemon socket')
+    }
+    if (updateDefault) await launcher('select', id)
+    attachClient(result.socket, id)
+    return await refreshProfiles()
+  } finally { switching = false }
+}
+
 if (process.env.ADE_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.ADE_E2E_USER_DATA_DIR)
 }
 
 ipcMain.handle('ade:app-version', () => app.getVersion())
 ipcMain.handle('ade:client-state', () => client.getState())
+ipcMain.handle('ade:profile-state', () => profileState)
+ipcMain.handle('ade:profile-list', () => refreshProfiles())
+ipcMain.handle('ade:profile-create', async (_event, name: unknown) => {
+  if (!managedProfiles) throw new Error('The socket is fixed by ADE_SOCKET')
+  if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new Error('Profile name must contain 1 to 80 characters')
+  await launcher('create', name.trim())
+  return refreshProfiles()
+})
+ipcMain.handle('ade:profile-select', async (_event, id: unknown) => {
+  if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid profile ID')
+  return selectProfile(id, true)
+})
 const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.answer'])
 ipcMain.handle('ade:conversation-request', async (_event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !conversationOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid conversation request')
   }
-  if (client.getState().status !== 'connected' || !process.env.ADE_SOCKET) {
+  const endpoint = socket
+  if (client.getState().status !== 'connected' || !endpoint) {
     throw new Error('Profile daemon is unavailable')
   }
   const args = fields as Record<string, unknown>
   const catalog = client.getState().catalog
-  if (op === 'provider.list') return requestDaemon(process.env.ADE_SOCKET, op)
+  if (op === 'provider.list') return requestDaemon(endpoint, op)
   if (op === 'conversation.create') {
-    const providers = await requestDaemon(process.env.ADE_SOCKET, 'provider.list')
+    const providers = await requestDaemon(endpoint, 'provider.list')
     const available = Array.isArray(providers.providers) ? providers.providers : []
     if (!validId(args.workspace_id) || !catalog?.workspaces.some((item) => item.id === args.workspace_id)
       || !available.some((item) => item && typeof item === 'object' && 'id' in item && item.id === args.provider)
       || typeof args.title !== 'string' || args.title.length > 256) throw new Error('Invalid conversation creation')
-    return requestDaemon(process.env.ADE_SOCKET, op, { workspace_id: args.workspace_id, provider: args.provider, title: args.title })
+    return requestDaemon(endpoint, op, { workspace_id: args.workspace_id, provider: args.provider, title: args.title })
   }
   if (!validId(args.conversation_id) || !catalog?.conversations.some((item) => item.id === args.conversation_id)) {
     throw new Error('Conversation is unavailable in this profile')
   }
-  if (op === 'conversation.get') return requestDaemon(process.env.ADE_SOCKET, op, { conversation_id: args.conversation_id, limit: 200 })
+  if (op === 'conversation.get') return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
   if (op === 'agent.send') {
     if (!validId(args.request_id) || typeof args.text !== 'string' || !args.text.trim() || Buffer.byteLength(args.text) > 120 * 1024) {
       throw new Error('Invalid prompt')
     }
-    return requestDaemon(process.env.ADE_SOCKET, op, { conversation_id: args.conversation_id, request_id: args.request_id, text: args.text })
+    return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, request_id: args.request_id, text: args.text })
   }
   if (!validId(args.request_id) || !['accept', 'decline', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
   if (args.decision === 'answer') {
     if (!args.answers || typeof args.answers !== 'object' || Array.isArray(args.answers)
       || Buffer.byteLength(JSON.stringify(args.answers)) > 64 * 1024) throw new Error('Invalid question answers')
   }
-  return requestDaemon(process.env.ADE_SOCKET, op, {
+  return requestDaemon(endpoint, op, {
     conversation_id: args.conversation_id, request_id: args.request_id,
     decision: args.decision, ...(args.decision === 'answer' ? { answers: args.answers } : {}),
   })
@@ -63,12 +153,12 @@ ipcMain.handle('ade:conversation-request', async (_event, op: unknown, fields: u
 ipcMain.handle('ade:terminal-attach', (event, connectionId: unknown, workspaceId: unknown, terminalId: unknown) => {
   if (!validId(connectionId) || !validId(workspaceId) || !validId(terminalId)) throw new Error('Invalid terminal identity')
   const workspace = client.getState().catalog?.workspaces.find((item) => item.id === workspaceId)
-  if (client.getState().status !== 'connected' || !workspace || workspace.terminal_id !== terminalId || !process.env.ADE_SOCKET) {
+  if (client.getState().status !== 'connected' || !workspace || workspace.terminal_id !== terminalId || !socket) {
     throw new Error('The selected terminal is unavailable in this profile')
   }
   const key = terminalKey(event.sender.id, connectionId)
   terminals.get(key)?.dispose()
-  const terminal = openTerminalConnection(process.env.ADE_SOCKET, workspaceId, terminalId,
+  const terminal = openTerminalConnection(socket, workspaceId, terminalId,
     (frame) => {
       if (!event.sender.isDestroyed()) event.sender.send('ade:terminal-frame', connectionId, frame)
     },
@@ -135,13 +225,14 @@ function openMainWindow(): void {
 }
 
 app.whenReady().then(() => {
-  client.subscribe((state) => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send('ade:client-state-changed', state)
-    }
-  })
+  unsubscribeClient = client.subscribe((state) => broadcast('ade:client-state-changed', state))
   client.start()
   openMainWindow()
+  if (managedProfiles) {
+    void refreshProfiles().then(async (state) => {
+      if (state.selectedId) await selectProfile(state.selectedId, false)
+    }).catch((error) => publishProfile({ error: String(error) }))
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
   })
@@ -150,6 +241,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   for (const terminal of terminals.values()) terminal.dispose()
   terminals.clear()
+  unsubscribeClient?.()
   client.stop()
 })
 
