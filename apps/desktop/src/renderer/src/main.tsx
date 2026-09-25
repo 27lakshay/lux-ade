@@ -168,6 +168,13 @@ function ConversationView({ conversation, bootId }: { conversation: Conversation
         if (!loading) { reloadRequested = false; void load() }
         return
       }
+      if (frame.type === 'conversation_reload' &&
+          (frame.conversation as Conversation | undefined)?.id === conversation.id) {
+        current = null
+        reloadRequested = true
+        if (!loading) { reloadRequested = false; void load() }
+        return
+      }
       if (frame.type !== 'conversation_changed') {
         current = { ...current, revision: frame.revision }
         return
@@ -236,7 +243,13 @@ function ConversationView({ conversation, bootId }: { conversation: Conversation
       setDraftError(clearError)
       setError('')
       setRefresh((value) => value + 1)
-    } catch (reason) { setError(String(reason)) }
+    } catch (reason) {
+      setError(String(reason))
+      try {
+        const state = await window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id })
+        setSendPending(Boolean(state.send_pending))
+      } catch { /* Keep the pending state until the daemon can be queried again. */ }
+    }
     finally { setBusy(false) }
   }
   const retryPendingSend = async (): Promise<void> => {
@@ -251,7 +264,13 @@ function ConversationView({ conversation, bootId }: { conversation: Conversation
       setDraftError(clearError)
       setError('')
       setRefresh((value) => value + 1)
-    } catch (reason) { setError(String(reason)) }
+    } catch (reason) {
+      setError(String(reason))
+      try {
+        const state = await window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id })
+        setSendPending(Boolean(state.send_pending))
+      } catch { /* Keep the pending state until the daemon can be queried again. */ }
+    }
     finally { setBusy(false) }
   }
   const retryClear = async (): Promise<void> => {

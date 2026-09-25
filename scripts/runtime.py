@@ -69,7 +69,7 @@ def save_binding(home, directory):
         if database.exists():
             with contextlib.closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version not in (1, 2, 3, 4, 5, 6, 7):
+                if version not in (1, 2, 3, 4, 5, 6, 7, 8):
                     raise RuntimeError(f"Unsupported store version {version}; keep the original directory")
                 if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise RuntimeError("Database integrity check failed; original directory preserved")

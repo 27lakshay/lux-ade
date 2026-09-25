@@ -617,16 +617,66 @@ impl Sessions {
                 };
                 Ok(json!({"type":"draft","draft":persistence_result(saved)?}))
             }
-            "agent.send" => {
-                self.send(
-                    string("conversation_id")?,
-                    string("request_id")?,
-                    request["text"].as_str().context("Missing prompt text")?,
-                    &serde_json::from_value::<Vec<crate::model::Attachment>>(
+            "draft.send.get" => {
+                let data = self.data.lock().unwrap();
+                Ok(json!({"type":"send_intent","intent":data.store.send_intent(
+                    string("conversation_id")?, string("window_id")?)?}))
+            }
+            "draft.send.prepare" => {
+                let draft = crate::model::Draft {
+                    text: request["draft_text"]
+                        .as_str()
+                        .context("Missing draft text")?
+                        .into(),
+                    revision: request["revision"]
+                        .as_i64()
+                        .context("Missing draft revision")?,
+                    attachments: serde_json::from_value(
                         request.get("attachments").cloned().unwrap_or(json!([])),
                     )?,
-                    false,
+                };
+                let data = self.data.lock().unwrap();
+                let intent = persistence_result(data.store.prepare_send_intent(
+                    string("conversation_id")?,
+                    string("window_id")?,
+                    string("request_id")?,
+                    &draft,
+                    request["text"].as_str().context("Missing prompt text")?,
+                ))?;
+                Ok(json!({"type":"send_intent","intent":intent}))
+            }
+            "draft.send.complete" => {
+                let data = self.data.lock().unwrap();
+                let draft = persistence_result(data.store.complete_send_intent(
+                    string("conversation_id")?,
+                    string("window_id")?,
+                    string("request_id")?,
+                ))?;
+                Ok(json!({"type":"draft","draft":draft}))
+            }
+            "draft.send.abort" => {
+                let data = self.data.lock().unwrap();
+                let draft = persistence_result(data.store.abort_send_intent(
+                    string("conversation_id")?,
+                    string("window_id")?,
+                    string("request_id")?,
+                ))?;
+                Ok(json!({"type":"draft","draft":draft}))
+            }
+            "agent.send" => {
+                let conversation = string("conversation_id")?;
+                let key = string("request_id")?;
+                let text = request["text"].as_str().context("Missing prompt text")?;
+                let attachments = serde_json::from_value::<Vec<crate::model::Attachment>>(
+                    request.get("attachments").cloned().unwrap_or(json!([])),
                 )?;
+                if let Err(error) = self.send(conversation, key, text, &attachments, false) {
+                    let data = self.data.lock().unwrap();
+                    let _ = data
+                        .store
+                        .reject_send_intent(conversation, key, text, &attachments);
+                    return Err(error);
+                }
                 Ok(json!({"type":"ack"}))
             }
             "queue.enqueue" | "queue.cancel" | "queue.pause" => {
@@ -896,6 +946,7 @@ impl Sessions {
                 !d.draining,
                 "Application daemon is restarting; prompt remains queued"
             );
+            d.store.guard_send_intent(id, key, text, attachments)?;
             ensure!(
                 d.agents.contains_key(id) || d.agents.len() < 16,
                 "Limit of 16 connected Agents reached"

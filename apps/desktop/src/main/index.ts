@@ -1,10 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { stat } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { AdeClient, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
+import { AdeClient, DaemonRequestError, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
 
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
@@ -20,13 +20,38 @@ let profileState: ProfileState = { managed: managedProfiles, profiles: [], selec
 const execFileAsync = promisify(execFile)
 const terminals = new Map<string, TerminalConnection>()
 type Draft = { text: string; revision: number; attachments: unknown[] }
-type SendIntent = { requestId: string; text: string; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null }
+type SendIntent = { requestId: string; draftText: string; revision: number; text: string; attachments: unknown[];
+  state: 'pending' | 'rejected'; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null }
 type DraftEntry = { senderId: number; endpoint: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string; send: SendIntent | null }
 const windowIds = new Map<number, string>()
+let singleWindowId = ''
 const drafts = new Map<string, DraftEntry>()
 const draftKey = (senderId: number, endpoint: string, conversationId: string): string => `${senderId}:${endpoint}:${conversationId}`
 const terminalKey = (senderId: number, connectionId: string): string => `${senderId}:${connectionId}`
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
+
+async function persistentWindowId(): Promise<string> {
+  const directory = app.getPath('userData')
+  const target = join(directory, 'window-owner-v1.json')
+  await mkdir(directory, { recursive: true })
+  let saved: string | undefined
+  try { saved = await readFile(target, 'utf8') }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (saved !== undefined) {
+    const value: unknown = JSON.parse(saved)
+    if (!value || typeof value !== 'object' || !('id' in value) || !validId(value.id)) {
+      throw new Error('Window owner record is invalid; preserve it for draft recovery')
+    }
+    return value.id
+  }
+  const id = randomUUID()
+  const temporary = `${target}.${id}.tmp`
+  await writeFile(temporary, JSON.stringify({ id }), { mode: 0o600, flag: 'wx' })
+  await rename(temporary, target)
+  return id
+}
 
 function closeSenderTerminals(senderId: number): void {
   for (const [key, terminal] of terminals) {
@@ -75,11 +100,25 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   if (cached) return cached
   const windowId = windowIds.get(senderId)
   if (!windowId) throw new Error('Window is unavailable')
-  const response = await requestDaemon(endpoint, 'draft.get', { conversation_id: conversationId, window_id: windowId })
+  const fields = { conversation_id: conversationId, window_id: windowId }
+  const [response, pending] = await Promise.all([
+    requestDaemon(endpoint, 'draft.get', fields),
+    requestDaemon(endpoint, 'draft.send.get', fields),
+  ])
   const value = response.draft as Draft
   if (!value || typeof value.text !== 'string' || !Number.isSafeInteger(value.revision)) throw new Error('Invalid draft response')
+  const recovered = pending.intent as { request_id?: unknown; draft_text?: unknown; draft_revision?: unknown;
+    text?: unknown; attachments?: unknown; state?: unknown } | null
+  if (recovered && (!validId(recovered.request_id) || typeof recovered.text !== 'string'
+    || typeof recovered.draft_text !== 'string' || !Number.isSafeInteger(recovered.draft_revision)
+    || !Array.isArray(recovered.attachments)
+    || !['pending', 'rejected'].includes(String(recovered.state)))) throw new Error('Invalid send intent response')
   const entry: DraftEntry = { senderId, endpoint, conversationId, windowId, draft: value, timer: null,
-    pending: Promise.resolve(), savedRevision: value.revision, error: '', unclearedText: '', send: null }
+    pending: Promise.resolve(), savedRevision: value.revision, error: '', unclearedText: '',
+    send: recovered ? { requestId: recovered.request_id as string, text: recovered.text as string,
+      draftText: recovered.draft_text as string, revision: recovered.draft_revision as number,
+      attachments: recovered.attachments as unknown[],
+      state: recovered.state as 'pending' | 'rejected', preparing: false, inFlight: null } : null }
   const concurrent = drafts.get(key)
   if (concurrent) return concurrent
   drafts.set(key, entry)
@@ -87,32 +126,25 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
 }
 
 function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
-  return entry.send ? { request_id: entry.send.requestId, text: entry.send.text } : null
+  return entry.send ? { request_id: entry.send.requestId, text: entry.send.text, state: entry.send.state } : null
 }
 
 async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>): Promise<Record<string, unknown>> {
-  entry.draft = { text: '', revision: entry.draft.revision + 1, attachments: [] }
-  try { await flushDraft(entry) }
-  catch {
-    entry.unclearedText = intent.text
-    entry.error = 'Prompt was sent, but its draft could not be cleared. Retry clearing before sending again.'
-    publishDraftError(entry, entry.error)
-    entry.send = null
-    return { ...response, draft_error: entry.error }
-  }
+  const result = await requestDaemon(entry.endpoint, 'draft.send.complete', {
+    conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
+  })
+  const cleared = result.draft as Draft
+  if (!cleared || cleared.text !== '' || !Number.isSafeInteger(cleared.revision)) throw new Error('Invalid completed draft')
+  entry.draft = cleared
+  entry.savedRevision = cleared.revision
+  entry.unclearedText = ''
+  entry.error = ''
+  publishDraftError(entry, '')
   entry.send = null
   return response
 }
 
-async function findAcceptedSend(entry: DraftEntry, intent: SendIntent): Promise<boolean> {
-  const response = await requestDaemon(entry.endpoint, 'conversation.get', { conversation_id: entry.conversationId, limit: 200 })
-  if (!Array.isArray(response.messages)) throw new Error('Conversation snapshot did not include messages')
-  return response.messages.some((item: unknown) => item && typeof item === 'object'
-    && 'id' in item && item.id === intent.requestId && 'role' in item && item.role === 'user'
-    && 'text' in item && item.text === intent.text)
-}
-
-function dispatchSend(entry: DraftEntry, intent: SendIntent, retry: boolean): Promise<Record<string, unknown>> {
+function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<string, unknown>> {
   if (intent.inFlight) return intent.inFlight
   const generation = clientGeneration
   const activeProfile = (): boolean => socket === entry.endpoint && clientGeneration === generation
@@ -121,26 +153,80 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent, retry: boolean): Pr
   const work = (async (): Promise<Record<string, unknown>> => {
     if (!activeProfile()) return uncertain()
     try {
-      if (retry && await findAcceptedSend(entry, intent)) {
+      const prepared = await requestDaemon(entry.endpoint, 'draft.send.prepare', {
+        conversation_id: entry.conversationId, window_id: entry.windowId,
+        request_id: intent.requestId, draft_text: intent.draftText, text: intent.text,
+        revision: intent.revision, attachments: intent.attachments,
+      })
+      const persisted = prepared.intent as { request_id?: string; state?: string } | null
+      if (persisted?.request_id === intent.requestId && persisted.state === 'completed') {
         if (!activeProfile()) return uncertain()
-        return acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
+        try { return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true }) }
+        catch { return uncertain() }
       }
-    } catch { /* The original request ID is safe to retry when a snapshot cannot be read. */ }
+      if (persisted?.request_id !== intent.requestId || !['pending', 'rejected'].includes(String(persisted.state))) {
+        throw new Error('Send intent was not admitted')
+      }
+      intent.state = persisted.state as 'pending' | 'rejected'
+    } catch (error) {
+      if (!activeProfile()) return uncertain()
+      try {
+        const state = await requestDaemon(entry.endpoint, 'draft.send.get', {
+          conversation_id: entry.conversationId, window_id: entry.windowId,
+        })
+        const persisted = state.intent as { request_id?: string; state?: string } | null
+        if (persisted?.request_id === intent.requestId && ['pending', 'rejected'].includes(String(persisted.state))) {
+          intent.state = persisted.state as 'pending' | 'rejected'
+        } else if (persisted) {
+          entry.send = null
+          throw new Error('A different prompt is awaiting reconciliation for this draft')
+        } else {
+          try {
+            if (!activeProfile()) return uncertain()
+            return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
+          } catch { /* No completed intent was found. */ }
+          if (error instanceof DaemonRequestError && (error.code === 'daemon' || error.code === 'invalid_request')) {
+            entry.send = null
+            throw error
+          }
+          return uncertain()
+        }
+      } catch (recoveryError) {
+        if (entry.send === null) throw recoveryError
+        return uncertain()
+      }
+    }
     if (!activeProfile()) return uncertain()
     try {
       const response = await requestDaemon(entry.endpoint, 'agent.send', {
         conversation_id: entry.conversationId, request_id: intent.requestId, text: intent.text,
+        attachments: intent.attachments,
       })
       if (!activeProfile()) return uncertain()
-      return acceptedSend(entry, intent, response)
-    } catch {
+      try { return await acceptedSend(entry, intent, response) }
+      catch { return uncertain() }
+    } catch (error) {
       if (!activeProfile()) return uncertain()
       try {
-        if (await findAcceptedSend(entry, intent)) {
+        return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
+      } catch { /* No matching durable user message is visible yet. */ }
+      try {
+        const state = await requestDaemon(entry.endpoint, 'draft.send.get', {
+          conversation_id: entry.conversationId, window_id: entry.windowId,
+        })
+        const persisted = state.intent as { request_id?: string; state?: string } | null
+        if (persisted?.request_id === intent.requestId && persisted.state === 'rejected') {
+          await requestDaemon(entry.endpoint, 'draft.send.abort', {
+            conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
+          })
           if (!activeProfile()) return uncertain()
-          return acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
+          intent.state = 'rejected'
+          entry.send = null
+          throw error
         }
-      } catch { /* Admission remains uncertain until a later retry with the same ID. */ }
+      } catch (recoveryError) {
+        if (recoveryError === error) throw error
+      }
       return uncertain()
     }
   })()
@@ -312,7 +398,7 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
     if (op === 'agent.retry_send') {
       if (!entry.send) throw new Error('No prompt is awaiting confirmation')
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
-      return dispatchSend(entry, entry.send, true)
+      return dispatchSend(entry, entry.send)
     }
     if (!validId(args.request_id) || typeof args.text !== 'string' || !args.text.trim() || Buffer.byteLength(args.text) > 120 * 1024) {
       throw new Error('Invalid prompt')
@@ -322,15 +408,20 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
         throw new Error('Resolve the previous prompt before starting another')
       }
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
-      return dispatchSend(entry, entry.send, true)
+      return dispatchSend(entry, entry.send)
     }
     if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
-    const intent: SendIntent = { requestId: args.request_id, text: args.text, preparing: true, inFlight: null }
+    const intent: SendIntent = { requestId: args.request_id, text: args.text, draftText: entry.draft.text,
+      revision: entry.draft.revision, attachments: entry.draft.attachments,
+      state: 'pending', preparing: true, inFlight: null }
     entry.send = intent
     try { await flushDraft(entry) }
     catch { entry.send = null; throw new Error('Draft could not be saved; prompt was not sent') }
+    intent.draftText = entry.draft.text
+    intent.revision = entry.draft.revision
+    intent.attachments = entry.draft.attachments
     intent.preparing = false
-    return dispatchSend(entry, intent, false)
+    return dispatchSend(entry, intent)
   }
   if (!validId(args.request_id) || !['accept', 'decline', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
   if (args.decision === 'answer') {
@@ -389,6 +480,7 @@ ipcMain.on('ade:terminal-detach', (event, connectionId: unknown) => {
 
 function openMainWindow(): void {
   const window = new BrowserWindow({
+    show: process.env.ADE_E2E_HIDE_WINDOW !== '1',
     width: 1200,
     height: 820,
     minWidth: 720,
@@ -401,7 +493,7 @@ function openMainWindow(): void {
       sandbox: true,
     },
   })
-  windowIds.set(window.webContents.id, randomUUID())
+  windowIds.set(window.webContents.id, singleWindowId)
   let readyForClose = false
   let closeFlushInProgress = false
   window.on('close', (event) => {
@@ -460,7 +552,12 @@ function openMainWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.platform === 'darwin') {
+    app.setActivationPolicy('accessory')
+    app.dock?.hide()
+  }
+  singleWindowId = await persistentWindowId()
   unsubscribeClient = client.subscribe((state) => broadcast('ade:client-state-changed', state))
   unsubscribeFeed = client.subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
   client.start()
@@ -473,6 +570,9 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
   })
+}).catch((error: unknown) => {
+  dialog.showErrorBox('ADE could not open its window', String(error))
+  app.quit()
 })
 
 let readyToQuit = false

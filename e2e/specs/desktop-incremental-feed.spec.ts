@@ -1,10 +1,10 @@
 import { expect, test, _electron as electron } from '@playwright/test'
 import { createRequire } from 'node:module'
 import { createConnection, createServer, type Socket } from 'node:net'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { startDaemon } from '../fixtures/daemon'
+import { rpc, startDaemon } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
@@ -96,6 +96,47 @@ test('conversation feed applies deltas and resnapshots after a missing revision'
     await application.close()
     for (const peer of peers) peer.destroy()
     await new Promise<void>((resolveClose) => proxy.close(() => resolveClose()))
+    await daemon.stop()
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('provider history committed on resume appears without transcript polling', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'ade-reload-e2e-'))
+  const mockDirectory = join(userData, 'codex')
+  const daemon = await startDaemon({
+    ADE_CODEX_BIN: resolve('scripts/fixtures/codex_mock.py'),
+    ADE_CODEX_TRANSPORT: 'stdio',
+    ADE_MOCK_DIR: mockDirectory,
+  })
+  const application = await electron.launch({
+    executablePath: electronExecutable,
+    args: [desktopDirectory],
+    env: { ...process.env, ADE_SOCKET: daemon.socket, ADE_E2E_USER_DATA_DIR: userData },
+  })
+  try {
+    const window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    await window.getByRole('button', { name: 'New conversation' }).click()
+    const conversation = window.getByRole('region', { name: 'Conversation' })
+    await conversation.getByRole('textbox', { name: 'Prompt' }).fill('First turn')
+    await conversation.getByRole('button', { name: 'Send' }).click()
+    await expect(conversation.locator('.message-assistant')).toContainText('Hello world')
+    const catalog = await rpc(daemon.socket, { op: 'catalog.get' })
+    const conversationId = (catalog.catalog as { conversations: Array<{ id: string }> }).conversations[0].id
+    await rpc(daemon.socket, { op: 'agent.disconnect', conversation_id: conversationId })
+    const threadFile = (await readdir(mockDirectory)).find((name) => name.endsWith('.json'))
+    if (!threadFile) throw new Error('Codex fixture did not write native history')
+    const filename = join(mockDirectory, threadFile)
+    const thread = JSON.parse(await readFile(filename, 'utf8')) as { turns: unknown[] }
+    thread.turns.push({ id: 'external-turn', status: 'completed', items: [
+      { id: 'external-answer', type: 'agentMessage', text: 'Recovered external history' },
+    ] })
+    await writeFile(filename, JSON.stringify(thread))
+    await rpc(daemon.socket, { op: 'agent.resume', conversation_id: conversationId })
+    await expect(conversation.locator('.message-assistant').filter({ hasText: 'Recovered external history' })).toBeVisible()
+  } finally {
+    await application.close()
     await daemon.stop()
     await rm(userData, { recursive: true, force: true })
   }
