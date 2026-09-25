@@ -50,6 +50,11 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .sidebar select { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 8px; width: 100%; }
 .field-label { color: #b7bfc0; display: block; font-size: 12px; margin: 20px 0 7px; }
 .workspace-root { color: #929c9d; font-size: 11px; overflow-wrap: anywhere; }
+.open-workspace { margin-top: 18px; }
+.open-workspace .field-label { margin-top: 0; }
+.open-workspace input { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 8px; width: 100%; }
+.open-workspace > div { display: flex; gap: 6px; margin-top: 7px; }
+.open-workspace button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 7px 9px; }
 .conversation-list { list-style: none; margin: 0; padding: 0; }
 .conversation-list button { background: transparent; border: 1px solid transparent; border-radius: 7px; color: inherit; display: block; padding: 9px 10px; text-align: left; width: 100%; }
 .conversation-list button:hover { background: #282d2e; }

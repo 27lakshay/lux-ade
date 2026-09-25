@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { execFile } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { AdeClient, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
 
@@ -109,6 +110,23 @@ ipcMain.handle('ade:profile-create', async (_event, name: unknown) => {
 ipcMain.handle('ade:profile-select', async (_event, id: unknown) => {
   if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid profile ID')
   return selectProfile(id, true)
+})
+async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> {
+  if (typeof folder !== 'string' || !isAbsolute(folder) || folder.length > 4096) throw new Error('Choose an absolute folder path')
+  if (!(await stat(folder)).isDirectory()) throw new Error('The selected path is not a folder')
+  const endpoint = socket
+  if (client.getState().status !== 'connected' || !endpoint) throw new Error('Profile daemon is unavailable')
+  return requestDaemon(endpoint, 'workspace.open', { path: folder })
+}
+ipcMain.handle('ade:workspace-open', (_event, folder: unknown) => openWorkspace(folder))
+ipcMain.handle('ade:workspace-choose', async (event) => {
+  const parent = BrowserWindow.fromWebContents(event.sender)
+  const options: Electron.OpenDialogOptions = {
+    title: 'Open workspace', properties: ['openDirectory'], buttonLabel: 'Open workspace',
+  }
+  const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
+  if (result.canceled || !result.filePaths[0]) return null
+  return openWorkspace(result.filePaths[0])
 })
 const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.answer'])
 ipcMain.handle('ade:conversation-request', async (_event, op: unknown, fields: unknown) => {

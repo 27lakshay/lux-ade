@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('adeHost', {
   listProfiles: () => ipcRenderer.invoke('ade:profile-list'),
   createProfile: (name: string) => ipcRenderer.invoke('ade:profile-create', name),
   selectProfile: (id: string) => ipcRenderer.invoke('ade:profile-select', id),
+  openWorkspace: (folder: string) => ipcRenderer.invoke('ade:workspace-open', folder),
+  chooseWorkspace: () => ipcRenderer.invoke('ade:workspace-choose'),
   onProfileState: (listener: (state: unknown) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
     ipcRenderer.on('ade:profile-state-changed', receive)

@@ -23,6 +23,8 @@ declare global {
       createProfile(name: string): Promise<ProfileState>
       selectProfile(id: string): Promise<ProfileState>
       onProfileState(listener: (state: ProfileState) => void): () => void
+      openWorkspace(folder: string): Promise<Frame>
+      chooseWorkspace(): Promise<Frame | null>
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
       terminal: TerminalBridge
     }
@@ -189,13 +191,17 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
   )
 }
 
-function ConnectedContent({ state }: { state: ClientState }): React.JSX.Element {
+function ConnectedContent({ state, profileKey }: { state: ClientState; profileKey: string }): React.JSX.Element {
   const workspaces = state.catalog?.workspaces ?? []
   const conversations = state.catalog?.conversations ?? []
-  const [workspaceId, setWorkspaceId] = React.useState('')
-  const [conversationId, setConversationId] = React.useState(() => localStorage.getItem('ade.lastConversation') ?? '')
+  const workspaceStorageKey = `ade.lastWorkspace.${profileKey}`
+  const conversationStorageKey = `ade.lastConversation.${profileKey}`
+  const [workspaceId, setWorkspaceId] = React.useState(() => localStorage.getItem(workspaceStorageKey) ?? '')
+  const [conversationId, setConversationId] = React.useState(() => localStorage.getItem(conversationStorageKey) ?? '')
   const [provider, setProvider] = React.useState('codex')
   const [providers, setProviders] = React.useState<Provider[]>([])
+  const [folderPath, setFolderPath] = React.useState('')
+  const [opening, setOpening] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [error, setError] = React.useState('')
   const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0]
@@ -221,10 +227,40 @@ function ConnectedContent({ state }: { state: ClientState }): React.JSX.Element 
       })
       const created = response.conversation as Conversation
       setConversationId(created.id)
-      localStorage.setItem('ade.lastConversation', created.id)
+      localStorage.setItem(conversationStorageKey, created.id)
       setError('')
     } catch (reason) { setError(String(reason)) }
     finally { setCreating(false) }
+  }
+  const openFolder = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (opening || !folderPath.trim()) return
+    setOpening(true)
+    try {
+      const result = await window.adeHost.openWorkspace(folderPath.trim())
+      const opened = result.workspace as Workspace
+      setWorkspaceId(opened.id)
+      localStorage.setItem(workspaceStorageKey, opened.id)
+      setConversationId('')
+      setFolderPath('')
+      setError('')
+    } catch (reason) { setError(String(reason)) }
+    finally { setOpening(false) }
+  }
+  const chooseFolder = async (): Promise<void> => {
+    if (opening) return
+    setOpening(true)
+    try {
+      const result = await window.adeHost.chooseWorkspace()
+      if (result) {
+        const opened = result.workspace as Workspace
+        setWorkspaceId(opened.id)
+        localStorage.setItem(workspaceStorageKey, opened.id)
+        setConversationId('')
+        setError('')
+      }
+    } catch (reason) { setError(String(reason)) }
+    finally { setOpening(false) }
   }
   return (
     <div className="workspace-layout">
@@ -233,14 +269,22 @@ function ConnectedContent({ state }: { state: ClientState }): React.JSX.Element 
         <p className="connection-meta">Daemon boot: {state.bootId}</p>
         {workspaces.length === 0 && <p>No workspaces are registered in this profile yet.</p>}
         {workspaces.length > 0 && <label className="field-label" htmlFor="workspace">Workspace</label>}
-        {workspaces.length > 0 && <select id="workspace" value={workspace?.id} onChange={(event) => { setWorkspaceId(event.target.value); setConversationId('') }}>
+        {workspaces.length > 0 && <select id="workspace" value={workspace?.id} onChange={(event) => {
+          setWorkspaceId(event.target.value); localStorage.setItem(workspaceStorageKey, event.target.value); setConversationId('')
+        }}>
           {workspaces.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
         </select>}
         {workspace && <p className="workspace-root" title={workspace.root}>{workspace.root}</p>}
+        <form className="open-workspace" onSubmit={(event) => void openFolder(event)}>
+          <label className="field-label" htmlFor="folder-path">Open folder</label>
+          <input id="folder-path" value={folderPath} placeholder="/path/to/project" onChange={(event) => setFolderPath(event.target.value)} />
+          <div><button type="submit" disabled={opening || !folderPath.trim()}>Open folder</button>
+            <button type="button" disabled={opening} onClick={() => void chooseFolder()}>Browse…</button></div>
+        </form>
         <h2>Conversations</h2>
         <nav aria-label="Conversations"><ul className="conversation-list">
           {workspaceConversations.map((item) => <li key={item.id}><button className={conversation?.id === item.id ? 'selected' : ''} onClick={() => {
-            setConversationId(item.id); localStorage.setItem('ade.lastConversation', item.id)
+            setConversationId(item.id); localStorage.setItem(conversationStorageKey, item.id)
           }}>{item.title}<small>{item.provider} · {item.status}</small></button></li>)}
         </ul></nav>
         <div className="new-conversation">
@@ -327,7 +371,7 @@ function App(): React.JSX.Element {
         <button type="submit" disabled={profileBusy || !newProfile.trim()}>Create</button></form>
       {(profileError || profile.error) && <span role="alert" className="inline-error">{profileError || profile.error}</span>}
     </div>}
-    {state?.status === 'connected' ? <ConnectedContent key={profile?.activeId ?? 'fixed'} state={state} /> : <section className="welcome">
+    {state?.status === 'connected' ? <ConnectedContent key={profile?.activeId ?? 'fixed'} profileKey={profile?.activeId ?? 'fixed'} state={state} /> : <section className="welcome">
       <h1>Work across agents, in one place.</h1><p role="status">{state?.detail ?? 'Checking profile daemon…'}</p>
     </section>}</main>
 }
