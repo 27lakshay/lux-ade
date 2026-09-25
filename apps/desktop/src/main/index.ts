@@ -19,7 +19,8 @@ let profileState: ProfileState = { managed: managedProfiles, profiles: [], selec
 const execFileAsync = promisify(execFile)
 const terminals = new Map<string, TerminalConnection>()
 type Draft = { text: string; revision: number; attachments: unknown[] }
-type DraftEntry = { senderId: number; endpoint: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string }
+type SendIntent = { requestId: string; text: string; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null }
+type DraftEntry = { senderId: number; endpoint: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string; send: SendIntent | null }
 const windowIds = new Map<number, string>()
 const drafts = new Map<string, DraftEntry>()
 const draftKey = (senderId: number, endpoint: string, conversationId: string): string => `${senderId}:${endpoint}:${conversationId}`
@@ -77,11 +78,74 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   const value = response.draft as Draft
   if (!value || typeof value.text !== 'string' || !Number.isSafeInteger(value.revision)) throw new Error('Invalid draft response')
   const entry: DraftEntry = { senderId, endpoint, conversationId, windowId, draft: value, timer: null,
-    pending: Promise.resolve(), savedRevision: value.revision, error: '', unclearedText: '' }
+    pending: Promise.resolve(), savedRevision: value.revision, error: '', unclearedText: '', send: null }
   const concurrent = drafts.get(key)
   if (concurrent) return concurrent
   drafts.set(key, entry)
   return entry
+}
+
+function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
+  return entry.send ? { request_id: entry.send.requestId, text: entry.send.text } : null
+}
+
+async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>): Promise<Record<string, unknown>> {
+  entry.draft = { text: '', revision: entry.draft.revision + 1, attachments: [] }
+  try { await flushDraft(entry) }
+  catch {
+    entry.unclearedText = intent.text
+    entry.error = 'Prompt was sent, but its draft could not be cleared. Retry clearing before sending again.'
+    publishDraftError(entry, entry.error)
+    entry.send = null
+    return { ...response, draft_error: entry.error }
+  }
+  entry.send = null
+  return response
+}
+
+async function findAcceptedSend(entry: DraftEntry, intent: SendIntent): Promise<boolean> {
+  const response = await requestDaemon(entry.endpoint, 'conversation.get', { conversation_id: entry.conversationId, limit: 200 })
+  if (!Array.isArray(response.messages)) throw new Error('Conversation snapshot did not include messages')
+  return response.messages.some((item: unknown) => item && typeof item === 'object'
+    && 'id' in item && item.id === intent.requestId && 'role' in item && item.role === 'user'
+    && 'text' in item && item.text === intent.text)
+}
+
+function dispatchSend(entry: DraftEntry, intent: SendIntent, retry: boolean): Promise<Record<string, unknown>> {
+  if (intent.inFlight) return intent.inFlight
+  const generation = clientGeneration
+  const activeProfile = (): boolean => socket === entry.endpoint && clientGeneration === generation
+  const uncertain = (): Record<string, unknown> => ({ type: 'send_pending', request_id: intent.requestId, text: intent.text,
+    message: 'Prompt delivery is unconfirmed. Retry will use the same request ID.' })
+  const work = (async (): Promise<Record<string, unknown>> => {
+    if (!activeProfile()) return uncertain()
+    try {
+      if (retry && await findAcceptedSend(entry, intent)) {
+        if (!activeProfile()) return uncertain()
+        return acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
+      }
+    } catch { /* The original request ID is safe to retry when a snapshot cannot be read. */ }
+    if (!activeProfile()) return uncertain()
+    try {
+      const response = await requestDaemon(entry.endpoint, 'agent.send', {
+        conversation_id: entry.conversationId, request_id: intent.requestId, text: intent.text,
+      })
+      if (!activeProfile()) return uncertain()
+      return acceptedSend(entry, intent, response)
+    } catch {
+      if (!activeProfile()) return uncertain()
+      try {
+        if (await findAcceptedSend(entry, intent)) {
+          if (!activeProfile()) return uncertain()
+          return acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
+        }
+      } catch { /* Admission remains uncertain until a later retry with the same ID. */ }
+      return uncertain()
+    }
+  })()
+  intent.inFlight = work
+  void work.finally(() => { intent.inFlight = null }).catch(() => undefined)
+  return work
 }
 
 function broadcast(channel: string, value: unknown): void {
@@ -184,16 +248,21 @@ ipcMain.handle('ade:workspace-choose', async (event) => {
   if (result.canceled || !result.filePaths[0]) return null
   return openWorkspace(result.filePaths[0])
 })
-const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
+const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.retry_send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
 ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !conversationOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid conversation request')
   }
   const endpoint = socket
+  const args = fields as Record<string, unknown>
+  if (op === 'draft.get' && endpoint && validId(args.conversation_id)) {
+    const cached = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
+    if (cached) return { type: 'draft', draft: cached.draft, error: cached.error, sent_text: cached.unclearedText,
+      send_pending: pendingSend(cached) }
+  }
   if (client.getState().status !== 'connected' || !endpoint) {
     throw new Error('Profile daemon is unavailable')
   }
-  const args = fields as Record<string, unknown>
   const catalog = client.getState().catalog
   if (op === 'provider.list') return requestDaemon(endpoint, op)
   if (op === 'conversation.create') {
@@ -210,7 +279,7 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
   if (op === 'draft.get' || op === 'draft.save' || op === 'draft.flush') {
     const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
     if (op === 'draft.save') {
-      if (entry.unclearedText) throw new Error('Finish clearing the sent draft before editing')
+      if (entry.unclearedText || entry.send) throw new Error('Resolve the previous prompt before editing this draft')
       if (typeof args.text !== 'string' || Buffer.byteLength(args.text) > 120 * 1024) throw new Error('Invalid draft')
       entry.draft = { text: args.text, revision: entry.draft.revision + 1, attachments: [] }
       scheduleDraft(entry)
@@ -219,26 +288,34 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
       await flushDraft(entry)
       entry.unclearedText = ''
     }
-    return { type: 'draft', draft: entry.draft, error: entry.error, sent_text: entry.unclearedText }
+    return { type: 'draft', draft: entry.draft, error: entry.error, sent_text: entry.unclearedText,
+      send_pending: pendingSend(entry) }
   }
   if (op === 'conversation.get') return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
-  if (op === 'agent.send') {
+  if (op === 'agent.send' || op === 'agent.retry_send') {
+    const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
+    if (op === 'agent.retry_send') {
+      if (!entry.send) throw new Error('No prompt is awaiting confirmation')
+      if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
+      return dispatchSend(entry, entry.send, true)
+    }
     if (!validId(args.request_id) || typeof args.text !== 'string' || !args.text.trim() || Buffer.byteLength(args.text) > 120 * 1024) {
       throw new Error('Invalid prompt')
     }
-    const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
-    if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
-    await flushDraft(entry)
-    const response = await requestDaemon(endpoint, op, { conversation_id: args.conversation_id, request_id: args.request_id, text: args.text })
-    entry.draft = { text: '', revision: entry.draft.revision + 1, attachments: [] }
-    try { await flushDraft(entry) }
-    catch {
-      entry.unclearedText = args.text
-      entry.error = 'Prompt was sent, but its draft could not be cleared. Retry clearing before sending again.'
-      publishDraftError(entry, entry.error)
-      return { ...response, draft_error: entry.error }
+    if (entry.send) {
+      if (entry.send.requestId !== args.request_id || entry.send.text !== args.text) {
+        throw new Error('Resolve the previous prompt before starting another')
+      }
+      if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
+      return dispatchSend(entry, entry.send, true)
     }
-    return response
+    if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
+    const intent: SendIntent = { requestId: args.request_id, text: args.text, preparing: true, inFlight: null }
+    entry.send = intent
+    try { await flushDraft(entry) }
+    catch { entry.send = null; throw new Error('Draft could not be saved; prompt was not sent') }
+    intent.preparing = false
+    return dispatchSend(entry, intent, false)
   }
   if (!validId(args.request_id) || !['accept', 'decline', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
   if (args.decision === 'answer') {
@@ -315,6 +392,13 @@ function openMainWindow(): void {
   window.on('close', (event) => {
     if (readyForClose) return
     if (closeFlushInProgress) { event.preventDefault(); return }
+    if ([...drafts.entries()].some(([key, entry]) => key.startsWith(`${window.webContents.id}:`) && entry.send)) {
+      event.preventDefault()
+      void dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
+        message: 'This window is staying open until the prompt is reconciled.',
+        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+      return
+    }
     const pending = [...drafts.entries()].filter(([key, entry]) =>
       key.startsWith(`${window.webContents.id}:`) && (entry.timer || entry.savedRevision < entry.draft.revision))
       .map(([, entry]) => entry)
@@ -327,6 +411,12 @@ function openMainWindow(): void {
         void dialog.showMessageBox(window, { type: 'error', title: 'Draft was not saved',
           message: 'This window is staying open because a draft could not be saved.',
           detail: 'Restore the profile daemon and try closing the window again.' })
+        return
+      }
+      if ([...drafts.entries()].some(([key, entry]) => key.startsWith(`${window.webContents.id}:`) && entry.send)) {
+        void dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
+          message: 'This window is staying open until the prompt is reconciled.',
+          detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
         return
       }
       readyForClose = true
@@ -372,6 +462,13 @@ app.whenReady().then(() => {
 let readyToQuit = false
 app.on('before-quit', (event) => {
   if (!readyToQuit) {
+    if ([...drafts.values()].some((entry) => entry.send)) {
+      event.preventDefault()
+      void dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
+        message: 'ADE is staying open until the prompt is reconciled.',
+        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+      return
+    }
     const pending = [...drafts.values()].filter((entry) => entry.timer || entry.savedRevision < entry.draft.revision)
     if (pending.length) {
       event.preventDefault()
@@ -380,6 +477,12 @@ app.on('before-quit', (event) => {
           void dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
             message: 'ADE is staying open because a draft could not be saved.',
             detail: 'Restore the profile daemon and try closing ADE again.' })
+          return
+        }
+        if ([...drafts.values()].some((entry) => entry.send)) {
+          void dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
+            message: 'ADE is staying open until the prompt is reconciled.',
+            detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
           return
         }
         readyToQuit = true

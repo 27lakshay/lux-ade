@@ -121,6 +121,7 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
   const [draftLoaded, setDraftLoaded] = React.useState(false)
   const [draftError, setDraftError] = React.useState('')
   const [sentDraftPendingClear, setSentDraftPendingClear] = React.useState(false)
+  const [sendPending, setSendPending] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
   const [refresh, setRefresh] = React.useState(0)
@@ -136,6 +137,7 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
       const sentText = typeof response.sent_text === 'string' ? response.sent_text : ''
       setDraft(sentText || saved.text)
       setSentDraftPendingClear(Boolean(sentText))
+      setSendPending(Boolean(response.send_pending))
       setDraftError(typeof response.error === 'string' ? response.error : '')
       setDraftLoaded(true)
     }).catch((reason) => { if (!disposed) setDraftError(`Draft could not be loaded: ${String(reason)}`) })
@@ -167,14 +169,35 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
     const text = draft.trim()
-    if (!text || busy || sentDraftPendingClear) return
+    if (!text || busy || sentDraftPendingClear || sendPending) return
     setBusy(true)
     try {
       const response = await window.adeHost.requestConversation('agent.send', {
         conversation_id: conversation.id, request_id: crypto.randomUUID(), text,
       })
+      if (response.type === 'send_pending') {
+        setSendPending(true)
+        setError('')
+        return
+      }
       const clearError = typeof response.draft_error === 'string' ? response.draft_error : ''
       if (!clearError) setDraft('')
+      setSendPending(false)
+      setSentDraftPendingClear(Boolean(clearError))
+      setDraftError(clearError)
+      setError('')
+      setRefresh((value) => value + 1)
+    } catch (reason) { setError(String(reason)) }
+    finally { setBusy(false) }
+  }
+  const retryPendingSend = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const response = await window.adeHost.requestConversation('agent.retry_send', { conversation_id: conversation.id })
+      if (response.type === 'send_pending') { setError('Prompt delivery is still unconfirmed. Retry when the profile daemon is available.'); return }
+      const clearError = typeof response.draft_error === 'string' ? response.draft_error : ''
+      if (!clearError) setDraft('')
+      setSendPending(false)
       setSentDraftPendingClear(Boolean(clearError))
       setDraftError(clearError)
       setError('')
@@ -212,6 +235,7 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
       </div>
       {error && <p role="alert" className="inline-error">{error}</p>}
       {draftError && <p role="alert" className="inline-error">{draftError}</p>}
+      {sendPending && <p role="status" className="inline-error">Prompt delivery is unconfirmed. Retry uses the same request ID and prompt.</p>}
       <div className="transcript" role="log" aria-label="Conversation transcript" aria-live="polite">
         {!snapshot && !error && <p className="muted">Loading conversation…</p>}
         {snapshot?.messages.length === 0 && <p className="muted">Send a prompt to start this conversation.</p>}
@@ -226,8 +250,9 @@ function ConversationView({ conversation, revision, bootId }: { conversation: Co
       </div>
       <form className="composer" onSubmit={(event) => void send(event)}>
         <label htmlFor="prompt">Prompt</label>
-        <textarea id="prompt" value={draft} disabled={busy || !draftLoaded || sentDraftPendingClear} onChange={(event) => updateDraft(event.target.value)} placeholder="Ask your agent…" rows={3} />
-        <button type="submit" disabled={busy || sentDraftPendingClear || !draftLoaded || !draft.trim() || !snapshot || !['idle', 'ready', 'error', 'interrupted'].includes(status)}>Send</button>
+        <textarea id="prompt" value={draft} disabled={busy || !draftLoaded || sentDraftPendingClear || sendPending} onChange={(event) => updateDraft(event.target.value)} placeholder="Ask your agent…" rows={3} />
+        <button type="submit" disabled={busy || sentDraftPendingClear || sendPending || !draftLoaded || !draft.trim() || !snapshot || !['idle', 'ready', 'error', 'interrupted'].includes(status)}>Send</button>
+        {sendPending && <button type="button" disabled={busy} onClick={() => void retryPendingSend()}>Retry prompt delivery</button>}
         {sentDraftPendingClear && <button type="button" disabled={busy} onClick={() => void retryClear()}>Retry clearing sent draft</button>}
       </form>
     </section>
