@@ -7,3 +7,6 @@
 *.pyc
 .DS_Store
 /preview.png
+/apps/*/out/
+/test-results/
+/playwright-report/

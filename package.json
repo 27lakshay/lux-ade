@@ -1,0 +1,19 @@
+{
+  "name": "lux-ade-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@12.1.0",
+  "scripts": {
+    "dev": "pnpm --filter @ade/desktop dev",
+    "build": "pnpm --filter @ade/desktop build",
+    "typecheck": "pnpm --filter @ade/desktop typecheck",
+    "test:e2e": "pnpm build && playwright test",
+    "deadcode": "fallow",
+    "check": "pnpm typecheck && pnpm build && pnpm test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "fallow": "3.28.0",
+    "typescript": "5.9.3"
+  }
+}
