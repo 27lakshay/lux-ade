@@ -28,5 +28,7 @@ real isolated daemon/runtime and deterministic Codex fixture. It observed
 structured tool content, stable message IDs after renderer reload, one native
 dispatch, and resolved command approval and Codex native question answers. The
 UI currently supports text prompts, native approvals/questions, and the first
-200 transcript records. Attachments, pagination, drafts, and live-provider
-verification remain open.
+200 transcript records. Attachments, pagination, drafts, and broader
+live-provider verification remain open. A separate disposable-profile check
+passed one real Codex and one real Claude Code text turn; Oh My Pi entered
+`error` on this Mac and awaits a configured-account rerun.

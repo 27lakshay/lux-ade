@@ -9,6 +9,7 @@
     "build:backend": "node scripts/cargo.mjs build --locked -p ade-daemon -p ade-runtime --features ade-runtime/native-terminal --bins",
     "typecheck": "pnpm --filter @ade/client typecheck && pnpm --filter @ade/terminal typecheck && pnpm --filter @ade/cli typecheck && pnpm --filter @ade/desktop typecheck",
     "test:e2e": "pnpm build:backend && pnpm build && playwright test",
+    "test:e2e:live": "python3 scripts/live_provider_check.py",
     "deadcode": "fallow dead-code --workspace '@ade/*'",
     "check": "pnpm typecheck && pnpm deadcode && pnpm test:e2e"
   },

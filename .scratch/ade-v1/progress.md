@@ -24,6 +24,13 @@ desktop/CLI build, and 11/11 running-process E2E tests. Existing provider
 fixture suite passed after root lockfile migration. The old GPUI app built and
 packaged successfully in build-only mode; its GUI startup was not verified.
 
+Separate opt-in live check on this Mac: Codex CLI 0.153.4 reached `ready` and
+returned the expected answer in 5.9 seconds; Claude Code 2.1.282 did so in
+2.86 seconds. Oh My Pi reached `error` after 2.85 seconds. This Mac has no
+`~/.pi/agent/auth.json` and no common provider API key in the environment;
+the failure may have another cause and needs a configured-account rerun.
+The repeatable command is `pnpm test:e2e:live codex claude omp`.
+
 The 11 E2E cases are narrow slices. No entire v1 domain or 140-item requirement
 register is marked complete by this record.
 
@@ -32,7 +39,7 @@ register is marked complete by this record.
 - Electron profile creation/switching is in progress. Profile launcher currently
   requires `scripts/profiles.py`; packaging it for a distributable app remains.
 - Draft recovery, conversation pagination, native attachments/context, queues,
-  broader approval forms, and live Codex/Claude Code/Oh My Pi runs remain.
+  broader approval forms, and live Oh My Pi verification remain.
 - Account management, extensible providers/plugins, worktrees, dev services,
   browsers, notifications, remote hosts, unified catalogs/history, customization,
   operations and reliability acceptance remain in the v1 register.
