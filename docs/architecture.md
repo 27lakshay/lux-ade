@@ -2,6 +2,10 @@
 
 This describes the current workspace. The implementation task list records work still pending.
 
+The [proposed Electron and Rust architecture](proposed-architecture.md) describes
+the planned successor, its scope, ownership rules, and acceptance gates. It is a
+design proposal; the source map below continues to describe the current GPUI code.
+
 ## Process ownership
 
 The desktop client renders a disposable view of daemon state. The daemon writes

@@ -49,6 +49,9 @@ JS/TS provider adapters live in `providers/` and use pnpm where dependencies are
 
 ## Development status
 
+- [Complete v1 specifications and requirements register](.scratch/ade-v1/README.md) — local Markdown tracker; all 140 catalogue dispositions and E2E acceptance
+- [Monorepo initialization plan](docs/monorepo-initialization-plan.md) — React/Electron, xterm.js, Fallow, and end-to-end-only testing
+- [Proposed Electron and Rust architecture](docs/proposed-architecture.md) — design for the successor; not yet implemented
 - [Full production and open-source plan](docs/production-and-open-source-plan.md)
 - [Implementation task list and evidence](docs/implementation-task-list.md)
 - [Build and release workflow](docs/build-and-release.md)
