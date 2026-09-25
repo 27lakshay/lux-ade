@@ -72,6 +72,27 @@ def copy_providers(source, destination):
             raise RuntimeError('Packaged dependency link does not resolve internally: ' + str(entry))
 
 
+def stage_providers(destination):
+    """Make self-contained provider trees from the shared workspace lockfile."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, package in (('claude', 'ade-claude-adapter'), ('omp', 'ade-omp-bridge')):
+        subprocess.run(['pnpm', '--filter', package, 'deploy',
+                        '--config.inject-workspace-packages=true', '--prod',
+                        '--frozen-lockfile', '--ignore-scripts', str(destination / name)],
+                       cwd=ROOT, check=True)
+        # Deploy rewrites dependency specifiers with peer suffixes. Runtime identity
+        # and the distribution manifest must retain the source declaration.
+        shutil.copy2(ROOT / 'providers' / name / 'package.json', destination / name / 'package.json')
+    for source in ROOT.joinpath('providers').iterdir():
+        if source.name in ('claude', 'omp'):
+            continue
+        target = destination / source.name
+        if source.is_dir():
+            shutil.copytree(source, target, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        elif source.is_file():
+            shutil.copy2(source, target)
+
+
 def package(profile, destination):
     target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')) / profile
     resources = destination / 'Contents/Resources'
@@ -103,7 +124,11 @@ def package(profile, destination):
     shutil.copy2(ROOT / 'assets/terminal.conf', resources / 'terminal.conf')
     (resources / 'scripts').mkdir(exist_ok=True)
     shutil.copy2(ROOT / 'scripts/runtime.py', resources / 'scripts/runtime.py')
-    copy_providers(ROOT / 'providers', resources / 'providers')
+    shutil.copy2(ROOT / 'pnpm-lock.yaml', resources / 'pnpm-lock.yaml')
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary) / 'providers'
+        stage_providers(staged)
+        copy_providers(staged, resources / 'providers')
     with tempfile.TemporaryDirectory(dir=resources) as temporary:
         notices(ROOT, Path(temporary))
         collect_rust_notices(ROOT, Path(temporary))

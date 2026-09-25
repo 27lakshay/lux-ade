@@ -14,9 +14,7 @@ project_dir="$(cd "$script_dir/.." && pwd)"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$project_dir/target}"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 export ADE_ROOT="${ADE_ROOT:-$project_dir}"
-for provider in claude omp; do
- pnpm --dir "$project_dir/providers/$provider" install --frozen-lockfile --ignore-scripts
-done
+pnpm --dir "$project_dir" install --frozen-lockfile --ignore-scripts
 if [[ "$profile" == release ]]; then
  (cd "$project_dir" && cargo build --locked --release --workspace --bins --features ade-runtime/native-terminal)
 else

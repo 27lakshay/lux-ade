@@ -19,6 +19,15 @@ def package_location(path):
 def collect(providers, destination):
     providers, destination = Path(providers).resolve(), Path(destination)
     manifests, aliases, locks = {}, {}, []
+    workspace_lock = providers.parent / 'pnpm-lock.yaml'
+    if workspace_lock.is_file():
+        output = Path('workspace-lockfile') / workspace_lock.name
+        (destination / output).parent.mkdir(parents=True, exist_ok=True)
+        data = workspace_lock.read_bytes()
+        (destination / output).write_bytes(data)
+        for provider in sorted(providers.iterdir()):
+            if (provider / 'package.json').is_file():
+                locks.append({'provider': provider.name, 'path': str(output), 'sha256': digest(data)})
     # Walk physical directories only. Inspect links separately, never recurse through them.
     for directory, directories, files in os.walk(providers, followlinks=False):
         base = Path(directory)
@@ -33,7 +42,7 @@ def collect(providers, destination):
                     aliases.setdefault(resolved, set()).add(str(path.relative_to(providers)))
         if 'package.json' in files and (package_location(base) or base.parent == providers):
             manifests[base.resolve()] = json.loads((base / 'package.json').read_text())
-        if 'pnpm-lock.yaml' in files and base.parent == providers:
+        if not workspace_lock.is_file() and 'pnpm-lock.yaml' in files and base.parent == providers:
             source = base / 'pnpm-lock.yaml'
             output = Path('provider-lockfiles') / base.name / source.name
             (destination / output).parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +76,7 @@ def collect(providers, destination):
         # omits _resolved/_integrity. Do not invent a registry URL from a package name.
         entry['lockfile'] = next((lock['path'] for lock in locks if lock['provider'] == provider), None)
         if not entry['lockfile'] and not entry['provider_root']:
-            entry['issues'].append('No provider pnpm lockfile found')
+            entry['issues'].append('No pnpm lockfile found')
         if not entry['license_declaration'] and not entry['legacy_licenses']:
             entry['issues'].append('No license declaration')
         if isinstance(entry['license_declaration'], (dict, list)) or entry['legacy_licenses']:
@@ -113,7 +122,7 @@ def collect(providers, destination):
               'Symlink aliases share one entry. Includes installed optional/dev packages and potentially stale packages; '
               'not a runtime reachability or license clearance assertion. Missing optional/peer/dev resolutions are recorded '
               'on edges and can be normal for platform-specific production installs. External CLI/runtime binaries excluded.',
-              'provenance_limits': 'Exact provider lockfiles are retained with hashes. Registry integrity/source entries '
+              'provenance_limits': 'The exact workspace lockfile is retained with its hash. Registry integrity/source entries '
               'remain in those lockfiles; this collector does not parse YAML or infer registry URLs. '
               'Manifest declarations are untrusted evidence, not verified ownership or license compatibility.',
               'lockfiles': sorted(locks, key=lambda lock: lock['provider']), 'packages': entries}

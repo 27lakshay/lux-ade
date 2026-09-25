@@ -144,13 +144,17 @@ def build_identity(binary, providers=None):
     providers = PROJECT / 'providers' if providers is None else Path(providers)
     digest = hashlib.sha256(b'ade-runtime-build-v2\0')
     files = [('binary', Path(binary))]
+    workspace_lock = providers.parent / 'pnpm-lock.yaml'
+    if workspace_lock.is_file():
+        files.append(('pnpm-lock.yaml', workspace_lock))
     for directory, children, names in os.walk(providers):
         children[:] = sorted(name for name in children if name not in ('node_modules', '.git', '__pycache__'))
         for name in sorted(names):
             source = Path(directory) / name
             if name.endswith('.test.mjs') or any(word in name for word in ('fixture', 'mock', 'fake-sdk')):
                 continue
-            if source.suffix == '.mjs' or name in ('package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'):
+            if (source.suffix == '.mjs' or name == 'package.json'
+                    or (not workspace_lock.is_file() and name in ('pnpm-lock.yaml', 'pnpm-workspace.yaml'))):
                 files.append((source.relative_to(providers).as_posix(), source))
     for label, source in sorted(files):
         digest.update(label.encode() + b'\0')

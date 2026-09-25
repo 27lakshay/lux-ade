@@ -64,14 +64,18 @@ release channel. The development daemon restart controller is not an updater.
 ## Provider resource packaging
 
 The initial package dereferenced every pnpm symlink. That copied a package again
-at each dependency edge: the provider resources grew to approximately 3.76 GB of file content in the app. Packaging now preserves relative links only
-after verifying that their resolved targets remain inside the provider tree.
+at each dependency edge: the provider resources grew to approximately 3.76 GB of file content in the app. The root pnpm workspace now owns one lockfile. Packaging
+deploys each provider's production graph into a self-contained staging tree,
+then preserves relative links only after verifying that their resolved targets
+remain inside that tree.
 Absolute, escaping and broken dependency links fail packaging. Generated pnpm
 Unix shims have their checkout-specific NODE_PATH rewritten relative to the shim.
 
-The relocated staging tree contains approximately 1.15 GB of file content, a
-reduction of about 69%. Claude uses about 257 MiB and OMP
-about 915 MiB. Provider-owned test files, mock CLI/SDK fixtures and transient
+The earlier independent-lockfile staging tree was approximately 1.15 GB. A
+macOS arm64 shared-lockfile staging run on 26 September 2026 measured 2.0 GB
+for both providers together. This increase needs a dependency-size audit before
+distribution; no packages were removed speculatively.
+Provider-owned test files, mock CLI/SDK fixtures and transient
 caches are excluded. Third-party source, maps, types, licenses, assets and native
 bindings are retained: OMP exports TypeScript source directly, and stripping its
 source tree would break runtime imports. Both adapter package manifests contain
@@ -147,16 +151,16 @@ require separate completion; this Rust inventory does not close those gates.
 Packaging inventories the copied provider tree using
 `scripts/provider_notices.py`. It produces `provider-dependency-inventory.json`,
 `PROVIDER_DEPENDENCY_NOTICES.md`, exact notice files under `licenses/providers/`,
-and copies of provider pnpm lockfiles under `provider-lockfiles/`. It makes no
+and a copy of the root pnpm lockfile under `workspace-lockfile/`. It makes no
 network calls and does not execute provider packages.
 
 Each physical package directory has one entry; multiple pnpm symlinks become
 aliases. Records include manifest hashes, name/version, declared license and
 repository/source fields, notice hashes, and resolved edges for normal,
 optional, peer and development dependencies. Source/integrity fields absent from
-installed manifests remain absent; the copied, hashed lockfiles retain pnpm's
+installed manifests remain absent; the copied, hashed lockfile retains pnpm's
 resolution evidence without inventing a registry URL. The inventory does not
-parse those lockfiles or attest that local package content equals the registry
+parse that lockfile or attest that local package content equals the registry
 archive. `SEE LICENSE IN` files are retained when safely contained in the package.
 Escaping or broken provider symlinks fail packaging; package-external notice
 references are flagged rather than copied.

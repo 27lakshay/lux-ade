@@ -19,8 +19,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - run: npm install --global pnpm@10.17.1
+          node-version: '24'
+      - run: npm install --global pnpm@12.1.0
       - run: rustup show
       - run: python3 scripts/install_tools.py
       - run: xcodebuild -downloadComponent MetalToolchain
