@@ -441,7 +441,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     return () => { disposed = true }
   }, [state.bootId])
   const create = async (): Promise<void> => {
-    if (!workspace || creating) return
+    if (!workspace || creating || opening) return
     setCreating(true)
     try {
       const response = await window.adeHost.requestConversation('conversation.create', {
@@ -487,7 +487,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         <p className="connection-meta">Daemon boot: {state.bootId}</p>
         {workspaces.length === 0 && <p>No workspaces are registered in this profile yet.</p>}
         {workspaces.length > 0 && <label className="field-label" htmlFor="workspace">Workspace</label>}
-        {workspaces.length > 0 && <select id="workspace" value={workspace?.id} disabled={creating} onChange={(event) => {
+        {workspaces.length > 0 && <select id="workspace" value={workspace?.id} disabled={creating || opening} onChange={(event) => {
           const nextId = event.target.value
           const firstConversation = conversations.find((item) => item.workspace_id === nextId)
           void selectVisible(nextId, firstConversation?.id ?? null).catch((reason) => setError(String(reason)))
@@ -503,16 +503,16 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         </form>
         <h2>Conversations</h2>
         <nav aria-label="Conversations"><ul className="conversation-list">
-          {workspaceConversations.map((item) => <li key={item.id}><button disabled={creating} className={conversation?.id === item.id ? 'selected' : ''} onClick={() => {
+          {workspaceConversations.map((item) => <li key={item.id}><button disabled={creating || opening} className={conversation?.id === item.id ? 'selected' : ''} onClick={() => {
             if (workspace) void selectVisible(workspace.id, item.id).catch((reason) => setError(String(reason)))
           }}>{item.title}<small>{item.provider} · {item.status}</small></button></li>)}
         </ul></nav>
         <div className="new-conversation">
           <label className="field-label" htmlFor="provider">New conversation provider</label>
-          <select id="provider" value={provider} disabled={creating} onChange={(event) => setProvider(event.target.value)}>
+          <select id="provider" value={provider} disabled={creating || opening} onChange={(event) => setProvider(event.target.value)}>
             {providers.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
           </select>
-          <button disabled={creating || !workspace || providers.length === 0} onClick={() => void create()}>New conversation</button>
+          <button disabled={creating || opening || !workspace || providers.length === 0} onClick={() => void create()}>New conversation</button>
         </div>
         {error && <p role="alert" className="inline-error">{error}</p>}
       </aside>
