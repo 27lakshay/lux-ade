@@ -37,6 +37,24 @@ if (!environment.ADE_SOCKET) {
       console.error(created.stderr || created.error?.message || 'Could not create ADE development profile')
       process.exit(created.status ?? 1)
     }
+    const started = runProfiles('--daemon', daemonBinary, 'start')
+    if (started.status !== 0) {
+      console.error(started.stderr || started.error?.message || 'Could not start ADE development profile')
+      process.exit(started.status ?? 1)
+    }
+    let connection
+    try { connection = JSON.parse(started.stdout) }
+    catch { console.error('ADE profile launcher returned an invalid socket'); process.exit(1) }
+    if (typeof connection.socket !== 'string') {
+      console.error('ADE profile launcher returned an invalid socket')
+      process.exit(1)
+    }
+    const opened = spawnSync('node', [join(root, 'apps/cli/dist/index.js'), '--socket', connection.socket,
+      'workspace', 'open', root], { cwd: root, env: environment, encoding: 'utf8' })
+    if (opened.status !== 0) {
+      console.error(opened.stderr || opened.error?.message || 'Could not open project in development profile')
+      process.exit(opened.status ?? 1)
+    }
   }
   console.info(`ADE development profiles: ${profilesHome}`)
 } else {

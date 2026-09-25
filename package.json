@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "packageManager": "pnpm@12.1.0",
   "scripts": {
-    "dev": "pnpm --filter @ade/client build && node scripts/dev-desktop.mjs",
+    "dev": "pnpm --filter @ade/client build && pnpm --filter @ade/cli build && node scripts/dev-desktop.mjs",
     "build": "pnpm --filter @ade/client build && pnpm --filter @ade/cli build && pnpm --filter @ade/desktop build",
     "build:backend": "node scripts/cargo.mjs build --locked -p ade-daemon -p ade-runtime --features ade-runtime/native-terminal --bins",
     "typecheck": "pnpm --filter @ade/client typecheck && pnpm --filter @ade/terminal typecheck && pnpm --filter @ade/cli typecheck && pnpm --filter @ade/desktop typecheck",

@@ -20,7 +20,8 @@ configured. This is a checkpoint, not a claim that the v1 register is complete.
 | `f11e28a` | Local profile launcher | Two-profile isolation/restart and incompatible-owner E2E |
 | `60fa747` | Electron profile selection | Two-daemon UI switch and catalog isolation E2E |
 | `1083d5d` | Open local folder | Stable workspace selection and terminal E2E |
-| pending | Renderer-reload drafts | Separate drafts and acknowledged-send clear E2E |
+| `6827f07` | Renderer-reload drafts | Separate drafts and acknowledged-send clear E2E |
+| pending | Development first-run workspace | Managed profile auto-opens this checkout |
 
 Latest full check: `pnpm check` passed typecheck, Fallow, backend build,
 desktop/CLI build, and 14/14 running-process E2E tests. Existing provider
@@ -34,8 +35,14 @@ returned the expected answer in 5.9 seconds; Claude Code 2.1.282 did so in
 the failure may have another cause and needs a configured-account rerun.
 The repeatable command is `pnpm test:e2e:live codex claude omp`.
 
-The 11 E2E cases are narrow slices. No entire v1 domain or 140-item requirement
+The 14 E2E cases are narrow slices. No entire v1 domain or 140-item requirement
 register is marked complete by this record.
+
+Manual development smoke: `pnpm dev` created a managed Development profile,
+Electron attached to its daemon and shell, and the first run registered this
+checkout as a workspace. The test daemon/runtime were stopped through their
+recorded identities. The local command guard refused recursive deletion of the
+disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 
 ## Active and next work
 
