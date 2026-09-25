@@ -424,6 +424,20 @@ impl Sessions {
             }
             "service.start" => self.start_service(string("workspace_id")?, string("name")?),
             "service.stop" => self.stop_service(string("workspace_id")?, string("name")?),
+            "service.inspect" => {
+                let limit = if request["tail_bytes"].is_null() {
+                    8192
+                } else {
+                    request["tail_bytes"]
+                        .as_u64()
+                        .context("Invalid tail limit")?
+                };
+                ensure!(
+                    (1..=32768).contains(&limit),
+                    "Tail limit must be 1 to 32768 bytes"
+                );
+                self.inspect_service(string("workspace_id")?, string("name")?, limit)
+            }
             "listener.list" => self.list_listeners(),
             "service.list" => {
                 let services = self
@@ -841,6 +855,103 @@ impl Sessions {
         self.changed(&mut d, &current, &[])?;
         Ok(())
     }
+    fn inspect_service(self: &Arc<Self>, workspace: &str, name: &str, limit: u64) -> Result<Value> {
+        let service = self.data.lock().unwrap().store.service(workspace, name)?;
+        let (state, execution_error) =
+            match self.command(&json!({"op":"service.list","workspace_id":workspace})) {
+                Ok(listed) => (
+                    listed["states"][name]["state"]
+                        .as_str()
+                        .unwrap_or("unavailable")
+                        .to_owned(),
+                    None,
+                ),
+                Err(error) => ("unavailable".to_owned(), Some(error.to_string())),
+            };
+        let observations = if state == "running" {
+            Some(self.list_listeners())
+        } else {
+            None
+        };
+        let (readiness_state, observation_error) = match observations {
+            None => (
+                if state == "stopped" {
+                    "stopped"
+                } else if state == "exited" {
+                    "exited"
+                } else {
+                    "unknown"
+                },
+                None,
+            ),
+            Some(Ok(inventory)) => {
+                let assignments = inventory["assignments"]
+                    .as_array()
+                    .context("Invalid listener inventory")?;
+                let ports = assignments
+                    .iter()
+                    .filter(|item| {
+                        item["workspace_id"] == workspace && item["service_name"] == name
+                    })
+                    .filter_map(|item| item["observation"].as_str())
+                    .collect::<Vec<_>>();
+                let readiness = match state.as_str() {
+                    "running" if ports.is_empty() => "unknown_no_port_check",
+                    "running"
+                        if ports
+                            .iter()
+                            .any(|item| *item == "observed_other" || *item == "contested") =>
+                    {
+                        "port_conflict"
+                    }
+                    "running" if ports.iter().all(|item| *item == "verified_managed") => {
+                        "tcp_listening"
+                    }
+                    "running" => "not_observed",
+                    _ => "unknown",
+                };
+                (readiness, None)
+            }
+            Some(Err(error)) => ("observation_unavailable", Some(error.to_string())),
+        };
+        let logs = if let Some(terminal_id) = &service.terminal_id {
+            match self
+                .runtime
+                .command(json!({"op":"terminal.tail","workspace_id":workspace,
+                "terminal_id":terminal_id,"limit_bytes":limit}))
+            {
+                Ok(tail)
+                    if service
+                        .terminal_owner
+                        .as_ref()
+                        .is_none_or(|owner| tail["transfer_id"] == owner.transfer_id) =>
+                {
+                    let mut tail = tail;
+                    tail["available"] = json!(true);
+                    tail
+                }
+                _ => json!({"available":false,"reason":"runtime_terminal_unavailable"}),
+            }
+        } else {
+            json!({"available":false,"reason":"not_started"})
+        };
+        let current = self.data.lock().unwrap().store.service(workspace, name)?;
+        if current != service {
+            return Ok(json!({"type":"service_inspection","service":current,
+                "execution_state":"unavailable","execution_error":"Service changed during inspection; refresh",
+                "readiness":{"state":"unknown","basis":"identity_changed",
+                    "application_ready":"unverified","observation_error":"Service changed during inspection; refresh"},
+                "logs":{"available":false,"reason":"service_changed_during_inspection"}}));
+        }
+        Ok(
+            json!({"type":"service_inspection","service":service,"execution_state":state,
+            "execution_error":execution_error,
+            "readiness":{"state":readiness_state,"basis":if state == "running" {"direct_process_tcp_listener"} else {"execution_state"},
+                "application_ready":"unverified","observation_error":observation_error},
+            "logs":logs}),
+        )
+    }
+
     fn list_listeners(&self) -> Result<Value> {
         let services = {
             let d = self.data.lock().unwrap();

@@ -74,6 +74,30 @@ impl Host {
             "terminal.list" => Ok(
                 json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics()})).collect::<Vec<_>>()}),
             ),
+            "terminal.tail" => {
+                let workspace = request["workspace_id"]
+                    .as_str()
+                    .context("Missing workspace_id")?;
+                let terminal_id = request["terminal_id"]
+                    .as_str()
+                    .context("Missing terminal_id")?;
+                let limit = request["limit_bytes"]
+                    .as_u64()
+                    .context("Missing tail limit")?;
+                ensure!(
+                    (1..=32768).contains(&limit),
+                    "Tail limit must be 1 to 32768 bytes"
+                );
+                let terminal = data
+                    .terminals
+                    .values()
+                    .find(|terminal| {
+                        terminal.workspace.id == workspace
+                            && terminal.workspace.terminal_id == terminal_id
+                    })
+                    .context("Service terminal is unavailable")?;
+                Ok(terminal.runtime.tail(limit as usize))
+            }
             "terminal.stop" | "terminal.retire" => {
                 ensure!(
                     !data.owner.as_ref().unwrap().draining,

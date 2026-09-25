@@ -709,6 +709,23 @@ pub fn spawn_runtime(
 }
 
 impl Runtime {
+    pub fn tail(&self, limit: usize) -> Value {
+        use base64::Engine as _;
+        let state = self.state.lock().unwrap();
+        let retained_start = state.bytes.saturating_sub(state.terminal.len() as u64);
+        let start = state.bytes.saturating_sub(limit as u64).max(retained_start);
+        let skip = (start - retained_start) as usize;
+        let bytes = state
+            .terminal
+            .iter()
+            .skip(skip)
+            .copied()
+            .collect::<Vec<_>>();
+        json!({"type":"terminal_tail","run_id":state.run_id,"transfer_id":state.transfer_id,
+            "start_offset":start,"through_offset":state.bytes,"truncated":start > 0,
+            "bytes_base64":base64::engine::general_purpose::STANDARD.encode(bytes)})
+    }
+
     pub fn stop(&self) -> anyhow::Result<()> {
         let state = self.state.lock().unwrap();
         if state.shell_running {
