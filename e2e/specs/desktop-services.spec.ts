@@ -93,6 +93,8 @@ test('CLI and Electron share a managed workspace service across app closure', as
     await expect(row).toContainText('TCP: tcp listening')
     await expect(row).toContainText('__ADE_SERVICE_LOG__')
     await expect(row).toContainText('verified managed')
+    await row.getByRole('button', { name: 'Check HTTP' }).click()
+    await expect(row.getByRole('status')).toHaveText('Last HTTP check: healthy (200)')
     const listeners = await runCli(daemon.socket, 'listener', 'list')
     expect(listeners).toMatchObject({ type: 'listeners', scope: 'local_host', coverage: 'partial' })
     expect(listeners.listeners).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -139,6 +141,8 @@ test('CLI and Electron share a managed workspace service across app closure', as
     expect(stoppedInspection).toMatchObject({ type: 'service_inspection', execution_state: 'stopped',
       readiness: { state: 'stopped' } })
     await expect(window.getByRole('article', { name: 'Service web' })).toContainText('Execution: stopped · TCP: stopped')
+    await window.getByRole('article', { name: 'Service web' }).getByRole('button', { name: 'Check HTTP' }).click()
+    await expect(window.getByRole('article', { name: 'Service web' }).getByRole('status')).toHaveText('Last HTTP check: not running')
     await expect.poll(async () => {
       try { await fetch(`http://127.0.0.1:${port}`); return false }
       catch { return true }

@@ -50,6 +50,11 @@ h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.0
 .service-actions { margin-top: 10px; }
 .service-inspection { border-top: 1px solid #323637; margin-top: 12px; padding-top: 10px; }
 .service-inspection h3 { font-size: 12px; margin: 12px 0 6px; }
+.service-health { align-items: end; display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.service-health label { color: #a5adae; display: grid; font-size: 12px; gap: 4px; }
+.service-health input, .service-health select { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: #e8e9e9; padding: 6px 8px; }
+.service-health input { width: 150px; }
+.service-health button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
 .service-inspection pre { background: #141718; border-radius: 7px; font-size: 11px; max-height: 180px; overflow: auto; padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .service-listeners { color: #a5adae; font-size: 12px; margin-top: 12px; }
 .service-listeners summary { cursor: pointer; }

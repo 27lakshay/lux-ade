@@ -1,4 +1,4 @@
-# Managed service status and output tail
+# Managed service inspection and HTTP health
 
 Status: in-progress
 Type: implementation ticket
@@ -21,3 +21,16 @@ application health explicitly unverified. It updates while open and after
 start/stop without overlapping polls. A real Electron/daemon E2E sees the log
 marker and TCP state through the UI before and after app closure. HTTP health
 probes and persistent logs remain outside this slice.
+
+An explicit `health_check` request now checks an assigned service port over
+IPv4 loopback, with a selected path and 50–2000 ms HTTP probe deadline. Listener
+observation adds latency outside that probe deadline. The request does
+not follow redirects or contact arbitrary hosts. It returns the HTTP status,
+timeout or error separately from TCP observation; missing or changed managed
+listener evidence and stop/identity races return unknown. The Electron pane
+offers an on-demand HTTP check and labels its result as the last check, so a
+stale sample is not presented as a continuous health monitor. Real-daemon E2E
+checks 200, 503, 302, timeout, invalid targets and a held request overlapping
+service stop. The desktop E2E checks healthy and stopped results through the
+running app. A persistent health policy, continuous monitoring, IPv6/remote
+targets, durable structured logs and full F086 acceptance remain open.

@@ -20,7 +20,8 @@ type ListenerInventory = { coverage: string; listeners: Array<{ address: string;
   assignments: Array<{ workspace_id: string; service_name: string; variable: string; port: number; observation: string }> }
 type ServiceInspection = { execution_state: string; execution_error?: string | null;
   readiness: { state: string; application_ready: string; observation_error?: string | null };
-  logs: { available: boolean; bytes_base64?: string; truncated?: boolean; reason?: string } }
+  logs: { available: boolean; bytes_base64?: string; truncated?: boolean; reason?: string };
+  health?: { state: string; basis: string; status_code?: number; error?: string } }
 
 function serviceOutput(logs: ServiceInspection['logs']): string {
   if (!logs.available || !logs.bytes_base64) return ''
@@ -58,6 +59,11 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
   const [inventory, setInventory] = React.useState<ListenerInventory | null>(null)
   const [inspection, setInspection] = React.useState<ServiceInspection | null>(null)
   const [detailName, setDetailName] = React.useState<string | null>(null)
+  const [healthPort, setHealthPort] = React.useState('')
+  const [healthPath, setHealthPath] = React.useState('/')
+  const [healthResult, setHealthResult] = React.useState<{ name: string; value: NonNullable<ServiceInspection['health']> } | null>(null)
+  const [healthBusy, setHealthBusy] = React.useState(false)
+  const healthRequest = React.useRef(0)
   const [inventoryError, setInventoryError] = React.useState('')
   const [busy, setBusy] = React.useState('')
   const [error, setError] = React.useState('')
@@ -106,12 +112,31 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
   const change = async (name: string, action: 'start' | 'stop'): Promise<void> => {
     if (busy) return
     setBusy(name)
+    healthRequest.current++
+    setHealthResult(null)
     try {
       await window.adeHost.requestService(`service.${action}`, { workspace_id: workspace.id, name })
       setError('')
       setRefresh((value) => value + 1)
     } catch (reason) { setError(String(reason)) }
     finally { setBusy('') }
+  }
+  const checkHealth = async (name: string): Promise<void> => {
+    if (healthBusy || !healthPort) return
+    const request = ++healthRequest.current
+    setHealthBusy(true)
+    setHealthResult(null)
+    try {
+      const result = await window.adeHost.requestService('service.inspect', {
+        workspace_id: workspace.id, name, tail_bytes: 4096,
+        health_check: { port_variable: healthPort, path: healthPath, timeout_ms: 500 },
+      }) as ServiceInspection
+      if (request === healthRequest.current && result.health) {
+        setHealthResult({ name, value: result.health })
+        setError('')
+      }
+    } catch (reason) { if (request === healthRequest.current) setError(String(reason)) }
+    finally { if (request === healthRequest.current) setHealthBusy(false) }
   }
   return <section className="service-pane" aria-label="Workspace services">
     <div className="service-heading"><h2>Services</h2><button onClick={() => setRefresh((value) => value + 1)}>Refresh</button></div>
@@ -134,12 +159,27 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
         <div className="service-actions">
           <button disabled={Boolean(busy) || owned} onClick={() => void change(service.name, 'start')}>Start</button>
           <button disabled={Boolean(busy) || !owned} onClick={() => void change(service.name, 'stop')}>Stop</button>
-          <button type="button" aria-expanded={detailName === service.name} onClick={() => setDetailName((value) =>
-            value === service.name ? null : service.name)}>{detailName === service.name ? 'Hide details' : 'Inspect'}</button>
+          <button type="button" aria-expanded={detailName === service.name} onClick={() => {
+            healthRequest.current++
+            setHealthBusy(false)
+            setHealthResult(null)
+            setHealthPort(Object.keys(service.ports)[0] ?? '')
+            setDetailName((value) => value === service.name ? null : service.name)
+          }}>{detailName === service.name ? 'Hide details' : 'Inspect'}</button>
         </div>
         {detailName === service.name && <div className="service-inspection">
           {!inspection ? <p className="muted">Loading service details…</p> : <>
             <p>Execution: {inspection.execution_state} · TCP: {inspection.readiness.state.replaceAll('_', ' ')} · Application health: {inspection.readiness.application_ready}</p>
+            {Object.keys(service.ports).length > 0 && <div className="service-health">
+              <label>Health port <select value={healthPort} onChange={(event) => { setHealthPort(event.target.value); setHealthResult(null) }}>
+                {Object.keys(service.ports).map((variable) => <option key={variable} value={variable}>{variable}</option>)}
+              </select></label>
+              <label>Health path <input value={healthPath} onChange={(event) => { setHealthPath(event.target.value); setHealthResult(null) }} /></label>
+              <button type="button" disabled={healthBusy || !healthPort} onClick={() => void checkHealth(service.name)}>Check HTTP</button>
+            </div>}
+            {healthResult?.name === service.name && <p role="status">Last HTTP check: {healthResult.value.state.replaceAll('_', ' ')}
+              {healthResult.value.status_code ? ` (${healthResult.value.status_code})` : ''}
+              {healthResult.value.error ? ` · ${healthResult.value.error}` : ''}</p>}
             {(inspection.execution_error || inspection.readiness.observation_error) &&
               <p role="alert">{inspection.execution_error || inspection.readiness.observation_error}</p>}
             <h3>Recent output</h3>

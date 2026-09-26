@@ -13,7 +13,9 @@ use crate::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    io::{Read, Write},
+    net::{Ipv4Addr, SocketAddr, TcpStream},
     path::Path,
     process::Command,
     sync::{
@@ -22,6 +24,130 @@ use std::{
         mpsc,
     },
 };
+
+struct HealthCheck {
+    port_variable: String,
+    path: String,
+    timeout: std::time::Duration,
+}
+
+impl HealthCheck {
+    fn parse(value: &Value) -> Result<Option<Self>> {
+        if value.is_null() {
+            return Ok(None);
+        }
+        let fields = value.as_object().context("Invalid HTTP health check")?;
+        ensure!(
+            fields
+                .keys()
+                .all(|key| matches!(key.as_str(), "port_variable" | "path" | "timeout_ms")),
+            "Unknown HTTP health check field"
+        );
+        let port_variable = fields
+            .get("port_variable")
+            .and_then(Value::as_str)
+            .context("Missing HTTP health port variable")?;
+        ensure!(
+            !port_variable.is_empty() && port_variable.len() <= 64,
+            "Invalid HTTP health port variable"
+        );
+        let path = fields
+            .get("path")
+            .and_then(Value::as_str)
+            .context("Missing HTTP health path")?;
+        ensure!(
+            path.starts_with('/')
+                && path.len() <= 1024
+                && path
+                    .bytes()
+                    .all(|byte| (0x21..=0x7e).contains(&byte) && byte != b'#'),
+            "HTTP health path must be a visible ASCII path of at most 1024 bytes"
+        );
+        let timeout_ms = fields
+            .get("timeout_ms")
+            .and_then(Value::as_u64)
+            .context("Missing HTTP health timeout")?;
+        ensure!(
+            (50..=2000).contains(&timeout_ms),
+            "HTTP health timeout must be 50 to 2000 ms"
+        );
+        Ok(Some(Self {
+            port_variable: port_variable.to_owned(),
+            path: path.to_owned(),
+            timeout: std::time::Duration::from_millis(timeout_ms),
+        }))
+    }
+
+    fn probe(&self, port: u16) -> Value {
+        // This deadline bounds the HTTP socket exchange. Runtime inspection and
+        // listener discovery are separate parts of the service.inspect request.
+        let deadline = std::time::Instant::now() + self.timeout;
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let result = (|| -> std::io::Result<u16> {
+            let mut stream = TcpStream::connect_timeout(&address, self.timeout)?;
+            let request = format!(
+                "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                self.path
+            );
+            let mut pending = request.as_bytes();
+            while !pending.is_empty() {
+                let remaining = deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .ok_or(std::io::ErrorKind::TimedOut)?;
+                stream.set_write_timeout(Some(remaining))?;
+                let written = stream.write(pending)?;
+                if written == 0 {
+                    return Err(std::io::ErrorKind::WriteZero.into());
+                }
+                pending = &pending[written..];
+            }
+            let mut line = Vec::new();
+            loop {
+                if line.len() >= 1024 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "HTTP status line exceeds 1024 bytes",
+                    ));
+                }
+                let remaining = deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .ok_or(std::io::ErrorKind::TimedOut)?;
+                stream.set_read_timeout(Some(remaining))?;
+                let mut byte = [0];
+                if stream.read(&mut byte)? == 0 {
+                    return Err(std::io::ErrorKind::UnexpectedEof.into());
+                }
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            let line = std::str::from_utf8(&line).map_err(|_| std::io::ErrorKind::InvalidData)?;
+            let mut parts = line.trim_end().split(' ');
+            let version = parts.next().unwrap_or("");
+            let status = parts.next().unwrap_or("");
+            if !matches!(version, "HTTP/1.0" | "HTTP/1.1")
+                || status.len() != 3
+                || !status.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
+            status
+                .parse()
+                .map_err(|_| std::io::ErrorKind::InvalidData.into())
+        })();
+        match result {
+            Ok(status) => {
+                json!({"state":if (200..300).contains(&status) {"healthy"} else {"unhealthy"},
+                "basis":"http_status","status_code":status})
+            }
+            Err(error) => {
+                json!({"state":if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) {"timeout"} else {"error"},
+                "basis":"http_probe","error":error.to_string()})
+            }
+        }
+    }
+}
 
 struct Agent {
     run_id: String,
@@ -34,8 +160,23 @@ struct Data {
     store: Store,
     agents: HashMap<String, Agent>,
     terminal_leases: HashMap<String, crate::worktrees::Lease>,
+    stopping_services: HashSet<(String, String)>,
     subscribers: HashMap<String, mpsc::SyncSender<Value>>,
     revision: u64,
+}
+struct ServiceStopGuard<'a> {
+    sessions: &'a Sessions,
+    key: (String, String),
+}
+impl Drop for ServiceStopGuard<'_> {
+    fn drop(&mut self) {
+        self.sessions
+            .data
+            .lock()
+            .unwrap()
+            .stopping_services
+            .remove(&self.key);
+    }
 }
 pub struct Sessions {
     pub review: Arc<crate::review::Review>,
@@ -70,6 +211,7 @@ impl Sessions {
                 store,
                 agents: HashMap::new(),
                 terminal_leases: HashMap::new(),
+                stopping_services: HashSet::new(),
                 subscribers: HashMap::new(),
                 revision: 0,
             }),
@@ -425,6 +567,7 @@ impl Sessions {
             "service.start" => self.start_service(string("workspace_id")?, string("name")?),
             "service.stop" => self.stop_service(string("workspace_id")?, string("name")?),
             "service.inspect" => {
+                let health_check = HealthCheck::parse(&request["health_check"])?;
                 let limit = if request["tail_bytes"].is_null() {
                     8192
                 } else {
@@ -436,7 +579,12 @@ impl Sessions {
                     (1..=32768).contains(&limit),
                     "Tail limit must be 1 to 32768 bytes"
                 );
-                self.inspect_service(string("workspace_id")?, string("name")?, limit)
+                self.inspect_service(
+                    string("workspace_id")?,
+                    string("name")?,
+                    limit,
+                    health_check.as_ref(),
+                )
             }
             "listener.list" => self.list_listeners(),
             "service.list" => {
@@ -855,8 +1003,25 @@ impl Sessions {
         self.changed(&mut d, &current, &[])?;
         Ok(())
     }
-    fn inspect_service(self: &Arc<Self>, workspace: &str, name: &str, limit: u64) -> Result<Value> {
+    fn inspect_service(
+        self: &Arc<Self>,
+        workspace: &str,
+        name: &str,
+        limit: u64,
+        health_check: Option<&HealthCheck>,
+    ) -> Result<Value> {
         let service = self.data.lock().unwrap().store.service(workspace, name)?;
+        if let Some(check) = health_check {
+            ensure!(
+                service
+                    .config
+                    .ports
+                    .iter()
+                    .any(|variable| variable == &check.port_variable)
+                    && service.ports.contains_key(&check.port_variable),
+                "HTTP health port variable is not configured for this service"
+            );
+        }
         let (state, execution_error) =
             match self.command(&json!({"op":"service.list","workspace_id":workspace})) {
                 Ok(listed) => (
@@ -873,7 +1038,7 @@ impl Sessions {
         } else {
             None
         };
-        let (readiness_state, observation_error) = match observations {
+        let (readiness_state, observation_error) = match &observations {
             None => (
                 if state == "stopped" {
                     "stopped"
@@ -914,6 +1079,34 @@ impl Sessions {
             }
             Some(Err(error)) => ("observation_unavailable", Some(error.to_string())),
         };
+        let mut health = health_check.map(|check| {
+            let result = if state != "running" {
+                json!({"state":"not_running","basis":"execution_state"})
+            } else if observations.as_ref().is_none_or(Result::is_err) {
+                json!({"state":"unknown","basis":"listener_observation_unavailable"})
+            } else {
+                let assignment = observations
+                    .as_ref()
+                    .and_then(|result| result.as_ref().ok())
+                    .and_then(|inventory| inventory["assignments"].as_array())
+                    .and_then(|assignments| {
+                        assignments.iter().find(|item| {
+                            item["workspace_id"] == workspace
+                                && item["service_name"] == name
+                                && item["variable"] == check.port_variable
+                        })
+                    });
+                if assignment.is_none_or(|item| item["observation"] != "verified_managed") {
+                    json!({"state":"unknown","basis":"managed_listener_unverified"})
+                } else {
+                    check.probe(service.ports[&check.port_variable])
+                }
+            };
+            let mut result = result;
+            result["port_variable"] = json!(check.port_variable);
+            result["path"] = json!(check.path);
+            result
+        });
         let logs = if let Some(terminal_id) = &service.terminal_id {
             match self
                 .runtime
@@ -935,21 +1128,67 @@ impl Sessions {
         } else {
             json!({"available":false,"reason":"not_started"})
         };
-        let current = self.data.lock().unwrap().store.service(workspace, name)?;
+        let still_running = if state == "running" && health_check.is_some() {
+            self.command(&json!({"op":"service.list","workspace_id":workspace}))
+                .ok()
+                .is_some_and(|listed| listed["states"][name]["state"] == "running")
+        } else {
+            false
+        };
+        // A listener can close or be replaced while the HTTP request is in flight.
+        // Only retain a probe result when the same managed assignment remains verified.
+        let still_managed = health_check.is_none_or(|check| {
+            if !health.as_ref().is_some_and(|result| {
+                result["basis"] == "http_status" || result["basis"] == "http_probe"
+            }) {
+                return true;
+            }
+            self.list_listeners().ok().is_some_and(|inventory| {
+                inventory["assignments"]
+                    .as_array()
+                    .is_some_and(|assignments| {
+                        assignments.iter().any(|item| {
+                            item["workspace_id"] == workspace
+                                && item["service_name"] == name
+                                && item["variable"] == check.port_variable
+                                && item["port"] == service.ports[&check.port_variable]
+                                && item["observation"] == "verified_managed"
+                        })
+                    })
+            })
+        });
+        let d = self.data.lock().unwrap();
+        let current = d.store.service(workspace, name)?;
         if current != service {
-            return Ok(json!({"type":"service_inspection","service":current,
+            let mut result = json!({"type":"service_inspection","service":current,
                 "execution_state":"unavailable","execution_error":"Service changed during inspection; refresh",
                 "readiness":{"state":"unknown","basis":"identity_changed",
                     "application_ready":"unverified","observation_error":"Service changed during inspection; refresh"},
-                "logs":{"available":false,"reason":"service_changed_during_inspection"}}));
+                "logs":{"available":false,"reason":"service_changed_during_inspection"}});
+            if health_check.is_some() {
+                result["health"] = json!({"state":"unknown","basis":"identity_changed"});
+            }
+            return Ok(result);
         }
-        Ok(
-            json!({"type":"service_inspection","service":service,"execution_state":state,
+        if state == "running" && health_check.is_some() {
+            let stopping = d
+                .stopping_services
+                .contains(&(workspace.to_owned(), name.to_owned()));
+            if stopping || !still_running {
+                health = Some(json!({"state":"unknown","basis":"execution_changed"}));
+            } else if !still_managed {
+                health = Some(json!({"state":"unknown","basis":"managed_listener_changed"}));
+            }
+        }
+        let mut result = json!({"type":"service_inspection","service":service,"execution_state":state,
             "execution_error":execution_error,
             "readiness":{"state":readiness_state,"basis":if state == "running" {"direct_process_tcp_listener"} else {"execution_state"},
                 "application_ready":"unverified","observation_error":observation_error},
-            "logs":logs}),
-        )
+            "logs":logs});
+        if let Some(health) = health {
+            result["health"] = health;
+        }
+        Ok(result)
     }
 
     fn list_listeners(&self) -> Result<Value> {
@@ -1090,13 +1329,22 @@ impl Sessions {
     }
     fn stop_service(&self, workspace: &str, name: &str) -> Result<Value> {
         let owner = {
-            let d = self.data.lock().unwrap();
+            let mut d = self.data.lock().unwrap();
             ensure!(!d.draining, "Application daemon is restarting");
             let service = d.store.service(workspace, name)?;
             let Some(owner) = service.terminal_owner else {
                 return Ok(json!({"type":"service","service":service}));
             };
+            ensure!(
+                d.stopping_services
+                    .insert((workspace.to_owned(), name.to_owned())),
+                "Service stop is already in progress"
+            );
             owner
+        };
+        let _stop_guard = ServiceStopGuard {
+            sessions: self,
+            key: (workspace.to_owned(), name.to_owned()),
         };
         // Do not hold the application state lock while waiting for process reap.
         // The durable reservation fences editing, removal and replacement runs.

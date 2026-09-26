@@ -544,6 +544,14 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
       throw new Error('Invalid service output limit')
     }
     request.tail_bytes = args.tail_bytes
+    if (args.health_check !== undefined) {
+      const check = args.health_check
+      if (!check || typeof check !== 'object' || Array.isArray(check)) throw new Error('Invalid HTTP health check')
+      const fields = check as Record<string, unknown>
+      if (typeof fields.port_variable !== 'string' || typeof fields.path !== 'string' ||
+        !Number.isSafeInteger(fields.timeout_ms)) throw new Error('Invalid HTTP health check')
+      request.health_check = { port_variable: fields.port_variable, path: fields.path, timeout_ms: fields.timeout_ms }
+    }
   }
   const result = await requestDaemon(endpoint, op, request)
   if (generation !== clientGeneration || socket !== endpoint) {
