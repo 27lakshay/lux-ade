@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, WebContentsView } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, link, lstat, mkdir, open, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
@@ -16,6 +16,10 @@ const windows = new Map<number, WindowTab>()
 let activeProfile: string | null = null
 type BrowserLease = { id: string; process: ChildProcessWithoutNullStreams; released: boolean }
 let browserLease: BrowserLease | null = null
+const capturingProfiles = new Set<string>()
+const browserOperations = new Map<string, number>()
+const restoreName = '.ade-browser-restore-v1.json'
+const restoreCompletedName = '.ade-browser-restore-completed-v1.json'
 
 const allowedUrl = (value: unknown): boolean => {
   if (typeof value !== 'string' || value.length > 8192) return false
@@ -113,6 +117,16 @@ async function syncDirectory(directory: string): Promise<void> {
   const handle = await open(directory, 'r')
   try { await handle.sync() } finally { await handle.close() }
 }
+async function writeDurableRecord(directory: string, name: string, value: unknown): Promise<void> {
+  const temporary = join(directory, `.${name}.${randomUUID()}.tmp`)
+  try {
+    const file = await open(temporary, 'wx', 0o600)
+    try { await file.writeFile(JSON.stringify(value)); await file.sync() }
+    finally { await file.close() }
+    await rename(temporary, join(directory, name))
+    await syncDirectory(directory)
+  } finally { await unlink(temporary).catch(() => undefined) }
+}
 async function writeOwner(directory: string, id: string): Promise<void> {
   const handle = await open(join(directory, ownerName), 'wx', 0o600)
   try {
@@ -166,6 +180,12 @@ async function migrationPause(point: 'fresh-stage' | 'fresh-owner' | 'stage' | '
   await new Promise<void>(() => undefined)
 }
 async function migrateBrowserStorage(id: string): Promise<void> {
+  if (await lstat(join(profilePath(id), restoreName)).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return false
+    throw error
+  })) {
+    throw new Error('Browser restore is incomplete; retry the same browser backup before selecting this profile')
+  }
   const source = join(profilePath(id), 'browser-session')
   const destination = browserStoragePath(id)
   const parent = dirname(destination)
@@ -356,7 +376,55 @@ function owner(event: Electron.IpcMainInvokeEvent): BrowserWindow {
 function current(event: Electron.IpcMainInvokeEvent): { id: string; window: BrowserWindow } {
   const window = owner(event)
   if (!activeProfile) throw new Error('Profile is unavailable')
+  if (capturingProfiles.has(activeProfile)) throw new Error('Browser capture is in progress')
   return { id: activeProfile, window }
+}
+function guardedBrowserHandle(channel: string, handler: Parameters<typeof ipcMain.handle>[1]): void {
+  ipcMain.handle(channel, async (event, ...args) => {
+    const id = activeProfile
+    if (id && capturingProfiles.has(id)) throw new Error('Browser capture is in progress')
+    if (id) browserOperations.set(id, (browserOperations.get(id) ?? 0) + 1)
+    try { return await handler(event, ...args) }
+    finally {
+      if (id) {
+        const remaining = (browserOperations.get(id) ?? 1) - 1
+        if (remaining) browserOperations.set(id, remaining)
+        else browserOperations.delete(id)
+      }
+    }
+  })
+}
+async function waitForBrowserOperations(id: string): Promise<void> {
+  const until = Date.now() + 10_000
+  while ((browserOperations.get(id) ?? 0) > 0) {
+    if (Date.now() > until) throw new Error('Browser operations did not finish before capture')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+async function e2eBrowserPause(point: string, url?: string): Promise<void> {
+  if (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_BROWSER_PAUSE !== point) return
+  if (process.env.ADE_E2E_BROWSER_PAUSE_URL && process.env.ADE_E2E_BROWSER_PAUSE_URL !== url) return
+  const signal = process.env.ADE_E2E_BROWSER_PAUSE_SIGNAL
+  const release = process.env.ADE_E2E_BROWSER_PAUSE_RELEASE
+  if (!signal || !release || !isAbsolute(signal) || !isAbsolute(release)) throw new Error('Invalid browser E2E pause paths')
+  await writeFile(signal, point, { flag: 'wx' })
+  const until = Date.now() + 10_000
+  while (Date.now() < until) {
+    if (await lstat(release).then(() => true, () => false)) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('Browser E2E pause timed out')
+}
+async function restoreFailure(point: 'cookies' | 'tabs' | 'owner'): Promise<void> {
+  if (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_BROWSER_RESTORE_FAIL !== point) return
+  const signal = process.env.ADE_E2E_BROWSER_RESTORE_FAIL_ONCE
+  if (!signal || !isAbsolute(signal)) throw new Error('Invalid browser restore E2E failure path')
+  try { await writeFile(signal, point, { flag: 'wx' }) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return
+    throw error
+  }
+  throw new Error(`Injected browser restore failure after ${point}`)
 }
 function exact(state: ProfileTabs, profileId: string, tabId: unknown): Tab {
   const tab = validId(tabId) ? state.tabs.get(tabId) : undefined
@@ -455,8 +523,298 @@ async function flushProfileSession(id: string): Promise<void> {
   pageSession.flushStorageData()
   await pageSession.cookies.flushStore()
 }
+type PortableCookie = Pick<Electron.Cookie, 'name' | 'value' | 'domain' | 'hostOnly' | 'path' | 'secure' | 'httpOnly' | 'sameSite' | 'expirationDate'>
+type BundleEntry<T> = { bytes: number; sha256: string; value: T }
+type BrowserBundle = {
+  format: 'ade-browser-bundle-v1'; scope: 'tabs-and-persistent-cookies'
+  sourceProfileId: string; sourceStorageKey: string; capturedAt: string
+  included: string[]; excluded: string[]
+  tabs: BundleEntry<Saved>; cookies: BundleEntry<PortableCookie[]>
+}
+const bundleIncluded = ['browser tab metadata', 'persistent HTTP(S) cookies, including possible login credentials']
+const bundleExcluded = ['session cookies', 'localStorage', 'IndexedDB', 'service workers',
+  'browser cache', 'browser permissions', 'native browser passwords and credentials']
+const bundleEntry = <T>(value: T): BundleEntry<T> => {
+  const data = JSON.stringify(value)
+  return { bytes: Buffer.byteLength(data), sha256: createHash('sha256').update(data).digest('hex'), value }
+}
+function validCookie(value: unknown): value is PortableCookie {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const cookie = value as Record<string, unknown>
+  if (typeof cookie.name !== 'string' || typeof cookie.value !== 'string' ||
+    typeof cookie.domain !== 'string' || !cookie.domain ||
+    typeof cookie.expirationDate !== 'number' || !Number.isFinite(cookie.expirationDate) || cookie.expirationDate <= 0 ||
+    (cookie.path !== undefined && typeof cookie.path !== 'string') ||
+    (cookie.secure !== undefined && typeof cookie.secure !== 'boolean') ||
+    (cookie.httpOnly !== undefined && typeof cookie.httpOnly !== 'boolean') ||
+    (cookie.hostOnly !== undefined && typeof cookie.hostOnly !== 'boolean') ||
+    !['unspecified', 'no_restriction', 'lax', 'strict'].includes(String(cookie.sameSite))) return false
+  try {
+    const host = cookie.domain.replace(/^\./, '')
+    if (!host || new URL(`${cookie.secure ? 'https' : 'http'}://${host}/`).hostname !== host) return false
+  } catch { return false }
+  return true
+}
+function savedTabs(id: string, state: ProfileTabs): Saved {
+  return { version: 1, selectedId: state.selectedId, tabs: [...state.tabs.values()].map((tab) => ({
+    id: tab.id, profileId: id, requestedUrl: tab.requestedUrl, observedUrl: tab.observedUrl, title: tab.title,
+  })) }
+}
+function validatedBundle(value: unknown): BrowserBundle {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid browser backup bundle')
+  const bundle = value as BrowserBundle
+  if (bundle.format !== 'ade-browser-bundle-v1' || bundle.scope !== 'tabs-and-persistent-cookies' ||
+    !validId(bundle.sourceProfileId) || bundle.sourceStorageKey !== storageKey(bundle.sourceProfileId) ||
+    JSON.stringify(bundle.included) !== JSON.stringify(bundleIncluded) ||
+    JSON.stringify(bundle.excluded) !== JSON.stringify(bundleExcluded) ||
+    typeof bundle.capturedAt !== 'string' || !Number.isFinite(Date.parse(bundle.capturedAt))) {
+    throw new Error('Unsupported browser backup format or identity')
+  }
+  for (const component of [bundle.tabs, bundle.cookies]) {
+    if (!component || typeof component !== 'object' || !Number.isSafeInteger(component.bytes) ||
+      component.bytes < 0 || typeof component.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(component.sha256)) {
+      throw new Error('Invalid browser backup component')
+    }
+    const observed = bundleEntry(component.value)
+    if (component.bytes !== observed.bytes || component.sha256 !== observed.sha256) {
+      throw new Error('Browser backup component failed verification')
+    }
+  }
+  const tabs = bundle.tabs.value
+  if (!tabs || tabs.version !== 1 || !Array.isArray(tabs.tabs) || tabs.tabs.length > 10000 ||
+    (tabs.selectedId !== null && !validId(tabs.selectedId))) throw new Error('Invalid browser tab backup')
+  const seen = new Set<string>()
+  for (const tab of tabs.tabs) {
+    if (!tab || !validId(tab.id) || seen.has(tab.id) || tab.profileId !== bundle.sourceProfileId ||
+      !allowedUrl(tab.requestedUrl) || (tab.observedUrl && !allowedUrl(tab.observedUrl)) ||
+      typeof tab.title !== 'string' || tab.title.length > 8192) throw new Error('Invalid browser tab backup')
+    seen.add(tab.id)
+  }
+  if (tabs.selectedId !== null && !seen.has(tabs.selectedId)) throw new Error('Browser backup selects a missing tab')
+  if (!Array.isArray(bundle.cookies.value) || bundle.cookies.value.length > 10000 ||
+    bundle.cookies.value.some((cookie) => !validCookie(cookie))) throw new Error('Invalid browser cookie backup')
+  if (bundle.tabs.bytes > 2 * 1024 * 1024 || bundle.cookies.bytes > 16 * 1024 * 1024) {
+    throw new Error('Browser backup exceeds its supported size')
+  }
+  return bundle
+}
+/** Electron-owned, intentionally partial capture of tabs and persistent cookies. */
+export async function captureBrowserProfile(id: string, destination: string): Promise<Record<string, unknown>> {
+  if (!validId(id) || id === 'fixed' || !isAbsolute(destination) || activeProfile !== id ||
+    browserLease?.id !== id || capturingProfiles.has(id)) throw new Error('Browser capture target is unavailable')
+  capturingProfiles.add(id)
+  let state: ProfileTabs | null = null
+  let selections: Array<[number, WindowTab]> = []
+  try {
+    await waitForBrowserOperations(id)
+    if (activeProfile !== id || browserLease?.id !== id) throw new Error('Browser session lease changed during capture')
+    const storage = browserStoragePath(id)
+    if (!(await checkOwner(storage, id))) throw new Error('Browser session has no verified owner')
+    state = await stateFor(id)
+    selections = [...windows.entries()].filter(([, selected]) => selected?.profileId === id)
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (windows.get(window.webContents.id)?.profileId === id) detach(window)
+    }
+    for (const view of state.views.values()) {
+      if (view.webContents.isDestroyed()) continue
+      const contents = view.webContents
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { contents.off('destroyed', onDestroyed); reject(new Error('Browser page did not close for capture')) }, 3000)
+        const onDestroyed = (): void => { clearTimeout(timer); resolve() }
+        contents.once('destroyed', onDestroyed)
+        contents.close()
+        if (contents.isDestroyed()) onDestroyed()
+      })
+    }
+    state.views.clear()
+    await state.writes
+    await save(id)
+    const pageSession = session.fromPath(storage)
+    await pageSession.closeAllConnections()
+    pageSession.flushStorageData()
+    await pageSession.cookies.flushStore()
+    const cookies = (await pageSession.cookies.get({}))
+      .filter((cookie): cookie is Electron.Cookie & { expirationDate: number } =>
+        typeof cookie.expirationDate === 'number' && cookie.expirationDate > Date.now() / 1000)
+      .map((cookie): PortableCookie => ({ name: cookie.name, value: cookie.value,
+        domain: cookie.domain, hostOnly: cookie.hostOnly, path: cookie.path, secure: cookie.secure,
+        httpOnly: cookie.httpOnly, sameSite: cookie.sameSite, expirationDate: cookie.expirationDate }))
+    const bundle = validatedBundle({ format: 'ade-browser-bundle-v1', scope: 'tabs-and-persistent-cookies',
+      sourceProfileId: id, sourceStorageKey: storageKey(id), capturedAt: new Date().toISOString(),
+      included: bundleIncluded, excluded: bundleExcluded,
+      tabs: bundleEntry(savedTabs(id, state)), cookies: bundleEntry(cookies) })
+    if (activeProfile !== id || browserLease?.id !== id) throw new Error('Browser session lease changed during capture')
+    const parent = dirname(destination)
+    if (!(await directoryExists(parent))) throw new Error('Browser backup parent directory is unavailable')
+    const temporary = join(parent, `.${basename(destination)}.${randomUUID()}.tmp`)
+    try {
+      const file = await open(temporary, 'wx', 0o600)
+      try { await file.writeFile(`${JSON.stringify(bundle)}\n`); await file.sync() }
+      finally { await file.close() }
+      await link(temporary, destination)
+      try { await syncDirectory(parent) }
+      catch { throw new Error(`Browser backup was published at ${destination}, but directory sync failed; durability is unconfirmed`) }
+    } finally { await unlink(temporary).catch(() => undefined) }
+    return { type: 'browser_profile_captured', format: bundle.format, scope: bundle.scope,
+      source_profile_id: id, tab_count: bundle.tabs.value.tabs.length,
+      cookie_count: bundle.cookies.value.length, file: destination,
+      included: bundle.included, excluded: bundle.excluded }
+  } finally {
+    capturingProfiles.delete(id)
+    if (state && activeProfile === id && browserLease?.id === id) {
+      for (const [windowId, selected] of selections) {
+        if (!selected) continue
+        const window = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.id === windowId)
+        const tab = state.tabs.get(selected.tabId)
+        if (window && tab && !window.isDestroyed()) {
+          viewFor(id, state, tab)
+          attach(window, id, tab.id, selected.bounds)
+        }
+      }
+    }
+  }
+}
+
+/** Restore into a never-opened managed profile without inheriting source identity. */
+export async function restoreBrowserProfile(source: string, id: string, home: string): Promise<Record<string, unknown>> {
+  if (!isAbsolute(source) || !isAbsolute(home) || !validId(id) || id === 'fixed' ||
+    activeProfile === id || profilePaths.has(id) || profiles.has(id)) throw new Error('Browser restore needs a fresh inactive profile')
+  const info = await lstat(source)
+  if (!info.isFile() || info.size > 20 * 1024 * 1024) throw new Error('Browser backup must be a bounded regular file')
+  const sourceBytes = await readFile(source)
+  const bundle = validatedBundle(JSON.parse(sourceBytes.toString('utf8')) as unknown)
+  if (bundle.sourceProfileId === id) throw new Error('Browser restore needs an independent target profile')
+  await directoryExists(home)
+  const storage = join(app.getPath('userData'), 'browser-sessions', storageKey(id))
+  const tabsFile = join(home, 'browser-tabs-v1.json')
+  const markerFile = join(home, restoreName)
+  const digest = createHash('sha256').update(sourceBytes).digest('hex')
+  const lease = await acquireBrowserLease(id, home)
+  try {
+    const markerInfo = await lstat(markerFile).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    let remapped: Map<string, string>
+    if (!markerInfo) {
+      const completed = await readSmallJson(join(home, restoreCompletedName), 1024 * 1024)
+      if (completed !== null) {
+        if (!completed || typeof completed !== 'object' || Array.isArray(completed)) throw new Error('Browser restore receipt is invalid')
+        const record = completed as Record<string, unknown>
+        if (record.version !== 1 || record.profileId !== id || record.bundleSha256 !== digest ||
+          !Array.isArray(record.tabIds) || record.tabIds.length !== bundle.tabs.value.tabs.length ||
+          record.tabIds.some((item) => !validId(item)) || new Set(record.tabIds).size !== record.tabIds.length) {
+          throw new Error('Browser restore receipt belongs to another attempt')
+        }
+        const tabIds = record.tabIds as string[]
+        const mapped = new Map(bundle.tabs.value.tabs.map((tab, index) => [tab.id, tabIds[index]]))
+        const saved: Saved = { version: 1,
+          selectedId: bundle.tabs.value.selectedId ? mapped.get(bundle.tabs.value.selectedId) ?? null : null,
+          tabs: bundle.tabs.value.tabs.map((tab) => ({ ...tab, id: mapped.get(tab.id)!, profileId: id })) }
+        if (!(await checkOwner(storage, id)) || (await readFile(tabsFile, 'utf8')) !== JSON.stringify(saved)) {
+          throw new Error('Completed browser restore changed; preserve it for review')
+        }
+        return { type: 'browser_profile_restored', source_profile_id: bundle.sourceProfileId,
+          profile_id: id, tab_count: saved.tabs.length, cookie_count: record.cookieCount,
+          scope: bundle.scope, included: bundle.included, excluded: bundle.excluded, already_complete: true }
+      }
+    }
+    if (markerInfo) {
+      if (!markerInfo.isFile() || markerInfo.size > 1024 * 1024) throw new Error('Browser restore marker is unsafe; preserve it for review')
+      let marker: unknown
+      try { marker = JSON.parse(await readFile(markerFile, 'utf8')) as unknown }
+      catch { throw new Error('Browser restore marker is invalid; preserve it for review') }
+      if (!marker || typeof marker !== 'object' || Array.isArray(marker)) throw new Error('Browser restore marker is invalid')
+      const record = marker as Record<string, unknown>
+      if (record.version !== 1 || record.profileId !== id || record.bundleSha256 !== digest ||
+        !Array.isArray(record.tabIds) || record.tabIds.length !== bundle.tabs.value.tabs.length ||
+        record.tabIds.some((item) => !validId(item)) || new Set(record.tabIds).size !== record.tabIds.length) {
+        throw new Error('Browser restore marker belongs to another attempt; preserve it for review')
+      }
+      const tabIds = record.tabIds as string[]
+      remapped = new Map(bundle.tabs.value.tabs.map((tab, index) => [tab.id, tabIds[index]]))
+    } else {
+      const tabsExists = await lstat(tabsFile).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return false
+        throw error
+      })
+      if (await directoryExists(storage) || tabsExists || await directoryExists(join(home, 'browser-session'))) {
+        throw new Error('Browser restore target already contains browser data')
+      }
+      remapped = new Map(bundle.tabs.value.tabs.map((tab) => [tab.id, randomUUID()]))
+      await writeDurableRecord(home, restoreName, { version: 1, profileId: id, bundleSha256: digest,
+        tabIds: [...remapped.values()] })
+    }
+    const restoredTabs: Saved = { version: 1,
+      selectedId: bundle.tabs.value.selectedId ? remapped.get(bundle.tabs.value.selectedId) ?? null : null,
+      tabs: bundle.tabs.value.tabs.map((tab) => ({ ...tab, id: remapped.get(tab.id)!, profileId: id })) }
+    await mkdir(dirname(storage), { recursive: true, mode: 0o700 })
+    if (!(await directoryExists(storage))) await mkdir(storage, { mode: 0o700 })
+    const storageMarker = join(storage, restoreName)
+    const storageClaim = await readSmallJson(storageMarker)
+    if (storageClaim === null) {
+      const owned = await checkOwner(storage, id)
+      const children = await readdir(storage)
+      if (!owned && children.length) throw new Error('Browser restore target storage changed during recovery')
+      if (!owned) {
+        await writeDurableRecord(storage, restoreName, { version: 1, profileId: id, bundleSha256: digest })
+      }
+    } else if (!storageClaim || typeof storageClaim !== 'object' || Array.isArray(storageClaim) ||
+      (storageClaim as Record<string, unknown>).version !== 1 ||
+      (storageClaim as Record<string, unknown>).profileId !== id ||
+      (storageClaim as Record<string, unknown>).bundleSha256 !== digest) {
+      throw new Error('Browser restore target storage belongs to another attempt')
+    }
+    const pageSession = session.fromPath(storage)
+    let restoredCookies = 0
+    for (const cookie of bundle.cookies.value) {
+      if (!cookie.expirationDate || cookie.expirationDate <= Date.now() / 1000) continue
+      const host = cookie.domain!.replace(/^\./, '')
+      await pageSession.cookies.set({ url: `${cookie.secure ? 'https' : 'http'}://${host}/`,
+        name: cookie.name, value: cookie.value, ...(cookie.hostOnly ? {} : { domain: cookie.domain }),
+        path: cookie.path, secure: cookie.secure, httpOnly: cookie.httpOnly,
+        sameSite: cookie.sameSite, expirationDate: cookie.expirationDate })
+      restoredCookies++
+    }
+    pageSession.flushStorageData()
+    await pageSession.cookies.flushStore()
+    await restoreFailure('cookies')
+    const tabsInfo = await lstat(tabsFile).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (tabsInfo) {
+      if (!tabsInfo.isFile() || (await readFile(tabsFile, 'utf8')) !== JSON.stringify(restoredTabs)) {
+        throw new Error('Browser restore tabs changed during recovery; preserve them for review')
+      }
+    } else {
+      const temporary = `${tabsFile}.${randomUUID()}.tmp`
+      const file = await open(temporary, 'wx', 0o600)
+      try { await file.writeFile(JSON.stringify(restoredTabs)); await file.sync() }
+      finally { await file.close() }
+      await rename(temporary, tabsFile)
+    }
+    await syncDirectory(home)
+    await restoreFailure('tabs')
+    if (!(await checkOwner(storage, id))) await writeOwner(storage, id)
+    await syncDirectory(dirname(storage))
+    await restoreFailure('owner')
+    await writeDurableRecord(home, restoreCompletedName, { version: 1, profileId: id,
+      bundleSha256: digest, tabIds: [...remapped.values()], cookieCount: restoredCookies })
+    await unlink(storageMarker).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+    await syncDirectory(storage)
+    await unlink(markerFile)
+    await syncDirectory(home)
+    return { type: 'browser_profile_restored', source_profile_id: bundle.sourceProfileId,
+      profile_id: id, tab_count: restoredTabs.tabs.length, cookie_count: restoredCookies,
+      scope: bundle.scope, included: bundle.included, excluded: bundle.excluded }
+  } finally { await releaseBrowserLease(lease) }
+}
 export async function setBrowserProfile(id: string | null, directory?: string): Promise<void> {
   if (id && (!directory || !isAbsolute(directory))) throw new Error('Browser profile needs an absolute storage path')
+  if (capturingProfiles.size) throw new Error('Browser capture is in progress')
   // Migration can refuse an ambiguous destination. Validate it before detaching
   // the previous profile's views or changing the active browser identity.
   let acquired: BrowserLease | null = null
@@ -520,17 +878,18 @@ export async function flushBrowserSessions(): Promise<void> {
   await Promise.all([...profilePaths.keys()].map(flushProfileSession))
 }
 export function registerBrowserIpc(): void {
-  ipcMain.handle('ade:browser-list', async (event) => {
+  guardedBrowserHandle('ade:browser-list', async (event) => {
     const { id } = current(event)
     await stateFor(id)
     if (activeProfile !== id) throw new Error('Profile changed')
     return snapshot(id)
   })
-  ipcMain.handle('ade:browser-open', async (event, url: unknown) => {
+  guardedBrowserHandle('ade:browser-open', async (event, url: unknown) => {
     const { id } = current(event)
     if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
     const state = await stateFor(id)
     if (activeProfile !== id) throw new Error('Profile changed')
+    await e2eBrowserPause('open-before-mutation', url as string)
     const address = url as string
     const tab: Tab = { id: randomUUID(), profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '' }
     state.tabs.set(tab.id, tab)
@@ -540,7 +899,7 @@ export function registerBrowserIpc(): void {
     publish(id)
     return snapshot(id)
   })
-  ipcMain.handle('ade:browser-select', async (event, tabId: unknown) => {
+  guardedBrowserHandle('ade:browser-select', async (event, tabId: unknown) => {
     const { id } = current(event)
     const state = await stateFor(id)
     const tab = exact(state, id, tabId)
@@ -551,7 +910,7 @@ export function registerBrowserIpc(): void {
     publish(id)
     return snapshot(id)
   })
-  ipcMain.handle('ade:browser-new', async (event) => {
+  guardedBrowserHandle('ade:browser-new', async (event) => {
     const { id, window } = current(event)
     const state = await stateFor(id)
     if (activeProfile !== id) throw new Error('Profile changed')
@@ -561,7 +920,7 @@ export function registerBrowserIpc(): void {
     publish(id)
     return snapshot(id)
   })
-  ipcMain.handle('ade:browser-navigate', async (event, tabId: unknown, url: unknown) => {
+  guardedBrowserHandle('ade:browser-navigate', async (event, tabId: unknown, url: unknown) => {
     const { id } = current(event)
     const state = await stateFor(id)
     const tab = exact(state, id, tabId)
@@ -583,7 +942,7 @@ export function registerBrowserIpc(): void {
     })
     return snapshot(id)
   })
-  ipcMain.handle('ade:browser-history', async (event, tabId: unknown, direction: unknown) => {
+  guardedBrowserHandle('ade:browser-history', async (event, tabId: unknown, direction: unknown) => {
     const { id } = current(event)
     const state = await stateFor(id)
     const tab = exact(state, id, tabId)
@@ -595,7 +954,7 @@ export function registerBrowserIpc(): void {
     else throw new Error('History is unavailable')
     return snapshot(id)
   })
-  ipcMain.handle('ade:browser-close', async (event, tabId: unknown) => {
+  guardedBrowserHandle('ade:browser-close', async (event, tabId: unknown) => {
     const { id } = current(event)
     const state = await stateFor(id)
     const tab = exact(state, id, tabId)
@@ -613,7 +972,7 @@ export function registerBrowserIpc(): void {
     publish(id)
     return snapshot(id)
   })
-  ipcMain.handle('ade:browser-bounds', async (event, tabId: unknown, rect: unknown) => {
+  guardedBrowserHandle('ade:browser-bounds', async (event, tabId: unknown, rect: unknown) => {
     const { id, window } = current(event)
     const state = await stateFor(id)
     const tab = exact(state, id, tabId)
@@ -629,5 +988,5 @@ export function registerBrowserIpc(): void {
     viewFor(id, state, tab)
     attach(window, id, tab.id, bounds)
   })
-  ipcMain.handle('ade:browser-hide', (event) => { detach(owner(event)) })
+  guardedBrowserHandle('ade:browser-hide', (event) => { detach(owner(event)) })
 }

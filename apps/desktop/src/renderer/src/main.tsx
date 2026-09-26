@@ -83,6 +83,8 @@ declare global {
       createProfile(name: string): Promise<ProfileState>
       selectProfile(id: string): Promise<ProfileState>
       adoptBrowserSession(profileId: string): Promise<ProfileState>
+      captureBrowserProfile(profileId: string, destination: string): Promise<Record<string, unknown>>
+      restoreBrowserProfile(bundle: string, profileId: string): Promise<Record<string, unknown>>
       onProfileState(listener: (state: ProfileState) => void): () => void
       openWorkspace(folder: string): Promise<Frame>
       chooseWorkspace(): Promise<Frame | null>

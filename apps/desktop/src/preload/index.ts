@@ -41,6 +41,10 @@ contextBridge.exposeInMainWorld('adeHost', {
   createProfile: (name: string) => ipcRenderer.invoke('ade:profile-create', name),
   selectProfile: (id: string) => ipcRenderer.invoke('ade:profile-select', id),
   adoptBrowserSession: (profileId: string) => ipcRenderer.invoke('ade:browser-adopt', profileId),
+  captureBrowserProfile: (profileId: string, destination: string) =>
+    ipcRenderer.invoke('ade:browser-backup-capture', profileId, destination),
+  restoreBrowserProfile: (bundle: string, profileId: string) =>
+    ipcRenderer.invoke('ade:browser-backup-restore', bundle, profileId),
   openWorkspace: (folder: string) => ipcRenderer.invoke('ade:workspace-open', folder),
   chooseWorkspace: () => ipcRenderer.invoke('ade:workspace-choose'),
   selectWorkspace: (id: string, conversationId: string | null): Promise<boolean> =>

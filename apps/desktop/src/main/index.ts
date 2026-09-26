@@ -5,7 +5,8 @@ import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { AdeClient, DaemonRequestError, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
-import { adoptUnownedBrowserStorage, closeBrowserWindow, flushBrowserSessions, registerBrowserIpc, setBrowserProfile } from './browser'
+import { adoptUnownedBrowserStorage, captureBrowserProfile, closeBrowserWindow, flushBrowserSessions,
+  registerBrowserIpc, restoreBrowserProfile, setBrowserProfile } from './browser'
 import { SendJournal, type SendJournalIdentity, type SendJournalRecord } from './send-journal'
 
 type Profile = { id: string; name: string; selected: boolean; home: string }
@@ -587,6 +588,7 @@ ipcMain.handle('ade:profile-state', () => profileState)
 ipcMain.handle('ade:profile-list', () => refreshProfiles())
 ipcMain.handle('ade:profile-create', async (_event, name: unknown) => {
   if (!managedProfiles) throw new Error('The socket is fixed by ADE_SOCKET')
+  if (switching) throw new Error('A profile operation is already in progress')
   if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new Error('Profile name must contain 1 to 80 characters')
   await launcher('create', name.trim())
   return refreshProfiles()
@@ -607,6 +609,34 @@ ipcMain.handle('ade:browser-adopt', async (event, id: unknown) => {
   if (!profile) throw new Error('Unknown profile')
   await adoptUnownedBrowserStorage(id, profile.home)
   return selectProfile(id, true)
+})
+function browserBackupRequest(event: Electron.IpcMainInvokeEvent, id: unknown, location: unknown,
+  active: boolean): { profile: Profile; location: string } {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed() || event.senderFrame !== window.webContents.mainFrame ||
+    !managedProfiles || switching || typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id) ||
+    typeof location !== 'string' || !isAbsolute(location) || location.includes('\0') || location.length > 4096) {
+    throw new Error('Invalid browser backup request')
+  }
+  const profile = profileState.profiles.find((item) => item.id === id)
+  if (!profile || (active ? profileState.activeId !== id : profileState.activeId === id)) {
+    throw new Error('Browser backup target does not match the requested profile')
+  }
+  return { profile, location }
+}
+ipcMain.handle('ade:browser-backup-capture', async (event, id: unknown, destination: unknown) => {
+  if (startupProfileSelection) await startupProfileSelection
+  const request = browserBackupRequest(event, id, destination, true)
+  switching = true
+  try { return await captureBrowserProfile(request.profile.id, request.location) }
+  finally { switching = false }
+})
+ipcMain.handle('ade:browser-backup-restore', async (event, bundle: unknown, id: unknown) => {
+  if (startupProfileSelection) await startupProfileSelection
+  const request = browserBackupRequest(event, id, bundle, false)
+  switching = true
+  try { return await restoreBrowserProfile(request.location, request.profile.id, request.profile.home) }
+  finally { switching = false }
 })
 async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> {
   if (typeof folder !== 'string' || !isAbsolute(folder) || folder.length > 4096) throw new Error('Choose an absolute folder path')
