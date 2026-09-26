@@ -115,6 +115,10 @@ impl Manager {
         Ok(manager)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "explicit proxy command identity and compare-and-set fields"
+    )]
     pub(super) fn ensure(
         &self,
         workspace_id: &str,
@@ -238,6 +242,10 @@ impl Manager {
         Ok(result)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "explicit proxy route key and compare-and-set fields"
+    )]
     pub(super) fn retire(
         &self,
         workspace_id: &str,
@@ -331,6 +339,10 @@ impl Manager {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "explicit proxy route key and compare-and-set fields"
+    )]
     pub(super) fn recovery_retry(
         &self,
         workspace_id: &str,

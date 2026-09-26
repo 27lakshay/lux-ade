@@ -492,11 +492,17 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
   }
   const stop = async (): Promise<void> => {
     const running = child
+    const runtimePid = hello?.runtime_pid
     await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello?.boot_id })
     await expect.poll(() => running?.exitCode).not.toBeNull()
     if (typeof hello?.runtime_socket === 'string') {
       await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance,
         stop_active: true })
+    }
+    if (typeof runtimePid === 'number') {
+      await expect.poll(() => {
+        try { process.kill(runtimePid, 0); return true } catch { return false }
+      }).toBe(false)
     }
   }
   const route = (name: string) => ({ workspace_id: workspace.id, name, port_variable: 'PORT' })
@@ -519,12 +525,12 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
 
     occupied = createServer()
     await new Promise<void>((done, fail) => {
-      occupied!.once('error', fail)
+      occupied!.once('error', (error) => fail(new Error(`Could not occupy saved one proxy port ${first.port}: ${error}`)))
       occupied!.listen(Number(first.port), '127.0.0.1', () => done())
     })
     occupiedRetired = createServer()
     await new Promise<void>((done, fail) => {
-      occupiedRetired!.once('error', fail)
+      occupiedRetired!.once('error', (error) => fail(new Error(`Could not occupy saved three proxy port ${third.port}: ${error}`)))
       occupiedRetired!.listen(Number(third.port), '127.0.0.1', () => done())
     })
     await launch()
