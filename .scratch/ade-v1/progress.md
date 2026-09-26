@@ -16,9 +16,9 @@ been changed since that baseline. The local build branch is
 
 ## Active assignments at this checkpoint
 
-| Owner | Scope | Acceptance before integration |
-|---|---|---|
-| `/root` | Complete managed backup/restore ownership, path-safe rebind admission and remaining v1 acceptance | Full source and packaged checks, zero leftover test processes, independent reviews, focused commits |
+The F071/F073 file slice is integrated. The Rust and Electron workers reviewed
+each other's changes, and the coordinator ran the full source and packaged
+suites. The coordinator owns the next v1 slice and the remaining acceptance.
 
 The browser bundle and explicit attachment reclaim slices were integrated as
 partial R014/R015 building blocks. Registered backend restore and explicit
@@ -465,3 +465,13 @@ See each domain `issues/` ticket for slice-specific acceptance and limits.
   close it: Git/Worktrunk can reopen Git metadata or a removal path after the
   final worker check, and provider, PTY, service, and script launches still
   need execution-bound identities. F061/R007/R014 remain open.
+- Commit `a3a9f77` adds bounded read-only workspace browse, recursive name
+  search and text/raster preview through the daemon and Electron. It rejects
+  parent traversal, outside symlinks, replaced roots and delayed results for a
+  prior workspace selection. `pnpm check` passes 126/126 source E2Es;
+  `pnpm package:mac` and `pnpm test:e2e:package` pass 6/6 packaged E2Es.
+  Rust formatting, workspace all-target strict Clippy, desktop typecheck/build
+  and the final focused Electron rerun pass. No test-owned ADE process remains.
+  Scans over 10,000 directory names or 1,000 search entries report incomplete
+  without further pagination; non-UTF-8 names fail the request. F071/F073 and
+  R011/R016 remain open.

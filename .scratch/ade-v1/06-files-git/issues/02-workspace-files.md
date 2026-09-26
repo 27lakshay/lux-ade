@@ -41,3 +41,17 @@ permission failures and concurrent path changes. F073 still needs a declared
 supported-media matrix and adversarial preview isolation evidence. R011/R016
 remain cross-surface requirements. Record implementation commits, tested
 revision and exact command evidence before changing this ticket's status.
+
+## Comments
+
+- 2026-09-26: `a3a9f77` adds the read-only daemon commands, selected-workspace
+  Electron bridge and file surface. A real-process protocol E2E covers three
+  listing pages, two search pages, text/image/HTML/oversized previews, permission
+  refusal, traversal, outside symlinks and root replacement. Electron E2Es cover
+  browse/preview and reject a delayed response after workspace selection changes.
+  On the same tree, `pnpm check` passed 126/126 source E2Es, `pnpm package:mac`
+  and `pnpm test:e2e:package` passed 6/6, Rust formatting and workspace
+  all-target strict Clippy passed. After the final one-line empty-state change,
+  desktop typecheck/build and both focused Electron E2Es passed again. No test-
+  owned daemon/runtime remains. The 10,000/1,000 scan limits and non-UTF-8 names
+  keep F071/F073 and this ticket open.
