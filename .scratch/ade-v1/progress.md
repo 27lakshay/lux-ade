@@ -29,14 +29,14 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen; an unknown Codex item retains safe metadata and ordering across profile and desktop restart | Real Oh My Pi account; real managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider; complete F031 multi-provider acceptance |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; CLI can attach a real TTY to the runtime-owned shell, resize, send a large paste and detach without stopping it; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
-| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged; caller-owned prompt retry IDs reconcile a lost daemon reply without a second fixture provider turn | Matching CLI coverage for the rest of the selected daily-use flow; broader crash phases and live-provider retry evidence |
+| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged; caller-owned prompt retry IDs reconcile a lost daemon reply without a second fixture provider turn; CLI worktree create/remove now expose caller-owned IDs and durable receipt lookup with strict same-ID conflict | Matching CLI coverage for the rest of the selected daily-use flow; broader crash phases and live-provider retry evidence |
 
 Blockers: a real Oh My Pi account is unavailable; the user chose to keep
 real two-account verification pending rather than authenticate two ADE-managed
 Claude homes now. Fixtures are not live-account proof. Active worker owners:
-none; the coordinator verified source desktop closure and reopen with ambient
-real Codex and Claude. Next assignment: enumerate and close the remaining
-daily-use CLI/API parity gaps while preserving the pending managed real
+none; the coordinator integrated safe CLI worktree retries as `630ba33`.
+Next assignment: enumerate and close the remaining daily-use CLI/API parity
+gaps while preserving the pending managed real
 provider criteria. The remaining rows
 are partial evidence, not closed feature IDs. F075/06-S06 and unrelated v1
 work remain queued.
@@ -138,6 +138,18 @@ partial; the E2E procedure is in `scripts/test_agent_handoff_live.py`.
 | `1d45a52` | Structured CLI E2E errors | Playwright child Node commands no longer mix conflicting color settings into JSON stderr; affected focused 8/8 and full source 183 passed/one host skip |
 | `0b400c3` | Installed macOS CLI | App bundle includes `ade` and its client closure; stripped-PATH symlink invocation, GUI profile isolation and cold CLI daemon start; packaged 9/9 |
 | `dfc82fe` | Caller-owned CLI prompt retry | Dropped accepted daemon reply, same-ID retry across compatible handoff, one Codex fixture dispatch, payload and target conflicts |
+| `95a58c0` | Real desktop provider continuity | Ambient authenticated Codex and Claude turns keep one prompt, native thread and daemon/runtime identity after the last window closes and reopens; opt-in live E2E 2/2 |
+| `630ba33` | CLI worktree retry and receipt | Caller-owned IDs for create/remove, named operation lookup, same-ID retry and changed-target conflict E2E |
+
+Daily-use CLI worktree checkpoint, 2026-09-27: no feature ID is fully closed
+by this retry slice. `pnpm check` passed type checking, Fallow and 185 source
+E2Es with one existing host skip; the new focused E2E passed 1/1. After
+`pnpm package:mac`, installed checks passed 9/9. The CLI requires a retained
+request ID for create/remove and exposes `worktree operation` so a lost reply
+can be inspected before retry. Implementation took about 4 minutes, review
+about 2 minutes, source checks 6.1 minutes and packaging plus installed checks
+about 1 minute. Broader CLI parity, real-provider retry and managed-account
+evidence remain open.
 
 Daily-use real desktop continuity checkpoint, 2026-09-27: no feature ID is
 fully closed by this source-only evidence. `ADE_RUN_LIVE_PROVIDERS=1 pnpm

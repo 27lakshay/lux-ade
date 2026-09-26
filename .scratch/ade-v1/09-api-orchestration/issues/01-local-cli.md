@@ -73,3 +73,11 @@ for altered payload or target. The final source check passed 184 E2Es with one
 host skip, and rebuilt installed checks passed 9/9 at `dfc82fe` on macOS
 arm64. Full F101–F103 and R001/R002 acceptance remains open for the other
 selected commands, crash boundaries and real providers.
+
+Worktree CLI retry slice, 27 September 2026 (F063/F065/F102/R002 partial):
+`630ba33` requires a caller-owned request ID for worktree create/remove and
+adds a named receipt read. The running-daemon CLI E2E verifies settled receipt
+lookup, same-ID retry without another tree or removal, changed-target conflict
+and preservation of the source checkout. The integrated source check passed
+185 E2Es with one host skip, and the rebuilt installed suite passed 9/9 on
+macOS arm64. Full CLI parity and provider/account criteria remain open.
