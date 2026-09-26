@@ -80,7 +80,8 @@ export function requestDaemon(
         const response = frame as Record<string, unknown>
         if (typeof response.type !== 'string') return fail('protocol', 'Daemon response has no type.')
         if (response.type === 'error') {
-          return fail('daemon', typeof response.message === 'string' ? response.message : 'Daemon rejected the request.')
+          return fail(response.code === 'unavailable' ? 'unavailable' : 'daemon',
+            typeof response.message === 'string' ? response.message : 'Daemon rejected the request.')
         }
         if (phase === 'hello') {
           if (response.type !== 'hello') return fail('protocol', 'Daemon did not provide a hello response.')

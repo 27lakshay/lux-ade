@@ -877,6 +877,18 @@ export async function flushBrowserSessions(): Promise<void> {
   await Promise.all([...profiles.values()].map((state) => state.writes))
   await Promise.all([...profilePaths.keys()].map(flushProfileSession))
 }
+export async function readBrowserOwner(profileId: string, op: 'browser.list' | 'browser.inspect',
+  tabId?: string): Promise<Record<string, unknown>> {
+  const lease = browserLease
+  if (activeProfile !== profileId || lease?.id !== profileId || lease.released ||
+    capturingProfiles.has(profileId)) throw new Error('Browser owner is unavailable')
+  const state = await stateFor(profileId)
+  if (activeProfile !== profileId || browserLease !== lease || lease.released ||
+    capturingProfiles.has(profileId)) throw new Error('Browser owner changed')
+  if (op === 'browser.list') return { type: 'browser_tabs', ...snapshot(profileId) }
+  const tab = exact(state, profileId, tabId)
+  return { type: 'browser_tab', tab_id: tab.id, tab: { ...tab } }
+}
 export function registerBrowserIpc(): void {
   guardedBrowserHandle('ade:browser-list', async (event) => {
     const { id } = current(event)
@@ -889,7 +901,12 @@ export function registerBrowserIpc(): void {
     if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
     const state = await stateFor(id)
     if (activeProfile !== id) throw new Error('Profile changed')
+    const lease = browserLease
+    if (lease?.id !== id || lease.released) throw new Error('Browser owner is unavailable')
     await e2eBrowserPause('open-before-mutation', url as string)
+    if (activeProfile !== id || browserLease !== lease || lease.released) {
+      throw new Error('Browser owner changed before opening the tab')
+    }
     const address = url as string
     const tab: Tab = { id: randomUUID(), profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '' }
     state.tabs.set(tab.id, tab)

@@ -76,6 +76,19 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
     const second = await cli('--profile', profiles[1].id, 'workspace', 'list')
     expect((first.workspaces as Array<{ root: string }>).map((item) => item.root)).toEqual([profiles[0].root])
     expect((second.workspaces as Array<{ root: string }>).map((item) => item.root)).toEqual([profiles[1].root])
+    const browserTab = await window.evaluate(() => window.adeHost.browser.open('http://127.0.0.1:65534/installed'))
+    const browserTabId = browserTab.tabs[0].id
+    await expect.poll(async () => (await cli('--profile', profiles[1].id, 'browser', 'owner')).owner_id).toBeTruthy()
+    const browserOwnerId = (await cli('--profile', profiles[1].id, 'browser', 'owner')).owner_id as string
+    expect((await cli('--profile', profiles[1].id, 'browser', 'list', browserOwnerId)).tabs)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: browserTabId })]))
+    expect((await cli('--profile', profiles[1].id, 'browser', 'inspect', browserOwnerId, browserTabId)).tab_id)
+      .toBe(browserTabId)
+    const inactiveBrowser = await execFileAsync(cliAlias, ['--profile', profiles[0].id, 'browser', 'owner'],
+      { env: cliEnv, cwd: directory, timeout: 35_000 }).catch((error: Error & { stderr?: string }) => error)
+    expect(inactiveBrowser).toHaveProperty('stderr')
+    expect(JSON.parse((inactiveBrowser as { stderr: string }).stderr),
+      (inactiveBrowser as { stderr: string }).stderr).toMatchObject({ type: 'error', code: 'unavailable' })
     const workspaceId = (first.workspaces as Array<{ id: string }>)[0].id
     const createdTerminal = await cli('--profile', profiles[0].id, 'terminal', 'create', workspaceId,
       '--request-id', 'installed-cli-terminal')
@@ -108,6 +121,10 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
 
     await application.close()
     application = null
+    const closedBrowser = await execFileAsync(cliAlias, ['--profile', profiles[1].id, 'browser', 'owner'],
+      { env: cliEnv, cwd: directory, timeout: 35_000 }).catch((error: Error & { stderr?: string }) => error)
+    expect(closedBrowser).toHaveProperty('stderr')
+    expect(JSON.parse((closedBrowser as { stderr: string }).stderr)).toMatchObject({ type: 'error', code: 'unavailable' })
     const prior = owners.get(profiles[0].id)!
     await stopManagedProfile(prior)
     owners.delete(profiles[0].id)

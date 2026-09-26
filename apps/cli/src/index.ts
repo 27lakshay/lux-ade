@@ -73,6 +73,9 @@ Commands:
                                         Stop the selected terminal shell
   terminal retire WORKSPACE_ID TERMINAL_ID
                                         Remove a stopped terminal from the workspace
+  browser owner                         Inspect the selected profile's live browser owner
+  browser list OWNER_ID                 List tabs under that exact owner
+  browser inspect OWNER_ID TAB_ID       Inspect one exact browser tab
   service list WORKSPACE_ID             List managed services and execution state
   service configure WORKSPACE_ID NAME JSON_CONFIG [REVISION]
                                         Save a service recipe; revision defaults to 0
@@ -941,6 +944,21 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     const rows = integer(rest[3], 'ROWS')
     const result = await terminalAction(socketPath, workspaceId, terminalId, 'resize', undefined, { cols, rows })
     return { type: 'terminal_resize_submitted', workspace_id: workspaceId, terminal_id: terminalId, cols, rows, metrics: result.metrics }
+  }
+  if (area === 'browser' && action === 'owner') {
+    if (rest.length) throw new CliError('usage', 'browser owner does not accept arguments.')
+    return requestDaemon(socketPath, 'browser.owner.get')
+  }
+  if (area === 'browser' && (action === 'list' || action === 'inspect')) {
+    const count = action === 'inspect' ? 2 : 1
+    if (rest.length !== count) throw new CliError('usage', `browser ${action} requires OWNER_ID${count === 2 ? ' TAB_ID' : ''}.`)
+    const owner = await requestDaemon(socketPath, 'browser.owner.get')
+    const profileId = owner.profile_id
+    if (typeof profileId !== 'string' || !profileId) throw new CliError('protocol', 'Browser owner has no profile identity.')
+    return requestDaemon(socketPath, `browser.${action}`, {
+      profile_id: profileId, owner_id: required(rest[0], 'OWNER_ID'),
+      ...(action === 'inspect' ? { tab_id: required(rest[1], 'TAB_ID') } : {}),
+    })
   }
   if (area === 'service' && action === 'list') {
     return requestDaemon(socketPath, 'service.list', { workspace_id: required(rest[0], 'WORKSPACE_ID') })

@@ -8,6 +8,7 @@ import { AdeClient, DaemonRequestError, formatReviewFeedback, openTerminalConnec
   type ReviewAnchor, type ReviewFeedback, type TerminalConnection } from '@ade/client'
 import { adoptUnownedBrowserStorage, captureBrowserProfile, closeBrowserWindow, flushBrowserSessions,
   registerBrowserIpc, restoreBrowserProfile, setBrowserProfile } from './browser'
+import { BrowserOwner } from './browser-owner'
 import { SendJournal, type SendJournalIdentity, type SendJournalRecord } from './send-journal'
 import { GitJournal, type GitIntent } from './git-journal'
 
@@ -23,6 +24,7 @@ let unsubscribeFeed: (() => void) | null = null
 let switching = false
 let restoringBinding = false
 let startupProfileSelection: Promise<void> | null = null
+let browserOwner: BrowserOwner | null = null
 let profileState: ProfileState = { managed: managedProfiles, profiles: [], selectedId: null, activeId: null, error: '' }
 const execFileAsync = promisify(execFile)
 const terminals = new Map<string, TerminalConnection>()
@@ -616,7 +618,14 @@ async function refreshProfiles(): Promise<ProfileState> {
 }
 
 async function attachClient(endpoint: string, profileId: string): Promise<void> {
-  await setBrowserProfile(profileId, profileState.profiles.find((item) => item.id === profileId)?.home)
+  const home = profileState.profiles.find((item) => item.id === profileId)?.home
+  if (!home) throw new Error('Browser profile home is unavailable')
+  const nextBrowserOwner = await BrowserOwner.open(profileId)
+  try { await setBrowserProfile(profileId, home) }
+  catch (error) { await nextBrowserOwner.close(); throw error }
+  const previousBrowserOwner = browserOwner
+  browserOwner = nextBrowserOwner
+  void previousBrowserOwner?.close()
   const previous = client
   const previousSubscription = unsubscribeClient
   const previousFeed = unsubscribeFeed
@@ -632,7 +641,13 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
   previousFeed?.()
   previous.stop()
   unsubscribeClient = next.subscribe((state) => {
-    if (generation === clientGeneration) broadcast('ade:client-state-changed', state)
+    if (generation === clientGeneration) {
+      broadcast('ade:client-state-changed', state)
+      if (state.status === 'connected') {
+        void nextBrowserOwner.register(endpoint, state.bootId).catch((error) =>
+          console.error('Browser owner registration failed', error))
+      }
+    }
   })
   unsubscribeFeed = next.subscribeFeed((frame) => {
     if (generation === clientGeneration) broadcast('ade:feed-frame', frame)
@@ -1552,9 +1567,17 @@ app.whenReady().then(async () => {
   gitJournal = await GitJournal.open(join(app.getPath('userData'), 'git-intents-v1.json'))
   if (!managedProfiles && fixedSocket) {
     const fixedIdentity = createHash('sha256').update(resolve(fixedSocket)).digest('hex').slice(0, 32)
-    await setBrowserProfile('fixed', join(app.getPath('userData'), 'browser-fixed', fixedIdentity))
+    const home = join(app.getPath('userData'), 'browser-fixed', fixedIdentity)
+    await setBrowserProfile('fixed', home)
+    browserOwner = await BrowserOwner.open(`fixed-${fixedIdentity}`, 'fixed')
   }
-  unsubscribeClient = client.subscribe((state) => broadcast('ade:client-state-changed', state))
+  unsubscribeClient = client.subscribe((state) => {
+    broadcast('ade:client-state-changed', state)
+    if (state.status === 'connected' && fixedSocket) {
+      void browserOwner?.register(fixedSocket, state.bootId).catch((error) =>
+        console.error('Browser owner registration failed', error))
+    }
+  })
   unsubscribeFeed = client.subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
   client.start()
   openMainWindow()
@@ -1617,7 +1640,9 @@ app.on('before-quit', (event) => {
     event.preventDefault()
     if (!browserFlushInProgress) {
       browserFlushInProgress = true
-      void flushBrowserSessions().then(() => {
+      void flushBrowserSessions().then(async () => {
+        await browserOwner?.close()
+        browserOwner = null
         browserReadyToQuit = true
         app.quit()
       }).catch((error) => {

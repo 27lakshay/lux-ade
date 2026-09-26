@@ -4,10 +4,14 @@ use ade_daemon::{
     worktrees::Lease,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     io::{self, BufRead, BufReader, Read, Write},
-    os::unix::{fs::PermissionsExt, net::UnixStream},
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
+        net::UnixStream,
+    },
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, RwLock,
@@ -19,6 +23,110 @@ fn error_response(error: impl Into<anyhow::Error>) -> Value {
     ade_core::error::error_envelope(error.into())
 }
 const MAX_REQUEST: u64 = 12 * 1024 * 1024;
+const MAX_BROWSER_REPLY: u64 = 1024 * 1024;
+const BROWSER_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone)]
+struct BrowserOwner {
+    profile_id: String,
+    owner_id: String,
+    socket: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+fn browser_error(code: &str, message: &str) -> Value {
+    json!({"type":"error","code":code,"message":message})
+}
+
+fn browser_id(value: &Value, field: &str) -> anyhow::Result<String> {
+    let id = value[field]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing {field}"))?;
+    anyhow::ensure!(
+        !id.is_empty()
+            && id.len() <= 128
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
+        "Invalid {field}"
+    );
+    Ok(id.to_owned())
+}
+
+fn daemon_browser_profile(socket: &str) -> anyhow::Result<String> {
+    if let Some(home) = std::env::var_os("ADE_RUNTIME_HOME") {
+        let path = Path::new(&home);
+        anyhow::ensure!(
+            path.file_name().is_some_and(|name| name == "runtime"),
+            "Managed browser profile has an invalid runtime home"
+        );
+        let id = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Managed browser profile has no identity"))?;
+        return browser_id(&json!({"profile_id":id}), "profile_id");
+    }
+    let endpoint = Path::new(socket);
+    let absolute = if endpoint.is_absolute() {
+        endpoint.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(endpoint)
+    };
+    let digest = Sha256::digest(absolute.to_string_lossy().as_bytes());
+    let suffix: String = digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok(format!("fixed-{suffix}"))
+}
+
+fn browser_socket(path: &Path) -> anyhow::Result<(u64, u64)> {
+    anyhow::ensure!(path.is_absolute(), "Browser owner socket must be absolute");
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Browser owner socket has no parent"))?;
+    let parent_meta = std::fs::symlink_metadata(parent)?;
+    let socket_meta = std::fs::symlink_metadata(path)?;
+    let uid = unsafe { libc::geteuid() };
+    anyhow::ensure!(
+        parent_meta.file_type().is_dir()
+            && parent_meta.uid() == uid
+            && parent_meta.permissions().mode() & 0o077 == 0,
+        "Browser owner socket parent must be a private owned directory"
+    );
+    anyhow::ensure!(
+        socket_meta.file_type().is_socket()
+            && socket_meta.uid() == uid
+            && socket_meta.permissions().mode() & 0o077 == 0,
+        "Browser owner endpoint must be a private owned Unix socket"
+    );
+    Ok((socket_meta.dev(), socket_meta.ino()))
+}
+
+fn browser_connect(owner: &BrowserOwner) -> anyhow::Result<UnixStream> {
+    let (device, inode) = browser_socket(&owner.socket)?;
+    anyhow::ensure!(
+        device == owner.device && inode == owner.inode,
+        "Browser owner socket changed"
+    );
+    let stream = UnixStream::connect(&owner.socket)?;
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        let result = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
+        anyhow::ensure!(
+            result == 0 && uid == unsafe { libc::geteuid() },
+            "Browser owner peer has another user identity"
+        );
+    }
+    stream.set_read_timeout(Some(BROWSER_TIMEOUT))?;
+    stream.set_write_timeout(Some(BROWSER_TIMEOUT))?;
+    Ok(stream)
+}
 struct ProbeBudget {
     active: Mutex<usize>,
     available: Condvar,
@@ -43,15 +151,173 @@ impl Drop for ProbePermit<'_> {
 }
 struct Host {
     socket: PathBuf,
+    profile_id: String,
     sessions: Arc<Sessions>,
     runtime: Arc<Supervisor>,
     default_workspace: String,
     leases: Mutex<HashMap<String, Lease>>,
+    browser_owner: Mutex<Option<BrowserOwner>>,
+    browser_budget: ProbeBudget,
     proxy_probe: ProbeBudget,
     admission: RwLock<()>,
     stopping: AtomicBool,
 }
 impl Host {
+    fn browser_command(&self, request: &Value) -> Value {
+        let op = request["op"].as_str().unwrap_or("");
+        let profile_id = if op == "browser.owner.get" && request.get("profile_id").is_none() {
+            self.profile_id.clone()
+        } else {
+            match browser_id(request, "profile_id") {
+                Ok(id) => id,
+                Err(error) => return browser_error("invalid_request", &error.to_string()),
+            }
+        };
+        if profile_id != self.profile_id {
+            return browser_error(
+                "unavailable",
+                "Browser profile is unavailable on this daemon",
+            );
+        }
+        if op == "browser.owner.register" {
+            let owner_id = match browser_id(request, "owner_id") {
+                Ok(id) => id,
+                Err(error) => return browser_error("invalid_request", &error.to_string()),
+            };
+            let Some(path) = request["socket_path"].as_str() else {
+                return browser_error("invalid_request", "Missing socket_path");
+            };
+            let socket = PathBuf::from(path);
+            let (device, inode) = match browser_socket(&socket) {
+                Ok(identity) => identity,
+                Err(_) => {
+                    return browser_error(
+                        "invalid_request",
+                        "Browser owner socket is not a private owned Unix socket",
+                    );
+                }
+            };
+            let candidate = BrowserOwner {
+                profile_id,
+                owner_id,
+                socket,
+                device,
+                inode,
+            };
+            let mut current = self.browser_owner.lock().unwrap();
+            if let Some(previous) = current.as_ref() {
+                let same_endpoint = previous.profile_id == candidate.profile_id
+                    && previous.owner_id == candidate.owner_id
+                    && previous.device == candidate.device
+                    && previous.inode == candidate.inode;
+                if !same_endpoint && browser_connect(previous).is_ok() {
+                    return browser_error("conflict", "Another live browser owner is registered");
+                }
+            }
+            *current = Some(candidate.clone());
+            return json!({"type":"browser_owner","profile_id":candidate.profile_id,
+                "owner_id":candidate.owner_id});
+        }
+        if op == "browser.owner.unregister" {
+            let owner_id = match browser_id(request, "owner_id") {
+                Ok(id) => id,
+                Err(error) => return browser_error("invalid_request", &error.to_string()),
+            };
+            let mut current = self.browser_owner.lock().unwrap();
+            if current
+                .as_ref()
+                .is_some_and(|owner| owner.profile_id == profile_id && owner.owner_id == owner_id)
+            {
+                *current = None;
+                return json!({"type":"ack","profile_id":profile_id,"owner_id":owner_id});
+            }
+            return browser_error("unavailable", "Browser owner is unavailable");
+        }
+        let current = self.browser_owner.lock().unwrap().clone();
+        let Some(owner) = current.filter(|owner| owner.profile_id == profile_id) else {
+            return browser_error("unavailable", "Browser owner is unavailable");
+        };
+        if op != "browser.owner.get" {
+            let requested = match browser_id(request, "owner_id") {
+                Ok(id) => id,
+                Err(error) => return browser_error("invalid_request", &error.to_string()),
+            };
+            if requested != owner.owner_id {
+                return browser_error("unavailable", "Browser owner changed; inspect it again");
+            }
+        }
+        if op == "browser.inspect"
+            && let Err(error) = browser_id(request, "tab_id")
+        {
+            return browser_error("invalid_request", &error.to_string());
+        }
+        let _permit = self.browser_budget.acquire();
+        let mut stream = match browser_connect(&owner) {
+            Ok(stream) => stream,
+            Err(_) => return browser_error("unavailable", "Browser owner is unavailable"),
+        };
+        if op == "browser.owner.get" {
+            return json!({"type":"browser_owner","profile_id":owner.profile_id,
+                "owner_id":owner.owner_id});
+        }
+        let mut command = json!({"op":op,"profile_id":owner.profile_id,"owner_id":owner.owner_id});
+        if let Some(tab_id) = request["tab_id"].as_str() {
+            command["tab_id"] = json!(tab_id);
+        }
+        if writeln!(stream, "{command}").is_err() {
+            return browser_error("unavailable", "Browser owner did not accept the request");
+        }
+        let mut reader = BufReader::new(stream);
+        let mut reply = Vec::new();
+        if reader
+            .by_ref()
+            .take(MAX_BROWSER_REPLY + 1)
+            .read_until(b'\n', &mut reply)
+            .is_err()
+            || reply.len() as u64 > MAX_BROWSER_REPLY
+            || reply.last() != Some(&b'\n')
+        {
+            return browser_error(
+                "unavailable",
+                "Browser owner response is unavailable or too large",
+            );
+        }
+        let response: Value = match serde_json::from_slice(&reply) {
+            Ok(value) => value,
+            Err(_) => return browser_error("protocol", "Browser owner returned invalid JSON"),
+        };
+        if !response.is_object()
+            || !response["type"].is_string()
+            || response["profile_id"] != owner.profile_id
+            || response["owner_id"] != owner.owner_id
+            || (op == "browser.inspect"
+                && response["type"] != "error"
+                && response["tab_id"] != request["tab_id"])
+        {
+            return browser_error(
+                "unavailable",
+                "Browser owner identity changed during the request",
+            );
+        }
+        // An unregistered or replaced owner may finish an in-flight read. Never
+        // present its response as current browser state.
+        if !self
+            .browser_owner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|current| {
+                current.profile_id == owner.profile_id
+                    && current.owner_id == owner.owner_id
+                    && current.device == owner.device
+                    && current.inode == owner.inode
+            })
+        {
+            return browser_error("unavailable", "Browser owner changed during the request");
+        }
+        response
+    }
+
     fn proxy_service(&self, request: &Value) -> anyhow::Result<(String, String, String, Value)> {
         let workspace = request["workspace_id"]
             .as_str()
@@ -605,6 +871,15 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                         true,
                     )
                     .map(|()| json!({"type":"ack"}))
+                } else if matches!(
+                    op,
+                    "browser.owner.register"
+                        | "browser.owner.unregister"
+                        | "browser.owner.get"
+                        | "browser.list"
+                        | "browser.inspect"
+                ) {
+                    Ok(host.browser_command(&request))
                 } else {
                     host.sessions.command(&request)
                 } {
@@ -731,10 +1006,16 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
 
     let host = Arc::new(Host {
         socket: PathBuf::from(&socket),
+        profile_id: daemon_browser_profile(&socket)?,
         sessions,
         runtime,
         default_workspace,
         leases: Mutex::new(HashMap::new()),
+        browser_owner: Mutex::new(None),
+        browser_budget: ProbeBudget {
+            active: Mutex::new(0),
+            available: Condvar::new(),
+        },
         proxy_probe: ProbeBudget {
             active: Mutex::new(0),
             available: Condvar::new(),
