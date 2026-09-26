@@ -20,8 +20,12 @@ The F071/F073 large-tree continuation is integrated. `/root/file_large_e2e`
 authored the public-protocol E2E and independently reviewed the backend;
 `/root/file_cursor_review` independently reviewed cursor and security behavior.
 Both are finished. `/root/git_ops_inventory` finished a read-only F075/F078
-inventory. The coordinator owns the next local Git slice in
-`06-files-git/issues/03-ordinary-git-local.md`.
+inventory. For `06-files-git/issues/03-ordinary-git-local.md`,
+`/root/git_cli_controls` completed CLI code and CLI E2E;
+`/root/git_ui_controls` completed Electron code. The coordinator integrated
+public-protocol and Electron E2E, reviewed both surfaces, and committed the
+partial F075 slice as `da930c7`. Branch, stash, merge, discard, push and pull
+remain for later tickets.
 
 The browser bundle and explicit attachment reclaim slices were integrated as
 partial R014/R015 building blocks. Registered backend restore and explicit
@@ -489,3 +493,16 @@ See each domain `issues/` ticket for slice-specific acceptance and limits.
   Rust formatting and all-target strict Clippy pass. No test-owned daemon or
   runtime remains. F071/F073 stay open for broad performance, mutation and
   preview isolation acceptance; the search depth/visited limits are explicit.
+- Commit `da930c7` exposes reviewed stage, unstage and commit in the CLI and
+  Electron Changes view. CLI mutations require an explicit reusable request ID.
+  Electron fsyncs a profile/workspace-bound Git intent before admission and
+  recovers its receipt after SIGKILL/relaunch. Public-protocol, CLI, and hidden
+  Electron E2Es cover stale tokens, changed request payloads, failed hooks,
+  delayed workspace selection, dropped replies, and crash recovery. `pnpm
+  check` passes 141 source E2Es with one host-filesystem skip; a rebuild and
+  focused Electron rerun pass 3/3 after the last UI race fix. Rust formatting
+  and strict Clippy pass. `pnpm package:mac` and 6/6 packaged E2Es pass.
+  Test-owned daemon/runtime processes exit after both suites; the pre-existing ADE Prototype.app daemon/runtime pair under
+  `Documents/Codex` was left untouched. The E2E startup failure also exits
+  without a native modal. The interrupted Git ID archive has no prune control
+  and fails closed at 16 MiB. F075 and F078 remain open.

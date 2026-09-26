@@ -29,3 +29,19 @@ This ticket exposes the existing `review.stage`, `review.unstage` and
 `review.commit` daemon operations. It does not close F075. Separate tickets
 must implement branch, stash, merge, discard, push and pull, then verify
 changed-state preconditions and remote/forge coverage for F075/F078/06-S06.
+
+## Evidence and remaining limit
+
+Commit `da930c7` adds named CLI commands and Electron Changes controls. The
+CLI requires a caller-owned request ID for each mutation. Electron writes the
+exact operation to a fsynced, profile/workspace-bound recovery journal before
+daemon admission, checks receipts after a crash, and keeps interrupted IDs
+visible. The running-daemon E2Es cover stale review tokens, failed hooks,
+same-ID retry, changed-payload rejection, and a dropped CLI reply. Hidden
+Electron E2Es cover stage/unstage/commit, delayed selection, and SIGKILL/relaunch
+with the original operation ID. `pnpm check` passes 141 E2Es with one
+host-filesystem skip; desktop rebuilt and the 3 focused Electron E2Es passed
+after the final selection-race fix. Rust formatting and strict all-target
+Clippy pass. `pnpm package:mac` and all 6 packaged E2Es pass. No test-owned
+daemon or runtime remains after either suite. The interrupted-ID archive has no prune control and fails closed
+at its 16 MiB journal cap. Full F075 and F078 acceptance is still open.
