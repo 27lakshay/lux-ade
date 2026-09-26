@@ -17,6 +17,7 @@ let clientGeneration = 0
 let unsubscribeClient: (() => void) | null = null
 let unsubscribeFeed: (() => void) | null = null
 let switching = false
+let startupProfileSelection: Promise<void> | null = null
 let profileState: ProfileState = { managed: managedProfiles, profiles: [], selectedId: null, activeId: null, error: '' }
 const execFileAsync = promisify(execFile)
 const terminals = new Map<string, TerminalConnection>()
@@ -431,6 +432,19 @@ async function selectProfile(id: string, updateDefault: boolean): Promise<Profil
       throw new Error('Profile launcher did not return a daemon socket')
     }
     await attachClient(result.socket, id)
+    // Let packaged E2E select another profile while startup selection remains open.
+    const release = process.env.ADE_E2E_STARTUP_PROFILE_RELEASE_FILE
+    if (!updateDefault && process.env.ADE_E2E_HIDE_WINDOW === '1' && release && isAbsolute(release)) {
+      const deadline = Date.now() + 10_000
+      while (true) {
+        try { await stat(release); break }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+        if (Date.now() >= deadline) throw new Error('E2E startup profile release timed out')
+        await new Promise<void>((done) => setTimeout(done, 25))
+      }
+    }
     if (updateDefault) {
       try { await launcher('select', id) } catch (error) {
         if (previousId && previousEndpoint) {
@@ -462,6 +476,7 @@ ipcMain.handle('ade:profile-create', async (_event, name: unknown) => {
 })
 ipcMain.handle('ade:profile-select', async (_event, id: unknown) => {
   if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid profile ID')
+  if (startupProfileSelection) await startupProfileSelection
   return selectProfile(id, true)
 })
 async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> {
@@ -894,9 +909,9 @@ app.whenReady().then(async () => {
   client.start()
   openMainWindow()
   if (managedProfiles) {
-    void refreshProfiles().then(async (state) => {
+    startupProfileSelection = refreshProfiles().then(async (state) => {
       if (state.selectedId) await selectProfile(state.selectedId, false)
-    }).catch((error) => publishProfile({ error: String(error) }))
+    }).catch((error) => { publishProfile({ error: String(error) }) }).finally(() => { startupProfileSelection = null })
   }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) openMainWindow()

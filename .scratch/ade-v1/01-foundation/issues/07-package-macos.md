@@ -48,6 +48,14 @@ new-conversation draft retention and Send availability. Packaged Playwright
 launches the app with its test-only hidden-window mode, so acceptance does not
 raise a desktop window in the active macOS Space.
 
+A fourth packaged scenario covers two profiles in the installed app. It opens a
+separate workspace, terminal and deterministic Codex conversation in each,
+reopens the app, switches profiles, and verifies each daemon boot identity,
+shell PID, terminal state and catalog stayed independent. Startup profile
+selection now settles before a user-initiated switch; the E2E holds startup
+selection at a bounded test-only gate to prove the race and its fix. The
+integrated check is `pnpm test:e2e:package` (4/4 passed).
+
 Signing, notarization and app updates remain separate release work. Renderer HMR
 belongs to 01-S15 and is not covered by this packaged-app check. Primary
 providers still need the full live-account and daily-use acceptance before

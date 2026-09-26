@@ -126,6 +126,137 @@ test('packaged macOS app runs from its own resources and retains work across reo
   }
 })
 
+test('packaged macOS app keeps two profile daemons, terminals and conversations isolated across reopen', async ({}, testInfo) => {
+  test.setTimeout(150_000)
+  const directory = await mkdtemp(join(tmpdir(), 'ade-package-profiles-e2e-'))
+  const folders = [join(directory, 'alpha-project'), join(directory, 'beta-project')]
+  await Promise.all(folders.map((folder) => mkdir(folder)))
+  const fixture = join(directory, 'codex-mock.py')
+  await copyFile(resolve('scripts/fixtures/codex_mock.py'), fixture)
+  const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_RESOURCE_DIR: _resources,
+    ADE_DAEMON_BIN: _daemonBinary, ADE_NODE_BIN: _nodeBinary, ADE_BUN_BIN: _bunBinary,
+    ADE_PYTHON_BIN: _pythonBinary, ADE_OMP_BRIDGE: _ompBridge,
+    ADE_CLAUDE_BRIDGE: _claudeBridge, ...parentEnvironment } = process.env
+  const env = {
+    ...parentEnvironment,
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    ADE_PROFILES_HOME: join(directory, 'profiles'),
+    ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
+    ADE_CODEX_TRANSPORT: 'stdio',
+    ADE_CODEX_BIN: fixture,
+    ADE_MOCK_DIR: join(directory, 'codex-calls'),
+    ADE_E2E_STARTUP_PROFILE_RELEASE_FILE: join(directory, 'release-startup-profile'),
+  }
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const execFileAsync = promisify(execFile)
+  let application = await electron.launch({ executablePath: executable, cwd: directory, env })
+  const owned: Array<{ id: string; socket: string; bootId: unknown; home: string }> = []
+  const profiles: Array<{ id: string; name: string; workspace: string; conversationId: string; shellPid: number }> = []
+  try {
+    let window = await application.firstWindow()
+    expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(false)
+    for (const [index, name] of ['Alpha', 'Beta'].entries()) {
+      await window.getByRole('textbox', { name: 'New profile' }).fill(name)
+      await window.getByRole('button', { name: 'Create' }).click()
+      await expect(window.getByText(`Active profile: ${name}`)).toBeVisible()
+      await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+      const active = await window.evaluate(() => window.adeHost.getProfileState())
+      const profile = active.profiles.find((item) => item.id === active.activeId)
+      expect(profile?.name).toBe(name)
+      const located = await execFileAsync('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile!.home])
+      const socket = (JSON.parse(located.stdout) as { socket: string }).socket
+      const hello = await rpc(socket, { op: 'hello' })
+      owned.push({ id: profile!.id, socket, bootId: hello.boot_id, home: profile!.home })
+
+      await window.getByRole('textbox', { name: 'Open folder' }).fill(folders[index])
+      await window.getByRole('button', { name: 'Open folder' }).click()
+      const workspace = await realpath(folders[index])
+      await expect(window.getByText(workspace, { exact: true })).toBeVisible()
+      const terminal = window.locator('.terminal-surface')
+      await expect(terminal.locator('.xterm-rows')).toBeVisible()
+      await terminal.click()
+      await window.keyboard.type(`export ADE_PROFILE_VALUE=${name.toUpperCase()}; printf 'PROFILE_%s_SHELL\\n' "$ADE_PROFILE_VALUE"`)
+      await window.keyboard.press('Enter')
+      await expect(terminal.locator('.xterm-rows')).toContainText(`PROFILE_${name.toUpperCase()}_SHELL`)
+
+      await window.getByRole('button', { name: 'New conversation' }).click()
+      const conversation = window.getByRole('region', { name: 'Conversation' })
+      await conversation.getByRole('textbox', { name: 'Prompt' }).fill(`profile-${name.toLowerCase()}-turn`)
+      await conversation.getByRole('button', { name: 'Send' }).click()
+      await expect(conversation.locator('.message-assistant')).toContainText('Hello world')
+      const catalog = await rpc(socket, { op: 'catalog.get' })
+      const records = catalog.catalog as { workspaces: Array<{ id: string; root: string }>;
+        conversations: Array<{ id: string; workspace_id: string }> }
+      expect(records.workspaces.map((item) => item.root)).toEqual([workspace])
+      expect(records.conversations).toHaveLength(1)
+      const runtime = await rpc(socket, { op: 'runtime.status' })
+      const shellPid = (runtime.terminals as Array<{ metrics: { shell_pid: number } }>)[0].metrics.shell_pid
+      expect(shellPid).toBeGreaterThan(0)
+      profiles.push({ id: profile!.id, name, workspace, conversationId: records.conversations[0].id, shellPid })
+      if (index === 1) {
+        await expect(window.getByText(profiles[0].workspace, { exact: true })).toHaveCount(0)
+        expect(records.conversations.some((item) => item.id === profiles[0].conversationId)).toBe(false)
+      }
+    }
+
+    await expect(window.getByRole('combobox', { name: 'Profile' })).toHaveValue(profiles[1].id)
+    await expect(window.evaluate(() => window.adeHost.selectProfile('00000000-0000-4000-8000-000000000000'))).rejects.toThrow('Unknown profile')
+    await expect(window.getByText('Active profile: Beta')).toBeVisible()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+
+    await application.close()
+    for (const owner of owned) expect((await rpc(owner.socket, { op: 'hello' })).boot_id).toBe(owner.bootId)
+    application = await electron.launch({ executablePath: executable, cwd: directory, env })
+    window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    await expect(window.getByText('Active profile: Beta')).toBeVisible()
+    const profilePicker = window.getByRole('combobox', { name: 'Profile' })
+    await profilePicker.selectOption(profiles[0].id)
+    await expect(profilePicker).toBeDisabled()
+    await expect(window.getByText('Active profile: Beta')).toBeVisible()
+    await writeFile(env.ADE_E2E_STARTUP_PROFILE_RELEASE_FILE, '')
+    for (const [index, profile] of [profiles[0], profiles[1], profiles[0]].entries()) {
+      if (index > 0) await window.getByRole('combobox', { name: 'Profile' }).selectOption(profile.id)
+      await expect(window.getByText(`Active profile: ${profile.name}`)).toBeVisible()
+      await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+      await expect(window.getByText(profile.workspace, { exact: true })).toBeVisible()
+      await expect(window.getByRole('region', { name: 'Conversation' }).locator('.message-assistant')).toContainText('Hello world')
+      await expect(window.getByText(profiles[profile.name === 'Alpha' ? 1 : 0].workspace, { exact: true })).toHaveCount(0)
+      const owner = owned.find((item) => item.id === profile.id)
+      expect(owner).toBeDefined()
+      expect((await rpc(owner!.socket, { op: 'hello' })).boot_id).toBe(owner!.bootId)
+      const runtime = await rpc(owner!.socket, { op: 'runtime.status' })
+      expect((runtime.terminals as Array<{ metrics: { shell_pid: number } }>)[0].metrics.shell_pid).toBe(profile.shellPid)
+      const terminal = window.locator('.terminal-surface')
+      await expect(terminal.locator('.xterm-rows')).toBeVisible()
+      await terminal.hover()
+      await window.mouse.wheel(0, 10_000)
+      await expect(terminal.locator('.xterm-rows')).toContainText(`PROFILE_${profile.name.toUpperCase()}_SHELL`, { timeout: 30_000 })
+      await expect(terminal.locator('.xterm-rows')).toContainText('❯')
+      await terminal.click()
+      await window.keyboard.type('printf "RESTORED_%s\\n" "$ADE_PROFILE_VALUE"')
+      await window.keyboard.press('Enter')
+      await window.mouse.wheel(0, 10_000)
+      await expect(terminal.locator('.xterm-rows')).toContainText(`RESTORED_${profile.name.toUpperCase()}`)
+      const snapshot = await rpc(owner!.socket, { op: 'conversation.get', conversation_id: profile.conversationId })
+      expect((snapshot.messages as Array<{ role: string; text: string }>).some((message) =>
+        message.role === 'user' && message.text === `profile-${profile.name.toLowerCase()}-turn`)).toBe(true)
+    }
+  } catch (error) {
+    for (const owner of owned) {
+      const log = await readFile(join(owner.home, 'daemon.log')).catch(() => Buffer.from('No daemon log was written'))
+      await testInfo.attach(`packaged-${owner.home.split('/').at(-1)}-daemon.log`,
+        { body: log.subarray(-64 * 1024), contentType: 'text/plain' })
+    }
+    throw error
+  } finally {
+    await application.close().catch(() => undefined)
+    for (const owner of owned) await stopOwned(owner.socket, owner.bootId)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('packaged provider entry points run deterministic turns through bundled Node and Bun', async ({}, testInfo) => {
   const directory = await mkdtemp(join(tmpdir(), 'ade-package-providers-e2e-'))
   const folder = join(directory, 'project')
