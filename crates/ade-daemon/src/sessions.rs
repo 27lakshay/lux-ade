@@ -2,7 +2,7 @@
 //! Identity follows Paseo; interrupted execution follows opencode's write-ahead
 //! claim; provider protocol handling follows T3 Code. Windows never author process state.
 use crate::listeners;
-use crate::services::ServiceExt;
+use crate::services::{Service, ServiceExt};
 use crate::{
     agent_runtime::{Envelope, Remote, Spec},
     model::*,
@@ -13,7 +13,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpStream},
     path::Path,
@@ -177,6 +177,12 @@ struct HealthAttempt {
     revision: i64,
     transfer_id: String,
     attempted_at: std::time::Instant,
+}
+#[derive(Clone)]
+struct PeerTarget {
+    variable: String,
+    port_variable: String,
+    service: Service,
 }
 struct Data {
     draining: bool,
@@ -1338,7 +1344,26 @@ impl Sessions {
         limit: u64,
         health_check: Option<&HealthCheck>,
     ) -> Result<Value> {
-        let service = self.data.lock().unwrap().store.service(workspace, name)?;
+        let (service, peer_targets, mut peer_error) = {
+            let d = self.data.lock().unwrap();
+            let service = d.store.service(workspace, name)?;
+            let (targets, error) = match Self::peer_targets(&d, &service) {
+                Ok(targets) => (targets, None),
+                Err(error) => (Vec::new(), Some(error.to_string())),
+            };
+            (service, targets, error)
+        };
+        let mut current_peer_endpoints = if peer_error.is_none() {
+            match self.resolve_peer_targets(&peer_targets) {
+                Ok(endpoints) => endpoints,
+                Err(error) => {
+                    peer_error = Some(error.to_string());
+                    BTreeMap::new()
+                }
+            }
+        } else {
+            BTreeMap::new()
+        };
         if let Some(check) = health_check {
             ensure!(
                 service
@@ -1516,12 +1541,36 @@ impl Sessions {
                 "readiness":{"state":"unknown","basis":"identity_changed",
                     "application_ready":"unverified","observation_error":"Service changed during inspection; refresh"},
                 "logs":{"available":false,"reason":"service_changed_during_inspection"},
-                "durable_logs":{"available":false,"reason":"service_changed_during_inspection"}});
+                "durable_logs":{"available":false,"reason":"service_changed_during_inspection"},
+                "effective_peers":{},"peer_error":"Service changed during inspection; refresh"});
             if health_check.is_some() {
                 result["health"] = json!({"state":"unknown","basis":"identity_changed"});
             }
             result["health_monitor"] = json!({"state":"unknown","basis":"identity_changed"});
             return Ok(result);
+        }
+        if peer_targets.iter().any(|target| {
+            d.stopping_services
+                .contains(&(workspace.to_owned(), target.service.name.clone()))
+                || d.store
+                    .service(workspace, &target.service.name)
+                    .ok()
+                    .as_ref()
+                    != Some(&target.service)
+        }) {
+            current_peer_endpoints.clear();
+            peer_error = Some("Peer service changed during inspection; refresh".into());
+        }
+        let effective_peers = if state == "running" && service.terminal_owner.is_some() {
+            service.launch_peers.clone()
+        } else {
+            BTreeMap::new()
+        };
+        if service.terminal_owner.is_some()
+            && peer_error.is_none()
+            && current_peer_endpoints != effective_peers
+        {
+            peer_error = Some("Peer endpoint changed since launch; restart this service".into());
         }
         if state == "running" && health_check.is_some() {
             let stopping = d
@@ -1537,7 +1586,9 @@ impl Sessions {
             "execution_error":execution_error,
             "readiness":{"state":readiness_state,"basis":if state == "running" {"direct_process_tcp_listener"} else {"execution_state"},
                 "application_ready":"unverified","observation_error":observation_error},
-            "logs":logs,"durable_logs":durable_logs});
+            "logs":logs,"durable_logs":durable_logs,
+            "effective_peers":effective_peers,"current_peer_endpoints":current_peer_endpoints,
+            "peer_error":peer_error});
         if let Some(health) = health {
             result["health"] = health;
         }
@@ -1645,11 +1696,124 @@ impl Sessions {
         )
     }
 
+    fn peer_targets(d: &Data, service: &Service) -> Result<Vec<PeerTarget>> {
+        service
+            .config
+            .peers
+            .iter()
+            .map(|(variable, peer)| {
+                let target = d
+                    .store
+                    .service(&service.workspace_id, &peer.service)
+                    .with_context(|| format!("Peer service {} is unavailable", peer.service))?;
+                ensure!(
+                    target.ports.contains_key(&peer.port_variable),
+                    "Peer service {} has no {} port",
+                    peer.service,
+                    peer.port_variable
+                );
+                ensure!(
+                    !d.stopping_services
+                        .contains(&(service.workspace_id.clone(), peer.service.clone())),
+                    "Peer service {} is stopping",
+                    peer.service
+                );
+                Ok(PeerTarget {
+                    variable: variable.clone(),
+                    port_variable: peer.port_variable.clone(),
+                    service: target,
+                })
+            })
+            .collect()
+    }
+
+    fn resolve_peer_targets(&self, targets: &[PeerTarget]) -> Result<BTreeMap<String, String>> {
+        if targets.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let terminals = terminals["terminals"]
+            .as_array()
+            .context("Peer terminal catalogue is unavailable")?;
+        let listeners = listeners::observe().context("Peer listener observation is unavailable")?;
+        let reachable_ipv4 = |address: &str| matches!(address, "127.0.0.1" | "0.0.0.0" | "*");
+        let mut resolved = BTreeMap::new();
+        for target in targets {
+            let peer = &target.service;
+            let port = peer.ports[&target.port_variable];
+            let owner = peer
+                .terminal_owner
+                .as_ref()
+                .with_context(|| format!("Peer service {} is stopped", peer.name))?;
+            ensure!(
+                owner.runtime_instance == self.runtime.instance,
+                "Peer service {} belongs to an unavailable runtime",
+                peer.name
+            );
+            let terminal = terminals
+                .iter()
+                .find(|entry| entry["workspace"]["terminal_id"] == owner.terminal_id)
+                .with_context(|| format!("Peer service {} has no live terminal", peer.name))?;
+            let metrics = &terminal["metrics"];
+            ensure!(
+                metrics["shell_running"] == true
+                    && metrics["transfer_id"] == owner.transfer_id
+                    && metrics["shell_pid"].as_u64().is_some(),
+                "Peer service {} execution identity is unavailable",
+                peer.name
+            );
+            let pid = u32::try_from(metrics["shell_pid"].as_u64().unwrap())?;
+            let own = listeners.iter().any(|entry| {
+                entry.pid == pid && entry.port == port && reachable_ipv4(&entry.address)
+            });
+            let other = listeners.iter().any(|entry| {
+                entry.pid != pid && entry.port == port && reachable_ipv4(&entry.address)
+            });
+            ensure!(
+                own && !other,
+                "Peer service {} does not own a verified IPv4 listener on {}",
+                peer.name,
+                target.port_variable
+            );
+            resolved.insert(target.variable.clone(), format!("http://127.0.0.1:{port}"));
+        }
+        Ok(resolved)
+    }
+
     fn start_service(&self, workspace: &str, name: &str) -> Result<Value> {
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
         let mut w = d.store.workspace(workspace)?;
         let before = d.store.service(workspace, name)?;
+        if let Some(owner) = &before.terminal_owner {
+            ensure!(
+                owner.runtime_instance == self.runtime.instance,
+                "Service supervisor was replaced; stop the service before starting a new run"
+            );
+            let state = self.runtime.command(json!({"op":"terminal.list"}))?;
+            let terminal = state["terminals"]
+                .as_array()
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find(|item| item["workspace"]["terminal_id"] == owner.terminal_id)
+                })
+                .context("Service terminal is unavailable; stop the prior run before restarting")?;
+            ensure!(
+                terminal["metrics"]["transfer_id"] == owner.transfer_id,
+                "Service terminal ownership changed"
+            );
+            ensure!(
+                terminal["metrics"]["shell_running"] == true,
+                "Service exited; stop the prior run before restarting"
+            );
+            return Ok(
+                json!({"type":"service","service":before,"terminal_id":owner.terminal_id,
+                "metrics":terminal["metrics"],"effective_peers":before.launch_peers}),
+            );
+        }
+        let targets = Self::peer_targets(&d, &before)?;
+        let peer_endpoints = self.resolve_peer_targets(&targets)?;
         let lease = self.worktrees.agent_lease(&w.root)?;
         if before.terminal_owner.is_none() {
             before.config.directory(&w.root)?;
@@ -1660,29 +1824,34 @@ impl Sessions {
                 )?;
             }
         }
-        let service = d
-            .store
-            .reserve_service(workspace, name, &self.runtime.instance)?;
+        let service =
+            d.store
+                .reserve_service(workspace, name, &self.runtime.instance, &peer_endpoints)?;
         d.health_samples
             .remove(&(workspace.to_owned(), name.to_owned()));
         d.health_attempts
             .remove(&(workspace.to_owned(), name.to_owned()));
-        let owner = service.terminal_owner.as_ref().unwrap();
+        let owner = service.terminal_owner.as_ref().unwrap().clone();
         ensure!(
             owner.runtime_instance == self.runtime.instance,
             "Service supervisor was replaced; stop the service before starting a new run"
         );
         d.terminal_leases.insert(owner.terminal_id.clone(), lease);
         self.catalog_changed(&mut d)?;
-        let launch = service.launch(&w.root)?;
+        let launch = service.launch(&w.root, &peer_endpoints)?;
         w.terminal_id = owner.terminal_id.clone();
         let result = self.runtime.command(json!({"op":"terminal.launch","workspace":w,"terminal_key":owner.terminal_id,"launch":launch,"session_subscribers":self.subscribers.load(Ordering::Relaxed)}))?;
+        ensure!(
+            result["metrics"]["transfer_id"] == owner.transfer_id,
+            "Service launch returned another transfer identity"
+        );
         self.publish(
             &mut d,
             json!({"type":"service_changed","service":service,"metrics":result["metrics"]}),
         );
         Ok(
-            json!({"type":"service","service":service,"terminal_id":owner.terminal_id,"metrics":result["metrics"]}),
+            json!({"type":"service","service":service,"terminal_id":owner.terminal_id,
+                "metrics":result["metrics"],"effective_peers":peer_endpoints}),
         )
     }
     fn stop_service(&self, workspace: &str, name: &str) -> Result<Value> {

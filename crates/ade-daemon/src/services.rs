@@ -29,6 +29,30 @@ fn load(db: &Connection, workspace: &str, name: &str) -> Result<Option<Service>>
         .optional()?;
     row.map(|v| Ok(serde_json::from_str(&v)?)).transpose()
 }
+fn reaches_service(
+    db: &Connection,
+    workspace: &str,
+    target: &str,
+    desired: &str,
+    seen: &mut Vec<String>,
+) -> Result<bool> {
+    if target == desired {
+        return Ok(true);
+    }
+    if seen.iter().any(|name| name == target) {
+        return Ok(false);
+    }
+    seen.push(target.to_owned());
+    let Some(service) = load(db, workspace, target)? else {
+        return Ok(false);
+    };
+    for peer in service.config.peers.values() {
+        if reaches_service(db, workspace, &peer.service, desired, seen)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 // Probe both loopback families while choosing a new port. Release the sockets
 // after the catalogue transaction: the service itself must bind at launch. Never
 // silently change an existing assignment because an unrelated listener took it.
@@ -80,6 +104,12 @@ impl Store {
         let tx =
             rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
         let before = load(&tx, &workspace.id, name)?;
+        for peer in config.peers.values() {
+            ensure!(
+                !reaches_service(&tx, &workspace.id, &peer.service, name, &mut Vec::new())?,
+                "Service peer dependency cycle"
+            );
+        }
         if let Some(before) = &before
             && before.config == config
         {
@@ -122,6 +152,7 @@ impl Store {
             config,
             ports: BTreeMap::new(),
             hostname: format!("{name}-{suffix}.localhost"),
+            launch_peers: BTreeMap::new(),
         };
         // Insert the parent first for the FK. Nothing is visible until all leases
         // and the final record commit together.
@@ -211,12 +242,25 @@ impl Store {
 }
 
 pub trait ServiceExt {
-    fn launch(&self, root: &str) -> Result<crate::terminal_launch::Launch>;
+    fn launch(
+        &self,
+        root: &str,
+        peer_endpoints: &BTreeMap<String, String>,
+    ) -> Result<crate::terminal_launch::Launch>;
     fn check_ports(&self) -> Result<()>;
 }
 impl ServiceExt for Service {
-    fn launch(&self, root: &str) -> Result<crate::terminal_launch::Launch> {
+    fn launch(
+        &self,
+        root: &str,
+        peer_endpoints: &BTreeMap<String, String>,
+    ) -> Result<crate::terminal_launch::Launch> {
         self.config.directory(root)?;
+        ensure!(
+            peer_endpoints.len() == self.config.peers.len()
+                && peer_endpoints.keys().eq(self.config.peers.keys()),
+            "Service peer endpoints were not resolved"
+        );
         let mut env = self.config.env.clone();
         env.extend(
             self.ports
@@ -226,6 +270,7 @@ impl ServiceExt for Service {
         env.insert("ADE_WORKSPACE_ROOT".into(), root.into());
         env.insert("ADE_SERVICE_NAME".into(), self.name.clone());
         env.insert("ADE_SERVICE_HOST".into(), self.hostname.clone());
+        env.extend(peer_endpoints.clone());
         let launch = crate::terminal_launch::Launch {
             transfer_id: self
                 .terminal_owner
@@ -255,7 +300,13 @@ impl Store {
     pub fn service(&self, workspace: &str, name: &str) -> Result<Service> {
         load(&self.connection, workspace, name)?.context("Unknown workspace service")
     }
-    pub fn reserve_service(&self, workspace: &str, name: &str, instance: &str) -> Result<Service> {
+    pub fn reserve_service(
+        &self,
+        workspace: &str,
+        name: &str,
+        instance: &str,
+        peer_endpoints: &BTreeMap<String, String>,
+    ) -> Result<Service> {
         let tx =
             rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
         let mut service = load(&tx, workspace, name)?.context("Unknown workspace service")?;
@@ -285,6 +336,7 @@ impl Store {
             .terminal_owner
             .as_ref()
             .map(|owner| owner.transfer_id.clone());
+        service.launch_peers = peer_endpoints.clone();
         tx.execute(
             "UPDATE services SET data=?3 WHERE workspace_id=?1 AND name=?2",
             params![workspace, name, serde_json::to_string(&service)?],
@@ -304,6 +356,7 @@ impl Store {
             "Service ownership changed"
         );
         service.terminal_owner = None;
+        service.launch_peers.clear();
         self.connection.execute(
             "UPDATE services SET data=?3 WHERE workspace_id=?1 AND name=?2",
             params![workspace, name, serde_json::to_string(&service)?],
@@ -445,9 +498,13 @@ mod tests {
         let store = f.store();
         let w = f.workspace(&store);
         store.configure_service(&w.id, "web", 0, config()).unwrap();
-        let reserved = store.reserve_service(&w.id, "web", "runtime").unwrap();
+        let reserved = store
+            .reserve_service(&w.id, "web", "runtime", &BTreeMap::new())
+            .unwrap();
         assert_eq!(
-            store.reserve_service(&w.id, "web", "runtime").unwrap(),
+            store
+                .reserve_service(&w.id, "web", "runtime", &BTreeMap::new())
+                .unwrap(),
             reserved
         );
         let owner = reserved.terminal_owner.as_ref().unwrap();

@@ -18,8 +18,17 @@ pub struct Config {
     /// Environment variables that receive stable, host-local TCP ports.
     #[serde(default)]
     pub ports: Vec<String>,
+    /// Environment variables populated from another managed service in this workspace.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub peers: BTreeMap<String, PeerEndpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<HealthPolicy>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerEndpoint {
+    pub service: String,
+    pub port_variable: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +44,7 @@ fn default_cwd() -> String {
 fn env_name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
+        && !matches!(value, "TERM" | "COLORTERM")
         && value
             .bytes()
             .enumerate()
@@ -72,6 +82,24 @@ impl Config {
         ensure!(
             self.ports.iter().collect::<HashSet<_>>().len() == self.ports.len(),
             "Duplicate service port variable"
+        );
+        ensure!(
+            self.peers.len() <= 16
+                && self.peers.iter().all(|(variable, peer)| {
+                    env_name(variable)
+                        && !variable.starts_with("ADE_")
+                        && !self.env.contains_key(variable)
+                        && !self.ports.contains(variable)
+                        && !peer.service.is_empty()
+                        && peer.service.len() <= 40
+                        && !peer.service.starts_with('-')
+                        && !peer.service.ends_with('-')
+                        && peer.service.bytes().all(|byte| {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                        })
+                        && env_name(&peer.port_variable)
+                }),
+            "Invalid peer service endpoints or environment variables"
         );
         if let Some(health) = &self.health {
             ensure!(
@@ -136,4 +164,7 @@ pub struct Service {
     pub config: Config,
     pub ports: BTreeMap<String, u16>,
     pub hostname: String,
+    /// URLs placed in the environment of the currently reserved service run.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub launch_peers: BTreeMap<String, String>,
 }

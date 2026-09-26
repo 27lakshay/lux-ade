@@ -25,7 +25,8 @@ function shellQuote(value: string): string {
 }
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
-type Service = { name: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>; config: { program: string } }
+type Service = { name: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>;
+  config: { program: string; peers?: Record<string, { service: string; port_variable: string }> } }
 type ServiceState = { state: string; metrics: Frame | null }
 type ServiceList = { services: Service[]; states: Record<string, ServiceState> }
 type ListenerInventory = { coverage: string; listeners: Array<{ address: string; port: number; pid: number; ownership: string }>;
@@ -38,6 +39,7 @@ type ServiceInspection = { execution_state: string; execution_error?: string | n
     run_transfer_id?: string; start_offset?: number; through_offset?: number; coverage?: string };
   health_monitor?: { state: string; basis?: string; status_code?: number; sampled_at_ms?: number;
     fresh_until_ms?: number; schedule_delay_ms?: number };
+  effective_peers?: Record<string, string>; peer_error?: string | null;
   health?: { state: string; basis: string; status_code?: number; error?: string } }
 
 function serviceOutput(logs: ServiceInspection['logs']): string {
@@ -173,6 +175,8 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
             item.service_name === service.name && item.variable === variable && item.port === port)?.observation ?? (inventory ? 'unknown' : 'unavailable')
           return `${variable}=${port} (${observation.replaceAll('_', ' ')})`
         }).join(' · ') || 'No assigned ports'}</p>
+        {Object.entries(service.config.peers ?? {}).map(([variable, peer]) =>
+          <p className="service-ports" key={variable}>{variable} ← {peer.service}.{peer.port_variable}</p>)}
         <div className="service-actions">
           <button disabled={Boolean(busy) || owned} onClick={() => void change(service.name, 'start')}>Start</button>
           <button disabled={Boolean(busy) || !owned} onClick={() => void change(service.name, 'stop')}>Stop</button>
@@ -205,6 +209,9 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
               </p>}
             {(inspection.execution_error || inspection.readiness.observation_error) &&
               <p role="alert">{inspection.execution_error || inspection.readiness.observation_error}</p>}
+            {inspection.peer_error && <p role="alert">Peer unavailable: {inspection.peer_error}</p>}
+            {Object.entries(inspection.effective_peers ?? {}).map(([variable, url]) =>
+              <p className="service-ports" key={variable}>Effective {variable}: {url}</p>)}
             <h3>Recorded output</h3>
             {inspection.durable_logs?.available ? <>
               <pre>{serviceOutput(inspection.durable_logs) || 'No output yet'}</pre>

@@ -72,6 +72,7 @@ impl Manager {
                 env: Default::default(),
                 cwd: ".".into(),
                 ports: vec![],
+                peers: Default::default(),
                 health: None,
             });
         for (field, value) in [
@@ -121,6 +122,7 @@ impl Manager {
                 args:serde_json::from_str(self.args.read(cx).value().as_ref()).map_err(|_|anyhow::anyhow!("Arguments must be a JSON array of strings, for example [\"dev\", \"--host\"]."))?,
                 env:serde_json::from_str(self.env.read(cx).value().as_ref()).map_err(|_|anyhow::anyhow!("Environment must be a JSON object of string values, for example {{\"NODE_ENV\":\"development\"}}."))?,
                 ports:self.ports.read(cx).value().split(',').map(str::trim).filter(|s|!s.is_empty()).map(String::from).collect(),
+                peers:self.selected.as_ref().map(|service|service.config.peers.clone()).unwrap_or_default(),
                 health:self.selected.as_ref().and_then(|service|service.config.health.clone())};
             config.validate()?;
             Ok(config)
