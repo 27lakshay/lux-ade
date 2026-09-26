@@ -10,7 +10,7 @@ to another service name and one of that service's allocated port variables.
 Peer variables cannot collide with the recipe's own environment or ports.
 Configuration rejects dependency cycles. On launch, ADE resolves each peer to
 an explicit host-local HTTP URL only when the target's current runtime transfer
-identity, process and IPv4 TCP listener match. A stopped, missing, changed or
+identity, process and IPv4 or IPv6 TCP listener match. A stopped, missing, changed or
 contested peer fails the dependent launch rather than silently substituting an
 unrelated process. The selected URL is recorded with the dependent run and
 injected into its environment.
@@ -30,9 +30,10 @@ an unavailable URL.
 - Stop the peer first. The dependent's effective URL must stay unchanged while
   current availability becomes unavailable. Starting it again must fail until
   the peer is running. Reject a configured dependency cycle.
-- Recheck after daemon/runtime restart, process descendants and IPv6-only
-  listeners, and verify cross-profile host claims before marking F089 complete.
-  The current listener evidence accepts a directly owned IPv4 process only.
+- Recheck after runtime replacement, process descendants, and cross-profile host
+  claims before marking F089 complete. Current listener evidence accepts a
+  directly owned IPv4 or IPv6 process only. IPv6-only service injection passes
+  `e2e/specs/service-peer-wiring.spec.ts` through the real daemon.
 - F088's stable proxy URL remains separate work. Direct peer URLs in this slice
   can stop serving when the target process stops or its assigned port changes.
 

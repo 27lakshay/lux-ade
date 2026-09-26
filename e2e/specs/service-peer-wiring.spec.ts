@@ -189,3 +189,45 @@ test('a daemon handoff retains the URLs given to a running peer-dependent servic
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('an IPv6-only managed peer receives a verified loopback URL', async () => {
+  const daemon = await startDaemon()
+  try {
+    const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory }))
+      .workspace as { id: string }
+    const api = (await rpc(daemon.socket, { op: 'service.configure', workspace_id: workspace.id,
+      name: 'ipv6-api', revision: 0, config: {
+        program: process.execPath, cwd: '.', env: {}, ports: ['PORT'],
+        args: ['-e', 'require("http").createServer((_,res)=>res.end("ipv6-peer")).listen(Number(process.env.PORT),"::1")'],
+      },
+    })).service as { ports: { PORT: number } }
+    const web = (await rpc(daemon.socket, { op: 'service.configure', workspace_id: workspace.id,
+      name: 'ipv6-web', revision: 0, config: {
+        program: process.execPath, cwd: '.', env: {}, ports: ['PORT'],
+        peers: { API_URL: { service: 'ipv6-api', port_variable: 'PORT' } },
+        args: ['-e', 'require("http").createServer(async(_,res)=>res.end(await (await fetch(process.env.API_URL)).text())).listen(Number(process.env.PORT),"127.0.0.1")'],
+      },
+    })).service as { ports: { PORT: number } }
+    await rpc(daemon.socket, { op: 'service.start', workspace_id: workspace.id, name: 'ipv6-api' })
+    await expect.poll(async () => {
+      try { return await (await fetch(`http://[::1]:${api.ports.PORT}/`)).text() }
+      catch { return '' }
+    }).toBe('ipv6-peer')
+    const inventory = await rpc(daemon.socket, { op: 'listener.list' })
+    expect((inventory.listeners as { family: string; port: number }[])
+      .some((listener) => listener.port === api.ports.PORT && listener.family === 'ipv6')).toBe(true)
+    const started = await rpc(daemon.socket, { op: 'service.start', workspace_id: workspace.id, name: 'ipv6-web' })
+    expect(started.effective_peers).toEqual({ API_URL: `http://[::1]:${api.ports.PORT}` })
+    await expect.poll(async () => {
+      try { return await (await fetch(`http://127.0.0.1:${web.ports.PORT}/`)).text() }
+      catch { return '' }
+    }).toBe('ipv6-peer')
+    const observed = await rpc(daemon.socket, { op: 'service.inspect', workspace_id: workspace.id,
+      name: 'ipv6-web', tail_bytes: 256 })
+    expect(observed.current_peer_endpoints).toEqual(started.effective_peers)
+    await rpc(daemon.socket, { op: 'service.stop', workspace_id: workspace.id, name: 'ipv6-web' })
+    await rpc(daemon.socket, { op: 'service.stop', workspace_id: workspace.id, name: 'ipv6-api' })
+  } finally {
+    await daemon.stop()
+  }
+})

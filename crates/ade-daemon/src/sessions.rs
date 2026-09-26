@@ -1661,6 +1661,7 @@ impl Sessions {
         let listener_rows = observed.iter().map(|listener| {
             let owner = managed.get(&listener.pid);
             json!({"protocol":"tcp","address":listener.address,"port":listener.port,
+                "family":match listener.family { listeners::IpFamily::V4 => "ipv4", listeners::IpFamily::V6 => "ipv6" },
                 "pid":listener.pid,"ownership":if owner.is_some(){"managed_service"}else{"unknown"},
                 "workspace_id":owner.map(|value| &value.0),"service_name":owner.map(|value| &value.1)})
         }).collect::<Vec<_>>();
@@ -1736,7 +1737,17 @@ impl Sessions {
             .as_array()
             .context("Peer terminal catalogue is unavailable")?;
         let listeners = listeners::observe().context("Peer listener observation is unavailable")?;
-        let reachable_ipv4 = |address: &str| matches!(address, "127.0.0.1" | "0.0.0.0" | "*");
+        let reachable = |entry: &listeners::Listener, family: listeners::IpFamily| {
+            entry.family == family
+                && match family {
+                    listeners::IpFamily::V4 => {
+                        matches!(entry.address.as_str(), "127.0.0.1" | "0.0.0.0" | "*")
+                    }
+                    listeners::IpFamily::V6 => {
+                        matches!(entry.address.as_str(), "::1" | "::" | "*")
+                    }
+                }
+        };
         let mut resolved = BTreeMap::new();
         for target in targets {
             let peer = &target.service;
@@ -1763,19 +1774,27 @@ impl Sessions {
                 peer.name
             );
             let pid = u32::try_from(metrics["shell_pid"].as_u64().unwrap())?;
-            let own = listeners.iter().any(|entry| {
-                entry.pid == pid && entry.port == port && reachable_ipv4(&entry.address)
-            });
-            let other = listeners.iter().any(|entry| {
-                entry.pid != pid && entry.port == port && reachable_ipv4(&entry.address)
-            });
-            ensure!(
-                own && !other,
-                "Peer service {} does not own a verified IPv4 listener on {}",
-                peer.name,
-                target.port_variable
-            );
-            resolved.insert(target.variable.clone(), format!("http://127.0.0.1:{port}"));
+            let address = [
+                (listeners::IpFamily::V4, "127.0.0.1"),
+                (listeners::IpFamily::V6, "[::1]"),
+            ]
+            .into_iter()
+            .find_map(|(family, address)| {
+                let own = listeners.iter().any(|entry| {
+                    entry.pid == pid && entry.port == port && reachable(entry, family)
+                });
+                let other = listeners.iter().any(|entry| {
+                    entry.pid != pid && entry.port == port && reachable(entry, family)
+                });
+                (own && !other).then_some(address)
+            })
+            .with_context(|| {
+                format!(
+                    "Peer service {} does not own a verified loopback listener on {}",
+                    peer.name, target.port_variable
+                )
+            })?;
+            resolved.insert(target.variable.clone(), format!("http://{address}:{port}"));
         }
         Ok(resolved)
     }

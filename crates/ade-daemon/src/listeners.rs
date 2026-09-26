@@ -13,6 +13,13 @@ pub struct Listener {
     pub pid: u32,
     pub address: String,
     pub port: u16,
+    pub family: IpFamily,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum IpFamily {
+    V4,
+    V6,
 }
 
 #[cfg(target_os = "macos")]
@@ -20,7 +27,7 @@ pub fn observe() -> Result<Vec<Listener>> {
     // lsof's documented field output is parseable without column-width or
     // localized-header assumptions. A timeout and byte limit bound this read.
     let mut child = Command::new("/usr/sbin/lsof")
-        .args(["-nP", "-w", "-iTCP", "-sTCP:LISTEN", "-Fpn"])
+        .args(["-nP", "-w", "-iTCP", "-sTCP:LISTEN", "-Fptn"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -77,11 +84,22 @@ pub fn observe() -> Result<Vec<Listener>> {
     }
     let output = String::from_utf8(bytes).context("Invalid local listener output")?;
     let mut pid = None;
+    let mut family = None;
     let mut listeners = HashSet::new();
     for line in output.lines() {
         if let Some(value) = line.strip_prefix('p') {
             pid = value.parse::<u32>().ok();
+            family = None;
+        } else if line.starts_with('f') {
+            family = None;
+        } else if let Some(value) = line.strip_prefix('t') {
+            family = match value {
+                "IPv4" => Some(IpFamily::V4),
+                "IPv6" => Some(IpFamily::V6),
+                _ => None,
+            };
         } else if let (Some(process), Some(value)) = (pid, line.strip_prefix('n')) {
+            let Some(family) = family else { continue };
             let Some((address, port)) = value.rsplit_once(':') else {
                 continue;
             };
@@ -90,8 +108,12 @@ pub fn observe() -> Result<Vec<Listener>> {
             };
             listeners.insert(Listener {
                 pid: process,
-                address: address.to_owned(),
+                address: address
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .to_owned(),
                 port,
+                family,
             });
             if listeners.len() > 4096 {
                 bail!("Local listener inventory exceeds the supported limit");
