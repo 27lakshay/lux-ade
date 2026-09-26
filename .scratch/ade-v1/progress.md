@@ -20,9 +20,9 @@ full acceptance in its owning spec:
 | Slice and requirement IDs | Observable gate | Current gap |
 |---|---|---|
 | Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged app, one profile, shell and deterministic turns pass; installed multi-profile and real-agent continuity remain |
-| Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live prompts passed; Oh My Pi lacks configured account; profile-owned account registration and conversation pinning pass, but managed execution waits for native identity readback; full control flows remain |
+| Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live prompts passed; Oh My Pi lacks configured account; Claude identity readback/pinning passes deterministic E2E but hosted two-account execution and full controls remain |
 | Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
-| Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, managed-service controls, listener and bounded log inspection, an on-demand HTTP health check, and browser preview with profile cookie persistence pass; configured health monitoring and persistent logs remain |
+| Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, service controls and recurring HTTP health checks, listener and bounded log inspection, and browser preview with profile cookie persistence pass; persistent logs/history and full F086 acceptance remain |
 | Shared control: F101, F102, F103 | CLI and Electron target the same profile/workspace/conversation/terminal with structured outcomes | Local CLI subset works; public command coverage remains |
 
 Each row needs running-app E2E evidence on the integrated revision before the
@@ -67,6 +67,16 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `3a283a7` | Browser migration refusal | A conflicting session leaves the previous profile browser, client and saved default usable |
 | `66396aa` | Managed service HTTP health | Bounded loopback probe reports HTTP status, timeout and uncertain ownership separately from TCP evidence |
 | `7447924` | Packaged E2E cleanup | Retries a transient daemon admission refusal during test-owned shutdown |
+| `acbe8d7` | Prompt warning deduplication | Repeated Quit while one send is unresolved produces one warning; the original send ID remains recoverable |
+| `260aea8` | Managed Claude readiness and recurring service health | Separate native homes, identity drift and disable race fail closed; configured HTTP samples survive service lifecycle boundaries |
+
+At `260aea8` on macOS arm64, `pnpm check` passed type checking, Fallow,
+backend/desktop builds and 42/42 real-process E2Es. Rust formatting and strict
+Clippy passed; the GPUI prototype build-only package also passed. The Claude
+tests use deterministic native CLI/SDK fixtures, so hosted two-account behavior
+and native logout remain unverified. Service health samples are memory-only;
+durable history and alerting remain open. The Electron Quit regression was red
+before `acbe8d7` and green afterward, with the full send-recovery E2E passing.
 
 At source revision `66396aa` on macOS arm64, `pnpm check` passed TypeScript
 type checking, Fallow, backend and desktop/CLI builds, and 36/36 real-process
@@ -135,12 +145,11 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   runtime-loss and identity boundaries. Root integrated, fixed hidden E2E
   teardown and ran source/package checks. All shared this checkout; no worker
   worktree was created.
-- For this checkpoint, `service_health` implemented the F086 one-shot HTTP
-  probe and real-daemon E2E. `browser_retention_audit` independently reviewed
-  browser lifecycle and the health probe; its stop-race and replacement-listener
-  findings were repaired before integration. Root added the Electron controls,
-  browser switch guard and combined acceptance. Both workers completed in this
-  shared checkout; no worker worktree or active assignment remains.
+- The account-readiness and service-health workers delivered separate slices
+  in the shared checkout. Independent reviews found a late account-disable
+  launch race and a health scheduler starvation case; both were repaired with
+  real-process E2E. Root integrated the GPUI recipe compatibility and the
+  repeated Quit warning regression. No worker assignment remains active.
 - Send-intent review closed altered/rejected/aborted request-ID dispatch,
   delayed prepare and accepted-message ID reuse holes. Concurrent completion
   across separate draft reads and daemon-crash boundary acceptance remain.
@@ -151,7 +160,7 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   process attribution; `service.inspect` adds bounded PTY output and execution
   state without calling a TCP listener application-ready. An explicit HTTP
   loopback check now samples application response separately. F085 full host
-  discovery and F086 configured monitoring/persistent-log acceptance remain open.
+  discovery and F086 persistent-log/history/alert acceptance remain open.
 - Electron profile creation/switching works in local development; the packaged
   app bundles the profile launcher. Installed multi-profile continuity remains.
 - Workspace opening works for local folders; repository and worktree lifecycle
@@ -163,10 +172,11 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 - Conversation pagination, native attachments/context, queues,
   broader approval forms, and live Oh My Pi verification remain.
 - Account registration creates separate profile-owned native homes and pins a
-  provider-matched account to each conversation. A real-daemon E2E proves
-  persistence, v8 migration, redirect rejection and fail-closed launch when
-  ambient Claude credentials exist. Native authentication/readback, readiness,
-  logout fencing and two live-account execution remain open for F025/F027/R012.
+  provider-matched account to each conversation. Managed Claude now probes
+  native identity in a sanitized home, pins it on verification, reprobes before
+  launch and fences disable during a delayed launch. Real-daemon E2E proves
+  these boundaries with CLI/SDK fixtures. Hosted two-account execution,
+  native logout/refresh and other managed providers remain open for F025/F027/R012.
 - Full account management, extensible providers/plugins, worktrees, full dev-service
   health/logs and browser features, notifications, remote hosts, unified catalogs/history, customization,
   operations and reliability acceptance remain in the v1 register.
