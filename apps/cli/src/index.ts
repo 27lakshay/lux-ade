@@ -20,8 +20,13 @@ Commands:
   workspace open PATH                   Register a repository or folder
   conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
-  conversation create WORKSPACE_ID [PROVIDER] [TITLE]
+  conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID]
   conversation send ID TEXT             Send a prompt with a generated request ID
+  account list                           List profile accounts
+  account create PROVIDER NAME           Register a native account home
+  account inspect ID                     Check current Claude readiness
+  account verify ID EXPECTED_GENERATION  Pin the observed native identity
+  account disable ID                     Disable new ADE launches; does not log out native CLI or stop running agents
   terminal list                         List workspace terminals
   terminal inspect WORKSPACE_ID TERMINAL_ID
   terminal send WORKSPACE_ID TERMINAL_ID TEXT
@@ -40,6 +45,9 @@ All command results are JSON on stdout. Errors are JSON on stderr.
 Terminal send appends Enter; use terminal attach in a later CLI slice for raw I/O.
 The profile socket is always explicit. This CLI does not start a daemon. Plans for
 profile discovery, remote hosts and stable public command schemas remain open.
+For Claude, authenticate the returned native home with:
+  CLAUDE_CONFIG_DIR=<native_home> claude auth login
+Then run account inspect and account verify. ADE never receives the login token.
 `
 
 type ErrorCode = 'usage' | 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' | 'invalid_request'
@@ -85,6 +93,15 @@ function revision(value: string | undefined): number {
   if (value === undefined) return 0
   const number = Number(value)
   if (!Number.isSafeInteger(number) || number < 0) throw new CliError('usage', 'REVISION must be a nonnegative integer.')
+  return number
+}
+
+function generation(value: string | undefined): number {
+  if (value === undefined) throw new CliError('usage', 'EXPECTED_GENERATION is required.')
+  const number = Number(value)
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new CliError('usage', 'EXPECTED_GENERATION must be a nonnegative integer.')
+  }
   return number
 }
 
@@ -189,8 +206,19 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     return requestDaemon(socketPath, 'conversation.get', { conversation_id: required(rest[0], 'ID') })
   }
   if (area === 'conversation' && action === 'create') {
+    const flag = rest.indexOf('--account')
+    const positionals = flag < 0 ? rest : rest.slice(0, flag)
+    if (positionals.length > 3 || positionals.some((word) => word.startsWith('--')) ||
+      (flag >= 0 && (flag !== rest.length - 2 || !rest[flag + 1]))) {
+      throw new CliError('usage', 'conversation create accepts WORKSPACE_ID [PROVIDER] [TITLE] [--account ID].')
+    }
+    if (positionals[2]?.startsWith('account_') && flag < 0) {
+      throw new CliError('usage', 'Use --account ID to select an account; the third positional value is a title.')
+    }
     return requestDaemon(socketPath, 'conversation.create', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), provider: rest[1] ?? 'codex', title: rest[2] ?? 'New Conversation',
+      workspace_id: required(positionals[0], 'WORKSPACE_ID'), provider: positionals[1] ?? 'codex',
+      title: positionals[2] ?? 'New Conversation',
+      ...(flag >= 0 ? { account_id: rest[flag + 1] } : {}),
     })
   }
   if (area === 'conversation' && action === 'send') {
@@ -199,6 +227,24 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     const requestId = randomUUID()
     const response = await requestDaemon(socketPath, 'agent.send', { conversation_id: conversationId, request_id: requestId, text })
     return { ...response, request_id: requestId }
+  }
+  if (area === 'account' && action === 'list') {
+    if (rest.length) throw new CliError('usage', 'account list does not accept arguments.')
+    return requestDaemon(socketPath, 'account.list')
+  }
+  if (area === 'account' && action === 'create') {
+    if (rest.length !== 2) throw new CliError('usage', 'account create requires PROVIDER NAME.')
+    return requestDaemon(socketPath, 'account.create', {
+      provider: required(rest[0], 'PROVIDER'), name: required(rest[1], 'NAME'),
+    })
+  }
+  if (area === 'account' && (action === 'inspect' || action === 'verify' || action === 'disable')) {
+    const count = action === 'verify' ? 2 : 1
+    if (rest.length !== count) throw new CliError('usage', `account ${action} requires ${action === 'verify' ? 'ID EXPECTED_GENERATION' : 'ID'}.`)
+    return requestDaemon(socketPath, `account.${action}`, {
+      account_id: required(rest[0], 'ID'),
+      ...(action === 'verify' ? { expected_generation: generation(rest[1]) } : {}),
+    })
   }
   if (area === 'terminal' && action === 'list') {
     const all = (await catalog(socketPath)).workspaces

@@ -41,3 +41,16 @@ evidence, and read a bounded PTY output tail. It kept application readiness
 `unverified`. Invalid byte limits and extra operands returned structured
 `usage` errors. These commands do not complete port discovery, health checks
 or the full CLI acceptance.
+
+Account control slice, 26 September 2026 (F025/F027/F102 partial): `account`
+`list/create/inspect/verify/disable` uses the same public daemon commands as
+the desktop. `conversation create` accepts `--account ID`; an account ID in the
+title position is rejected rather than silently creating an ambient conversation.
+The help names the native Claude login command and explains that `disable`
+affects future ADE launches, not native logout or already running Agents.
+`pnpm --filter @ade/cli build` and the two focused real-daemon cases in
+`e2e/specs/local-cli.spec.ts` pass on macOS arm64. One case checks missing
+executable and explicit binding; another verifies and sends through a managed
+Claude account using a deterministic external CLI/SDK fixture. This does not
+prove two hosted accounts or full F025/F027/F102 acceptance. The tested source
+revision is the commit that adds this paragraph and its implementation.
