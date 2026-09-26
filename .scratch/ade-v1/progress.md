@@ -16,41 +16,27 @@ been changed since that baseline. The local build branch is
 
 ## Current state and next assignment
 
-Execution order: finish the reviewed Discard safety slice before exposing it.
-Then assign only work that closes the daily-use gate below. Queue other V1
-requirements until that gate passes; keep the original V1 scope and E2E
-acceptance. Use focused E2Es and affected static checks during implementation,
-one full source suite per integrated checkpoint (repeat only for relevant
-changes or failures), and packaged checks for package/installed-app changes or
-delivery milestones. Do not reopen resolved issues without new failure evidence.
-At each checkpoint, record criteria closed/remaining and observed time in
-implementation, independent review, checks and packaging.
+Daily-use gate only until it passes; other V1 work stays queued. Use focused
+E2Es and affected static checks while implementing, one full source suite per
+integrated checkpoint, and packaged checks for changed packaging/installed
+behavior or delivery milestones. Repeat a full run only for relevant changes
+or failures. Keep the final full V1 audit. Do not reopen resolved issues without
+new failure evidence; fix acceptance/safety defects in the current slice and
+queue unrelated improvements.
 
-| Daily-use gate and IDs | Verified so far | Remaining before gate closes |
+| Daily-use gate and IDs | Verified | Remaining before gate closes |
 |---|---|---|
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es | Real Oh My Pi account; managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
-| Workspace/review: F061, F074 | Folder selection; daemon-validated feedback admission, 5 MiB paged diff selection/send, stale cursor refusal and same-ID crash recovery in Electron | Complete F074 multi-range/structured feedback and anchor history acceptance; F061 lifecycle acceptance |
+| Workspace/review: F061, F074 | F074 closed: large paged diff, multi-range notes, atomic stale admission, durable structured history/search and same-ID uncertain-send recovery; folder selection | F061 lifecycle acceptance |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume | Matching CLI coverage for the rest of the selected daily-use flow |
 
-These are partial observations, not closed feature IDs. Each row still needs
-integrated running-app evidence. Oh My Pi live-account acceptance currently
-needs credentials; continue the other rows without substituting a fixture.
-The one-file Discard ticket, shared cancel/resume control slice, durable
-answer-recovery slice and this F074 paging/admission slice are closed. F075/06-S06,
-full F074 and real-provider F021/F038 acceptance remain open. Active owner:
-coordinator; `/root/f074_large_diff_audit` delivered daemon paging and the
-protocol E2E, and `/root/codex_cancel_review` completed independent safety
-review. No worker is running. Next assignment: finish F074 multiple selected
-ranges/notes, structured feedback and anchor history in the daily-use flow;
-then close F061 lifecycle and shared CLI parity before other V1 work. The
-review-send linearization point is the daemon's final fresh Git status under
-the repository guard; later writes by external tools are concurrent, and the
-prompt retains the observed revision, token and line. Real Codex/Claude negative-choice semantics now work, but their
-ambient checks do not prove managed two-account execution or native answer
-crash recovery. Continue around the Oh My Pi credential blocker. Queue
-unrelated V1 slices and preserve the final full V1 audit.
+Blocker: a real Oh My Pi account is unavailable; continue other gate criteria
+without treating the fixture as live-account proof. Active owner: coordinator;
+no worker is running. Next assignment: F061 workspace/worktree lifecycle and
+matching CLI controls. The remaining rows are partial evidence, not closed
+feature IDs. F075/06-S06 and unrelated V1 work remain queued.
 
 ## Integrated checkpoints
 
@@ -124,6 +110,23 @@ unrelated V1 slices and preserve the final full V1 audit.
 | `1e1b36a` | Durable native answer reconciliation | Crash/lost-reply/no-delivery/conflict and CLI answer E2Es; focused 11/11, source 162 passed/one host skip, installed 6/6; independent review found no confirmed P1/P2 |
 | `8f70037` | Native negative approval choices | Real Codex cancel and Claude decline, live accept/retry/conflict; CLI/Electron fixture choices, focused 3/3, source 162 passed/one host skip, installed 6/6 |
 | `b4f1005`, `cdfdcfa` | F074 paged diff and review admission | 166 source E2Es passed/one host skip; installed 6/6; strict Clippy and rustfmt pass; 5 MiB later-page send, stale edit, crash recovery and stale cursor E2Es |
+| `75fbeda` | F074 structured feedback and history | 170 source E2Es passed/one host skip; installed 6/6; multi-note/range, stale edit, history search, uncertain send and pre-dispatch crash E2Es |
+
+F074 structured-feedback checkpoint, 2026-09-26: F074 is verified; the daily-use
+workspace/review row remains open for F061. Review findings in the current
+slice were fixed: note-size mismatch, mixed search pagination, one-note history
+omission and unanchored note loss. The final independent pass found no other
+confirmed current-slice P1/P2. The review E2Es all passed in the full source
+suite after a focused rerun verified the legacy recovery case. The full
+source suite passed 170 with one existing host skip; Fallow, type checking,
+rustfmt and strict Clippy passed. Packaged macOS checks passed 6/6. No
+test-owned ADE processes remain after the passing runs. Two runtimes leaked by
+failed intermediate runs were identified by E2E data paths and stopped; the
+failed-run teardown improvement stays queued outside the daily-use gate.
+Approximate elapsed time: implementation 17 minutes; independent review 5
+minutes (overlapping implementation); focused checks and failure diagnosis 5
+minutes; full source check 5.1 minutes; packaging and installed checks 1.2
+minutes. The next slice should keep focused checks until review findings close.
 
 F074 paging/admission checkpoint, 2026-09-26: the daily-use large-diff,
 daemon admission and crash-retry subcriteria close. `review.diff_page` serves

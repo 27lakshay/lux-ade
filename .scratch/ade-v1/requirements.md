@@ -93,7 +93,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F071 | File explorer and search | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
 | F072 | Built-in code editor | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F073 | File previews | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
-| F074 | Diff review and agent feedback | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
+| F074 | Diff review and agent feedback | V1 | [06-files-git](06-files-git/spec.md) | Verified |
 | F075 | Ordinary Git operations | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
 | F076 | PR creation and management | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F077 | Advanced PR status and review | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
