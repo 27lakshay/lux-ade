@@ -29,7 +29,7 @@ implementation, independent review, checks and packaging.
 | Daily-use gate and IDs | Verified so far | Remaining before gate closes |
 |---|---|---|
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
-| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts; deterministic managed-identity, prompt recovery, approvals/questions and cancel/resume E2Es | Real Oh My Pi account; two-account hosted execution; tools, answer/decline, cancel/resume and recovery across each primary provider |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts; deterministic managed-identity, prompt and answer recovery, approvals/questions, CLI answer/decline and cancel/resume E2Es | Real Oh My Pi account; two-account hosted execution; tools, answer/decline, cancel/resume and recovery across each primary provider |
 | Workspace/review: F061, F074 | Folder selection and revision-anchored agent feedback E2Es | Full atomic feedback admission and large-diff flow in integrated app; remaining lifecycle acceptance |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume | Matching CLI coverage for the rest of the selected daily-use flow |
@@ -37,17 +37,16 @@ implementation, independent review, checks and packaging.
 These are partial observations, not closed feature IDs. Each row still needs
 integrated running-app evidence. Oh My Pi live-account acceptance currently
 needs credentials; continue the other rows without substituting a fixture.
-The one-file Discard ticket and the shared cancel/resume control slice are
-closed; F075/06-S06 and real-provider F021/F038 acceptance remain open.
-Active owner: coordinator on connected provider/account daily-use acceptance.
-`/root/git_discard_e2e` and `/root/discard_safety_review` have finished; no
-worker is currently running. Next assignment: close the F038 answer-delivery
-gap before live-provider acceptance. `agent.answer` currently marks a request
-`responding` before native RPC; an RPC failure fails the run, while a later
-retry only accepts `pending`, so once-only recovery is unproved. Add durable
-reconciliation and CLI answer/decline parity through focused running-process
-E2Es, then test available real accounts. Continue around the Oh My Pi credential
-blocker. Queue unrelated V1 slices and preserve the final full V1 audit.
+The one-file Discard ticket, shared cancel/resume control slice, and durable
+answer-recovery slice are closed. F075/06-S06 and real-provider F021/F038
+acceptance remain open. Active owner: coordinator on connected provider/account
+daily-use acceptance; `/root/answer_cli_e2e` and
+`/root/answer_recovery_audit` have finished, and no worker is running. Next
+assignment: exercise available real Codex and Claude accounts through the
+running app/CLI, record which approval, tool, cancel/resume, and recovery cases
+are observable, then implement the first demonstrated daily-use failure.
+Continue around the Oh My Pi credential blocker. Queue unrelated V1 slices and
+preserve the final full V1 audit.
 
 ## Integrated checkpoints
 
@@ -118,6 +117,18 @@ blocker. Queue unrelated V1 slices and preserve the final full V1 audit.
 | `315dc8f` | Registered backend restore | Registry-last new profile, private workspace remap, explicit crash resume and validation E2E |
 | `6e3f0a5` | Restored path rebind | Core/lifecycle immutable source claims, public CLI/protocol, cross-store source and repeated-rebind E2E |
 | `504a6b3` | Browser E2E profile switch race | Waits for the profile control to become enabled before a second switch |
+| `1e1b36a` | Durable native answer reconciliation | Crash/lost-reply/no-delivery/conflict and CLI answer E2Es; focused 11/11, source 162 passed/one host skip, installed 6/6; independent review found no confirmed P1/P2 |
+
+Answer-recovery checkpoint `1e1b36a`: the deterministic once-only answer and
+CLI parity criteria in the implementation ticket close. Live provider
+answer/decline and managed two-account acceptance remain. Implementation took
+at least 18 minutes between the first and final static checks, with earlier
+work unmetered. Independent review overlapped implementation and was not
+separately timed; it completed three passes. Final focused checks took 9.8
+seconds, the full source suite 4.7 minutes, and packaging plus installed
+checks about 58 seconds. Intermediate affected checks followed safety edits;
+the full source suite ran once after integration. Next slice will record
+category timings from its start.
 
 Discard checkpoint `9901747`: all three one-file ticket criteria pass through
 9 protocol/CLI and 2 hidden Electron E2Es. Independent safety review found
