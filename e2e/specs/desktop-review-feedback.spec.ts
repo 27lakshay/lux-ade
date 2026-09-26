@@ -83,6 +83,11 @@ test('Electron sends current line feedback once, blocks stale feedback and prese
     const turn = calls.map((line) => JSON.parse(line)).find((call) => call.method === 'turn/start')
     expect(JSON.stringify(turn)).toContain('Please handle this line carefully')
     expect(JSON.stringify(turn)).toContain(`Diff token: ${token}`)
+    const savedSearch = changes.getByRole('form', { name: 'Saved feedback search' })
+    await savedSearch.getByRole('textbox', { name: 'Search feedback path' }).fill('sample.txt')
+    await savedSearch.getByRole('textbox', { name: 'Search saved notes' }).fill('handle this line')
+    await savedSearch.getByRole('button', { name: 'Search feedback' }).click()
+    await expect(savedSearch.getByLabel('Saved feedback results')).toContainText('Please handle this line carefully')
 
     const completedKey = await window.evaluate(async (requestId: string) => {
       const state = await window.adeHost.getClientState()
@@ -363,6 +368,8 @@ test('uncertain review feedback keeps its note and request ID through selection 
     await expect(navigation.locator('button').filter({ hasText: 'starting' })).toHaveCount(0)
 
     dropReply = true
+    await changes.getByRole('button', { name: 'Unstaged diff' }).click()
+    await changes.getByRole('button', { name: 'Select line 1' }).click()
     await changes.getByRole('textbox', { name: 'Feedback note' }).fill('Completed while this pane stays open')
     await changes.getByRole('button', { name: 'Send feedback' }).click()
     await expect(changes.getByRole('button', { name: 'Retry feedback delivery' })).toBeVisible()

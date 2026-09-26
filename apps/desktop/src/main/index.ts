@@ -29,7 +29,7 @@ type Draft = { text: string; revision: number; attachments: unknown[] }
 type SendIntent = { requestId: string; draftText: string; revision: number; text: string; attachments: unknown[];
   state: 'pending' | 'rejected'; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null;
   reviewSelection?: { senderId: number; workspaceId: string; conversationId: string; epoch: number };
-  reviewAnchor?: ReviewAnchor }
+  reviewAnchor?: ReviewAnchor; reviewFeedback?: ReviewFeedback }
 type DraftEntry = { senderId: number; endpoint: string; profileId: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string; send: SendIntent | null }
 const windowIds = new Map<number, string>()
 const selectedWorkspaces = new Map<number, { workspaceId: string; conversationId: string | null; generation: number; epoch: number }>()
@@ -64,7 +64,8 @@ function journalIdentity(entry: DraftEntry, intent: SendIntent): SendJournalIden
 function journalRecord(entry: DraftEntry, intent: SendIntent, dispatchStarted: boolean): SendJournalRecord {
   return { ...journalIdentity(entry, intent), endpoint: entry.endpoint, text: intent.text,
     draftText: intent.draftText, draftRevision: intent.revision, attachments: intent.attachments,
-    dispatchStarted, ...(intent.reviewAnchor ? { reviewAnchor: intent.reviewAnchor } : {}) }
+    dispatchStarted, ...(intent.reviewAnchor ? { reviewAnchor: intent.reviewAnchor } : {}),
+    ...(intent.reviewFeedback ? { reviewFeedback: intent.reviewFeedback } : {}) }
 }
 async function e2ePauseAfterSendJournal(): Promise<void> {
   if (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_SEND_JOURNAL_PAUSE !== '1') return
@@ -90,7 +91,8 @@ async function journaled(entry: DraftEntry): Promise<boolean> {
     record.text === intent.text && record.draftText === intent.draftText &&
     record.draftRevision === intent.revision &&
     JSON.stringify(record.attachments) === JSON.stringify(intent.attachments) &&
-    sameReviewAnchor(record.reviewAnchor, intent.reviewAnchor))
+    sameReviewAnchor(record.reviewAnchor, intent.reviewAnchor) &&
+    sameReviewFeedback(record.reviewFeedback, intent.reviewFeedback))
 }
 
 async function unsafePending(entries: DraftEntry[]): Promise<boolean> {
@@ -103,7 +105,15 @@ type ReviewFile = { path: string; staged: boolean; unstaged: boolean }
 type ReviewStatus = { revision: string; index_token: string; files: ReviewFile[] }
 type ReviewDiff = { token: string }
 type ReviewAnchor = { workspace_id: string; path: string; staged: boolean; revision: string;
-  token: string; hunk: string; line: number; text: string }
+  token: string; hunk: string; line: number; text: string; end_line?: number; end_text?: string }
+type ReviewFeedback = { format: 'ade-review-feedback-v1'; workspace_id: string;
+  notes: { anchor: ReviewAnchor; note: string }[] }
+function sameReviewFeedback(left: unknown, right: unknown): boolean {
+  const canonical = (value: unknown): string => JSON.stringify(value ?? null, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item)
+  return canonical(left) === canonical(right)
+}
 const reviewAnchorFields = ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text'] as const
 function sameReviewAnchor(left: unknown, right: unknown): boolean {
   if (left == null || right == null) return left == null && right == null
@@ -117,6 +127,15 @@ function reviewPromptText(anchor: ReviewAnchor, note: string): string {
 function reviewNote(text: string, anchor: ReviewAnchor): string | null {
   const prefix = reviewPromptText(anchor, '')
   return text.startsWith(prefix) ? text.slice(prefix.length) : null
+}
+function reviewFeedbackText(feedback: ReviewFeedback): string {
+  const notes = feedback.notes.map(({ anchor, note }, index) =>
+    `${index + 1}. File: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\n` +
+    `Diff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\n` +
+    `${anchor.end_line === undefined ? 'Line' : 'Lines'}: +${anchor.line}${anchor.end_line === undefined ? '' : ` to +${anchor.end_line}`}\n` +
+    `Selected text: ${anchor.text}${anchor.end_text === undefined ? '' : `\nEnd text: ${anchor.end_text}`}\n` +
+    `Feedback: ${note.trim()}`)
+  return `Review feedback for workspace ${feedback.workspace_id}\n\n${notes.join('\n\n')}`
 }
 
 function reviewPath(value: unknown): value is string {
@@ -191,6 +210,49 @@ async function reviewPrompt(context: ReviewContext, conversationId: string,
     throw new Error('Stale diff: selected line changed; refresh Changes and select the line again')
   }
   return reviewPromptText(anchor, note)
+}
+
+async function reviewBatchPrompt(context: ReviewContext, conversationId: string,
+  value: unknown): Promise<{ feedback: ReviewFeedback; text: string }> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid review feedback')
+  const feedback = value as ReviewFeedback
+  if (feedback.format !== 'ade-review-feedback-v1' || !validId(feedback.workspace_id) ||
+    !Array.isArray(feedback.notes) || feedback.notes.length < 1 || feedback.notes.length > 16 ||
+    Buffer.byteLength(JSON.stringify(feedback)) > 64 * 1024) throw new Error('Invalid review feedback')
+  assertReviewContext(context, feedback.workspace_id, conversationId)
+  const conversation = client.getState().catalog?.conversations.find((item) => item.id === conversationId)
+  if (!conversation || conversation.workspace_id !== feedback.workspace_id) {
+    throw new Error('Review feedback must target a conversation in this workspace')
+  }
+  const status = await reviewStatus(context, feedback.workspace_id)
+  const tokens = new Map<string, string>()
+  for (const item of feedback.notes) {
+    if (!item || typeof item !== 'object' || Array.isArray(item) ||
+      typeof item.note !== 'string' || !item.note.trim() || Buffer.byteLength(item.note) > 4096 ||
+      !item.anchor || typeof item.anchor !== 'object' || Array.isArray(item.anchor)) throw new Error('Invalid review feedback')
+    const anchor = item.anchor
+    if (anchor.workspace_id !== feedback.workspace_id || !reviewPath(anchor.path) ||
+      typeof anchor.staged !== 'boolean' || typeof anchor.revision !== 'string' || !/^[0-9a-f]{16}$/.test(anchor.revision) ||
+      typeof anchor.token !== 'string' || !/^[0-9a-f]{16}$/.test(anchor.token) ||
+      typeof anchor.hunk !== 'string' || !anchor.hunk.startsWith('@@ ') || anchor.hunk.length > 512 ||
+      !Number.isSafeInteger(anchor.line) || anchor.line < 1 ||
+      typeof anchor.text !== 'string' || anchor.text.length > 8192 ||
+      (anchor.end_line !== undefined || anchor.end_text !== undefined) &&
+      (!Number.isSafeInteger(anchor.end_line) || (anchor.end_line as number) < anchor.line ||
+        typeof anchor.end_text !== 'string' || anchor.end_text.length > 8192)) throw new Error('Invalid review feedback')
+    if (status.revision !== anchor.revision ||
+      !status.files.some((file) => file.path === anchor.path && (anchor.staged ? file.staged : file.unstaged))) {
+      throw new Error('Stale diff: workspace changes have moved; refresh Changes and select the ranges again')
+    }
+    const key = JSON.stringify([anchor.path, anchor.staged])
+    let token = tokens.get(key)
+    if (!token) {
+      token = (await reviewDiff(context, feedback.workspace_id, anchor.path, anchor.staged)).token
+      tokens.set(key, token)
+    }
+    if (token !== anchor.token) throw new Error('Stale diff: selected range changed; refresh Changes and select it again')
+  }
+  return { feedback, text: reviewFeedbackText(feedback) }
 }
 
 async function persistentWindowId(): Promise<string> {
@@ -283,7 +345,7 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   }
   const restoredFromBackup = pending.restored_from_backup === true
   const recovered = pending.intent as { request_id?: unknown; draft_text?: unknown; draft_revision?: unknown;
-    text?: unknown; attachments?: unknown; state?: unknown; review_anchor?: unknown } | null
+    text?: unknown; attachments?: unknown; state?: unknown; review_anchor?: unknown; review_feedback?: unknown } | null
   if (recovered && (!validId(recovered.request_id) || typeof recovered.text !== 'string'
     || typeof recovered.draft_text !== 'string' || !Number.isSafeInteger(recovered.draft_revision)
     || !Array.isArray(recovered.attachments)
@@ -293,7 +355,8 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   if (recorded && recovered && (recorded.requestId !== recovered.request_id || recorded.text !== recovered.text ||
     recorded.draftText !== recovered.draft_text || recorded.draftRevision !== recovered.draft_revision ||
     JSON.stringify(recorded.attachments) !== JSON.stringify(recovered.attachments) ||
-    !sameReviewAnchor(recorded.reviewAnchor, recovered.review_anchor))) {
+    !sameReviewAnchor(recorded.reviewAnchor, recovered.review_anchor) ||
+    !sameReviewFeedback(recorded.reviewFeedback, recovered.review_feedback))) {
     throw new Error('Local prompt recovery conflicts with the profile daemon; preserve both records for review')
   }
   if (!recorded && recovered) {
@@ -301,6 +364,7 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
       endpoint, text: recovered.text as string, draftText: recovered.draft_text as string,
       draftRevision: recovered.draft_revision as number, attachments: recovered.attachments as unknown[],
       ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}),
+      ...(recovered.review_feedback ? { reviewFeedback: recovered.review_feedback as ReviewFeedback } : {}),
       dispatchStarted: true, ...(restoredFromBackup ? { restoreHold: true } : {}) })
   } else if (recorded && restoredFromBackup && !recorded.restoreHold) {
     recorded = { ...recorded, restoreHold: true }
@@ -309,7 +373,8 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   const restored = recorded ?? (recovered ? { requestId: recovered.request_id as string,
     text: recovered.text as string, draftText: recovered.draft_text as string,
     draftRevision: recovered.draft_revision as number, attachments: recovered.attachments as unknown[],
-    ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}) } : null)
+    ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}),
+    ...(recovered.review_feedback ? { reviewFeedback: recovered.review_feedback as ReviewFeedback } : {}) } : null)
   const visibleDraft = recorded ? { text: recorded.draftText, revision: recorded.draftRevision,
     attachments: recorded.attachments } : value
   const entry: DraftEntry = { senderId, endpoint, profileId, conversationId, windowId, draft: visibleDraft, timer: null,
@@ -317,7 +382,7 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
     send: restored ? { requestId: restored.requestId, text: restored.text,
       draftText: restored.draftText, revision: restored.draftRevision,
       attachments: restored.attachments,
-      reviewAnchor: restored.reviewAnchor,
+      reviewAnchor: restored.reviewAnchor, reviewFeedback: restored.reviewFeedback,
       state: recovered?.state as 'pending' | 'rejected' || 'pending', preparing: false, inFlight: null } : null }
   const concurrent = drafts.get(key)
   if (concurrent) return concurrent
@@ -329,7 +394,8 @@ function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
   if (!entry.send) return null
   const anchor = entry.send.reviewAnchor
   return { request_id: entry.send.requestId, text: entry.send.text, state: entry.send.state,
-    ...(anchor ? { review_anchor: anchor, review_note: reviewNote(entry.send.text, anchor) } : {}) }
+    ...(anchor ? { review_anchor: anchor, review_note: reviewNote(entry.send.text, anchor) } : {}),
+    ...(entry.send.reviewFeedback ? { review_feedback: entry.send.reviewFeedback } : {}) }
 }
 
 async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>> {
@@ -399,11 +465,12 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<str
           conversation_id: entry.conversationId, window_id: entry.windowId,
         })
         const saved = previous.intent as { request_id?: string; text?: string; draft_text?: string;
-          draft_revision?: number; attachments?: unknown[]; state?: string; review_anchor?: unknown } | null
+          draft_revision?: number; attachments?: unknown[]; state?: string; review_anchor?: unknown; review_feedback?: unknown } | null
         if (!saved || saved.request_id !== intent.requestId || saved.text !== intent.text ||
           saved.draft_text !== intent.draftText || saved.draft_revision !== intent.revision ||
           JSON.stringify(saved.attachments) !== JSON.stringify(intent.attachments) ||
           !sameReviewAnchor(saved.review_anchor, intent.reviewAnchor) ||
+          !sameReviewFeedback(saved.review_feedback, intent.reviewFeedback) ||
           !['pending', 'rejected'].includes(String(saved.state))) return uncertain()
       } catch { return uncertain() }
     } else {
@@ -434,6 +501,7 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<str
         request_id: intent.requestId, draft_text: intent.draftText, text: intent.text,
         revision: intent.revision, attachments: intent.attachments,
         ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
+        ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
       })
       const persisted = prepared.intent as { request_id?: string; state?: string } | null
       if (persisted?.request_id === intent.requestId && persisted.state === 'completed') {
@@ -477,10 +545,11 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<str
     if (!activeProfile()) return uncertain()
     try {
       await journal().markDispatched(journalIdentity(entry, intent))
-      const response = await requestDaemon(entry.endpoint, intent.reviewAnchor ? 'agent.send_review' : 'agent.send', {
+      const response = await requestDaemon(entry.endpoint, intent.reviewAnchor || intent.reviewFeedback ? 'agent.send_review' : 'agent.send', {
         conversation_id: entry.conversationId, request_id: intent.requestId, text: intent.text,
         attachments: intent.attachments,
         ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
+        ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
       })
       if (!activeProfile()) return uncertain()
       try { return await acceptedSend(entry, intent, response) }
@@ -969,13 +1038,29 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
   return result
 })
 ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
-  if (typeof op !== 'string' || !['review.status', 'review.diff', 'review.diff_page', 'review.stage', 'review.unstage',
+  if (typeof op !== 'string' || !['review.status', 'review.diff', 'review.diff_page', 'review.feedback.search', 'review.stage', 'review.unstage',
     'review.commit', 'review.discard', 'review.operation'].includes(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid review request')
   }
   const args = fields as Record<string, unknown>
   const context = activeReviewContext(event.sender.id, args.workspace_id)
   const workspaceId = args.workspace_id as string
+  if (op === 'review.feedback.search') {
+    if ((args.path !== undefined && !reviewPath(args.path)) ||
+      (args.query !== undefined && (typeof args.query !== 'string' || !args.query.trim() || Buffer.byteLength(args.query) > 256)) ||
+      (args.path === undefined && args.query === undefined) ||
+      (args.before !== undefined && (!Number.isSafeInteger(args.before) || (args.before as number) < 1)) ||
+      (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 50))) {
+      throw new Error('Invalid review feedback search')
+    }
+    const response = await requestDaemon(context.endpoint, op, { workspace_id: workspaceId,
+      ...(args.path !== undefined ? { path: args.path } : {}),
+      ...(args.query !== undefined ? { query: args.query } : {}),
+      ...(args.before !== undefined ? { before: args.before } : {}),
+      ...(args.limit !== undefined ? { limit: args.limit } : {}) })
+    assertReviewContext(context, workspaceId)
+    return response
+  }
   if (op === 'review.operation' || op === 'review.stage' || op === 'review.unstage' || op === 'review.commit' || op === 'review.discard') {
     if (typeof args.request_id !== 'string' || !/^[0-9a-f-]{36}$/.test(args.request_id)) {
       throw new Error('Invalid Git operation ID')
@@ -1217,12 +1302,23 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
   }
   if (op === 'agent.send' || op === 'agent.retry_send') {
     try {
-    const reviewContext = args.review_anchor === undefined ? null : activeReviewContext(event.sender.id,
-      (args.review_anchor as Record<string, unknown> | null)?.workspace_id)
+    if (args.review_anchor !== undefined && args.review_feedback !== undefined) throw new Error('Choose one review feedback format')
+    const reviewWorkspaceId = args.review_feedback === undefined
+      ? (args.review_anchor as Record<string, unknown> | null)?.workspace_id
+      : (args.review_feedback as Record<string, unknown> | null)?.workspace_id
+    const reviewContext = args.review_anchor === undefined && args.review_feedback === undefined
+      ? null : activeReviewContext(event.sender.id, reviewWorkspaceId)
     let text = args.text
+    let reviewFeedback: ReviewFeedback | undefined
     if (op === 'agent.send' && reviewContext) {
-      text = await reviewPrompt(reviewContext, args.conversation_id, args.review_anchor, args.note)
-      assertReviewContext(reviewContext, (args.review_anchor as ReviewAnchor).workspace_id, args.conversation_id)
+      if (args.review_feedback !== undefined) {
+        const prepared = await reviewBatchPrompt(reviewContext, args.conversation_id, args.review_feedback)
+        text = prepared.text
+        reviewFeedback = prepared.feedback
+      } else {
+        text = await reviewPrompt(reviewContext, args.conversation_id, args.review_anchor, args.note)
+      }
+      assertReviewContext(reviewContext, reviewWorkspaceId as string, args.conversation_id)
     }
     const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
     if (op === 'agent.retry_send') {
@@ -1236,11 +1332,12 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
           selection.conversationId !== entry.send.reviewSelection.conversationId ||
           selection.generation !== clientGeneration) throw new Error('Return to the feedback workspace before retrying')
         entry.send.reviewSelection.epoch = selection.epoch
-      } else if (entry.send.reviewAnchor) {
-        const context = activeReviewContext(event.sender.id, entry.send.reviewAnchor.workspace_id)
-        assertReviewContext(context, entry.send.reviewAnchor.workspace_id, args.conversation_id)
+      } else if (entry.send.reviewAnchor || entry.send.reviewFeedback) {
+        const workspaceId = entry.send.reviewAnchor?.workspace_id ?? entry.send.reviewFeedback?.workspace_id as string
+        const context = activeReviewContext(event.sender.id, workspaceId)
+        assertReviewContext(context, workspaceId, args.conversation_id)
         entry.send.reviewSelection = { senderId: event.sender.id,
-          workspaceId: entry.send.reviewAnchor.workspace_id,
+          workspaceId,
           conversationId: args.conversation_id, epoch: context.epoch }
       }
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
@@ -1259,6 +1356,9 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
       if (!sameReviewAnchor(entry.send.reviewAnchor, args.review_anchor)) {
         throw new Error('Review selection changed before prompt reconciliation')
       }
+      if (!sameReviewFeedback(entry.send.reviewFeedback, reviewFeedback)) {
+        throw new Error('Review feedback changed before prompt reconciliation')
+      }
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
       return await dispatchSend(entry, entry.send)
     }
@@ -1266,13 +1366,14 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
     if (reviewContext && entry.draft.revision === 0) {
       entry.draft = { text: '', revision: 1, attachments: [] }
     }
-    if (reviewContext) assertReviewContext(reviewContext, (args.review_anchor as ReviewAnchor).workspace_id, args.conversation_id)
+    if (reviewContext) assertReviewContext(reviewContext, reviewWorkspaceId as string, args.conversation_id)
     const intent: SendIntent = { requestId: args.request_id, text, draftText: entry.draft.text,
       revision: entry.draft.revision, attachments: entry.draft.attachments,
       state: 'pending', preparing: true, inFlight: null,
       reviewAnchor: reviewContext ? args.review_anchor as ReviewAnchor : undefined,
+      reviewFeedback,
       reviewSelection: reviewContext ? { senderId: event.sender.id,
-        workspaceId: (args.review_anchor as ReviewAnchor).workspace_id,
+        workspaceId: reviewWorkspaceId as string,
         conversationId: args.conversation_id, epoch: reviewContext.epoch } : undefined }
     await journal().upsert(journalRecord(entry, intent, false))
     entry.send = intent
@@ -1289,7 +1390,7 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
     intent.preparing = false
     return await dispatchSend(entry, intent)
     } catch (error) {
-      if (op !== 'agent.send' || args.review_anchor === undefined) throw error
+      if (op !== 'agent.send' || (args.review_anchor === undefined && args.review_feedback === undefined)) throw error
       const entry = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
       if (entry && entry.send?.requestId === args.request_id) {
         return { type: 'send_pending', ...pendingSend(entry) }

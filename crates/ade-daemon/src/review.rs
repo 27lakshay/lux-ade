@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{HashMap, hash_map::DefaultHasher},
     ffi::CString,
     fs,
     hash::{Hash, Hasher},
@@ -37,6 +37,101 @@ const DIFF_SNAPSHOT_MAX_BYTES: usize = 16 * 1024 * 1024;
 const DIFF_PAGE_MAX_BYTES: usize = 240 * 1024;
 const DIFF_PAGE_MAX_ROWS: usize = 1000;
 const DIFF_SNAPSHOT_TTL: Duration = Duration::from_secs(120);
+const REVIEW_FEEDBACK_MAX_BYTES: usize = 64 * 1024;
+const REVIEW_FEEDBACK_MAX_NOTES: usize = 16;
+
+pub fn feedback_anchors(feedback: &Value) -> Result<Vec<&Value>> {
+    ensure!(
+        serde_json::to_vec(feedback)?.len() <= REVIEW_FEEDBACK_MAX_BYTES,
+        "Review feedback exceeds 64 KiB"
+    );
+    let fields = feedback.as_object().context("Invalid review feedback")?;
+    ensure!(
+        fields.len() == 3
+            && fields.contains_key("format")
+            && fields.contains_key("workspace_id")
+            && fields.contains_key("notes"),
+        "Invalid review feedback fields"
+    );
+    ensure!(
+        feedback["format"] == "ade-review-feedback-v1",
+        "Unsupported review feedback format"
+    );
+    ensure!(
+        feedback["workspace_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()),
+        "Missing review workspace"
+    );
+    let notes = feedback["notes"]
+        .as_array()
+        .context("Invalid review notes")?;
+    ensure!(
+        !notes.is_empty() && notes.len() <= REVIEW_FEEDBACK_MAX_NOTES,
+        "Review feedback needs 1 to 16 notes"
+    );
+    notes
+        .iter()
+        .map(|entry| {
+            let fields = entry.as_object().context("Invalid review note")?;
+            ensure!(
+                fields.len() == 2 && fields.contains_key("anchor") && fields.contains_key("note"),
+                "Invalid review note fields"
+            );
+            let note = entry["note"].as_str().context("Invalid review note text")?;
+            ensure!(
+                !note.trim().is_empty() && note.len() <= 4096,
+                "Review note must be 1 to 4096 bytes"
+            );
+            let anchor = &entry["anchor"];
+            ensure!(
+                anchor["workspace_id"] == feedback["workspace_id"],
+                "Review note targets a different workspace"
+            );
+            let fields = anchor.as_object().context("Invalid review anchor")?;
+            ensure!(
+                fields.keys().all(|key| matches!(
+                    key.as_str(),
+                    "workspace_id"
+                        | "path"
+                        | "staged"
+                        | "revision"
+                        | "token"
+                        | "hunk"
+                        | "line"
+                        | "text"
+                        | "end_line"
+                        | "end_text"
+                )),
+                "Unknown review anchor field"
+            );
+            ensure!(
+                anchor.get("end_line").is_some() == anchor.get("end_text").is_some(),
+                "Review range needs both end line and text"
+            );
+            if anchor.get("end_line").is_some() {
+                let start = anchor["line"]
+                    .as_u64()
+                    .filter(|line| *line > 0)
+                    .context("Invalid review line")?;
+                let end = anchor["end_line"]
+                    .as_u64()
+                    .context("Invalid review range end")?;
+                ensure!(
+                    end >= start && end - start < 1000,
+                    "Review range must cover at most 1000 lines"
+                );
+                ensure!(
+                    anchor["end_text"]
+                        .as_str()
+                        .is_some_and(|text| text.len() <= 8192),
+                    "Invalid review range text"
+                );
+            }
+            Ok(anchor)
+        })
+        .collect()
+}
 
 struct DiffSnapshot {
     workspace_id: String,
@@ -944,6 +1039,16 @@ impl Review {
         anchor: &Value,
         admit: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
+        self.validate_anchors_then(root, workspace_binding, common_binding, &[anchor], admit)
+    }
+    pub fn validate_anchors_then<T>(
+        &self,
+        root: &str,
+        workspace_binding: (u64, u64),
+        common_binding: Option<(u64, u64)>,
+        anchors: &[&Value],
+        admit: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
         let metadata = fs::metadata(root)?;
         ensure!(
             metadata.is_dir() && (metadata.dev(), metadata.ino()) == workspace_binding,
@@ -960,54 +1065,100 @@ impl Review {
             binding: (metadata.dev(), metadata.ino()),
             common_binding,
         };
-        let path = string(anchor, "path")?;
-        path_arg(path)?;
-        let staged = anchor["staged"].as_bool().context("Invalid review side")?;
-        let revision = string(anchor, "revision")?;
-        let token = string(anchor, "token")?;
-        let hunk = string(anchor, "hunk")?;
-        let line = anchor["line"]
-            .as_u64()
-            .filter(|line| *line > 0)
-            .context("Invalid review line")?;
-        let text = anchor["text"]
-            .as_str()
-            .filter(|text| text.len() <= 8192)
-            .context("Invalid review line text")?;
+        ensure!(
+            !anchors.is_empty() && anchors.len() <= REVIEW_FEEDBACK_MAX_NOTES,
+            "Invalid review note count"
+        );
         let state = git.status()?;
-        ensure!(
-            state["revision"] == revision,
-            "Stale diff: workspace changes moved; refresh Changes"
-        );
-        let patch = git.diff_source(path, staged, &state)?;
-        let snapshot = DiffSnapshot::new("", root, path, staged, &state, patch)?;
-        ensure!(
-            snapshot.token == token,
-            "Stale diff: selected file changed; refresh Changes"
-        );
-        let mut cursor = DiffCursor {
-            snapshot_id: String::new(),
-            offset: snapshot.body_start,
-            hunk: String::new(),
-            old_line: 0,
-            new_line: 0,
-        };
-        let mut found = false;
-        for raw in snapshot.patch[snapshot.body_start..].split_inclusive('\n') {
-            let row = next_diff_row(raw, &mut cursor);
-            if row["hunk"] == hunk
-                && row["new_line"] == line
-                && row["text"] == text
-                && row["truncated"] == false
-                && (row["kind"] == "added" || row["kind"] == "context")
-            {
-                found = true;
-                break;
+        let mut snapshots: HashMap<(String, bool), DiffSnapshot> = HashMap::new();
+        for anchor in anchors {
+            let path = string(anchor, "path")?;
+            path_arg(path)?;
+            let staged = anchor["staged"].as_bool().context("Invalid review side")?;
+            let revision = string(anchor, "revision")?;
+            let token = string(anchor, "token")?;
+            let hunk = string(anchor, "hunk")?;
+            let line = anchor["line"]
+                .as_u64()
+                .filter(|line| *line > 0)
+                .context("Invalid review line")?;
+            let text = anchor["text"]
+                .as_str()
+                .filter(|text| text.len() <= 8192)
+                .context("Invalid review line text")?;
+            ensure!(
+                state["revision"] == revision,
+                "Stale diff: workspace changes moved; refresh Changes"
+            );
+            let key = (path.to_owned(), staged);
+            if !snapshots.contains_key(&key) {
+                let patch = git.diff_source(path, staged, &state)?;
+                snapshots.insert(
+                    key.clone(),
+                    DiffSnapshot::new("", root, path, staged, &state, patch)?,
+                );
             }
+            let snapshot = &snapshots[&key];
+            ensure!(
+                snapshot.token == token,
+                "Stale diff: selected file changed; refresh Changes"
+            );
+            let mut cursor = DiffCursor {
+                snapshot_id: String::new(),
+                offset: snapshot.body_start,
+                hunk: String::new(),
+                old_line: 0,
+                new_line: 0,
+            };
+            let end_line = anchor
+                .get("end_line")
+                .map(|value| value.as_u64().context("Invalid review range end"))
+                .transpose()?
+                .unwrap_or(line);
+            let end_text = anchor
+                .get("end_text")
+                .map(|value| value.as_str().context("Invalid review range text"))
+                .transpose()?
+                .unwrap_or(text);
+            ensure!(
+                end_line >= line && end_line - line < 1000,
+                "Invalid review range"
+            );
+            let mut next_line = line;
+            let mut found_start = false;
+            let mut found_end = false;
+            for raw in snapshot.patch[snapshot.body_start..].split_inclusive('\n') {
+                let row = next_diff_row(raw, &mut cursor);
+                if row["hunk"] == hunk
+                    && row["new_line"] == next_line
+                    && row["truncated"] == false
+                    && (row["kind"] == "added" || row["kind"] == "context")
+                {
+                    if next_line == line {
+                        ensure!(
+                            row["text"] == text,
+                            "Stale diff: selected line changed; refresh Changes"
+                        );
+                        found_start = true;
+                    }
+                    if next_line == end_line {
+                        ensure!(
+                            row["text"] == end_text,
+                            "Stale diff: selected range changed; refresh Changes"
+                        );
+                        found_end = true;
+                        break;
+                    }
+                    next_line += 1;
+                }
+            }
+            ensure!(
+                found_start && found_end,
+                "Stale diff: selected range changed; refresh Changes"
+            );
         }
-        ensure!(found, "Stale diff: selected line changed; refresh Changes");
         ensure!(
-            git.status()?["revision"] == revision,
+            git.status()?["revision"] == state["revision"],
             "Stale diff: workspace changes moved; refresh Changes"
         );
         admit()

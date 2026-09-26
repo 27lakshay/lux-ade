@@ -11,8 +11,22 @@ type ReviewDiffPage = { token: string; path: string; staged: boolean; revision: 
     hunk: string; truncated: boolean }>;
   next_cursor: string | null; complete: boolean; binary: boolean; conflict: boolean; bytes: number }
 type Anchor = { workspace_id: string; path: string; staged: boolean; revision: string;
-  token: string; hunk: string; line: number; text: string }
-type PendingFeedback = { requestId: string; anchor: Anchor; note: string }
+  token: string; hunk: string; line: number; text: string; end_line?: number; end_text?: string }
+type ReviewNote = { anchor: Anchor; note: string }
+type ReviewFeedback = { format: 'ade-review-feedback-v1'; workspace_id: string; notes: ReviewNote[] }
+type SavedFeedback = { message_id: string; conversation_id: string; review_feedback: ReviewFeedback }
+type FeedbackSearch = { type: 'review_feedback_search'; results: SavedFeedback[]; next_cursor: number | null }
+type PendingFeedback = { requestId: string; anchor: Anchor; note: string; reviewFeedback?: never } |
+  { requestId: string; reviewFeedback: ReviewFeedback; anchor?: never; note?: never }
+function pendingEditor(pending: PendingFeedback | null): { anchor: Anchor | null; note: string; notes: ReviewNote[] } {
+  if (!pending) return { anchor: null, note: '', notes: [] }
+  if (pending.anchor) return { anchor: pending.anchor, note: pending.note ?? '', notes: [] }
+  const saved = pending.reviewFeedback?.notes ?? []
+  if (saved.length === 1 && saved[0].anchor.end_line === undefined) {
+    return { anchor: saved[0].anchor, note: saved[0].note, notes: [] }
+  }
+  return { anchor: null, note: '', notes: saved }
+}
 type GitMutation = 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
 type PendingGit = { op: GitMutation; request_id: string; workspace_id: string; path?: string;
   revision?: string; diff_token?: string; index_token?: string; message?: string }
@@ -21,6 +35,7 @@ type AcknowledgedGit = { intent: PendingGit; acknowledged_at: number }
 type GitReceipt = { type: 'review_operation'; operation: { id: string; status: 'running' | 'succeeded' | 'failed' | 'interrupted';
   error?: string; backup_path?: string; result?: { head?: string } } }
 type DiffLine = { key: string; number: number; text: string; selectable: boolean }
+const utf8Bytes = (value: string): number => new TextEncoder().encode(value).byteLength
 
 function readPending(key: string): PendingFeedback | null {
   const raw = sessionStorage.getItem(key)
@@ -29,7 +44,12 @@ function readPending(key: string): PendingFeedback | null {
     const value: unknown = JSON.parse(raw)
     if (!value || typeof value !== 'object') return null
     const pending = value as PendingFeedback
-    return typeof pending.requestId === 'string' && typeof pending.note === 'string' &&
+    if (typeof pending.requestId !== 'string') return null
+    if (pending.reviewFeedback?.format === 'ade-review-feedback-v1' &&
+      Array.isArray(pending.reviewFeedback.notes) && pending.reviewFeedback.notes.length > 0 &&
+      pending.reviewFeedback.notes.every((item: ReviewNote) =>
+        typeof item.note === 'string' && typeof item.anchor?.workspace_id === 'string')) return pending
+    return typeof pending.note === 'string' &&
       pending.anchor && typeof pending.anchor.workspace_id === 'string' ? pending : null
   } catch { return null }
 }
@@ -46,8 +66,13 @@ function linesInHunk(hunk: string, index: number): DiffLine[] {
   })
 }
 
+function lineSelected(selected: Anchor | null, hunk: string, line: number): boolean {
+  return selected?.hunk === hunk && line >= selected.line && line <= (selected.end_line ?? selected.line)
+}
+
 function ReviewDiffView({ diff, status, workspace, selected, onSelect }: {
-  diff: ReviewDiff; status: ReviewStatus; workspace: Workspace; selected: Anchor | null; onSelect: (anchor: Anchor) => void
+  diff: ReviewDiff; status: ReviewStatus; workspace: Workspace; selected: Anchor | null;
+  onSelect: (anchor: Anchor, extend: boolean) => void
 }): React.JSX.Element {
   return <div className="review-diff" role="region" aria-label={`Diff for ${diff.path}`}>
     <pre className="review-diff-header">{diff.header}</pre>
@@ -58,11 +83,11 @@ function ReviewDiffView({ diff, status, workspace, selected, onSelect }: {
       return <div className="review-hunk" key={`${header}:${index}`}>
         <div className="review-hunk-heading">{header}</div>
         {linesInHunk(hunk, index).map((line) => line.selectable && !diff.binary && !diff.conflict
-          ? <button type="button" className={`review-line ${selected?.hunk === header && selected.line === line.number ? 'selected' : ''}`}
-            key={line.key} aria-label={`Select line ${line.number}`} onClick={() => onSelect({
+          ? <button type="button" className={`review-line ${lineSelected(selected, header, line.number) ? 'selected' : ''}`}
+            key={line.key} aria-label={`Select line ${line.number}`} onClick={(event) => onSelect({
               workspace_id: workspace.id, path: diff.path, staged: diff.staged, revision: status.revision,
               token: diff.token, hunk: header, line: line.number, text: line.text,
-            })}><span>{line.number}</span><code>{line.text}</code></button>
+            }, event.shiftKey)}><span>{line.number}</span><code>{line.text}</code></button>
           : <div className="review-line" key={line.key}><span /> <code>{line.text}</code></div>)}
       </div>
     })}
@@ -70,7 +95,8 @@ function ReviewDiffView({ diff, status, workspace, selected, onSelect }: {
 }
 
 function ReviewPageView({ page, workspace, selected, onSelect }: {
-  page: ReviewDiffPage; workspace: Workspace; selected: Anchor | null; onSelect: (anchor: Anchor) => void
+  page: ReviewDiffPage; workspace: Workspace; selected: Anchor | null;
+  onSelect: (anchor: Anchor, extend: boolean) => void
 }): React.JSX.Element {
   return <div className="review-diff" role="region" aria-label={`Diff for ${page.path}`}>
     <pre className="review-diff-header">{page.header}</pre>
@@ -80,11 +106,11 @@ function ReviewPageView({ page, workspace, selected, onSelect }: {
       ? <div className="review-hunk-heading" key={index}>{row.text}</div>
       : (row.kind === 'added' || row.kind === 'context') && row.new_line !== null &&
         !row.truncated && row.text.length <= 8192 && !page.binary && !page.conflict
-        ? <button type="button" className={`review-line ${selected?.hunk === row.hunk && selected.line === row.new_line ? 'selected' : ''}`}
-          key={index} aria-label={`Select line ${row.new_line}`} onClick={() => onSelect({
+        ? <button type="button" className={`review-line ${lineSelected(selected, row.hunk, row.new_line) ? 'selected' : ''}`}
+          key={index} aria-label={`Select line ${row.new_line}`} onClick={(event) => onSelect({
             workspace_id: workspace.id, path: page.path, staged: page.staged, revision: page.revision,
             token: page.token, hunk: row.hunk, line: row.new_line!, text: row.text,
-          })}><span>{row.new_line}</span><code>{row.text}</code></button>
+          }, event.shiftKey)}><span>{row.new_line}</span><code>{row.text}</code></button>
         : <div className="review-line" key={index}><span /> <code>{row.text}</code></div>)}
   </div>
 }
@@ -94,13 +120,15 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
 }): React.JSX.Element {
   const pendingKey = `ade.reviewPending.${profileKey}.${workspace.id}.${conversation?.id ?? ''}`
   const [restoredPending] = React.useState(() => readPending(pendingKey))
+  const restoredEditor = pendingEditor(restoredPending)
   const [acknowledgedGit, setAcknowledgedGit] = React.useState<AcknowledgedGit[]>([])
   const [status, setStatus] = React.useState<ReviewStatus | null>(null)
   const [diff, setDiff] = React.useState<ReviewDiff | null>(null)
   const [diffPage, setDiffPage] = React.useState<ReviewDiffPage | null>(null)
   const [discardPreview, setDiscardPreview] = React.useState<DiscardPreview | null>(null)
-  const [selected, setSelected] = React.useState<Anchor | null>(restoredPending?.anchor ?? null)
-  const [note, setNote] = React.useState(restoredPending?.note ?? '')
+  const [selected, setSelected] = React.useState<Anchor | null>(restoredEditor.anchor)
+  const [note, setNote] = React.useState(restoredEditor.note)
+  const [notes, setNotes] = React.useState<ReviewNote[]>(restoredEditor.notes)
   const [error, setError] = React.useState('')
   const [message, setMessage] = React.useState(restoredPending ? 'Feedback delivery is unconfirmed. Retry uses the same request ID.' : '')
   const [loading, setLoading] = React.useState(false)
@@ -114,9 +142,26 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   const [gitMessage, setGitMessage] = React.useState('')
   const [gitBusy, setGitBusy] = React.useState(false)
   const [commitMessage, setCommitMessage] = React.useState('')
+  const [feedbackPath, setFeedbackPath] = React.useState('')
+  const [feedbackQuery, setFeedbackQuery] = React.useState('')
+  const [feedbackResults, setFeedbackResults] = React.useState<SavedFeedback[]>([])
+  const [feedbackCursor, setFeedbackCursor] = React.useState<number | null>(null)
+  const [feedbackSearched, setFeedbackSearched] = React.useState(false)
+  const [feedbackSearchBusy, setFeedbackSearchBusy] = React.useState(false)
+  const [feedbackSearchError, setFeedbackSearchError] = React.useState('')
   const [refresh, setRefresh] = React.useState(0)
   const requestSequence = React.useRef(0)
+  const feedbackSearchSequence = React.useRef(0)
   const gitStarting = React.useRef(false)
+
+  React.useEffect(() => {
+    feedbackSearchSequence.current++
+    setFeedbackResults([])
+    setFeedbackCursor(null)
+    setFeedbackSearched(false)
+    setFeedbackSearchBusy(false)
+    setFeedbackSearchError('')
+  }, [workspace.id])
 
   React.useEffect(() => {
     let disposed = false
@@ -244,6 +289,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
         setPendingId(null)
         setNote('')
         setSelected(null)
+        setNotes([])
         setMessage('Feedback sent to this conversation.')
       } else if (pending && pending.request_id !== restoredPending.requestId) {
         sessionStorage.removeItem(pendingKey)
@@ -260,14 +306,20 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     let disposed = false
     void window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id }).then((draft) => {
       if (disposed) return
-      const pending = draft.send_pending as { request_id?: unknown; review_anchor?: Anchor; review_note?: unknown } | null
-      if (!pending || typeof pending.request_id !== 'string' ||
-        pending.review_anchor?.workspace_id !== workspace.id || typeof pending.review_note !== 'string') return
-      const restored = { requestId: pending.request_id, anchor: pending.review_anchor,
-        note: pending.review_note } satisfies PendingFeedback
+      const pending = draft.send_pending as { request_id?: unknown; review_anchor?: Anchor;
+        review_note?: unknown; review_feedback?: ReviewFeedback } | null
+      if (!pending || typeof pending.request_id !== 'string') return
+      const restored: PendingFeedback | null = pending.review_feedback?.format === 'ade-review-feedback-v1' &&
+        pending.review_feedback.workspace_id === workspace.id && pending.review_feedback.notes.length > 0
+        ? { requestId: pending.request_id, reviewFeedback: pending.review_feedback }
+        : pending.review_anchor?.workspace_id === workspace.id && typeof pending.review_note === 'string'
+          ? { requestId: pending.request_id, anchor: pending.review_anchor, note: pending.review_note } : null
+      if (!restored) return
       sessionStorage.setItem(pendingKey, JSON.stringify(restored))
-      setSelected(restored.anchor)
-      setNote(restored.note)
+      const editor = pendingEditor(restored)
+      setSelected(editor.anchor)
+      setNote(editor.note)
+      setNotes(editor.notes)
       setPendingId(restored.requestId)
       setMessage('Feedback delivery is unconfirmed. Retry uses the same request ID.')
     }).catch(() => { /* Keep daemon recovery available in the ordinary conversation composer. */ })
@@ -286,6 +338,8 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     sessionStorage.removeItem(pendingKey)
     setPendingId(null)
     setNote('')
+    setNotes([])
+    setSelected(null)
     setMessage('Feedback sent to this conversation.')
     setError('')
   }
@@ -368,13 +422,27 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
 
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
-    if (busy || !selected || !conversation || !note.trim() || stale || pendingId) return
-    setBusy(true)
+    if (note.trim() && !selected) {
+      setError('Select a changed line for the unfinished note before sending feedback.')
+      return
+    }
+    const includedNotes = [...notes, ...(selected && note.trim() ? [{ anchor: selected, note: note.trim() }] : [])]
+    if (busy || !conversation || includedNotes.length === 0 || stale || pendingId) return
     const requestId = globalThis.crypto.randomUUID()
-    sessionStorage.setItem(pendingKey, JSON.stringify({ requestId, anchor: selected, note } satisfies PendingFeedback))
+    const reviewFeedback: ReviewFeedback = { format: 'ade-review-feedback-v1', workspace_id: workspace.id, notes: includedNotes }
+    if (includedNotes.length > 16) { setError('Review feedback supports at most 16 notes. Remove a note before sending.'); return }
+    if (includedNotes.some((item) => utf8Bytes(item.note) > 4096)) {
+      setError('Each review note must be 4096 bytes or less. Shorten the note before sending.'); return
+    }
+    if (utf8Bytes(JSON.stringify(reviewFeedback)) > 64 * 1024) {
+      setError('Review feedback must be 64 KiB or less. Shorten or remove a note before sending.'); return
+    }
+    setBusy(true)
+    const saved: PendingFeedback = { requestId, reviewFeedback }
+    sessionStorage.setItem(pendingKey, JSON.stringify(saved))
     try {
       const response = await window.adeHost.requestConversation('agent.send', {
-        conversation_id: conversation.id, request_id: requestId, review_anchor: selected, note,
+        conversation_id: conversation.id, request_id: requestId, review_feedback: reviewFeedback,
       })
       if (response.type === 'send_pending') {
         setPendingId(requestId)
@@ -423,13 +491,65 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
         if (!saved || saved.requestId !== pendingId) throw reason
         response = await window.adeHost.requestConversation('agent.send', {
           conversation_id: conversation.id, request_id: saved.requestId,
-          review_anchor: saved.anchor, note: saved.note,
+          ...(saved.reviewFeedback ? { review_feedback: saved.reviewFeedback } : { review_anchor: saved.anchor, note: saved.note }),
         })
       }
       if (response.type === 'review_rejected') rejectFeedback(String(response.message ?? 'Review feedback was not sent'))
       else if (response.type !== 'send_pending') acceptFeedback()
     } catch (reason) { setError(String(reason)) }
     finally { setBusy(false) }
+  }
+
+  const selectAnchor = (anchor: Anchor, extend: boolean): void => {
+    if (pendingId) return
+    if (extend && selected && selected.path === anchor.path && selected.staged === anchor.staged &&
+      selected.revision === anchor.revision && selected.token === anchor.token &&
+      selected.hunk === anchor.hunk && anchor.line >= selected.line) {
+      setSelected({ ...selected, end_line: anchor.line, end_text: anchor.text })
+    } else setSelected(anchor)
+  }
+
+  const addNote = (): void => {
+    if (!selected || !note.trim() || pendingId) return
+    if (notes.length >= 16) { setError('Review feedback supports at most 16 notes. Remove a note before adding another.'); return }
+    if (utf8Bytes(note.trim()) > 4096) {
+      setError('Each review note must be 4096 bytes or less. Shorten the note before adding it.'); return
+    }
+    setNotes((current) => [...current, { anchor: selected, note: note.trim() }])
+    setSelected(null)
+    setNote('')
+    setError('')
+  }
+
+  const searchFeedback = async (before?: number): Promise<void> => {
+    const path = feedbackPath.trim()
+    const query = feedbackQuery.trim()
+    if ((!path && !query) || feedbackSearchBusy) return
+    const sequence = ++feedbackSearchSequence.current
+    setFeedbackSearchBusy(true)
+    setFeedbackSearchError('')
+    try {
+      const response = await window.adeHost.requestReview('review.feedback.search', {
+        workspace_id: workspace.id, ...(path ? { path } : {}), ...(query ? { query } : {}),
+        ...(before !== undefined ? { before } : {}), limit: 10,
+      }) as FeedbackSearch
+      if (response.type !== 'review_feedback_search' || !Array.isArray(response.results)) {
+        throw new Error('Invalid saved feedback search response')
+      }
+      if (sequence !== feedbackSearchSequence.current) return
+      setFeedbackResults((current) => before === undefined ? response.results : [...current, ...response.results])
+      setFeedbackCursor(response.next_cursor)
+      setFeedbackSearched(true)
+    } catch (reason) { if (sequence === feedbackSearchSequence.current) setFeedbackSearchError(String(reason)) }
+    finally { if (sequence === feedbackSearchSequence.current) setFeedbackSearchBusy(false) }
+  }
+  const resetFeedbackSearch = (): void => {
+    feedbackSearchSequence.current++
+    setFeedbackResults([])
+    setFeedbackCursor(null)
+    setFeedbackSearched(false)
+    setFeedbackSearchBusy(false)
+    setFeedbackSearchError('')
   }
 
   return <section className="review-pane" aria-label="Changes">
@@ -480,8 +600,8 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
         status.conflicts > 0 || Boolean(pendingGit) || !gitReady || loading}>Commit staged changes</button>
       {status.conflicts > 0 && <p className="muted">Resolve and stage conflicts before committing.</p>}
     </form>}
-    {diff && status && <ReviewDiffView diff={diff} status={status} workspace={workspace} selected={selected} onSelect={setSelected} />}
-    {diffPage && <><ReviewPageView page={diffPage} workspace={workspace} selected={selected} onSelect={setSelected} />
+    {diff && status && <ReviewDiffView diff={diff} status={status} workspace={workspace} selected={selected} onSelect={selectAnchor} />}
+    {diffPage && <><ReviewPageView page={diffPage} workspace={workspace} selected={selected} onSelect={selectAnchor} />
       {diffPage.next_cursor && <button type="button" disabled={loading} onClick={() => void nextDiffPage()}>Next diff page</button>}</>}
     {discardPreview && diff?.path === discardPreview.path && !diff.staged &&
       <div className="review-discard-confirm" role="group" aria-label={`Discard ${discardPreview.path}`}>
@@ -498,15 +618,51 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
         <button type="button" onClick={() => setDiscardPreview(null)}>Cancel</button>
       </div>}
     <form className="review-feedback" onSubmit={(event) => void send(event)}>
-      <p>{selected ? `${selected.path} · ${selected.staged ? 'staged' : 'unstaged'} · line ${selected.line} · ${selected.token}`
-        : 'Select an added or context line to anchor feedback.'}</p>
+      <p>{selected ? `${selected.path} · ${selected.staged ? 'staged' : 'unstaged'} · line ${selected.line}${selected.end_line !== undefined ? `–${selected.end_line}` : ''} · ${selected.token}`
+        : 'Select an added or context line to anchor feedback. Shift-click a later line in the same hunk for a range.'}</p>
+      {notes.length > 0 && <div className="review-notes" aria-label="Feedback notes">
+        {notes.map((item, index) => <div className="review-note-item" key={index}>
+          <span>{item.anchor.path} · line {item.anchor.line}{item.anchor.end_line !== undefined ? `–${item.anchor.end_line}` : ''} · {item.note}</span>
+          {!pendingId && <button type="button" aria-label={`Remove note ${index + 1}`}
+            onClick={() => setNotes((current) => current.filter((_, at) => at !== index))}>Remove</button>}
+        </div>)}
+      </div>}
       <label htmlFor="review-note">Feedback note</label>
       <textarea id="review-note" value={note} rows={3} disabled={Boolean(pendingId)} onChange={(event) => setNote(event.target.value)}
         placeholder="Tell the agent what to change…" />
-      <button type="submit" disabled={!selected || !conversation || !note.trim() || busy || stale || Boolean(pendingId)}>
+      <div className="review-feedback-actions">
+      <button type="button" disabled={!selected || !note.trim() || busy || Boolean(pendingId)} onClick={addNote}>Add note</button>
+      <button type="submit" disabled={(!notes.length && (!selected || !note.trim())) || !conversation || busy || stale || Boolean(pendingId)}>
         Send feedback</button>
+      </div>
       {pendingId && <button type="button" disabled={busy} onClick={() => void retry()}>Retry feedback delivery</button>}
       {!conversation && <p className="muted">Create a conversation in this workspace to send feedback.</p>}
+    </form>
+    <form className="review-feedback-search" aria-label="Saved feedback search" onSubmit={(event) => {
+      event.preventDefault(); void searchFeedback()
+    }}>
+      <h3>Saved feedback</h3>
+      <label htmlFor="review-feedback-path">File path</label>
+      <input id="review-feedback-path" aria-label="Search feedback path" value={feedbackPath}
+        onChange={(event) => { setFeedbackPath(event.target.value); resetFeedbackSearch() }} placeholder="sample.txt" />
+      <label htmlFor="review-feedback-query">Note text</label>
+      <input id="review-feedback-query" aria-label="Search saved notes" value={feedbackQuery}
+        onChange={(event) => { setFeedbackQuery(event.target.value); resetFeedbackSearch() }} placeholder="Search saved notes…" />
+      <button type="submit" disabled={(!feedbackPath.trim() && !feedbackQuery.trim()) || feedbackSearchBusy}>
+        Search feedback</button>
+      {feedbackSearchError && <p role="alert" className="inline-error">{feedbackSearchError}</p>}
+      {feedbackSearched && feedbackResults.length === 0 && <p className="muted">No saved feedback found.</p>}
+      {feedbackResults.length > 0 && <div className="review-feedback-results" aria-label="Saved feedback results">
+        {feedbackResults.flatMap((item) => item.review_feedback.notes.map((entry, index) =>
+          <div className="review-feedback-result" key={`${item.message_id}:${index}`}>
+            <strong>{entry.anchor.path} · {entry.anchor.staged ? 'staged' : 'unstaged'} · line {entry.anchor.line}
+              {entry.anchor.end_line !== undefined ? `–${entry.anchor.end_line}` : ''}</strong>
+            <span>{entry.note}</span>
+            <small>Conversation {item.conversation_id}</small>
+          </div>))}
+      </div>}
+      {feedbackCursor !== null && <button type="button" disabled={feedbackSearchBusy}
+        onClick={() => void searchFeedback(feedbackCursor)}>More saved feedback</button>}
     </form>
   </section>
 }

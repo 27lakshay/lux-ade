@@ -34,12 +34,14 @@ struct HealthCheck {
 }
 struct SendAdmission<'a> {
     review_anchor: Option<&'a Value>,
+    review_feedback: Option<&'a Value>,
     prelease: Option<crate::worktrees::Lease>,
 }
 impl SendAdmission<'_> {
     fn ordinary() -> Self {
         Self {
             review_anchor: None,
+            review_feedback: None,
             prelease: None,
         }
     }
@@ -803,6 +805,37 @@ impl Sessions {
             }
             return Ok(response);
         }
+        if op == "review.feedback.search" {
+            let limit = request
+                .get("limit")
+                .map(|value| value.as_u64().context("Invalid review search limit"))
+                .transpose()?
+                .unwrap_or(20);
+            ensure!(
+                (1..=50).contains(&limit),
+                "Review search limit must be 1 to 50"
+            );
+            let data = self.data.lock().unwrap();
+            let (results, next_cursor) = data.store.search_review_feedback(
+                string("workspace_id")?,
+                request
+                    .get("path")
+                    .map(|value| value.as_str().context("Invalid review path query"))
+                    .transpose()?,
+                request
+                    .get("query")
+                    .map(|value| value.as_str().context("Invalid review note query"))
+                    .transpose()?,
+                request
+                    .get("before")
+                    .map(|value| value.as_i64().context("Invalid review search cursor"))
+                    .transpose()?,
+                limit as usize,
+            )?;
+            return Ok(
+                json!({"type":"review_feedback_search","results":results,"next_cursor":next_cursor}),
+            );
+        }
         if request["op"]
             .as_str()
             .is_some_and(|op| op.starts_with("review."))
@@ -1389,6 +1422,14 @@ impl Sessions {
                     "restored_from_backup":data.store.restored_from_backup()?}))
             }
             "draft.send.prepare" => {
+                ensure!(
+                    request.get("review_anchor").is_none()
+                        || request.get("review_feedback").is_none(),
+                    "Choose one review payload"
+                );
+                if let Some(feedback) = request.get("review_feedback") {
+                    crate::review::feedback_anchors(feedback)?;
+                }
                 let draft = crate::model::Draft {
                     text: request["draft_text"]
                         .as_str()
@@ -1402,14 +1443,18 @@ impl Sessions {
                     )?,
                 };
                 let data = self.data.lock().unwrap();
-                let intent = persistence_result(data.store.prepare_send_intent(
-                    string("conversation_id")?,
-                    string("window_id")?,
-                    string("request_id")?,
-                    &draft,
-                    request["text"].as_str().context("Missing prompt text")?,
-                    request.get("review_anchor"),
-                ))?;
+                let intent = persistence_result(
+                    data.store.prepare_send_intent(
+                        string("conversation_id")?,
+                        string("window_id")?,
+                        string("request_id")?,
+                        &draft,
+                        request["text"].as_str().context("Missing prompt text")?,
+                        request
+                            .get("review_anchor")
+                            .or(request.get("review_feedback")),
+                    ),
+                )?;
                 Ok(json!({"type":"send_intent","intent":intent}))
             }
             "draft.send.complete" => {
@@ -1457,9 +1502,17 @@ impl Sessions {
                 let conversation = string("conversation_id")?;
                 let key = string("request_id")?;
                 let text = request["text"].as_str().context("Missing prompt text")?;
-                let anchor = request
-                    .get("review_anchor")
-                    .context("Missing review anchor")?;
+                let anchor = request.get("review_anchor");
+                let feedback = request.get("review_feedback");
+                ensure!(
+                    anchor.is_some() != feedback.is_some(),
+                    "Provide one review payload"
+                );
+                let anchors = if let Some(feedback) = feedback {
+                    crate::review::feedback_anchors(feedback)?
+                } else {
+                    vec![anchor.context("Missing review anchor")?]
+                };
                 let attachments = serde_json::from_value::<Vec<crate::model::Attachment>>(
                     request.get("attachments").cloned().unwrap_or(json!([])),
                 )?;
@@ -1467,35 +1520,38 @@ impl Sessions {
                     attachments.is_empty(),
                     "Review feedback cannot include attachments"
                 );
-                let (workspace, binding, common_binding) = {
-                    let data = self.data.lock().unwrap();
-                    data.store.guard_send_intent(
-                        conversation,
-                        key,
-                        text,
-                        &attachments,
-                        Some(anchor),
-                    )?;
-                    let current = data.store.conversation(conversation)?;
-                    let workspace = data.store.workspace(&current.workspace_id)?;
-                    ensure!(
-                        anchor["workspace_id"].as_str() == Some(workspace.id.as_str()),
-                        "Review feedback targets a different workspace"
-                    );
-                    let binding = data.store.workspace_binding_identity(&workspace.id)?;
-                    let common_binding = workspace
-                        .repository_id
-                        .as_deref()
-                        .map(|id| data.store.repository_binding_identity(id))
-                        .transpose()?;
-                    (workspace, binding, common_binding)
-                };
+                let (workspace, binding, common_binding) =
+                    {
+                        let data = self.data.lock().unwrap();
+                        data.store.guard_send_intent(
+                            conversation,
+                            key,
+                            text,
+                            &attachments,
+                            anchor.or(feedback),
+                        )?;
+                        let current = data.store.conversation(conversation)?;
+                        let workspace = data.store.workspace(&current.workspace_id)?;
+                        ensure!(
+                            anchors.iter().all(|anchor| anchor["workspace_id"].as_str()
+                                == Some(workspace.id.as_str())),
+                            "Review feedback targets a different workspace"
+                        );
+                        let binding = data.store.workspace_binding_identity(&workspace.id)?;
+                        let common_binding = workspace
+                            .repository_id
+                            .as_deref()
+                            .map(|id| data.store.repository_binding_identity(id))
+                            .transpose()?;
+                        (workspace, binding, common_binding)
+                    };
                 let accepted = self.data.lock().unwrap().store.message(key)?;
                 if accepted.is_some_and(|m| {
                     m.conversation_id == conversation
                         && m.role == "user"
                         && m.text == text
                         && m.attachments == attachments
+                        && m.review_feedback.as_ref() == feedback
                 }) {
                     self.send(
                         conversation,
@@ -1504,7 +1560,8 @@ impl Sessions {
                         &attachments,
                         false,
                         SendAdmission {
-                            review_anchor: Some(anchor),
+                            review_anchor: anchor,
+                            review_feedback: feedback,
                             prelease: None,
                         },
                     )?;
@@ -1527,11 +1584,11 @@ impl Sessions {
                         }
                     }
                 };
-                let result = self.review.validate_anchor_then(
+                let result = self.review.validate_anchors_then(
                     &workspace.root,
                     binding,
                     common_binding,
-                    anchor,
+                    &anchors,
                     || {
                         self.send(
                             conversation,
@@ -1540,7 +1597,8 @@ impl Sessions {
                             &attachments,
                             false,
                             SendAdmission {
-                                review_anchor: Some(anchor),
+                                review_anchor: anchor,
+                                review_feedback: feedback,
                                 prelease: Some(lease),
                             },
                         )
@@ -2513,8 +2571,13 @@ impl Sessions {
                 !d.draining,
                 "Application daemon is restarting; prompt remains queued"
             );
-            d.store
-                .guard_send_intent(id, key, text, attachments, admission.review_anchor)?;
+            d.store.guard_send_intent(
+                id,
+                key,
+                text,
+                attachments,
+                admission.review_anchor.or(admission.review_feedback),
+            )?;
             let current = d.store.conversation(id)?;
             Self::ensure_account_current(
                 &d,
@@ -2534,7 +2597,8 @@ impl Sessions {
                     existing.is_some_and(|m| m.conversation_id == id
                         && m.role == "user"
                         && m.text == text
-                        && m.attachments == attachments),
+                        && m.attachments == attachments
+                        && m.review_feedback.as_ref() == admission.review_feedback),
                     "Resume this Conversation before sending another prompt"
                 );
             }
@@ -2546,9 +2610,14 @@ impl Sessions {
                 self.worktrees.agent_lease(&workspace.root)?
             };
             let prompt = d.store.prompt(id, text, attachments)?;
-            let mut begin = d
-                .store
-                .begin_content_turn(id, key, text, attachments, queued)?;
+            let mut begin = d.store.begin_content_turn_with_feedback(
+                id,
+                key,
+                text,
+                attachments,
+                queued,
+                admission.review_feedback,
+            )?;
             if begin.duplicate {
                 return Ok(());
             }
@@ -3185,6 +3254,7 @@ impl Sessions {
                     if !messages.contains_key(&mid) {
                         let m = d.store.message(&mid)?.unwrap_or_else(|| Message {
                             content: None,
+                            review_feedback: None,
                             attachments: vec![],
                             id: mid.clone(),
                             conversation_id: id.into(),

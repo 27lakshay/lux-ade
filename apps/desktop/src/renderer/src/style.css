@@ -194,6 +194,20 @@ button.review-line:hover, button.review-line.selected { background: #263d34; }
 .review-feedback label { font-size: 12px; }
 .review-feedback textarea { background: #222627; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 9px; resize: vertical; width: 100%; }
 .review-feedback button { background: #84c8aa; border: 0; border-radius: 7px; color: #132019; font-size: 13px; font-weight: 600; justify-self: end; padding: 9px 12px; }
+.review-feedback-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.review-notes { display: grid; gap: 6px; }
+.review-note-item { align-items: center; background: #26302d; border-radius: 7px; display: flex; gap: 8px; justify-content: space-between; padding: 6px 8px; }
+.review-note-item span { font-size: 12px; overflow-wrap: anywhere; }
+.review-feedback .review-note-item button { background: transparent; color: #a5adae; padding: 3px 5px; }
+.review-feedback-search { border-top: 1px solid #38413e; display: grid; gap: 7px; margin-top: 18px; padding-top: 14px; }
+.review-feedback-search h3 { font-size: 13px; margin: 0 0 2px; }
+.review-feedback-search label { font-size: 12px; }
+.review-feedback-search input { background: #222627; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 8px; }
+.review-feedback-search button { justify-self: end; }
+.review-feedback-results { display: grid; gap: 7px; max-height: 280px; overflow: auto; }
+.review-feedback-result { background: #26302d; border-radius: 7px; display: grid; gap: 3px; overflow-wrap: anywhere; padding: 8px; }
+.review-feedback-result strong, .review-feedback-result span { font-size: 12px; }
+.review-feedback-result small { color: #a5adae; font-size: 11px; }
 .browser-pane { border-top: 1px solid #323637; margin: 32px 24px; padding: 18px 0 30px; }
 .browser-heading, .browser-tabs, .browser-toolbar, .browser-meta { align-items: center; display: flex; gap: 8px; }
 .browser-heading { justify-content: space-between; }

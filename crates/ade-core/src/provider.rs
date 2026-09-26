@@ -152,6 +152,7 @@ impl Item {
     pub fn message(&self, conversation: &str) -> Message {
         Message {
             content: self.content.clone(),
+            review_feedback: None,
             attachments: vec![],
             id: self
                 .client_id

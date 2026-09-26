@@ -141,6 +141,8 @@ pub struct QueuedPrompt {
 pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<crate::transcript::Content>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_feedback: Option<serde_json::Value>,
     pub id: String,
     pub conversation_id: String,
     pub role: String,

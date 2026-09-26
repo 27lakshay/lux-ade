@@ -26,6 +26,10 @@ export type SendJournalRecord = SendJournalIdentity & {
   restoreHold?: true
   reviewAnchor?: { workspace_id: string; path: string; staged: boolean; revision: string;
     token: string; hunk: string; line: number; text: string }
+  reviewFeedback?: { format: 'ade-review-feedback-v1'; workspace_id: string; notes: {
+    anchor: { workspace_id: string; path: string; staged: boolean; revision: string;
+      token: string; hunk: string; line: number; text: string; end_line?: number; end_text?: string };
+    note: string }[] }
 }
 
 type JournalFile = { version: 1; records: SendJournalRecord[] }
@@ -71,7 +75,7 @@ function validRecord(value: unknown): value is SendJournalRecord {
   const candidate: Record<string, unknown> = value
   const fields = ['attachments', 'conversationId', 'dispatchStarted', 'draftRevision',
     'draftText', 'endpoint', 'profileId', 'requestId', 'text', 'windowId']
-  const optional = ['restoreHold', 'reviewAnchor'].filter((field) => Object.hasOwn(candidate, field))
+  const optional = ['restoreHold', 'reviewAnchor', 'reviewFeedback'].filter((field) => Object.hasOwn(candidate, field))
   if (!hasFields(candidate, [...fields, ...optional])) return false
   if (candidate.restoreHold !== undefined && candidate.restoreHold !== true) return false
   if (candidate.reviewAnchor !== undefined) {
@@ -83,6 +87,29 @@ function validRecord(value: unknown): value is SendJournalRecord {
       typeof anchor.token !== 'string' || typeof anchor.hunk !== 'string' ||
       !Number.isSafeInteger(anchor.line) || typeof anchor.text !== 'string' ||
       Buffer.byteLength(JSON.stringify(anchor)) > 12 * 1024) return false
+  }
+  if (candidate.reviewFeedback !== undefined) {
+    const feedback = candidate.reviewFeedback
+    if (!plainObject(feedback) || !hasFields(feedback, ['format', 'workspace_id', 'notes']) ||
+      feedback.format !== 'ade-review-feedback-v1' ||
+      typeof feedback.workspace_id !== 'string' || !idPattern.test(feedback.workspace_id) ||
+      !Array.isArray(feedback.notes) || feedback.notes.length < 1 || feedback.notes.length > 16 ||
+      Buffer.byteLength(JSON.stringify(feedback)) > 64 * 1024 ||
+      !feedback.notes.every((item) => {
+        if (!plainObject(item) || !hasFields(item, ['anchor', 'note']) ||
+          typeof item.note !== 'string' || !item.note.trim() || Buffer.byteLength(item.note) > 4096 ||
+          !plainObject(item.anchor)) return false
+        const anchor = item.anchor
+        const range = Object.hasOwn(anchor, 'end_line') || Object.hasOwn(anchor, 'end_text')
+        return hasFields(anchor, range ? ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text', 'end_line', 'end_text'] :
+          ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text']) &&
+          anchor.workspace_id === feedback.workspace_id && typeof anchor.path === 'string' &&
+          anchor.path.length > 0 && anchor.path.length <= 4096 && typeof anchor.staged === 'boolean' &&
+          typeof anchor.revision === 'string' && typeof anchor.token === 'string' &&
+          typeof anchor.hunk === 'string' && Number.isSafeInteger(anchor.line) &&
+          typeof anchor.text === 'string' && (!range ||
+            Number.isSafeInteger(anchor.end_line) && typeof anchor.end_text === 'string')
+      }) || candidate.reviewAnchor !== undefined) return false
   }
   if (typeof candidate.endpoint !== 'string' || !isAbsolute(candidate.endpoint) || candidate.endpoint.includes('\0') || candidate.endpoint.length > 4096) return false
   if (typeof candidate.text !== 'string' || !candidate.text.trim() || Buffer.byteLength(candidate.text) > maxPromptBytes) return false
@@ -154,6 +181,10 @@ function matchingIntent(record: SendJournalRecord, response: unknown): boolean {
     response.restored_from_backup !== true || !plainObject(response.intent)) return false
   const intent = response.intent
   const reviewAnchor = intent.review_anchor
+  const reviewFeedback = intent.review_feedback
+  const canonical = (value: unknown): string => JSON.stringify(value ?? null, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item)
   return intent.request_id === record.requestId && intent.conversation_id === record.conversationId &&
     intent.window_id === record.windowId && intent.draft_revision === record.draftRevision &&
     intent.draft_text === record.draftText && intent.text === record.text &&
@@ -161,6 +192,7 @@ function matchingIntent(record: SendJournalRecord, response: unknown): boolean {
       plainObject(reviewAnchor) && record.reviewAnchor !== undefined &&
       ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text'].every((field) =>
         reviewAnchor[field] === record.reviewAnchor?.[field as keyof typeof record.reviewAnchor])) &&
+    canonical(reviewFeedback) === canonical(record.reviewFeedback) &&
     Array.isArray(intent.attachments) && JSON.stringify(intent.attachments) === JSON.stringify(record.attachments) &&
     (intent.state === 'pending' || intent.state === 'rejected')
 }

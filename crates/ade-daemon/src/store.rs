@@ -3,6 +3,7 @@ use crate::model::*;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use std::{
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
@@ -275,9 +276,24 @@ pub struct SendIntent {
     pub attachments: Vec<Attachment>,
     pub state: String,
     pub review_anchor: Option<serde_json::Value>,
+    pub review_feedback: Option<serde_json::Value>,
 }
 
 fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
+    let stored: Option<serde_json::Value> = row
+        .get::<_, Option<String>>(8)?
+        .map(|value| serde_json::from_str(&value))
+        .transpose()
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                8,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    let is_batch = stored
+        .as_ref()
+        .is_some_and(|value| value["format"] == "ade-review-feedback-v1");
     Ok(SendIntent {
         request_id: row.get(0)?,
         conversation_id: row.get(1)?,
@@ -287,17 +303,8 @@ fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
         text: row.get(5)?,
         attachments: attachment_row(row, 6)?,
         state: row.get(7)?,
-        review_anchor: row
-            .get::<_, Option<String>>(8)?
-            .map(|value| serde_json::from_str(&value))
-            .transpose()
-            .map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    8,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?,
+        review_anchor: if is_batch { None } else { stored.clone() },
+        review_feedback: if is_batch { stored } else { None },
     })
 }
 
@@ -1083,7 +1090,7 @@ impl Store {
         request_id: &str,
         text: &str,
         attachments: &[Attachment],
-        review_anchor: Option<&serde_json::Value>,
+        review_payload: Option<&serde_json::Value>,
     ) -> Result<()> {
         let intent: Option<SendIntent> = self.connection.query_row(
             "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
@@ -1095,7 +1102,11 @@ impl Store {
                 intent.conversation_id == conversation
                     && intent.text == text
                     && intent.attachments == attachments
-                    && intent.review_anchor.as_ref() == review_anchor,
+                    && intent
+                        .review_anchor
+                        .as_ref()
+                        .or(intent.review_feedback.as_ref())
+                        == review_payload,
                 "Send intent ID was already used for a different prompt or conversation"
             );
             ensure!(intent.state != "aborted", "Send intent was aborted");
@@ -1134,7 +1145,7 @@ impl Store {
         request_id: &str,
         draft: &Draft,
         text: &str,
-        review_anchor: Option<&serde_json::Value>,
+        review_payload: Option<&serde_json::Value>,
     ) -> Result<SendIntent> {
         check_id(request_id)?;
         check_id(window)?;
@@ -1154,7 +1165,7 @@ impl Store {
                 && existing.draft_revision == draft.revision && existing.draft_text == draft.text
                 && existing.text == text
                 && existing.attachments == draft.attachments
-                && existing.review_anchor.as_ref() == review_anchor,
+                && existing.review_anchor.as_ref().or(existing.review_feedback.as_ref()) == review_payload,
                 "Send intent ID was already used for a different prompt or owner");
             return Ok(existing);
         }
@@ -1175,7 +1186,7 @@ impl Store {
             params![conversation,window], |_| Ok(()),
         ).optional()?.is_none(), "Resolve the pending send before preparing another prompt");
         tx.execute("INSERT INTO send_intents(request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor) VALUES(?1,?2,?3,?4,?5,?6,?7,'pending',?8)",
-            params![request_id,conversation,window,draft.revision,draft.text,text,encode(&draft.attachments)?,review_anchor.map(serde_json::to_string).transpose()?])?;
+            params![request_id,conversation,window,draft.revision,draft.text,text,encode(&draft.attachments)?,review_payload.map(serde_json::to_string).transpose()?])?;
         tx.commit()?;
         Ok(SendIntent {
             request_id: request_id.into(),
@@ -1186,7 +1197,12 @@ impl Store {
             text: text.into(),
             attachments: draft.attachments.clone(),
             state: "pending".into(),
-            review_anchor: review_anchor.cloned(),
+            review_anchor: review_payload
+                .filter(|value| value["format"] != "ade-review-feedback-v1")
+                .cloned(),
+            review_feedback: review_payload
+                .filter(|value| value["format"] == "ade-review-feedback-v1")
+                .cloned(),
         })
     }
     /// An acknowledged user message and draft clear settle together. A missing
@@ -1976,6 +1992,78 @@ impl Store {
     pub fn message(&self, id: &str) -> Result<Option<Message>> {
         message_by_id(&self.connection, id)
     }
+    /// Page backward through a workspace's durable review anchors. The scan cap
+    /// bounds one request even when few notes match the requested text/path.
+    pub fn search_review_feedback(
+        &self,
+        workspace_id: &str,
+        path: Option<&str>,
+        query: Option<&str>,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<(Vec<Value>, Option<i64>)> {
+        self.workspace(workspace_id)?;
+        ensure!(
+            path.is_some() || query.is_some(),
+            "Specify a review path or note query"
+        );
+        ensure!(
+            path.is_none_or(|value| !value.is_empty() && value.len() <= 4096),
+            "Invalid review path query"
+        );
+        ensure!(
+            query.is_none_or(|value| !value.trim().is_empty() && value.len() <= 256),
+            "Invalid review note query"
+        );
+        ensure!(
+            before.is_none_or(|value| value > 0),
+            "Invalid review search cursor"
+        );
+        ensure!(
+            (1..=50).contains(&limit),
+            "Review search limit must be 1 to 50"
+        );
+        let mut statement = self.connection.prepare("SELECT m.rowid,m.data FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.workspace_id=?1 AND (?2 IS NULL OR m.rowid<?2) ORDER BY m.rowid DESC LIMIT 501")?;
+        let mut rows = statement.query(params![workspace_id, before])?;
+        let mut results = Vec::new();
+        let mut cursor = None;
+        let mut scanned = 0;
+        while let Some(row) = rows.next()? {
+            let rowid: i64 = row.get(0)?;
+            let message: Message = decode(row.get::<_, String>(1)?)?;
+            scanned += 1;
+            cursor = Some(rowid);
+            if let Some(feedback) = message.review_feedback
+                && let Some(notes) = feedback["notes"].as_array()
+            {
+                let matching: Vec<_> = notes
+                    .iter()
+                    .filter(|note| {
+                        path.is_none_or(|path| note["anchor"]["path"].as_str() == Some(path))
+                            && query.is_none_or(|query| {
+                                note["note"].as_str().is_some_and(|value| {
+                                    value.to_lowercase().contains(&query.to_lowercase())
+                                })
+                            })
+                    })
+                    .cloned()
+                    .collect();
+                if !matching.is_empty() {
+                    results.push(json!({"message_id":message.id,"conversation_id":message.conversation_id,
+                            "review_feedback":{"format":"ade-review-feedback-v1","workspace_id":workspace_id,"notes":matching}}));
+                }
+            }
+            if results.len() >= limit || scanned >= 500 {
+                break;
+            }
+        }
+        let next_cursor = if scanned >= 500 || (results.len() >= limit && rows.next()?.is_some()) {
+            cursor
+        } else {
+            None
+        };
+        Ok((results, next_cursor))
+    }
     pub fn pending(&self, id: &str) -> Result<Vec<PendingRequest>> {
         self.conversation(id)?;
         let mut statement = self.connection.prepare("SELECT data FROM requests WHERE conversation_id=?1 AND status IN ('pending','responding') ORDER BY rowid")?;
@@ -2111,6 +2199,24 @@ impl Store {
         attachments: &[Attachment],
         queued: bool,
     ) -> Result<BeginTurn> {
+        self.begin_content_turn_with_feedback(
+            conversation_id,
+            request_id,
+            text,
+            attachments,
+            queued,
+            None,
+        )
+    }
+    pub fn begin_content_turn_with_feedback(
+        &self,
+        conversation_id: &str,
+        request_id: &str,
+        text: &str,
+        attachments: &[Attachment],
+        queued: bool,
+        review_feedback: Option<&serde_json::Value>,
+    ) -> Result<BeginTurn> {
         check_id(request_id)?;
         check_text(text)?;
         ensure!(
@@ -2159,7 +2265,8 @@ impl Store {
                 message.conversation_id == conversation_id
                     && message.role == "user"
                     && message.text == text
-                    && message.attachments == attachments,
+                    && message.attachments == attachments
+                    && message.review_feedback.as_ref() == review_feedback,
                 "Submission ID was already used for a different prompt or conversation"
             );
             return Ok(BeginTurn {
@@ -2178,6 +2285,7 @@ impl Store {
         );
         let message = Message {
             content: None,
+            review_feedback: review_feedback.cloned(),
             id: request_id.into(),
             conversation_id: conversation_id.into(),
             role: "user".into(),
@@ -2269,6 +2377,7 @@ impl Store {
                     // Our accepted payload is authoritative for retries and display.
                     message.text = existing.text;
                     message.attachments = existing.attachments;
+                    message.review_feedback = existing.review_feedback;
                 }
                 message.id = existing.id;
                 message.sequence = existing.sequence;
@@ -2936,6 +3045,7 @@ mod tests {
     fn assistant(conversation: &Conversation, id: &str, provider: &str) -> Message {
         Message {
             content: None,
+            review_feedback: None,
             attachments: vec![],
             id: id.into(),
             conversation_id: conversation.id.clone(),
