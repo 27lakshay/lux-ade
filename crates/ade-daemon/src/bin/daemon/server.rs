@@ -25,6 +25,7 @@ fn error_response(error: impl Into<anyhow::Error>) -> Value {
 const MAX_REQUEST: u64 = 12 * 1024 * 1024;
 const MAX_BROWSER_REPLY: u64 = 1024 * 1024;
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_BROWSER_RECEIPTS: usize = 4096;
 
 #[derive(Clone)]
 struct BrowserOwner {
@@ -33,6 +34,18 @@ struct BrowserOwner {
     socket: PathBuf,
     device: u64,
     inode: u64,
+}
+
+enum BrowserReceiptState {
+    Accepted,
+    Unknown,
+    Completed(Value),
+}
+
+struct BrowserReceipt {
+    owner_id: String,
+    fingerprint: String,
+    state: BrowserReceiptState,
 }
 
 fn browser_error(code: &str, message: &str) -> Value {
@@ -50,6 +63,21 @@ fn browser_id(value: &Value, field: &str) -> anyhow::Result<String> {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
         "Invalid {field}"
+    );
+    Ok(id.to_owned())
+}
+
+fn browser_request_id(value: &Value) -> anyhow::Result<String> {
+    let id = value["request_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing request_id"))?;
+    anyhow::ensure!(
+        !id.is_empty()
+            && id.len() <= 256
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
+        "Invalid request_id"
     );
     Ok(id.to_owned())
 }
@@ -157,15 +185,336 @@ struct Host {
     default_workspace: String,
     leases: Mutex<HashMap<String, Lease>>,
     browser_owner: Mutex<Option<BrowserOwner>>,
+    browser_receipts: Mutex<HashMap<(String, String), BrowserReceipt>>,
     browser_budget: ProbeBudget,
     proxy_probe: ProbeBudget,
     admission: RwLock<()>,
     stopping: AtomicBool,
 }
 impl Host {
+    fn browser_operation(&self, request: &Value, profile_id: &str) -> Value {
+        let request_id = match browser_request_id(request) {
+            Ok(id) => id,
+            Err(error) => return browser_error("invalid_request", &error.to_string()),
+        };
+        let local = self
+            .browser_receipts
+            .lock()
+            .unwrap()
+            .get(&(profile_id.to_owned(), request_id.clone()))
+            .map(|receipt| {
+            let (state, result) = match &receipt.state {
+                BrowserReceiptState::Accepted => ("accepted", None),
+                BrowserReceiptState::Unknown => ("unknown", None),
+                BrowserReceiptState::Completed(value) => ("completed", Some(value.clone())),
+            };
+            json!({"type":"browser_operation","profile_id":profile_id,"owner_id":receipt.owner_id,
+                "request_id":request_id,"payload_fingerprint":receipt.fingerprint,"state":state,
+                "result":result})
+        });
+        if let Some(value) = &local
+            && value["state"] != "unknown"
+        {
+            return value.clone();
+        }
+        let unavailable = || {
+            local
+                .clone()
+                .unwrap_or_else(|| browser_error("unavailable", "Browser operation is unavailable"))
+        };
+        let owner = self.browser_owner.lock().unwrap().clone();
+        let Some(owner) = owner.filter(|owner| owner.profile_id == profile_id) else {
+            return unavailable();
+        };
+        let _permit = self.browser_budget.acquire();
+        let mut stream = match browser_connect(&owner) {
+            Ok(stream) => stream,
+            Err(_) => return unavailable(),
+        };
+        let command = json!({"op":"browser.operation","profile_id":profile_id,
+            "owner_id":owner.owner_id,"request_id":request_id});
+        if writeln!(stream, "{command}").is_err() {
+            return unavailable();
+        }
+        let mut reader = BufReader::new(stream);
+        let mut bytes = Vec::new();
+        if reader
+            .by_ref()
+            .take(MAX_BROWSER_REPLY + 1)
+            .read_until(b'\n', &mut bytes)
+            .is_err()
+            || bytes.len() as u64 > MAX_BROWSER_REPLY
+            || bytes.last() != Some(&b'\n')
+        {
+            return unavailable();
+        }
+        let reply: Value = match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            Err(_) => return unavailable(),
+        };
+        if !reply.is_object()
+            || !reply["type"].is_string()
+            || reply["profile_id"] != profile_id
+            || reply["owner_id"] != owner.owner_id
+            || reply["request_id"] != request_id
+            || !self
+                .browser_owner
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|current| {
+                    current.profile_id == owner.profile_id
+                        && current.owner_id == owner.owner_id
+                        && current.device == owner.device
+                        && current.inode == owner.inode
+                })
+        {
+            return unavailable();
+        }
+        if let Some(local) = local {
+            let fingerprint = local["payload_fingerprint"].as_str().unwrap_or_default();
+            let result = &reply["result"];
+            if reply["type"] != "browser_operation"
+                || reply["state"] != "completed"
+                || reply["payload_fingerprint"] != fingerprint
+                || !result.is_object()
+                || result["profile_id"] != profile_id
+                || result["owner_id"] != local["owner_id"]
+                || result["request_id"] != request_id
+                || result["payload_fingerprint"] != fingerprint
+            {
+                return local;
+            }
+            let mut receipts = self.browser_receipts.lock().unwrap();
+            if let Some(record) = receipts.get_mut(&(profile_id.to_owned(), request_id.clone()))
+                && record.fingerprint == fingerprint
+                && matches!(record.state, BrowserReceiptState::Unknown)
+            {
+                record.state = BrowserReceiptState::Completed(result.clone());
+                return json!({"type":"browser_operation","profile_id":profile_id,
+                    "owner_id":record.owner_id,"request_id":request_id,
+                    "payload_fingerprint":fingerprint,"state":"completed","result":result});
+            }
+            return local;
+        }
+        reply
+    }
+
+    fn browser_mutation(&self, request: &Value, profile_id: &str, op: &str) -> Value {
+        let owner_id = match browser_id(request, "owner_id") {
+            Ok(id) => id,
+            Err(error) => return browser_error("invalid_request", &error.to_string()),
+        };
+        let request_id = match browser_request_id(request) {
+            Ok(id) => id,
+            Err(error) => return browser_error("invalid_request", &error.to_string()),
+        };
+        let needs_tab = op != "browser.open";
+        let needs_url = op != "browser.close";
+        let tab_id = if needs_tab {
+            match browser_id(request, "tab_id") {
+                Ok(id) => Some(id),
+                Err(error) => return browser_error("invalid_request", &error.to_string()),
+            }
+        } else {
+            None
+        };
+        let url = if needs_url {
+            match request["url"].as_str() {
+                Some(url)
+                    if !url.is_empty()
+                        && url.len() <= 8192
+                        && (url.starts_with("http://") || url.starts_with("https://")) =>
+                {
+                    Some(url)
+                }
+                _ => return browser_error("invalid_request", "Invalid browser URL"),
+            }
+        } else {
+            None
+        };
+        let allowed = [
+            "op",
+            "profile_id",
+            "owner_id",
+            "request_id",
+            "diagnostic_id",
+            if needs_tab { "tab_id" } else { "" },
+            if needs_url { "url" } else { "" },
+        ];
+        if request
+            .as_object()
+            .is_none_or(|fields| fields.keys().any(|key| !allowed.contains(&key.as_str())))
+        {
+            return browser_error("invalid_request", "Unknown browser mutation field");
+        }
+        let canonical = json!([op, profile_id, owner_id, tab_id, url]);
+        let fingerprint = format!("{:x}", Sha256::digest(canonical.to_string().as_bytes()));
+        let key = (profile_id.to_owned(), request_id.to_owned());
+        {
+            let receipts = self.browser_receipts.lock().unwrap();
+            if let Some(prior) = receipts.get(&key) {
+                if prior.fingerprint != fingerprint {
+                    return browser_error(
+                        "conflict",
+                        "Browser request ID has another target or payload",
+                    );
+                }
+                return match &prior.state {
+                    BrowserReceiptState::Accepted => {
+                        browser_error("in_progress", "Browser operation is still in progress")
+                    }
+                    BrowserReceiptState::Unknown => browser_error(
+                        "outcome_unknown",
+                        "Browser operation outcome is unknown; inspect before another action",
+                    ),
+                    BrowserReceiptState::Completed(reply) => reply.clone(),
+                };
+            }
+        }
+        let owner = self.browser_owner.lock().unwrap().clone();
+        let Some(owner) =
+            owner.filter(|owner| owner.profile_id == profile_id && owner.owner_id == owner_id)
+        else {
+            return browser_error("unavailable", "Browser owner changed; inspect it again");
+        };
+        let _permit = self.browser_budget.acquire();
+        // Take the journal lock after acquiring the bounded dispatch permit. A
+        // concurrent same-ID request can then observe the accepted receipt.
+        {
+            let mut receipts = self.browser_receipts.lock().unwrap();
+            if let Some(prior) = receipts.get(&key) {
+                if prior.fingerprint != fingerprint {
+                    return browser_error(
+                        "conflict",
+                        "Browser request ID has another target or payload",
+                    );
+                }
+                return match &prior.state {
+                    BrowserReceiptState::Accepted => {
+                        browser_error("in_progress", "Browser operation is still in progress")
+                    }
+                    BrowserReceiptState::Unknown => browser_error(
+                        "outcome_unknown",
+                        "Browser operation outcome is unknown; inspect before another action",
+                    ),
+                    BrowserReceiptState::Completed(reply) => reply.clone(),
+                };
+            }
+            if receipts.len() >= MAX_BROWSER_RECEIPTS {
+                return browser_error(
+                    "overloaded",
+                    "Browser operation journal is full; restart after inspecting outstanding work",
+                );
+            }
+            receipts.insert(
+                key.clone(),
+                BrowserReceipt {
+                    owner_id: owner_id.clone(),
+                    fingerprint: fingerprint.clone(),
+                    state: BrowserReceiptState::Accepted,
+                },
+            );
+        }
+        let current_owner = self.browser_owner.lock().unwrap();
+        if !current_owner.as_ref().is_some_and(|current| {
+            current.profile_id == owner.profile_id
+                && current.owner_id == owner.owner_id
+                && current.device == owner.device
+                && current.inode == owner.inode
+        }) {
+            self.browser_receipts.lock().unwrap().remove(&key);
+            return browser_error("unavailable", "Browser owner changed before dispatch");
+        }
+        let mut stream = match browser_connect(&owner) {
+            Ok(stream) => stream,
+            Err(_) => {
+                self.browser_receipts.lock().unwrap().remove(&key);
+                return browser_error("unavailable", "Browser owner is unavailable");
+            }
+        };
+        let mut command = json!({"op":op,"profile_id":profile_id,"owner_id":owner_id,
+            "request_id":request_id,"payload_fingerprint":fingerprint});
+        if let Some(tab_id) = &tab_id {
+            command["tab_id"] = json!(tab_id);
+        }
+        if let Some(url) = url {
+            command["url"] = json!(url);
+        }
+        let uncertain = || {
+            browser_error(
+                "outcome_unknown",
+                "Browser owner reply was lost; inspect this operation before retrying",
+            )
+        };
+        let written = writeln!(stream, "{command}");
+        drop(current_owner);
+        let mut reply = if written.is_err() {
+            uncertain()
+        } else {
+            let mut reader = BufReader::new(stream);
+            let mut bytes = Vec::new();
+            if reader
+                .by_ref()
+                .take(MAX_BROWSER_REPLY + 1)
+                .read_until(b'\n', &mut bytes)
+                .is_err()
+                || bytes.len() as u64 > MAX_BROWSER_REPLY
+                || bytes.last() != Some(&b'\n')
+            {
+                uncertain()
+            } else {
+                match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(value)
+                        if value.is_object()
+                            && value["profile_id"] == profile_id
+                            && value["owner_id"] == owner_id
+                            && value["request_id"] == request_id
+                            && value["payload_fingerprint"] == fingerprint
+                            && value["type"].is_string()
+                            && (value["type"] == "error"
+                                || browser_id(&value, "tab_id").ok().is_some_and(
+                                    |reply_tab| {
+                                        tab_id.as_ref().is_none_or(|target| target == &reply_tab)
+                                    },
+                                )) =>
+                    {
+                        value
+                    }
+                    _ => uncertain(),
+                }
+            }
+        };
+        if !self
+            .browser_owner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|current| {
+                current.profile_id == owner.profile_id
+                    && current.owner_id == owner.owner_id
+                    && current.device == owner.device
+                    && current.inode == owner.inode
+            })
+        {
+            reply = uncertain();
+        }
+        let mut receipts = self.browser_receipts.lock().unwrap();
+        if let Some(record) = receipts.get_mut(&key) {
+            record.state = if reply["code"] == "outcome_unknown" {
+                BrowserReceiptState::Unknown
+            } else {
+                BrowserReceiptState::Completed(reply.clone())
+            };
+        }
+        reply
+    }
+
     fn browser_command(&self, request: &Value) -> Value {
         let op = request["op"].as_str().unwrap_or("");
-        let profile_id = if op == "browser.owner.get" && request.get("profile_id").is_none() {
+        let profile_id = if matches!(op, "browser.owner.get" | "browser.operation")
+            && request.get("profile_id").is_none()
+        {
             self.profile_id.clone()
         } else {
             match browser_id(request, "profile_id") {
@@ -178,6 +527,12 @@ impl Host {
                 "unavailable",
                 "Browser profile is unavailable on this daemon",
             );
+        }
+        if op == "browser.operation" {
+            return self.browser_operation(request, &profile_id);
+        }
+        if matches!(op, "browser.open" | "browser.navigate" | "browser.close") {
+            return self.browser_mutation(request, &profile_id, op);
         }
         if op == "browser.owner.register" {
             let owner_id = match browser_id(request, "owner_id") {
@@ -878,6 +1233,10 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                         | "browser.owner.get"
                         | "browser.list"
                         | "browser.inspect"
+                        | "browser.open"
+                        | "browser.navigate"
+                        | "browser.close"
+                        | "browser.operation"
                 ) {
                     Ok(host.browser_command(&request))
                 } else {
@@ -1012,6 +1371,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         default_workspace,
         leases: Mutex::new(HashMap::new()),
         browser_owner: Mutex::new(None),
+        browser_receipts: Mutex::new(HashMap::new()),
         browser_budget: ProbeBudget {
             active: Mutex::new(0),
             available: Condvar::new(),

@@ -84,6 +84,19 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: browserTabId })]))
     expect((await cli('--profile', profiles[1].id, 'browser', 'inspect', browserOwnerId, browserTabId)).tab_id)
       .toBe(browserTabId)
+    const cliTab = await cli('--profile', profiles[1].id, 'browser', 'open', browserOwnerId,
+      'http://127.0.0.1:65534/cli', '--request-id', 'installed-browser-open')
+    const cliTabId = cliTab.tab_id as string
+    expect((await cli('--profile', profiles[1].id, 'browser', 'open', browserOwnerId,
+      'http://127.0.0.1:65534/cli', '--request-id', 'installed-browser-open')).tab_id).toBe(cliTabId)
+    expect((await cli('--profile', profiles[1].id, 'browser', 'operation', 'installed-browser-open')).state)
+      .toBe('completed')
+    expect((await cli('--profile', profiles[1].id, 'browser', 'navigate', browserOwnerId, cliTabId,
+      'http://127.0.0.1:65534/cli-next', '--request-id', 'installed-browser-navigate')).tab_id).toBe(cliTabId)
+    expect((await cli('--profile', profiles[1].id, 'browser', 'close', browserOwnerId, cliTabId,
+      '--request-id', 'installed-browser-close')).tab_id).toBe(cliTabId)
+    expect((await cli('--profile', profiles[1].id, 'browser', 'list', browserOwnerId)).tabs.map((tab: { id: string }) => tab.id))
+      .toEqual([browserTabId])
     const inactiveBrowser = await execFileAsync(cliAlias, ['--profile', profiles[0].id, 'browser', 'owner'],
       { env: cliEnv, cwd: directory, timeout: 35_000 }).catch((error: Error & { stderr?: string }) => error)
     expect(inactiveBrowser).toHaveProperty('stderr')

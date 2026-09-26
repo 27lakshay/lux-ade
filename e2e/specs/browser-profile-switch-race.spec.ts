@@ -51,7 +51,7 @@ test('a delayed browser open cannot create a tab after profile selection changes
     const secondId = secondTab.tabs[0].id
     await window.evaluate((id) => window.adeHost.selectProfile(id), first.id)
     await writeFile(pauseRelease, 'release')
-    expect(await delayed).toContain('Browser owner changed before opening the tab')
+    expect(await delayed).toContain('Browser owner changed')
     expect((await window.evaluate(() => window.adeHost.browser.list())).tabs).toEqual([])
     await window.evaluate((id) => window.adeHost.selectProfile(id), second.id)
     expect((await window.evaluate(() => window.adeHost.browser.list())).tabs.map((tab) => tab.id)).toEqual([secondId])

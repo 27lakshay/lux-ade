@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { requestDaemon } from '@ade/client'
-import { readBrowserOwner } from './browser'
+import { mutateBrowserOwner, readBrowserOperation, readBrowserOwner } from './browser'
 
 const maxRequestBytes = 64 * 1024
 
@@ -72,12 +72,32 @@ export class BrowserOwner {
       if (value.profile_id !== this.profileId || value.owner_id !== this.ownerId) {
         throw new Error('Browser owner changed')
       }
-      if (value.op !== 'browser.list' && value.op !== 'browser.inspect') {
+      if (value.op !== 'browser.list' && value.op !== 'browser.inspect' && value.op !== 'browser.operation' &&
+        value.op !== 'browser.open' && value.op !== 'browser.navigate' && value.op !== 'browser.close') {
         throw new Error('Unsupported browser operation')
       }
-      const result = await readBrowserOwner(this.browserProfileId, value.op,
-        typeof value.tab_id === 'string' ? value.tab_id : undefined)
-      return { ...identity, ...result }
+      if (value.op === 'browser.operation') {
+        const result = await readBrowserOperation(this.browserProfileId, this.profileId, value.request_id)
+        return { ...identity, ...result }
+      }
+      if (value.op === 'browser.list' || value.op === 'browser.inspect') {
+        const result = await readBrowserOwner(this.browserProfileId, value.op,
+          typeof value.tab_id === 'string' ? value.tab_id : undefined)
+        return { ...identity, ...result }
+      }
+      const mutation = { request_id: value.request_id, payload_fingerprint: value.payload_fingerprint }
+      try {
+        const result = await mutateBrowserOwner(this.browserProfileId, this.profileId, this.ownerId,
+          value.op, value.request_id, value.payload_fingerprint, value.tab_id, value.url)
+        return { ...identity, ...mutation, ...result }
+      } catch (error) {
+        const message = String(error)
+        const code = message.includes('outcome_unknown:') ? 'outcome_unknown'
+          : message.includes('conflicts with a different target') ? 'conflict'
+            : message.includes('Invalid browser') || message.includes('fingerprint does not match') ? 'invalid_request'
+              : 'unavailable'
+        return { type: 'error', code, message, ...identity, ...mutation }
+      }
     } catch (error) {
       return { type: 'error', code: 'unavailable', message: String(error), ...identity }
     }

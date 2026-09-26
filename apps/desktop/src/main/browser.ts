@@ -5,8 +5,12 @@ import { cp, link, lstat, mkdir, open, readdir, readFile, rename, rm, unlink, wr
 import { basename, dirname, isAbsolute, join } from 'node:path'
 
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
+type BrowserMutation = 'browser.open' | 'browser.navigate' | 'browser.close'
+type BrowserReceipt = { requestId: string; fingerprint: string; profileId: string; ownerId: string;
+  status: 'pending' | 'completed'; op: BrowserMutation; tabId: string | null }
 type Saved = { version: 1; selectedId: string | null; tabs: Array<Pick<Tab, 'id' | 'profileId' | 'requestedUrl' | 'observedUrl' | 'title'>> }
-type ProfileTabs = { selectedId: string | null; tabs: Map<string, Tab>; views: Map<string, WebContentsView>; writes: Promise<void> }
+type ProfileTabs = { selectedId: string | null; tabs: Map<string, Tab>; views: Map<string, WebContentsView>;
+  inFlightOperations: Map<string, BrowserReceipt>; writes: Promise<void> }
 type WindowTab = { profileId: string; tabId: string; bounds: Electron.Rectangle } | null
 const profiles = new Map<string, ProfileTabs>()
 const profilePaths = new Map<string, string>()
@@ -126,6 +130,41 @@ async function writeDurableRecord(directory: string, name: string, value: unknow
     await rename(temporary, join(directory, name))
     await syncDirectory(directory)
   } finally { await unlink(temporary).catch(() => undefined) }
+}
+function browserReceiptDirectory(id: string): string {
+  return join(profilePath(id), 'browser-operations-v1')
+}
+function browserReceiptName(requestId: string): string {
+  return `${createHash('sha256').update(requestId).digest('hex')}.json`
+}
+function validBrowserReceipt(value: unknown, requestId: string, profileId: string): BrowserReceipt {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Browser receipt is invalid; preserve it for review')
+  }
+  const item = value as BrowserReceipt
+  if (item.requestId !== requestId || item.profileId !== profileId || !validId(item.ownerId) ||
+    !/^[a-f0-9]{64}$/.test(item.fingerprint) ||
+    !['pending', 'completed'].includes(item.status) ||
+    !['browser.open', 'browser.navigate', 'browser.close'].includes(item.op) ||
+    !(item.tabId === null || validId(item.tabId)) ||
+    (item.status === 'completed' && item.tabId === null)) {
+    throw new Error('Browser receipt is invalid; preserve it for review')
+  }
+  return item
+}
+async function readBrowserReceipt(id: string, profileId: string, requestId: string): Promise<BrowserReceipt | null> {
+  const value = await readSmallJson(join(browserReceiptDirectory(id), browserReceiptName(requestId)))
+  return value === null ? null : validBrowserReceipt(value, requestId, profileId)
+}
+async function writeBrowserReceipt(id: string, receipt: BrowserReceipt): Promise<void> {
+  const directory = browserReceiptDirectory(id)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const info = await lstat(directory)
+  if (!info.isDirectory() || (info.mode & 0o077) !== 0) {
+    throw new Error('Browser receipt directory is unsafe; preserve it for review')
+  }
+  await syncDirectory(profilePath(id))
+  await writeDurableRecord(directory, browserReceiptName(receipt.requestId), receipt)
 }
 async function writeOwner(directory: string, id: string): Promise<void> {
   const handle = await open(join(directory, ownerName), 'wx', 0o600)
@@ -347,7 +386,7 @@ async function stateFor(id: string): Promise<ProfileTabs> {
       tabs.set(item.id, { ...item, loading: false, error: '' })
     }
     const state: ProfileTabs = { tabs, selectedId: validId(saved?.selectedId) && tabs.has(saved.selectedId) ? saved.selectedId : null,
-      views: new Map(), writes: Promise.resolve() }
+      views: new Map(), inFlightOperations: new Map(), writes: Promise.resolve() }
     profiles.set(id, state)
     return state
   })()
@@ -360,11 +399,9 @@ async function save(id: string): Promise<void> {
     id: tab.id, profileId: id, requestedUrl: tab.requestedUrl, observedUrl: tab.observedUrl, title: tab.title,
   })) }
   state.writes = state.writes.catch(() => undefined).then(async () => {
-    const file = target(id)
-    await mkdir(profilePath(id), { recursive: true })
-    const temporary = `${file}.${randomUUID()}.tmp`
-    await writeFile(temporary, JSON.stringify(payload), { mode: 0o600, flag: 'wx' })
-    await rename(temporary, file)
+    const directory = profilePath(id)
+    await mkdir(directory, { recursive: true })
+    await writeDurableRecord(directory, basename(target(id)), payload)
   })
   await state.writes
 }
@@ -889,6 +926,154 @@ export async function readBrowserOwner(profileId: string, op: 'browser.list' | '
   const tab = exact(state, profileId, tabId)
   return { type: 'browser_tab', tab_id: tab.id, tab: { ...tab } }
 }
+export async function readBrowserOperation(browserProfileId: string, profileId: string,
+  requestId: unknown): Promise<Record<string, unknown>> {
+  if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(requestId)) {
+    throw new Error('Invalid browser request identity')
+  }
+  const lease = liveBrowserLease(browserProfileId)
+  const state = await stateFor(browserProfileId)
+  requireBrowserLease(browserProfileId, lease)
+  const receipt = await readBrowserReceipt(browserProfileId, profileId, requestId) ?? state.inFlightOperations.get(requestId)
+  requireBrowserLease(browserProfileId, lease)
+  if (!receipt) throw new Error('Browser operation is unavailable')
+  return { type: 'browser_operation', request_id: requestId,
+    state: receipt.status === 'completed' && !state.inFlightOperations.has(requestId) ? 'completed' : 'unknown',
+    payload_fingerprint: receipt.fingerprint, op: receipt.op,
+    ...(receipt.tabId ? { result: { type: 'browser_mutation', op: receipt.op, tab_id: receipt.tabId,
+      profile_id: receipt.profileId, owner_id: receipt.ownerId, request_id: requestId,
+      payload_fingerprint: receipt.fingerprint } } : {}) }
+}
+function liveBrowserLease(id: string): BrowserLease {
+  const lease = browserLease
+  if (activeProfile !== id || lease?.id !== id || lease.released || capturingProfiles.has(id)) {
+    throw new Error('Browser owner is unavailable')
+  }
+  return lease
+}
+function requireBrowserLease(id: string, lease: BrowserLease): void {
+  if (activeProfile !== id || browserLease !== lease || lease.released) {
+    throw new Error('Browser owner changed')
+  }
+}
+async function openBrowserTab(id: string, url: unknown): Promise<string> {
+  if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
+  const lease = liveBrowserLease(id)
+  const state = await stateFor(id)
+  requireBrowserLease(id, lease)
+  await e2eBrowserPause('open-before-mutation', url as string)
+  requireBrowserLease(id, lease)
+  const address = url as string
+  const tab: Tab = { id: randomUUID(), profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '' }
+  state.tabs.set(tab.id, tab)
+  state.selectedId = tab.id
+  viewFor(id, state, tab)
+  await save(id)
+  publish(id)
+  return tab.id
+}
+async function navigateBrowserTab(id: string, tabId: unknown, url: unknown): Promise<string> {
+  if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
+  const lease = liveBrowserLease(id)
+  const state = await stateFor(id)
+  const tab = exact(state, id, tabId)
+  requireBrowserLease(id, lease)
+  tab.requestedUrl = url as string
+  tab.error = ''
+  await save(id)
+  requireBrowserLease(id, lease)
+  const existing = state.views.get(tab.id)
+  const view = viewFor(id, state, tab, url as string)
+  tab.loading = true
+  publish(id)
+  if (existing && !existing.webContents.isDestroyed()) void view.webContents.loadURL(url as string).catch((error) => {
+    if (view.webContents.isDestroyed()) return
+    tab.loading = view.webContents.isLoading()
+    if (!abortedLoad(error) && !tab.error) tab.error = `Load failed: ${String(error)}`
+    else if (!tab.loading && !tab.error) tab.error = 'Navigation canceled'
+    publish(id)
+  })
+  return tab.id
+}
+async function closeBrowserTab(id: string, tabId: unknown): Promise<string> {
+  const lease = liveBrowserLease(id)
+  const state = await stateFor(id)
+  const tab = exact(state, id, tabId)
+  requireBrowserLease(id, lease)
+  for (const window of BrowserWindow.getAllWindows()) {
+    const selected = windows.get(window.webContents.id)
+    if (selected?.profileId === id && selected.tabId === tab.id) detach(window)
+  }
+  const view = state.views.get(tab.id)
+  if (view && !view.webContents.isDestroyed()) view.webContents.close()
+  state.views.delete(tab.id)
+  state.tabs.delete(tab.id)
+  if (state.selectedId === tab.id) state.selectedId = state.tabs.keys().next().value ?? null
+  await save(id)
+  publish(id)
+  return tab.id
+}
+export async function mutateBrowserOwner(browserProfileId: string, profileId: string, ownerId: string,
+  op: BrowserMutation, requestId: unknown, fingerprint: unknown, tabId?: unknown,
+  url?: unknown): Promise<Record<string, unknown>> {
+  if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(requestId) ||
+    typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(fingerprint)) {
+    throw new Error('Invalid browser request identity')
+  }
+  const expected = createHash('sha256').update(JSON.stringify([op, profileId, ownerId,
+    tabId ?? null, url ?? null])).digest('hex')
+  if (expected !== fingerprint) throw new Error('Browser request fingerprint does not match its target')
+  const lease = liveBrowserLease(browserProfileId)
+  browserOperations.set(browserProfileId, (browserOperations.get(browserProfileId) ?? 0) + 1)
+  try {
+  const state = await stateFor(browserProfileId)
+  requireBrowserLease(browserProfileId, lease)
+  if (op === 'browser.open' && (!allowedUrl(url) || tabId !== undefined) ||
+    op === 'browser.navigate' && (!validId(tabId) || !allowedUrl(url)) ||
+    op === 'browser.close' && (!validId(tabId) || url !== undefined)) {
+    throw new Error('Invalid browser mutation target')
+  }
+  const receipt: BrowserReceipt = { requestId, fingerprint, profileId, ownerId, status: 'pending', op, tabId: null }
+  const running = state.inFlightOperations.get(requestId)
+  if (running) {
+    if (running.fingerprint !== fingerprint) throw new Error('Browser request ID conflicts with a different target')
+    throw new Error('outcome_unknown: browser effect is already in progress')
+  }
+  state.inFlightOperations.set(requestId, receipt)
+  try {
+    const previous = await readBrowserReceipt(browserProfileId, profileId, requestId)
+    requireBrowserLease(browserProfileId, lease)
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new Error('Browser request ID conflicts with a different target')
+      if (previous.status !== 'completed' || !previous.tabId) {
+        throw new Error('outcome_unknown: browser effect needs reconciliation')
+      }
+      return { type: 'browser_mutation', op, tab_id: previous.tabId }
+    }
+    await writeBrowserReceipt(browserProfileId, receipt)
+    requireBrowserLease(browserProfileId, lease)
+    const resultId = op === 'browser.open' ? await openBrowserTab(browserProfileId, url)
+      : op === 'browser.navigate' ? await navigateBrowserTab(browserProfileId, tabId, url)
+      : await closeBrowserTab(browserProfileId, tabId)
+    receipt.tabId = resultId
+    receipt.status = 'completed'
+    try { await writeBrowserReceipt(browserProfileId, receipt) }
+    catch { receipt.status = 'pending'; throw new Error('outcome_unknown: browser receipt could not be saved') }
+    return { type: 'browser_mutation', op, tab_id: resultId }
+  } catch (error) {
+    if (receipt.status !== 'completed' && !String(error).includes('conflicts with a different target')) {
+      throw new Error(`outcome_unknown: ${String(error)}`)
+    }
+    throw error
+  } finally {
+    state.inFlightOperations.delete(requestId)
+  }
+  } finally {
+    const remaining = (browserOperations.get(browserProfileId) ?? 1) - 1
+    if (remaining) browserOperations.set(browserProfileId, remaining)
+    else browserOperations.delete(browserProfileId)
+  }
+}
 export function registerBrowserIpc(): void {
   guardedBrowserHandle('ade:browser-list', async (event) => {
     const { id } = current(event)
@@ -898,22 +1083,7 @@ export function registerBrowserIpc(): void {
   })
   guardedBrowserHandle('ade:browser-open', async (event, url: unknown) => {
     const { id } = current(event)
-    if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
-    const state = await stateFor(id)
-    if (activeProfile !== id) throw new Error('Profile changed')
-    const lease = browserLease
-    if (lease?.id !== id || lease.released) throw new Error('Browser owner is unavailable')
-    await e2eBrowserPause('open-before-mutation', url as string)
-    if (activeProfile !== id || browserLease !== lease || lease.released) {
-      throw new Error('Browser owner changed before opening the tab')
-    }
-    const address = url as string
-    const tab: Tab = { id: randomUUID(), profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '' }
-    state.tabs.set(tab.id, tab)
-    state.selectedId = tab.id
-    viewFor(id, state, tab)
-    await save(id)
-    publish(id)
+    await openBrowserTab(id, url)
     return snapshot(id)
   })
   guardedBrowserHandle('ade:browser-select', async (event, tabId: unknown) => {
@@ -939,24 +1109,7 @@ export function registerBrowserIpc(): void {
   })
   guardedBrowserHandle('ade:browser-navigate', async (event, tabId: unknown, url: unknown) => {
     const { id } = current(event)
-    const state = await stateFor(id)
-    const tab = exact(state, id, tabId)
-    if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
-    if (activeProfile !== id) throw new Error('Profile changed')
-    tab.requestedUrl = url as string
-    tab.error = ''
-    await save(id)
-    const existing = state.views.get(tab.id)
-    const view = viewFor(id, state, tab, url as string)
-    tab.loading = true
-    publish(id)
-    if (existing && !existing.webContents.isDestroyed()) void view.webContents.loadURL(url as string).catch((error) => {
-      if (view.webContents.isDestroyed()) return
-      tab.loading = view.webContents.isLoading()
-      if (!abortedLoad(error) && !tab.error) tab.error = `Load failed: ${String(error)}`
-      else if (!tab.loading && !tab.error) tab.error = 'Navigation canceled'
-      publish(id)
-    })
+    await navigateBrowserTab(id, tabId, url)
     return snapshot(id)
   })
   guardedBrowserHandle('ade:browser-history', async (event, tabId: unknown, direction: unknown) => {
@@ -973,20 +1126,7 @@ export function registerBrowserIpc(): void {
   })
   guardedBrowserHandle('ade:browser-close', async (event, tabId: unknown) => {
     const { id } = current(event)
-    const state = await stateFor(id)
-    const tab = exact(state, id, tabId)
-    if (activeProfile !== id) throw new Error('Profile changed')
-    for (const window of BrowserWindow.getAllWindows()) {
-      const selected = windows.get(window.webContents.id)
-      if (selected?.profileId === id && selected.tabId === tab.id) detach(window)
-    }
-    const view = state.views.get(tab.id)
-    if (view && !view.webContents.isDestroyed()) view.webContents.close()
-    state.views.delete(tab.id)
-    state.tabs.delete(tab.id)
-    if (state.selectedId === tab.id) state.selectedId = state.tabs.keys().next().value ?? null
-    await save(id)
-    publish(id)
+    await closeBrowserTab(id, tabId)
     return snapshot(id)
   })
   guardedBrowserHandle('ade:browser-bounds', async (event, tabId: unknown, rect: unknown) => {
