@@ -272,8 +272,10 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   unrelated routes remain available. A corrupt registry starts in explicit
   recovery mode; the CLI can inspect, retry a fenced bind, or archive and reset
   after digest confirmation. Real-process E2E covers restore, stale retries,
-  duplicate IDs, oversized and nonregular files, and FIFO refusal. Wider URL
-  discovery, Electron recovery UI, backup restore and the D09 public exposure
+  duplicate IDs, oversized and nonregular files, and FIFO refusal. Electron
+  now exposes blocked-route inspection, identity-fenced retry or retirement,
+  and reviewed corrupt-registry archive/reset; real-process E2E covers those
+  controls. Wider URL discovery, backup restore and the D09 public exposure
   policy remain.
 - F090 root package scripts and checked-in `.ade/scripts.json` recipes now run
   under supervised processes with retained output, stop/retire controls, exit
@@ -308,8 +310,22 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   the active Space. Rust formatting, strict workspace Clippy, and the GPUI
   prototype build-only package pass. F088, F090 and R006 remain open for the
   limitations above.
-- Next daily-use work: Oh My Pi managed native accounts, real-agent
-  account/control acceptance, proxy recovery UI, and browser
+- Commits `5f175ec`, `5c6709e` and `7665267` add desktop service URL
+  recovery and managed Oh My Pi account inspection, identity pinning,
+  per-turn drift fencing, private-home launch and desktop/CLI controls.
+  The Oh My Pi login command uses a private working directory, clears
+  ambient variables and requires the pinned 18.3.0 CLI. Integrated
+  source type checking, Fallow, builds and 72/72 real-process E2Es pass.
+  In two earlier full runs, the browser E2E still observed the previous URL
+  after requesting a redirect; it now waits for the preceding load to finish,
+  and the full rerun passes. The macOS package build and 6/6 packaged E2Es
+  pass, including native account inspection through bundled resources.
+  Rust formatting, strict workspace Clippy and the legacy GPUI build-only
+  package pass as well.
+  Hosted Oh My Pi
+  OAuth, credential refresh/logout and native fallback behavior remain
+  unverified. F021/F025/F027/R012 and F088 remain open.
+- Next daily-use work: real-agent account/control acceptance, browser
   ownership and backup/retention coordination. Continue
   through the full V1 register afterward.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
