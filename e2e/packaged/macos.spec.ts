@@ -76,6 +76,27 @@ test('installed CLI uses bundled Node and targets GUI profiles without switching
     const second = await cli('--profile', profiles[1].id, 'workspace', 'list')
     expect((first.workspaces as Array<{ root: string }>).map((item) => item.root)).toEqual([profiles[0].root])
     expect((second.workspaces as Array<{ root: string }>).map((item) => item.root)).toEqual([profiles[1].root])
+    const workspaceId = (first.workspaces as Array<{ id: string }>)[0].id
+    const createdTerminal = await cli('--profile', profiles[0].id, 'terminal', 'create', workspaceId,
+      '--request-id', 'installed-cli-terminal')
+    const terminalId = createdTerminal.terminal_id as string
+    expect((await cli('--profile', profiles[0].id, 'terminal', 'create', workspaceId,
+      '--request-id', 'installed-cli-terminal')).terminal_id).toBe(terminalId)
+    expect((await cli('--profile', profiles[0].id, 'terminal', 'operation', workspaceId,
+      'installed-cli-terminal')).terminal_id).toBe(terminalId)
+    expect((await cli('--profile', profiles[0].id, 'terminal', 'inspect', workspaceId, terminalId)).type)
+      .toBe('snapshot')
+    expect((await cli('--profile', profiles[0].id, 'terminal', 'stop', workspaceId, terminalId)).type)
+      .toBe('ack')
+    await expect.poll(async () => {
+      const runtime = await cli('--profile', profiles[0].id, 'request', 'runtime.status')
+      return (runtime.terminals as Array<{ metrics: { terminal_id: string; shell_running: boolean } }>)
+        .find((item) => item.metrics.terminal_id === terminalId)?.metrics.shell_running
+    }).toBe(false)
+    expect((await cli('--profile', profiles[0].id, 'terminal', 'retire', workspaceId, terminalId)).type)
+      .toBe('ack')
+    expect((await cli('--profile', profiles[0].id, 'terminal', 'list')).terminals)
+      .not.toContainEqual({ workspace_id: workspaceId, terminal_id: terminalId })
     const wrong = await execFileAsync(installedCli,
       ['--profile', '00000000-0000-4000-8000-000000000000', 'workspace', 'list'],
       { env: cliEnv, cwd: directory, timeout: 35_000 }).catch((error: Error & { stderr?: string }) => error)

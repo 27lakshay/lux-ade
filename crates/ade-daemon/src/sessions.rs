@@ -1345,9 +1345,30 @@ impl Sessions {
             }
             "terminal.create" => {
                 let mut d = self.data.lock().unwrap();
-                let terminal = d.store.create_terminal(string("workspace_id")?)?;
+                let request_id = match request.get("request_id") {
+                    Some(value) => Some(value.as_str().context("Invalid terminal request ID")?),
+                    None => None,
+                };
+                let terminal = d
+                    .store
+                    .create_terminal(string("workspace_id")?, request_id)?;
                 self.catalog_changed(&mut d)?;
                 Ok(json!({"type":"ack", "terminal_id":terminal}))
+            }
+            "terminal.operation" => {
+                let d = self.data.lock().unwrap();
+                let workspace_id = string("workspace_id")?;
+                let request_id = string("request_id")?;
+                let (owner, terminal_id) = d
+                    .store
+                    .terminal_creation(request_id)?
+                    .context("Terminal operation is unavailable")?;
+                ensure!(
+                    owner == workspace_id,
+                    "Terminal operation belongs to another workspace"
+                );
+                Ok(json!({"type":"terminal_operation", "workspace_id":owner,
+                    "request_id":request_id, "terminal_id":terminal_id}))
             }
             "conversation.create" => {
                 let mut d = self.data.lock().unwrap();

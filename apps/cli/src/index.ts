@@ -60,11 +60,19 @@ Commands:
                                         Pin only the identity returned by account inspect
   account disable ID                     Disable new ADE launches; does not log out native CLI or stop running agents
   terminal list                         List workspace terminals
+  terminal create WORKSPACE_ID --request-id ID
+                                        Create another terminal; reuse ID after a lost reply
+  terminal operation WORKSPACE_ID REQUEST_ID
+                                        Inspect a terminal creation receipt
   terminal inspect WORKSPACE_ID TERMINAL_ID
   terminal attach WORKSPACE_ID TERMINAL_ID
                                         Attach this TTY; press Ctrl-] to detach without stopping the shell
   terminal send WORKSPACE_ID TERMINAL_ID TEXT
   terminal resize WORKSPACE_ID TERMINAL_ID COLS ROWS
+  terminal stop WORKSPACE_ID TERMINAL_ID
+                                        Stop the selected terminal shell
+  terminal retire WORKSPACE_ID TERMINAL_ID
+                                        Remove a stopped terminal from the workspace
   service list WORKSPACE_ID             List managed services and execution state
   service configure WORKSPACE_ID NAME JSON_CONFIG [REVISION]
                                         Save a service recipe; revision defaults to 0
@@ -886,6 +894,7 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     })
   }
   if (area === 'terminal' && action === 'list') {
+    if (rest.length) throw new CliError('usage', 'terminal list does not accept arguments.')
     const all = (await catalog(socketPath)).workspaces
     if (!Array.isArray(all)) throw new CliError('protocol', 'Daemon catalog has no workspaces.')
     return { type: 'terminals', terminals: all.flatMap((item) => {
@@ -893,6 +902,29 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
       const ids = [item.terminal_id, ...(Array.isArray(item.extra_terminals) ? item.extra_terminals : [])]
       return ids.map((terminalId) => ({ workspace_id: item.id, terminal_id: terminalId }))
     }) }
+  }
+  if (area === 'terminal' && action === 'create') {
+    if (rest.length !== 3 || rest[1] !== '--request-id' || !rest[2] ||
+      rest[2].startsWith('--') || rest[2].length > 256) {
+      throw new CliError('usage', 'terminal create requires WORKSPACE_ID --request-id ID.')
+    }
+    const response = await requestDaemon(socketPath, 'terminal.create', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), request_id: rest[2],
+    })
+    return { ...response, request_id: rest[2] }
+  }
+  if (area === 'terminal' && action === 'operation') {
+    if (rest.length !== 2) throw new CliError('usage', 'terminal operation requires WORKSPACE_ID REQUEST_ID.')
+    return requestDaemon(socketPath, 'terminal.operation', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), request_id: required(rest[1], 'REQUEST_ID'),
+    })
+  }
+  if (area === 'terminal' && (action === 'stop' || action === 'retire')) {
+    if (rest.length !== 2) throw new CliError('usage', `terminal ${action} requires WORKSPACE_ID TERMINAL_ID.`)
+    const workspaceId = required(rest[0], 'WORKSPACE_ID')
+    const terminalId = required(rest[1], 'TERMINAL_ID')
+    await terminalTarget(socketPath, workspaceId, terminalId)
+    return requestDaemon(socketPath, `terminal.${action}`, { workspace_id: workspaceId, terminal_id: terminalId })
   }
   if (area === 'terminal' && ['inspect', 'send', 'resize'].includes(action ?? '')) {
     const workspaceId = required(rest[0], 'WORKSPACE_ID')

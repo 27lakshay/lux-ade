@@ -10,7 +10,7 @@ Public delivery, signing identity, and release ownership remain deferred.
 |---|---|---|
 | Client to daemon | `ade-application-v1` | `ade-core/src/protocol.rs` |
 | Daemon to supervisor | `ade-runtime-v8` | `ade-core/src/protocol.rs` |
-| SQLite data | `PRAGMA user_version = 15` | `crates/ade-daemon/src/store.rs` |
+| SQLite data | `PRAGMA user_version = 16` | `crates/ade-daemon/src/store.rs` |
 | Executable identity | Content hash and Mach-O UUID | Packaged `Resources/build-manifest.json` |
 
 Protocol identifiers describe compatibility, not the app marketing version.

@@ -26,7 +26,7 @@ use std::{
 use uuid::Uuid;
 
 const FILES: &[(&str, &str, i64)] = &[
-    ("sessions.sqlite", "sqlite", 15),
+    ("sessions.sqlite", "sqlite", 16),
     ("sessions.review.sqlite3", "sqlite", 0),
     ("sessions.worktrees/lifecycle.sqlite3", "sqlite", 3),
     ("sessions.worktrees/empty.toml", "manifest", 0),

@@ -669,7 +669,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=15).contains(&version),
+            (0..=16).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -892,6 +892,15 @@ impl Store {
             tx.execute_batch("PRAGMA user_version=15;")?;
             tx.execute(
                 "INSERT OR IGNORE INTO schema_migrations VALUES(15,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        if version < 16 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS terminal_creations(request_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, terminal_id TEXT NOT NULL); PRAGMA user_version=16;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(16,?1)",
                 [now_ms()],
             )?;
             tx.commit()?;
@@ -1851,8 +1860,42 @@ impl Store {
         );
         self.retire_terminal(workspace_id, run_id)
     }
-    pub fn create_terminal(&self, id: &str) -> Result<String> {
+    pub fn terminal_creation(&self, request_id: &str) -> Result<Option<(String, String)>> {
+        ensure!(
+            !request_id.is_empty() && request_id.len() <= 256,
+            "Invalid terminal request ID"
+        );
+        self.connection
+            .query_row(
+                "SELECT workspace_id,terminal_id FROM terminal_creations WHERE request_id=?1",
+                [request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+    pub fn create_terminal(&self, id: &str, request_id: Option<&str>) -> Result<String> {
         let tx = self.connection.unchecked_transaction()?;
+        if let Some(request_id) = request_id {
+            ensure!(
+                !request_id.is_empty() && request_id.len() <= 256,
+                "Invalid terminal request ID"
+            );
+            let prior: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT workspace_id,terminal_id FROM terminal_creations WHERE request_id=?1",
+                    [request_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((workspace_id, terminal_id)) = prior {
+                ensure!(
+                    workspace_id == id,
+                    "Terminal request ID conflicts with another workspace"
+                );
+                return Ok(terminal_id);
+            }
+        }
         let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
         ensure!(
             workspace.extra_terminals.len() < 32,
@@ -1864,6 +1907,12 @@ impl Store {
             "UPDATE workspaces SET data=?1 WHERE id=?2",
             params![encode(&workspace)?, id],
         )?;
+        if let Some(request_id) = request_id {
+            tx.execute(
+                "INSERT INTO terminal_creations VALUES(?1,?2,?3)",
+                params![request_id, id, terminal],
+            )?;
+        }
         tx.commit()?;
         Ok(terminal)
     }
@@ -3187,7 +3236,7 @@ mod tests {
         let db = Database::new();
         let store = db.open();
         let (workspace, conversation) = fixture(&store);
-        let extra = store.create_terminal(&workspace.id).unwrap();
+        let extra = store.create_terminal(&workspace.id, None).unwrap();
         let mut record = window(&workspace, &conversation, "tabs-window");
         record.tabs.initialized = true;
         let tab = TerminalTab {
