@@ -152,6 +152,7 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
     await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, `${url}/probe`), { id: personalId, url: web.url })
     await expect.poll(() => web.reports.filter((item) => item.page === 'probe').at(-1)?.cookie).toContain('profile=personal')
     await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.observedUrl).toContain('/probe')
+    await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.loading).toBe(false)
     await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, `${url}/redirect`), { id: personalId, url: web.url })
     await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.observedUrl)
       .toContain('/landing')
