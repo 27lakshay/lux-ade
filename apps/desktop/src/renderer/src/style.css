@@ -122,6 +122,19 @@ button.review-line:hover, button.review-line.selected { background: #263d34; }
 .review-feedback label { font-size: 12px; }
 .review-feedback textarea { background: #222627; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 9px; resize: vertical; width: 100%; }
 .review-feedback button { background: #84c8aa; border: 0; border-radius: 7px; color: #132019; font-size: 13px; font-weight: 600; justify-self: end; padding: 9px 12px; }
+.browser-pane { border-top: 1px solid #323637; margin: 32px 24px; padding: 18px 0 30px; }
+.browser-heading, .browser-tabs, .browser-toolbar, .browser-meta { align-items: center; display: flex; gap: 8px; }
+.browser-heading { justify-content: space-between; }
+.browser-heading h2 { font-size: 15px; margin: 0; }
+.browser-pane button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 7px 10px; }
+.browser-tabs { flex-wrap: wrap; margin: 12px 0; }
+.browser-tab { align-items: center; display: inline-flex; gap: 2px; }
+.browser-tab button[aria-current="page"] { background: #263d34; border-color: #397b59; }
+.browser-toolbar { margin: 12px 0 8px; }
+.browser-toolbar label { font-size: 12px; }
+.browser-toolbar input { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: inherit; flex: 1; min-width: 0; padding: 8px; }
+.browser-meta { color: #a5adae; flex-wrap: wrap; font-size: 11px; overflow-wrap: anywhere; }
+.browser-surface { background: #fff; border: 1px solid #454b4c; border-radius: 8px; height: 420px; margin-top: 9px; overflow: hidden; }
 @media (max-width: 780px) {
   .profile-bar { padding: 10px 16px; }
   .workspace-layout { grid-template-columns: 1fr; }

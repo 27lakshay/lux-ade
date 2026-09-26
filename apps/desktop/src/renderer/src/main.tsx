@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import type { ClientState, Workspace, Conversation, FeedFrame } from '@ade/client'
 import { mountTerminal, type TerminalBridge } from '@ade/terminal'
 import { ReviewPane } from './review'
+import { BrowserPane, type BrowserBridge } from './browser'
 import './style.css'
 
 type Frame = Record<string, unknown>
@@ -36,6 +37,7 @@ declare global {
       requestReview(op: string, fields: Record<string, unknown>): Promise<Frame>
       onDraftError(listener: (value: { conversationId: string; message: string }) => void): () => void
       terminal: TerminalBridge
+      browser: BrowserBridge
     }
   }
 }
@@ -596,7 +598,9 @@ function App(): React.JSX.Element {
     </div>}
     {state?.status === 'connected' ? <ConnectedContent key={profile?.activeId ?? 'fixed'} profileKey={profile?.activeId ?? 'fixed'} state={state} /> : <section className="welcome">
       <h1>Work across agents, in one place.</h1><p role="status">{state?.detail ?? 'Checking profile daemon…'}</p>
-    </section>}</main>
+    </section>}
+    {(profile?.activeId || !profile?.managed) && <BrowserPane key={`browser:${profile?.activeId ?? 'fixed'}`} profileId={profile?.activeId ?? 'fixed'} />}
+  </main>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

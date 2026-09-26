@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { AdeClient, DaemonRequestError, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
+import { closeBrowserWindow, flushBrowserSessions, registerBrowserIpc, setBrowserProfile } from './browser'
 
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
@@ -379,7 +380,8 @@ async function refreshProfiles(): Promise<ProfileState> {
   return publishProfile({ profiles: response.profiles as Profile[], selectedId: response.selected_id as string | null, error: '' })
 }
 
-function attachClient(endpoint: string, profileId: string): void {
+async function attachClient(endpoint: string, profileId: string): Promise<void> {
+  await setBrowserProfile(profileId, profileState.profiles.find((item) => item.id === profileId)?.home)
   const previous = client
   const previousSubscription = unsubscribeClient
   const previousFeed = unsubscribeFeed
@@ -414,7 +416,7 @@ async function selectProfile(id: string, updateDefault: boolean): Promise<Profil
       throw new Error('Profile launcher did not return a daemon socket')
     }
     if (updateDefault) await launcher('select', id)
-    attachClient(result.socket, id)
+    await attachClient(result.socket, id)
     return await refreshProfiles()
   } finally { switching = false }
 }
@@ -422,6 +424,7 @@ async function selectProfile(id: string, updateDefault: boolean): Promise<Profil
 if (process.env.ADE_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.ADE_E2E_USER_DATA_DIR)
 }
+registerBrowserIpc()
 
 ipcMain.handle('ade:app-version', () => app.getVersion())
 ipcMain.handle('ade:client-state', () => client.getState())
@@ -750,6 +753,7 @@ function openMainWindow(): void {
   })
   window.webContents.on('did-start-navigation', () => closeSenderTerminals(window.webContents.id))
   window.webContents.on('destroyed', () => {
+    closeBrowserWindow(window)
     closeSenderTerminals(window.webContents.id)
     selectedWorkspaces.delete(window.webContents.id)
     selectionRequests.delete(window.webContents.id)
@@ -778,6 +782,10 @@ app.whenReady().then(async () => {
     app.dock?.hide()
   }
   singleWindowId = await persistentWindowId()
+  if (!managedProfiles && fixedSocket) {
+    const fixedIdentity = createHash('sha256').update(resolve(fixedSocket)).digest('hex').slice(0, 32)
+    await setBrowserProfile('fixed', join(app.getPath('userData'), 'browser-fixed', fixedIdentity))
+  }
   unsubscribeClient = client.subscribe((state) => broadcast('ade:client-state-changed', state))
   unsubscribeFeed = client.subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
   client.start()
@@ -796,6 +804,8 @@ app.whenReady().then(async () => {
 })
 
 let readyToQuit = false
+let browserReadyToQuit = false
+let browserFlushInProgress = false
 app.on('before-quit', (event) => {
   if (!readyToQuit && process.env.ADE_E2E_HIDE_WINDOW !== '1') {
     if ([...drafts.values()].some((entry) => entry.send)) {
@@ -826,6 +836,25 @@ app.on('before-quit', (event) => {
       })
       return
     }
+  }
+  if (!browserReadyToQuit) {
+    event.preventDefault()
+    if (!browserFlushInProgress) {
+      browserFlushInProgress = true
+      void flushBrowserSessions().then(() => {
+        browserReadyToQuit = true
+        app.quit()
+      }).catch((error) => {
+        browserFlushInProgress = false
+        if (process.env.ADE_E2E_HIDE_WINDOW === '1') {
+          console.error('Browser state could not be saved', error)
+          browserReadyToQuit = true
+          app.quit()
+        } else void dialog.showMessageBox({ type: 'error', title: 'Browser state was not saved',
+          message: 'ADE is staying open because browser state could not be saved.', detail: String(error) })
+      })
+    }
+    return
   }
   for (const terminal of terminals.values()) terminal.dispose()
   terminals.clear()

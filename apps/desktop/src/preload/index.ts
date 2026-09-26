@@ -70,5 +70,22 @@ contextBridge.exposeInMainWorld('adeHost', {
     ipcRenderer.on('ade:feed-frame', receive)
     return () => ipcRenderer.removeListener('ade:feed-frame', receive)
   },
+  browser: {
+    list: () => ipcRenderer.invoke('ade:browser-list'),
+    open: (url: string) => ipcRenderer.invoke('ade:browser-open', url),
+    select: (id: string) => ipcRenderer.invoke('ade:browser-select', id),
+    newTab: () => ipcRenderer.invoke('ade:browser-new'),
+    navigate: (id: string, url: string) => ipcRenderer.invoke('ade:browser-navigate', id, url),
+    history: (id: string, direction: 'back' | 'forward') => ipcRenderer.invoke('ade:browser-history', id, direction),
+    close: (id: string) => ipcRenderer.invoke('ade:browser-close', id),
+    bounds: (id: string, rect: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('ade:browser-bounds', id, rect),
+    hide: () => ipcRenderer.invoke('ade:browser-hide'),
+    onState: (listener: (state: unknown) => void): (() => void) => {
+      const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
+      ipcRenderer.on('ade:browser-state', receive)
+      return () => ipcRenderer.removeListener('ade:browser-state', receive)
+    },
+  },
   terminal,
 })

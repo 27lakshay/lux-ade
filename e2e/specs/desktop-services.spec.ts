@@ -90,6 +90,20 @@ test('CLI and Electron share a managed workspace service across app closure', as
     expect(await runCliFailure(daemon.socket, 'listener', 'list', 'extra'))
       .toMatchObject({ type: 'error', code: 'usage' })
 
+    await window.getByRole('button', { name: 'Show preview' }).click()
+    await window.getByRole('textbox', { name: 'Address' }).fill(`http://127.0.0.1:${port}/`)
+    await window.getByRole('button', { name: 'Open tab' }).click()
+    await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.observedUrl)
+      .toBe(`http://127.0.0.1:${port}/`)
+    const previewId = (await window.evaluate(() => window.adeHost.browser.list())).tabs[0].id
+    await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, url),
+      { id: previewId, url: `http://127.0.0.1:${port}/other` })
+    await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.observedUrl)
+      .toContain('/other')
+    await window.evaluate((id) => window.adeHost.browser.history(id, 'back'), previewId)
+    await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.observedUrl)
+      .toBe(`http://127.0.0.1:${port}/`)
+
     await application.close()
     const afterClose = await runCli(daemon.socket, 'service', 'list', workspace.id)
     expect((afterClose.states as Record<string, { state: string }>).web.state).toBe('running')
@@ -111,6 +125,12 @@ test('CLI and Electron share a managed workspace service across app closure', as
       try { await fetch(`http://127.0.0.1:${port}`); return false }
       catch { return true }
     }).toBe(true)
+    await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, url),
+      { id: previewId, url: `http://127.0.0.1:${port}/` })
+    await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.error)
+      .toContain('Load failed')
+    expect((await window.evaluate(() => window.adeHost.browser.list())).tabs[0].id).toBe(previewId)
+    await expect(window.getByRole('region', { name: 'Browser preview' }).getByRole('alert')).toContainText('Load failed')
 
     await window.getByRole('article', { name: 'Service web' }).getByRole('button', { name: 'Start' }).click()
     await expect(window.getByRole('article', { name: 'Service web' })).toContainText('running')
