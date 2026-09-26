@@ -18,6 +18,8 @@ extraFiles:
   - from: target/release/ade-runtime
     to: MacOS/ade-runtime
 extraResources:
+  - from: scripts/browser_lease.py
+    to: browser_lease.py
   - from: scripts/profiles.py
     to: profiles.py
   - from: scripts/runtime.py

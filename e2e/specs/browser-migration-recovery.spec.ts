@@ -76,6 +76,56 @@ async function creationStages(parent: string, storageKey: string): Promise<strin
   return (await readdir(parent)).filter((name) => name.startsWith(`${storageKey}.creating-`))
 }
 
+test('a second Electron process cannot write one profile browser while its owner is alive', async () => {
+  test.setTimeout(70_000)
+  const directory = await mkdtemp(join(tmpdir(), 'ade-browser-lease-'))
+  const web = await fixture()
+  const { ADE_SOCKET: _fixedSocket, ADE_DAEMON_BIN: _parentDaemon, ...environment } = process.env
+  const common = { ...environment, ADE_PROFILES_HOME: join(directory, 'profiles'),
+    ADE_DAEMON_BIN: resolve('target/debug/ade-daemon'), ADE_E2E_HIDE_WINDOW: '1' }
+  const launch = (name: string) => electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+    env: { ...common, ADE_E2E_USER_DATA_DIR: join(directory, name) } })
+  const owned: OwnedRuntime[] = []
+  let first: Application | null = null
+  let second: Application | null = null
+  try {
+    first = await launch('first')
+    const firstWindow = await first.firstWindow()
+    await firstWindow.getByRole('textbox', { name: 'New profile' }).fill('Shared')
+    await firstWindow.getByRole('button', { name: 'Create' }).click()
+    await expect(firstWindow.locator('header').getByRole('status')).toHaveText('connected')
+    const profile = (await firstWindow.evaluate(() => window.adeHost.getProfileState())).profiles
+      .find((item) => item.name === 'Shared')!
+    owned.push(await locateOwned(profile.home))
+    await firstWindow.evaluate((url) => window.adeHost.browser.open(url), `${web.url}/set`)
+    await expect.poll(() => web.reports.findLast((item) => item.page === 'set')?.cookie).toContain('profile=migrated')
+
+    second = await launch('second')
+    const secondWindow = await second.firstWindow()
+    await secondWindow.getByRole('textbox', { name: 'New profile' }).waitFor()
+    await expect.poll(async () => (await secondWindow.evaluate(() => window.adeHost.getProfileState())).error)
+      .toContain('Another ADE process owns browser data')
+    await expect(secondWindow.evaluate((id) => window.adeHost.selectProfile(id), profile.id))
+      .rejects.toThrow(/Another ADE process owns browser data/)
+    expect((await firstWindow.evaluate(() => window.adeHost.browser.list())).tabs).toHaveLength(1)
+
+    const owner = first.process()
+    owner.kill('SIGKILL')
+    await waitForExit(owner)
+    first = null
+    await expect.poll(async () => secondWindow.evaluate((id) => window.adeHost.selectProfile(id)
+      .then(() => true, () => false), profile.id), { timeout: 15_000 }).toBe(true)
+    await expect(secondWindow.locator('header').getByRole('status')).toHaveText('connected')
+    expect((await secondWindow.evaluate(() => window.adeHost.browser.list())).tabs).toHaveLength(1)
+  } finally {
+    await first?.close().catch(() => undefined)
+    await second?.close().catch(() => undefined)
+    for (const item of owned) await stopOwned(item).catch(() => undefined)
+    await new Promise<void>((done) => web.server.close(() => done()))
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 for (const pause of ['fresh-stage', 'fresh-owner'] as const) {
   test(`a ${pause} crash creates a usable owned browser session on relaunch`, async () => {
     test.setTimeout(60_000)

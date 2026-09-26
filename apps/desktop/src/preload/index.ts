@@ -90,6 +90,11 @@ contextBridge.exposeInMainWorld('adeHost', {
       ipcRenderer.on('ade:browser-state', receive)
       return () => ipcRenderer.removeListener('ade:browser-state', receive)
     },
+    onLeaseLost: (listener: (profileId: string) => void): (() => void) => {
+      const receive = (_event: Electron.IpcRendererEvent, profileId: string): void => listener(profileId)
+      ipcRenderer.on('ade:browser-lease-lost', receive)
+      return () => ipcRenderer.removeListener('ade:browser-lease-lost', receive)
+    },
   },
   terminal,
 })

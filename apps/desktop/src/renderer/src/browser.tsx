@@ -13,6 +13,7 @@ export type BrowserBridge = {
   bounds(id: string, rect: { x: number; y: number; width: number; height: number }): Promise<void>
   hide(): Promise<void>
   onState(listener: (state: BrowserState) => void): () => void
+  onLeaseLost(listener: (profileId: string) => void): () => void
 }
 
 export function BrowserPane({ profileId }: { profileId: string }): React.JSX.Element {
@@ -29,10 +30,16 @@ export function BrowserPane({ profileId }: { profileId: string }): React.JSX.Ele
     const unsubscribe = window.adeHost.browser.onState((next) => {
       if (alive && next.profileId === profileId) setState(next)
     })
+    const unsubscribeLease = window.adeHost.browser.onLeaseLost((id) => {
+      if (alive && id === profileId) {
+        setState(null)
+        setError('Browser session ownership was lost. Restart ADE before using this profile browser.')
+      }
+    })
     void window.adeHost.browser.list().then((next) => {
       if (alive && next.profileId === profileId) { setState(next); if (next.tabs.length) setExpanded(true) }
     }).catch((reason) => { if (alive) setError(String(reason)) })
-    return () => { alive = false; unsubscribe(); void window.adeHost.browser.hide() }
+    return () => { alive = false; unsubscribe(); unsubscribeLease(); void window.adeHost.browser.hide() }
   }, [profileId])
   React.useEffect(() => { setAddress(selected?.requestedUrl || '') }, [selected?.id, selected?.requestedUrl])
   React.useEffect(() => {

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, session, WebContentsView } from 'electron'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
@@ -13,6 +14,8 @@ const loadingProfiles = new Map<string, Promise<ProfileTabs>>()
 const guardedSessions = new Set<string>()
 const windows = new Map<number, WindowTab>()
 let activeProfile: string | null = null
+type BrowserLease = { id: string; process: ChildProcessWithoutNullStreams; released: boolean }
+let browserLease: BrowserLease | null = null
 
 const allowedUrl = (value: unknown): boolean => {
   if (typeof value !== 'string' || value.length > 8192) return false
@@ -32,6 +35,70 @@ const storageKey = (id: string): string => createHash('sha256').update(id).diges
 const browserStoragePath = (id: string): string => {
   if (id === 'fixed') return join(profilePath(id), 'browser-session')
   return join(app.getPath('userData'), 'browser-sessions', storageKey(id))
+}
+async function acquireBrowserLease(id: string, directory: string): Promise<BrowserLease> {
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const script = app.isPackaged ? join(process.resourcesPath, 'browser_lease.py')
+    : join(app.getAppPath(), '../../scripts/browser_lease.py')
+  const child = spawn(app.isPackaged ? '/usr/bin/python3' : 'python3',
+    [script, join(directory, '.ade-browser-session.lock')], { stdio: ['pipe', 'pipe', 'pipe'] })
+  child.stdin.on('error', () => undefined)
+  const lease: BrowserLease = { id, process: child, released: false }
+  try {
+    const status = await new Promise<string>((resolve, reject) => {
+      let output = ''
+      const timeout = setTimeout(() => reject(new Error('Browser session lease timed out')), 10_000)
+      const finish = (error?: Error, value?: string): void => {
+        clearTimeout(timeout)
+        child.stdout.off('data', onData)
+        child.off('error', onError)
+        child.off('exit', onExit)
+        if (error) reject(error)
+        else resolve(value ?? '')
+      }
+      const onError = (error: Error): void => finish(error)
+      const onExit = (): void => finish(new Error('Browser session lease helper stopped before admission'))
+      const onData = (chunk: Buffer): void => {
+        output += chunk.toString('utf8')
+        if (output.length > 32) return finish(new Error('Browser session lease returned an invalid response'))
+        const newline = output.indexOf('\n')
+        if (newline >= 0) finish(undefined, output.slice(0, newline))
+      }
+      child.stdout.on('data', onData)
+      child.once('error', onError)
+      child.once('exit', onExit)
+    })
+    if (status !== 'ready') throw new Error(status === 'busy'
+      ? `Another ADE process owns browser data for profile ${id}; close its browser before switching here`
+      : 'Browser session lease returned an invalid response')
+    child.on('exit', () => {
+      if (lease.released || browserLease !== lease) return
+      browserLease = null
+      activeProfile = null
+      for (const window of BrowserWindow.getAllWindows()) detach(window)
+      for (const state of profiles.values()) {
+        for (const view of state.views.values()) if (!view.webContents.isDestroyed()) view.webContents.close()
+        state.views.clear()
+      }
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('ade:browser-lease-lost', id)
+      }
+    })
+    return lease
+  } catch (error) {
+    child.stdin.end()
+    if (child.exitCode === null) child.kill()
+    throw error
+  }
+}
+async function releaseBrowserLease(lease: BrowserLease): Promise<void> {
+  lease.released = true
+  if (lease.process.exitCode !== null || lease.process.signalCode !== null) return
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => { lease.process.kill(); resolve() }, 5_000)
+    lease.process.once('exit', () => { clearTimeout(timer); resolve() })
+    lease.process.stdin.end()
+  })
 }
 async function directoryExists(directory: string): Promise<boolean> {
   try {
@@ -210,20 +277,23 @@ async function migrateBrowserStorage(id: string): Promise<void> {
 }
 export async function adoptUnownedBrowserStorage(id: string, directory: string): Promise<void> {
   if (!validId(id) || id === 'fixed' || !isAbsolute(directory)) throw new Error('Invalid browser profile for adoption')
-  const destination = join(app.getPath('userData'), 'browser-sessions', storageKey(id))
-  const source = join(directory, 'browser-session')
-  if (!(await directoryExists(destination)) || await directoryExists(source)) {
-    throw new Error('Browser session adoption requires one existing destination and no legacy source')
-  }
-  if (await checkOwner(destination, id)) throw new Error('Browser session already has a verified owner')
-  const marker = await readSmallJson(join(destination, '.ade-migration-v1.json')) as { profileId?: string } | null
-  if (marker) throw new Error('Browser migration marker requires separate review before adoption')
-  const entries = await readdir(dirname(destination))
-  if (entries.some((name) => name.startsWith(`${storageKey(id)}.migrating-`) ||
-    name.startsWith(`${storageKey(id)}.creating-`))) {
-    throw new Error('Interrupted browser storage work must be resolved before adoption')
-  }
-  await writeOwner(destination, id)
+  const lease = await acquireBrowserLease(id, directory)
+  try {
+    const destination = join(app.getPath('userData'), 'browser-sessions', storageKey(id))
+    const source = join(directory, 'browser-session')
+    if (!(await directoryExists(destination)) || await directoryExists(source)) {
+      throw new Error('Browser session adoption requires one existing destination and no legacy source')
+    }
+    if (await checkOwner(destination, id)) throw new Error('Browser session already has a verified owner')
+    const marker = await readSmallJson(join(destination, '.ade-migration-v1.json')) as { profileId?: string } | null
+    if (marker) throw new Error('Browser migration marker requires separate review before adoption')
+    const entries = await readdir(dirname(destination))
+    if (entries.some((name) => name.startsWith(`${storageKey(id)}.migrating-`) ||
+      name.startsWith(`${storageKey(id)}.creating-`))) {
+      throw new Error('Interrupted browser storage work must be resolved before adoption')
+    }
+    await writeOwner(destination, id)
+  } finally { await releaseBrowserLease(lease) }
 }
 const snapshot = (id: string): { profileId: string; selectedId: string | null; tabs: Tab[] } => {
   const state = profiles.get(id)
@@ -389,13 +459,21 @@ export async function setBrowserProfile(id: string | null, directory?: string): 
   if (id && (!directory || !isAbsolute(directory))) throw new Error('Browser profile needs an absolute storage path')
   // Migration can refuse an ambiguous destination. Validate it before detaching
   // the previous profile's views or changing the active browser identity.
+  let acquired: BrowserLease | null = null
   if (id) {
     const originalPath = profilePaths.get(id)
     if (originalPath && originalPath !== directory) {
       throw new Error('Browser profile home changed while active; restart ADE to rebind this profile')
     }
+    acquired = browserLease?.id === id ? null : await acquireBrowserLease(id, directory as string)
     profilePaths.set(id, directory as string)
-    try { await migrateBrowserStorage(id) } catch (error) {
+    try {
+      await migrateBrowserStorage(id)
+      if (acquired && (acquired.process.exitCode !== null || acquired.process.signalCode !== null)) {
+        throw new Error('Browser session lease ended during profile selection')
+      }
+    } catch (error) {
+      if (acquired) await releaseBrowserLease(acquired)
       if (originalPath === undefined) profilePaths.delete(id)
       else profilePaths.set(id, originalPath)
       throw error
@@ -404,13 +482,29 @@ export async function setBrowserProfile(id: string | null, directory?: string): 
   const previous = activeProfile
   activeProfile = null
   for (const window of BrowserWindow.getAllWindows()) detach(window)
-  if (previous && previous !== id) {
-    const prior = profiles.get(previous)
-    await flushProfileSession(previous)
-    for (const view of prior?.views.values() ?? []) if (!view.webContents.isDestroyed()) view.webContents.close()
-    prior?.views.clear()
+  try {
+    if (previous && previous !== id) {
+      const prior = profiles.get(previous)
+      await flushProfileSession(previous)
+      for (const view of prior?.views.values() ?? []) if (!view.webContents.isDestroyed()) view.webContents.close()
+      prior?.views.clear()
+    }
+    if (acquired && (acquired.process.exitCode !== null || acquired.process.signalCode !== null)) {
+      throw new Error('Browser session lease ended during profile selection')
+    }
+    if ((acquired || !id) && browserLease) {
+      const previousLease = browserLease
+      browserLease = acquired
+      await releaseBrowserLease(previousLease)
+    } else if (acquired) {
+      browserLease = acquired
+    }
+    activeProfile = id
+  } catch (error) {
+    if (acquired && browserLease !== acquired) await releaseBrowserLease(acquired)
+    activeProfile = previous
+    throw error
   }
-  activeProfile = id
   if (id) void stateFor(id).then(() => publish(id)).catch(() => undefined)
 }
 export function closeBrowserWindow(window: BrowserWindow): void {
