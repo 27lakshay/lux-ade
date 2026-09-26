@@ -898,9 +898,14 @@ impl Worktrees {
         let mut repositories = Vec::with_capacity(rows.len());
         for row in rows {
             let repository: Repository = serde_json::from_str(&row)?;
+            let rebindable = repository.source_root_device.is_some()
+                && repository.source_root_inode.is_some()
+                && repository.source_common_device.is_some()
+                && repository.source_common_inode.is_some();
             repositories.push(json!({"id":repository.id,"root":repository.root,
                 "common_dir":repository.common_dir,
                 "needs_rebind":repository.needs_rebind || !repository_binding_matches(&repository),
+                "rebindable":rebindable,
                 "binding_generation":repository.binding_generation}));
         }
         Ok(json!({"type":"worktree_rebind_catalog","repositories":repositories}))

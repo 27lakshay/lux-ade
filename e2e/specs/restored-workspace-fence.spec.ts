@@ -77,17 +77,15 @@ test('restored external workspace keeps history readable but fences source check
         window_id: 'source-draft' })).draft).toMatchObject({ text: 'Source draft' })
       expect((await rpc(clone.socket, { op: 'workspace.open', path: checkout })).workspace)
         .toMatchObject({ id: workspace.id, needs_rebind: true })
-      const inherited = (await rpc(clone.socket, { op: 'workspace.open', path: child }))
-        .workspace as { id: string; needs_rebind: boolean; root: string }
-      expect(inherited).toMatchObject({ root: await realpath(child), needs_rebind: true })
-      expect(inherited.id).not.toBe(workspace.id)
-      expect(await rawReply(clone.socket, { op: 'terminal.create', workspace_id: inherited.id }))
+      expect(await rawReply(clone.socket, { op: 'workspace.open', path: child }))
         .toMatchObject({ type: 'error', code: 'needs_rebind' })
-      const unclassified = (await rpc(clone.socket, { op: 'workspace.open', path: unknown }))
-        .workspace as { id: string; needs_rebind: boolean }
-      expect(unclassified.needs_rebind).toBe(true)
-      expect(await rawReply(clone.socket, { op: 'terminal.create', workspace_id: unclassified.id }))
+      expect(await rawReply(clone.socket, { op: 'workspace.open', path: unknown }))
         .toMatchObject({ type: 'error', code: 'needs_rebind' })
+      const afterRejected = (await rpc(clone.socket, { op: 'catalog.get' })).catalog as {
+        workspaces: Array<{ root: string }>
+      }
+      expect(afterRejected.workspaces.map((item) => item.root)).not.toContain(await realpath(child))
+      expect(afterRejected.workspaces.map((item) => item.root)).not.toContain(await realpath(unknown))
 
       for (const request of [
         { op: 'agent.send', conversation_id: conversation.id, request_id: 'blocked-send', text: 'run' },
@@ -144,8 +142,8 @@ test('restored lifecycle-only repository stays fenced after private workspace re
       '--backup', backup, '--data-dir', restored], { timeout: 20_000 })
     const fenced = await startDaemon({ ADE_DATA_DIR: restored })
     try {
-      expect((await rpc(fenced.socket, { op: 'workspace.open', path: checkout })).workspace)
-        .toMatchObject({ needs_rebind: true })
+      expect(await rawReply(fenced.socket, { op: 'workspace.open', path: checkout }))
+        .toMatchObject({ type: 'error', code: 'needs_rebind' })
     } finally {
       await fenced.stop()
     }

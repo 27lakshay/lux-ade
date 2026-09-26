@@ -89,6 +89,41 @@ test('registered backend restore publishes a new profile last and remaps its pri
   }
 })
 
+test('registered restore starts with a fenced Worktrunk repository and no default terminal launch', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ade-registered-lifecycle-restore-e2e-'))
+  const home = join(directory, 'profiles')
+  const checkout = join(directory, 'source-checkout')
+  const bundle = join(directory, 'bundle')
+  const owned: ManagedProfileOwner[] = []
+  try {
+    await execFileAsync('git', ['init', '-q', '-b', 'main', checkout])
+    const source = (await command(home, 'create', 'Source')).profile as Profile
+    const sourceLaunch = await command(home, 'start', source.id) as Launch
+    owned.push(await managedProfileOwner(sourceLaunch.socket))
+    const workspace = (await rpc(sourceLaunch.socket, { op: 'workspace.open', path: checkout }))
+      .workspace as { id: string }
+    const lifecycle = (await rpc(sourceLaunch.socket, { op: 'worktree.repository', path: checkout }))
+      .repository as { id: string }
+    await command(home, 'backup-backend', '--out', bundle, source.id)
+    const target = (await command(home, 'restore-backend', '--backup', bundle,
+      '--name', 'Recovered')).profile as Profile
+    const targetLaunch = await command(home, 'start', target.id) as Launch
+    owned.push(await managedProfileOwner(targetLaunch.socket))
+    expect((await rpc(targetLaunch.socket, { op: 'worktree.rebind.list' })).repositories)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: lifecycle.id, needs_rebind: true })]))
+    expect((await rpc(targetLaunch.socket, { op: 'workspace.rebind.list' })).workspaces)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: workspace.id,
+        root: await realpath(checkout), needs_rebind: true })]))
+    expect((await rpc(targetLaunch.socket, { op: 'catalog.get' })).catalog)
+      .toMatchObject({ workspaces: expect.arrayContaining([expect.objectContaining({
+        root: await realpath(join(home, 'profiles', target.id, 'workspace')), needs_rebind: false,
+      })]) })
+  } finally {
+    await stopManagedProfiles(owned)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('an interrupted registry-last restore remains unpublished until explicit resume', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ade-restore-resume-e2e-'))
   const home = join(directory, 'profiles')

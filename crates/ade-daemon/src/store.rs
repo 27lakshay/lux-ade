@@ -4,7 +4,8 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
-    os::unix::fs::MetadataExt,
+    io::Read,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
@@ -13,6 +14,14 @@ const BUSY: &[&str] = &["starting", "running", "waiting", "cancelling"];
 pub struct Store {
     pub(crate) connection: Connection,
     data_directory: PathBuf,
+}
+#[derive(Serialize)]
+pub struct WorkspaceRebindEntry {
+    id: String,
+    root: String,
+    name: String,
+    needs_rebind: bool,
+    rebindable: bool,
 }
 fn binding_matches(db: &Connection, kind: &str, id: &str, root: &str) -> Result<bool> {
     let saved: Option<(String, String)> = db
@@ -31,6 +40,88 @@ fn binding_matches(db: &Connection, kind: &str, id: &str, root: &str) -> Result<
     Ok(metadata.is_dir()
         && device == metadata.dev().to_string()
         && inode == metadata.ino().to_string())
+}
+fn small_git_path(path: &Path, prefix: &str) -> Option<PathBuf> {
+    if !std::fs::symlink_metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(4097).read_to_string(&mut text).ok()?;
+    if text.len() > 4096 {
+        return None;
+    }
+    let value = text.trim_end_matches(['\r', '\n']);
+    let value = value.strip_prefix(prefix)?;
+    if value.is_empty() || value.contains(['\r', '\n', '\0']) {
+        return None;
+    }
+    Some(PathBuf::from(value))
+}
+fn linked_common_matches(workspace_root: &str, repository_root: &str) -> bool {
+    // This runs while the store mutex is held. Inspect the standard on-disk
+    // Git layout directly so catalogue polling cannot wait on a Git child.
+    // Unrecognized layouts fail closed and can be explicitly rebound.
+    let Some(expected) = std::fs::canonicalize(repository_root).ok() else {
+        return false;
+    };
+    let root = Path::new(workspace_root);
+    for ancestor in root.ancestors() {
+        let dot_git = ancestor.join(".git");
+        match std::fs::symlink_metadata(&dot_git) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return false,
+        }
+        let Ok(metadata) = std::fs::metadata(&dot_git) else {
+            return false;
+        };
+        let git_dir = if metadata.is_dir() {
+            dot_git
+        } else if metadata.is_file() {
+            let Some(pointer) = small_git_path(&dot_git, "gitdir: ") else {
+                return false;
+            };
+            if pointer.is_absolute() {
+                pointer
+            } else {
+                ancestor.join(pointer)
+            }
+        } else {
+            return false;
+        };
+        let Some(git_dir) = std::fs::canonicalize(git_dir).ok() else {
+            return false;
+        };
+        let common_file = git_dir.join("commondir");
+        let common = match std::fs::symlink_metadata(&common_file) {
+            Ok(_) => {
+                let Some(pointer) = small_git_path(&common_file, "") else {
+                    return false;
+                };
+                if pointer.is_absolute() {
+                    pointer
+                } else {
+                    git_dir.join(pointer)
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => git_dir,
+            Err(_) => return false,
+        };
+        return std::fs::canonicalize(common).is_ok_and(|common| common == expected);
+    }
+    // A bare repository has no .git entry; its root is the common directory.
+    root == expected
+        && root.join("HEAD").is_file()
+        && root.join("objects").is_dir()
+        && root.join("refs").is_dir()
 }
 fn saved_binding_identity(db: &Connection, kind: &str, id: &str) -> Result<Option<(u64, u64)>> {
     let saved: Option<(Option<String>, Option<String>)> = db
@@ -1219,8 +1310,72 @@ impl Store {
     pub fn workspace(&self, id: &str) -> Result<WorkspaceRecord> {
         one(&self.connection, "workspaces", id)
     }
+    pub fn rebind_workspaces(&self) -> Result<Vec<WorkspaceRebindEntry>> {
+        let workspaces: Vec<WorkspaceRecord> = all(
+            &self.connection,
+            "SELECT data FROM workspaces ORDER BY rowid",
+        )?;
+        workspaces
+            .into_iter()
+            .map(|workspace| {
+                let repository_unbound = match &workspace.repository_id {
+                    Some(id) => {
+                        let repository = self.repository(id)?;
+                        repository.needs_rebind
+                            || !binding_matches(
+                                &self.connection,
+                                "repository",
+                                id,
+                                &repository.root,
+                            )?
+                            || !linked_common_matches(&workspace.root, &repository.root)
+                    }
+                    None => false,
+                };
+                let needs_rebind = workspace.needs_rebind
+                    || repository_unbound
+                    || !binding_matches(
+                        &self.connection,
+                        "workspace",
+                        &workspace.id,
+                        &workspace.root,
+                    )?;
+                let rebindable =
+                    saved_binding_identity(&self.connection, "workspace", &workspace.id)?.is_some();
+                Ok(WorkspaceRebindEntry {
+                    id: workspace.id,
+                    root: workspace.root,
+                    name: workspace.name,
+                    needs_rebind,
+                    rebindable,
+                })
+            })
+            .collect()
+    }
     pub fn repository(&self, id: &str) -> Result<Repository> {
         one(&self.connection, "repositories", id)
+    }
+    pub fn rebind_repositories(&self) -> Result<Vec<(String, String, bool, bool)>> {
+        let repositories: Vec<Repository> = all(
+            &self.connection,
+            "SELECT data FROM repositories ORDER BY rowid",
+        )?;
+        repositories
+            .into_iter()
+            .map(|repository| {
+                let needs_rebind = repository.needs_rebind
+                    || !binding_matches(
+                        &self.connection,
+                        "repository",
+                        &repository.id,
+                        &repository.root,
+                    )?;
+                let rebindable =
+                    saved_binding_identity(&self.connection, "repository", &repository.id)?
+                        .is_some();
+                Ok((repository.id, repository.root, needs_rebind, rebindable))
+            })
+            .collect()
     }
     pub fn repository_bound(&self, id: &str) -> Result<bool> {
         let repository = self.repository(id)?;
@@ -1248,6 +1403,7 @@ impl Store {
                     repository_id,
                     &repository.root,
                 )?
+                || !linked_common_matches(&workspace.root, &repository.root)
             {
                 return Err(ade_core::error::NeedsRebind.into());
             }
@@ -1280,6 +1436,12 @@ impl Store {
                 &workspace.root,
             )? {
                 return Ok(true);
+            }
+            if let Some(repository_id) = &workspace.repository_id {
+                let repository: Repository = one(&self.connection, "repositories", repository_id)?;
+                if !linked_common_matches(&workspace.root, &repository.root) {
+                    return Ok(true);
+                }
             }
         }
         let repositories: Vec<Repository> = all(&self.connection, "SELECT data FROM repositories")?;
@@ -1381,12 +1543,24 @@ impl Store {
             "An ordinary workspace cannot rebind to a Git checkout; bind a repository first"
         );
         ensure_not_source_directory(&tx, root)?;
+        let linked_repository = workspace
+            .repository_id
+            .as_ref()
+            .map(|repository_id| one::<Repository>(&tx, "repositories", repository_id))
+            .transpose()?;
+        let linked_common_changed = linked_repository
+            .as_ref()
+            .is_some_and(|repository| !linked_common_matches(&workspace.root, &repository.root));
         ensure!(
-            workspace.needs_rebind || !binding_matches(&tx, "workspace", id, &workspace.root)?,
+            workspace.needs_rebind
+                || !binding_matches(&tx, "workspace", id, &workspace.root)?
+                || linked_common_changed,
             "Workspace is already bound"
         );
         ensure!(
-            workspace.root != root || !binding_matches(&tx, "workspace", id, root)?,
+            workspace.root != root
+                || !binding_matches(&tx, "workspace", id, root)?
+                || linked_common_changed,
             "Select a different directory from the source workspace"
         );
         let collision: Option<String> = tx
@@ -1400,8 +1574,8 @@ impl Store {
             collision.is_none(),
             "Workspace path belongs to another identity"
         );
-        if let Some(repository_id) = &workspace.repository_id {
-            let repository: Repository = one(&tx, "repositories", repository_id)?;
+        if let Some(repository) = linked_repository {
+            let repository_id = &repository.id;
             ensure!(
                 !repository.needs_rebind
                     && binding_matches(&tx, "repository", repository_id, &repository.root)?,
@@ -1590,6 +1764,7 @@ impl Store {
                 let repository: Repository = one(&tx, "repositories", repository_id)?;
                 repository.needs_rebind
                     || !binding_matches(&tx, "repository", repository_id, &repository.root)?
+                    || !linked_common_matches(&workspace.root, &repository.root)
             } else {
                 false
             };
@@ -1606,6 +1781,10 @@ impl Store {
             tx.commit()?;
             return Ok(workspace);
         }
+        // A new path has no saved identity to recover. Persisting it while a
+        // restored claim is unresolved would give it a fenced, unbindable ID
+        // and could also block the original workspace from selecting it.
+        ensure!(!needs_rebind, ade_core::error::NeedsRebind);
         let repository_id = if let Some(repository_root) = repository_root {
             ensure!(!repository_root.is_empty(), "Repository root is empty");
             let existing: Option<String> = tx

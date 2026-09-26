@@ -233,6 +233,11 @@ struct SelectedBinding {
     root_identity: (u64, u64),
     common_identity: Option<(u64, u64)>,
 }
+fn e2e_rebind_exit(point: &str) {
+    if std::env::var("ADE_E2E_REBIND_FAILPOINT").as_deref() == Ok(point) {
+        std::process::exit(93);
+    }
+}
 fn selected_binding(path: &str, require_git: bool) -> Result<SelectedBinding> {
     let root = std::fs::canonicalize(path).context("Selected directory is unavailable")?;
     ensure!(root.is_dir(), "Selected path must be a directory");
@@ -294,6 +299,12 @@ impl Sessions {
         let (queue_wake, queue_rx) = mpsc::sync_channel(1);
 
         let worktrees = crate::worktrees::Worktrees::open(&path.with_extension("worktrees"))?;
+        // The final rebind and this marker live in separate SQLite stores.
+        // If the daemon died after the last binding commit, reconcile only
+        // after both owners independently verify every saved physical path.
+        if !worktrees.has_pending_rebind()? && !store.has_unbound_records()? {
+            store.release_restore_fence()?;
+        }
         let review =
             crate::review::Review::open(&path.with_extension("review.sqlite3"), worktrees.clone())?;
         let sessions = Arc::new(Self {
@@ -605,6 +616,12 @@ impl Sessions {
     }
     pub fn ensure_workspace_bound(&self, id: &str) -> Result<()> {
         self.data.lock().unwrap().store.ensure_workspace_bound(id)
+    }
+    pub fn has_pending_rebind(&self) -> Result<bool> {
+        if self.worktrees.has_pending_rebind()? {
+            return Ok(true);
+        }
+        self.data.lock().unwrap().store.has_pending_rebind()
     }
     fn release_restore_fence_if_bound(&self) -> Result<()> {
         if self.worktrees.has_pending_rebind()? {
@@ -1111,6 +1128,24 @@ impl Sessions {
             "catalog.get" => Ok(
                 json!({"type":"catalog","catalog":self.data.lock().unwrap().store.catalog()?,"providers":provider::descriptors(),"boot_id":self.boot_id}),
             ),
+            "workspace.rebind.list" => {
+                let workspaces = self.data.lock().unwrap().store.rebind_workspaces()?;
+                Ok(json!({"type":"workspace_rebind_catalog","workspaces":workspaces}))
+            }
+            "repository.rebind.list" => {
+                let repositories = self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .rebind_repositories()?
+                    .into_iter()
+                    .map(|(id, root, needs_rebind, rebindable)| {
+                        json!({"id":id,"root":root,"needs_rebind":needs_rebind,"rebindable":rebindable})
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!({"type":"repository_rebind_catalog","repositories":repositories}))
+            }
             "workspace.open" => {
                 Ok(json!({"type":"ack","workspace":self.open_workspace(string("path")?)?}))
             }
@@ -1178,12 +1213,14 @@ impl Sessions {
                     binding == checked,
                     "Selected workspace changed during rebind"
                 );
+                e2e_rebind_exit("before_workspace_commit");
                 let workspace = d.store.rebind_workspace(
                     string("workspace_id")?,
                     &binding.root,
                     binding.common.as_deref(),
                     binding.root_identity,
                 )?;
+                e2e_rebind_exit("after_workspace_commit");
                 self.catalog_changed(&mut d)?;
                 drop(d);
                 self.release_restore_fence_if_bound()?;

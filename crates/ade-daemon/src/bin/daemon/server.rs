@@ -688,6 +688,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     // They must never turn the app bundle or Finder's cwd into an editable project.
     let selection = std::env::var_os("ADE_ROOT").is_none()
         && std::env::var("ADE_WORKSPACE_SELECTION").as_deref() == Ok("1");
+    let pending_rebind = sessions.has_pending_rebind()?;
     let default_workspace = if selection {
         let catalog = sessions.command(&json!({"op":"catalog.get"}))?;
         catalog["catalog"]["workspaces"]
@@ -707,7 +708,25 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     } else {
         let root = std::env::var("ADE_ROOT")
             .unwrap_or(std::env::current_dir()?.to_string_lossy().into_owned());
-        sessions.open_workspace(&root)?.id
+        if pending_rebind {
+            // A restored catalogue may not contain this launcher root. Never
+            // create a new fenced workspace merely to start the daemon.
+            let root = std::fs::canonicalize(&root)
+                .ok()
+                .and_then(|path| path.to_str().map(str::to_owned))
+                .unwrap_or(root);
+            let catalog = sessions.command(&json!({"op":"catalog.get"}))?;
+            catalog["catalog"]["workspaces"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|workspace| workspace["root"] == root)
+                .and_then(|workspace| workspace["id"].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        } else {
+            sessions.open_workspace(&root)?.id
+        }
     };
 
     let host = Arc::new(Host {
@@ -725,6 +744,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     });
     host.refresh_leases()?;
     if !selection
+        && !pending_rebind
         && host
             .sessions
             .ensure_workspace_bound(&host.default_workspace)

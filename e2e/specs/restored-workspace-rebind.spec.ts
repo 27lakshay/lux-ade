@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createConnection } from 'node:net'
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -97,7 +97,13 @@ test('restored repository and shared workspaces rebind explicitly without source
       .toMatchObject({ type: 'error', code: 'needs_rebind' })
     expect((await rpc(socket, { op: 'worktree.rebind.list' })).repositories)
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: lifecycle.id,
-        needs_rebind: true })]))
+        needs_rebind: true, rebindable: true })]))
+    expect(await rpc(socket, { op: 'repository.rebind.list' }))
+      .toMatchObject({ type: 'repository_rebind_catalog', repositories: expect.arrayContaining([
+        expect.objectContaining({ id: first.repository_id,
+          root: await realpath(join(sourceCheckout, '.git')), needs_rebind: true,
+          rebindable: true }),
+      ]) })
     expect(await reply(socket, { op: 'worktree.rebind', repository_id: lifecycle.id,
       path: sourceCheckout })).toMatchObject({ type: 'error' })
     expect(await reply(socket, { op: 'worktree.rebind', repository_id: lifecycle.id,
@@ -125,6 +131,9 @@ test('restored repository and shared workspaces rebind explicitly without source
     expect((await rpc(restarted, { op: 'repository.rebind', repository_id: first.repository_id,
       path: targetCheckout })).repository).toMatchObject({ id: first.repository_id,
         root: await realpath(join(targetCheckout, '.git')), needs_rebind: false })
+    expect((await rpc(restarted, { op: 'repository.rebind.list' })).repositories)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: first.repository_id,
+        root: await realpath(join(targetCheckout, '.git')), needs_rebind: false })]))
     expect(await reply(restarted, { op: 'workspace.rebind', workspace_id: first.id,
       path: sourceCheckout })).toMatchObject({ type: 'error' })
     expect((await rpc(restarted, { op: 'workspace.rebind', workspace_id: first.id,
@@ -464,6 +473,9 @@ test('schema-12 restore cannot rebind without a saved source physical identity',
     expect(await reply(socket, { op: 'workspace.rebind', workspace_id: workspace.id,
       path: targetFolder })).toMatchObject({ type: 'error', message:
       expect.stringContaining('physical identity is unavailable') })
+    expect((await rpc(socket, { op: 'workspace.rebind.list' })).workspaces)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: workspace.id,
+        needs_rebind: true, rebindable: false })]))
     expect(await reply(socket, { op: 'terminal.create', workspace_id: workspace.id }))
       .toMatchObject({ type: 'error', code: 'needs_rebind' })
   } finally {
@@ -471,6 +483,168 @@ test('schema-12 restore cannot rebind without a saved source physical identity',
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     if (failures.length) throw new Error(`ADE cleanup is unconfirmed; retain ${outside}: ${failures.map(
       (failure) => String(failure.reason)).join('; ')}`)
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+for (const failpoint of ['before_workspace_commit', 'after_workspace_commit'] as const) {
+  test(`restore rebind recovers after daemon exits ${failpoint}`, async () => {
+    test.setTimeout(120_000)
+    const source = await startDaemon()
+    const outside = await mkdtemp(join(tmpdir(), 'ade-rebind-crash-'))
+    let restored: Awaited<ReturnType<typeof startDaemon>> | null = null
+    try {
+      const oldExternal = join(outside, 'old-external')
+      const newExternal = join(outside, 'new-external')
+      const privateTarget = join(outside, 'new-private')
+      const unknown = join(outside, 'unknown')
+      await Promise.all([mkdir(oldExternal), mkdir(newExternal), mkdir(privateTarget), mkdir(unknown)])
+      const external = (await rpc(source.socket, { op: 'workspace.open', path: oldExternal }))
+        .workspace as { id: string }
+      const sourcePrivate = await realpath(source.rootDirectory)
+      const privateWorkspace = ((await rpc(source.socket, { op: 'catalog.get' })).catalog as {
+        workspaces: Array<{ id: string; root: string }>
+      }).workspaces.find((workspace) => workspace.root === sourcePrivate)
+      expect(privateWorkspace).toBeDefined()
+      const backup = join(outside, 'backup')
+      const data = join(outside, 'restored')
+      await execFileAsync('python3', ['scripts/managed_backup.py', 'create',
+        '--data-dir', source.dataDirectory, '--out', backup], { timeout: 30_000 })
+      await execFileAsync('python3', ['scripts/managed_backup.py', 'restore',
+        '--backup', backup, '--data-dir', data], { timeout: 30_000 })
+      restored = await startDaemon({ ADE_DATA_DIR: data, ADE_ROOT: source.rootDirectory })
+      const fenced = await reply(restored.socket, { op: 'workspace.open', path: unknown })
+      expect(fenced).toMatchObject({ type: 'error', code: 'needs_rebind' })
+      const unknownRoot = await realpath(unknown)
+      expect(await rpc(restored.socket, { op: 'workspace.rebind.list' }))
+        .toMatchObject({ type: 'workspace_rebind_catalog', workspaces: expect.arrayContaining([
+          expect.objectContaining({ id: external.id, root: await realpath(oldExternal),
+            name: 'old-external', needs_rebind: true }),
+          expect.objectContaining({ id: privateWorkspace!.id, needs_rebind: true }),
+        ]) })
+      expect(((await rpc(restored.socket, { op: 'catalog.get' })).catalog as {
+        workspaces: Array<{ root: string }>
+      }).workspaces.some((workspace) => workspace.root === unknownRoot)).toBe(false)
+      await rpc(restored.socket, { op: 'workspace.rebind', workspace_id: external.id,
+        path: newExternal })
+      await restored.stop()
+      restored = await startDaemon({ ADE_DATA_DIR: data, ADE_ROOT: source.rootDirectory,
+        ADE_E2E_REBIND_FAILPOINT: failpoint })
+      await expect(rpc(restored.socket, { op: 'workspace.rebind',
+        workspace_id: privateWorkspace!.id, path: privateTarget })).rejects.toThrow()
+      await restored.stop()
+      restored = await startDaemon({ ADE_DATA_DIR: data, ADE_ROOT: source.rootDirectory })
+      const catalogue = (await rpc(restored.socket, { op: 'catalog.get' })).catalog as {
+        workspaces: Array<{ id: string; root: string; needs_rebind: boolean }>
+      }
+      const rebound = catalogue.workspaces.find((workspace) => workspace.id === privateWorkspace!.id)
+      expect(rebound).toMatchObject({ id: privateWorkspace!.id,
+        root: failpoint === 'before_workspace_commit' ? await realpath(source.rootDirectory)
+          : await realpath(privateTarget),
+        needs_rebind: failpoint === 'before_workspace_commit' })
+      if (failpoint === 'before_workspace_commit') {
+        expect(await reply(restored.socket, { op: 'workspace.open', path: unknown }))
+          .toMatchObject({ type: 'error', code: 'needs_rebind' })
+        expect(await reply(restored.socket, { op: 'terminal.create',
+          workspace_id: privateWorkspace!.id })).toMatchObject({ type: 'error', code: 'needs_rebind' })
+        await rpc(restored.socket, { op: 'workspace.rebind', workspace_id: privateWorkspace!.id,
+          path: privateTarget })
+      }
+      const opened = (await rpc(restored.socket, { op: 'workspace.open', path: unknown }))
+        .workspace as { id: string; root: string; needs_rebind: boolean }
+      expect(opened).toMatchObject({ root: await realpath(unknown), needs_rebind: false })
+      expect((await rpc(restored.socket, { op: 'workspace.rebind.list' })).workspaces)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ id: opened.id,
+          root: unknownRoot, needs_rebind: false })]))
+      await rename(unknown, join(outside, 'unknown-moved'))
+      await mkdir(unknown)
+      expect((await rpc(restored.socket, { op: 'workspace.rebind.list' })).workspaces)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ id: opened.id,
+          root: unknownRoot, needs_rebind: true })]))
+      expect((await rpc(restored.socket, { op: 'terminal.create',
+        workspace_id: external.id })).terminal_id).toEqual(expect.any(String))
+    } finally {
+      const results = await Promise.allSettled([restored?.stop(), source.stop()])
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failures.length) throw new Error(`ADE cleanup is unconfirmed; retain ${outside}: ${failures.map(
+        (failure) => String(failure.reason)).join('; ')}`)
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+}
+
+test('a linked workspace is fenced when its Git common directory diverges from the rebound repository', async () => {
+  const source = await startDaemon()
+  const outside = await mkdtemp(join(tmpdir(), 'ade-rebind-git-divergence-'))
+  let restored: Awaited<ReturnType<typeof startDaemon>> | null = null
+  try {
+    const sourceCheckout = join(outside, 'source')
+    const targetA = join(outside, 'target-a')
+    const targetB = join(outside, 'target-b')
+    const unrelated = join(outside, 'unrelated')
+    await execFileAsync('git', ['init', '-q', '-b', 'main', sourceCheckout])
+    await writeFile(join(sourceCheckout, 'tracked.txt'), 'original\n')
+    await execFileAsync('git', ['add', 'tracked.txt'], { cwd: sourceCheckout })
+    await execFileAsync('git', ['-c', 'user.name=Fixture', '-c',
+      'user.email=fixture@example.invalid', 'commit', '-qm', 'original'], { cwd: sourceCheckout })
+    for (const target of [targetA, targetB, unrelated]) {
+      await execFileAsync('git', ['clone', '-q', sourceCheckout, target])
+    }
+    const workspace = (await rpc(source.socket, { op: 'workspace.open', path: sourceCheckout }))
+      .workspace as { id: string; repository_id: string }
+    const backup = join(outside, 'backup')
+    const data = join(outside, 'restored')
+    await execFileAsync('python3', ['scripts/managed_backup.py', 'create',
+      '--data-dir', source.dataDirectory, '--out', backup], { timeout: 30_000 })
+    await execFileAsync('python3', ['scripts/managed_backup.py', 'restore',
+      '--backup', backup, '--data-dir', data], { timeout: 30_000 })
+    restored = await startDaemon({ ADE_DATA_DIR: data, ADE_ROOT: source.rootDirectory })
+    const socket = restored.socket
+    await rpc(socket, { op: 'repository.rebind', repository_id: workspace.repository_id, path: targetA })
+    await rpc(socket, { op: 'workspace.rebind', workspace_id: workspace.id, path: targetA })
+    expect((await rpc(socket, { op: 'terminal.create', workspace_id: workspace.id })).terminal_id)
+      .toEqual(expect.any(String))
+
+    // Keep the checkout directory inode, but make Git resolve through a
+    // different common directory before rebinding the core repository.
+    await rename(join(targetA, '.git'), join(targetA, '.git-saved'))
+    await symlink(join(unrelated, '.git'), join(targetA, '.git'))
+    await rpc(socket, { op: 'repository.rebind', repository_id: workspace.repository_id, path: targetB })
+    expect(await reply(socket, { op: 'terminal.create', workspace_id: workspace.id }))
+      .toMatchObject({ type: 'error', code: 'needs_rebind' })
+    expect((await rpc(socket, { op: 'workspace.rebind.list' })).workspaces)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: workspace.id,
+        root: await realpath(targetA), needs_rebind: true })]))
+    expect((await rpc(socket, { op: 'workspace.rebind', workspace_id: workspace.id,
+      path: targetB })).workspace).toMatchObject({ id: workspace.id,
+        root: await realpath(targetB), needs_rebind: false })
+    expect((await rpc(socket, { op: 'terminal.create', workspace_id: workspace.id })).terminal_id)
+      .toEqual(expect.any(String))
+  } finally {
+    const results = await Promise.allSettled([restored?.stop(), source.stop()])
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failures.length) throw new Error(`ADE cleanup is unconfirmed; retain ${outside}: ${failures.map(
+      (failure) => String(failure.reason)).join('; ')}`)
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test('a nonregular Git common-directory marker fails closed without blocking daemon requests', async () => {
+  const daemon = await startDaemon()
+  const outside = await mkdtemp(join(tmpdir(), 'ade-rebind-git-fifo-'))
+  try {
+    const checkout = join(outside, 'checkout')
+    await execFileAsync('git', ['init', '-q', checkout])
+    const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: checkout }))
+      .workspace as { id: string }
+    await execFileAsync('mkfifo', [join(checkout, '.git', 'commondir')])
+    expect((await fixtureRpc(daemon.socket, { op: 'workspace.rebind.list' }, 2_000)).workspaces)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: workspace.id,
+        needs_rebind: true })]))
+    expect(await reply(daemon.socket, { op: 'terminal.create', workspace_id: workspace.id }))
+      .toMatchObject({ type: 'error', code: 'needs_rebind' })
+  } finally {
+    await daemon.stop()
     await rm(outside, { recursive: true, force: true })
   }
 })
