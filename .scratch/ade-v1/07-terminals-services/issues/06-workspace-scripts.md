@@ -17,6 +17,14 @@ bounded durable output. `script.inspect` reports observed runtime state and
 bounded live/durable output; `script.stop` waits for verified process exit.
 Script run status separates successful exit, nonzero exit, signal termination
 and unknown wait/reap outcome; the actual code or signal is retained.
+`script.inspect` keeps execution status separate from `output_coverage`. Full
+returned-output coverage requires a verified exit, no durable capture error or
+gap, no spool retention overflow, matching producer/capture byte offsets, and a
+tail starting at offset zero. A running process reports pending coverage until
+capture loss is known, then incomplete coverage; a successful exit can also
+report incomplete output. The public terminal tail
+reports its retained start offset and retention overflow separately from a
+caller-selected tail limit.
 `script.runs` lists retained runtime runs. `script.retire` releases an exited
 run and its spool so repeated use does not exhaust the runtime terminal limit.
 The run's terminal membership is committed in the workspace before launch and
@@ -42,6 +50,9 @@ public protocol.
   observe a sibling `node` executable through both a package script and a
   direct ADE recipe's output. The ADE repository permits a checked-in root
   `.ade/scripts.json` while continuing to ignore its generated `.ade` files.
+- A real recipe emits more than the 1 MiB durable spool. Inspection reports
+  retention overflow and incomplete output while preserving its actual exit
+  status and allowing stop and retirement.
 - Discovery currently reads root `package.json` and `.ade/scripts.json` only.
   Other package-manager manifests and nested package discovery remain open.
 - A supervisor restart still loses its in-memory run catalogue; durable output
@@ -54,9 +65,11 @@ public protocol.
 
 Evidence: `e2e/specs/workspace-scripts.spec.ts` exercises public commands with
 real ADE processes, including a daemon handoff and crash between runtime and
-catalogue retirement. Focused run after ADE recipes and exit outcomes: 6/6 on
-macOS, including a plain workspace, nonzero and signaled exits, relative argv,
-duplicate/escape rejection and two-profile isolation. The PATH case uses a
+catalogue retirement. Focused run after spool saturation: 7/7 on macOS,
+including a plain workspace, nonzero and signaled exits, relative argv,
+duplicate/escape rejection, two-profile isolation, and a successful process
+that emits 1.3 million bytes while reporting incomplete retained output. Stop
+and retirement still work after overflow. The PATH case uses a
 deterministic external pnpm/node fixture. The
 packaged macOS app separately passed `e2e/packaged/macos.spec.ts`: the app
 launched with a Finder-like `PATH`, ran a `node` package script through its

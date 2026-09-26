@@ -107,6 +107,7 @@ test('checked-in ADE recipes run explicit argv and report success, nonzero exit 
     const succeeded = await rpc(daemon.socket, { op: 'script.inspect', workspace_id: workspace.id,
       run_id: successId })
     expect(succeeded.state).toBe('exited')
+    expect(succeeded.output_coverage).toMatchObject({ status: 'complete', reason: null })
     expect(Buffer.from((succeeded.output as { bytes_base64: string }).bytes_base64, 'base64').toString())
       .toContain('ADE_RECIPE_OK')
     expect(await readFile(join(subdirectory, 'receipt'), 'utf8')).toBe(await realpath(subdirectory))
@@ -222,6 +223,46 @@ test('a configured pnpm executable supplies its sibling node on a stripped launc
   } finally {
     await daemon?.stop()
     await rm(toolRoot, { recursive: true, force: true })
+  }
+})
+
+test('a saturated script spool reports incomplete output without changing the verified exit', async () => {
+  const daemon = await startDaemon()
+  try {
+    await mkdir(join(daemon.rootDirectory, '.ade'))
+    await writeFile(join(daemon.rootDirectory, '.ade', 'scripts.json'), JSON.stringify({
+      schema_version: 1, scripts: { flood: { program: process.execPath, args: [
+        '-e', 'process.stdout.write("A".repeat(1300000) + "ADE_SPOOL_END\\n")',
+      ] } },
+    }))
+    const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory }))
+      .workspace as { id: string }
+    const started = await rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id,
+      name: 'flood' })
+    const runId = started.run_id as string
+    await expect.poll(async () => (await rpc(daemon.socket, { op: 'script.inspect',
+      workspace_id: workspace.id, run_id: runId })).exit_status)
+      .toEqual({ kind: 'success', code: 0 })
+    const inspected = await rpc(daemon.socket, { op: 'script.inspect', workspace_id: workspace.id,
+      run_id: runId })
+    expect(inspected.state).toBe('exited')
+    expect(inspected.output_coverage).toMatchObject({ status: 'incomplete', reason: 'retention_overflow' })
+    expect((inspected.output_coverage as { produced_bytes: number }).produced_bytes).toBeGreaterThan(1_048_576)
+    expect(inspected.durable_output).toMatchObject({ available: true, retention_overflow: true })
+    expect((inspected.durable_output as { retained_start_offset: number }).retained_start_offset)
+      .toBeGreaterThan(0)
+    expect((inspected.output as { retention_overflow: boolean }).retention_overflow).toBe(true)
+    expect((inspected.output as { retained_start_offset: number }).retained_start_offset).toBeGreaterThan(0)
+    expect(Buffer.from((inspected.durable_output as { bytes_base64: string }).bytes_base64, 'base64').toString())
+      .toContain('ADE_SPOOL_END')
+    const stopped = await rpc(daemon.socket, { op: 'script.stop', workspace_id: workspace.id,
+      run_id: runId })
+    expect(stopped.exit_status).toEqual({ kind: 'success', code: 0 })
+    await rpc(daemon.socket, { op: 'script.retire', workspace_id: workspace.id, run_id: runId })
+    await expect(rpc(daemon.socket, { op: 'script.inspect', workspace_id: workspace.id,
+      run_id: runId })).rejects.toThrow(/unavailable/)
+  } finally {
+    await daemon.stop()
   }
 })
 

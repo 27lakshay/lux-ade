@@ -761,7 +761,9 @@ impl Runtime {
             .copied()
             .collect::<Vec<_>>();
         json!({"type":"terminal_tail","run_id":state.run_id,"transfer_id":state.transfer_id,
-            "start_offset":start,"through_offset":state.bytes,"truncated":start > 0,
+            "start_offset":start,"through_offset":state.bytes,
+            "retained_start_offset":retained_start,"truncated":start > 0,
+            "retention_overflow":retained_start > 0,"coverage":"captured_bytes_only",
             "bytes_base64":base64::engine::general_purpose::STANDARD.encode(bytes)})
     }
 

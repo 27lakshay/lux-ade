@@ -41,6 +41,37 @@ fn run_state(terminal: &Value, run_id: &str) -> Value {
     run
 }
 
+fn output_coverage(metrics: &Value, durable: &Value) -> Value {
+    let produced = metrics["terminal_bytes"].as_u64();
+    let returned_start = durable["start_offset"].as_u64();
+    let captured_through = durable["through_offset"].as_u64();
+    let (status, reason) = if metrics["durable_log_error"].as_str().is_some() {
+        ("incomplete", "capture_error")
+    } else if durable["available"] != true {
+        ("incomplete", "durable_output_unavailable")
+    } else if durable["retention_overflow"] == true {
+        ("incomplete", "retention_overflow")
+    } else if durable["segment_gap"] == true {
+        ("incomplete", "segment_gap")
+    } else if metrics["shell_running"] == true {
+        ("pending", "process_running")
+    } else if !matches!(
+        metrics["exit_status"]["kind"].as_str(),
+        Some("success" | "failure" | "signaled")
+    ) {
+        ("incomplete", "exit_unknown")
+    } else if produced.is_none() || captured_through != produced {
+        ("incomplete", "capture_gap")
+    } else if durable["truncated"] == true || returned_start != Some(0) {
+        ("incomplete", "tail_limited")
+    } else {
+        ("complete", "")
+    };
+    json!({"status":status,"reason":if reason.is_empty() {Value::Null} else {json!(reason)},
+        "produced_bytes":produced,"captured_through_offset":captured_through,
+        "returned_start_offset":returned_start})
+}
+
 fn script_environment() -> Result<(Option<String>, std::collections::BTreeMap<String, String>)> {
     match std::env::var("ADE_PNPM_BIN") {
         Ok(program) => {
@@ -190,13 +221,15 @@ pub fn command(
                 "Script run changed during inspection"
             );
             result["output"] = tail;
-            result["durable_output"] = ade_runtime::service_logs::tail(
+            let durable = ade_runtime::service_logs::tail(
                 runtime.data_directory(),
                 &workspace.id,
                 run_id,
                 transfer_id,
                 limit as usize,
             );
+            result["output_coverage"] = output_coverage(&item["metrics"], &durable);
+            result["durable_output"] = durable;
             result["type"] = json!("script_run");
             result["workspace_id"] = json!(workspace.id);
             Ok(result)
