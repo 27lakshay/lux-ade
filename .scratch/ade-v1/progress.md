@@ -29,33 +29,21 @@ implementation, independent review, checks and packaging.
 | Daily-use gate and IDs | Verified so far | Remaining before gate closes |
 |---|---|---|
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
-| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts; deterministic managed-identity and prompt recovery E2Es | Real Oh My Pi account; two-account hosted execution; tools, answer/decline, cancel/resume and recovery across each primary provider |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts; deterministic managed-identity, prompt recovery, approvals/questions and cancel/resume E2Es | Real Oh My Pi account; two-account hosted execution; tools, answer/decline, cancel/resume and recovery across each primary provider |
 | Workspace/review: F061, F074 | Folder selection and revision-anchored agent feedback E2Es | Full atomic feedback admission and large-diff flow in integrated app; remaining lifecycle acceptance |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
-| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes | Matching CLI coverage for the selected daily-use flow |
+| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume | Matching CLI coverage for the rest of the selected daily-use flow |
 
 These are partial observations, not closed feature IDs. Each row still needs
 integrated running-app evidence. Oh My Pi live-account acceptance currently
 needs credentials; continue the other rows without substituting a fixture.
-The Discard slice meets its three ticket criteria through 9 public-protocol/CLI
-and 2 hidden Electron E2Es. Independent safety review found no confirmed
-remaining byte-loss path after the local-APFS exchange and retained recovery
-file changes. The final integrated source suite passes 152 tests with one
-host-filesystem skip; the installed package passes 6/6 E2Es. F075 and 06-S06
-remain partial beyond this slice. Active owner: coordinator, preparing the
-connected provider/account daily-use flow. `/root/git_discard_e2e` and
-`/root/discard_safety_review` have finished; no worker is currently running.
-Next assignment: select the smallest real-provider/account flow that closes
-the provider/conversation row, while continuing around the Oh My Pi credential
-blocker. Queue unrelated V1 slices.
-
-Checkpoint timing: implementation and independent-review wall time were not
-recorded before this process change; start explicit category timing on the next
-assignment. After code freeze, focused E2Es took 31.9 seconds, the full source
-suite took about 4.4 minutes, and packaging plus installed-app E2Es took about
-41 seconds. Earlier full runs were repeated because safety-relevant code
-changed. No further full run is needed for tracker-only edits. The final full
-V1 acceptance audit remains required.
+The one-file Discard ticket and the shared cancel/resume control slice are
+closed; F075/06-S06 and real-provider F021/F038 acceptance remain open.
+Active owner: coordinator on connected provider/account daily-use acceptance.
+`/root/git_discard_e2e` and `/root/discard_safety_review` have finished; no
+worker is currently running. Next assignment: select a real-provider/account
+flow for the provider/conversation row, working around the Oh My Pi credential
+blocker. Queue unrelated V1 slices. Preserve the final full V1 acceptance audit.
 
 ## Integrated checkpoints
 
@@ -114,6 +102,7 @@ V1 acceptance audit remains required.
 | `b365be1` | Packaged workspace scripts | Bundled pinned pnpm and Node launcher; Finder-like PATH and reopen E2E |
 | `5455362` | Backend-only SQLite snapshot | Live draft-write capture, integrity and schema checks, offline restore E2E |
 | `9901747` | Safe one-file Git Discard | Atomic local-APFS exchange, retained recovery file, 11 focused E2Es; final source suite 152 passed/one host skip; installed suite 6/6 |
+| `a5bef38` | Shared cancel/resume controls | Electron and CLI share daemon turn control; focused 2/2, source 153 passed/one host skip, installed suite 6/6 |
 | `a0a377a` | Browser recovery E2E race | First profile form reset is awaited before the next action |
 | `ddb8536` | Backup limits and evidence | Explicit independently consistent backend scope and exclusions |
 | `21b931b` | Explicit attachment reclaim | Durable tombstones, reference/race and backup-overlap E2E |
@@ -125,6 +114,28 @@ V1 acceptance audit remains required.
 | `315dc8f` | Registered backend restore | Registry-last new profile, private workspace remap, explicit crash resume and validation E2E |
 | `6e3f0a5` | Restored path rebind | Core/lifecycle immutable source claims, public CLI/protocol, cross-store source and repeated-rebind E2E |
 | `504a6b3` | Browser E2E profile switch race | Waits for the profile control to become enabled before a second switch |
+
+Discard checkpoint `9901747`: all three one-file ticket criteria pass through
+9 protocol/CLI and 2 hidden Electron E2Es. Independent safety review found
+no confirmed remaining byte-loss path after the APFS exchange and retained
+recovery-file changes. The source suite passed 152 tests with one host skip;
+the installed suite passed 6/6. Implementation and review time were not
+recorded before the execution-process change. After code freeze, focused E2Es
+took 31.9 seconds, the source suite about 4.4 minutes, and packaging plus
+installed E2Es about 41 seconds. Earlier source runs were repeated after
+safety-relevant edits.
+
+Conversation-control checkpoint `a5bef38`: Electron and CLI cancel and resume
+one running fixture turn through the same daemon. The local surface criterion
+closes, but real-provider F021/F038 acceptance remains. Focused E2Es passed
+2/2; typecheck, Fallow and build passed. The source suite passed 153 tests
+with one host skip in 4.6 minutes; packaging and installed checks passed 6/6
+in about 53 seconds. No test-owned ADE process remained. Observed checkpoint
+elapsed about 8 minutes 13 seconds: source checks 4.6 minutes, packaging 53
+seconds, focused/static checks under 10 seconds; the remaining roughly 2
+minutes 40 seconds covers implementation, local review and coordination,
+which were not timed separately. Separate category timers begin with the next
+slice. No second integrated source run was needed.
 
 At `854fff9`, `pnpm check` passes type checking, Fallow, builds and 103/103
 source E2Es. The macOS package passes 6/6 packaged E2Es with hidden windows;
@@ -256,7 +267,7 @@ checkout as a workspace. The test daemon/runtime were stopped through their
 recorded identities. The local command guard refused recursive deletion of the
 disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 
-## Active and next work
+## Earlier work and open acceptance history
 
 - After `235dece`, managed Codex inspection, verification and per-turn
   readback were added against an isolated native home and a version-gated
