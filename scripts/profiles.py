@@ -237,6 +237,8 @@ def retarget_restored_store(database, staged_data, final_data, source_private, t
     try:
         connection.execute("PRAGMA journal_mode=DELETE")
         connection.execute("BEGIN IMMEDIATE")
+        schema = connection.execute("PRAGMA user_version").fetchone()[0]
+        private_identity = (staged_data.parent.parent / "workspace").stat()
         for account_id, encoded in connection.execute("SELECT id,data FROM accounts").fetchall():
             record = managed_backup.strict_json(encoded)
             expected = str(staged_data / "provider-accounts" / account_id)
@@ -255,6 +257,13 @@ def retarget_restored_store(database, staged_data, final_data, source_private, t
             record["worktree_lifecycle_needs_rebind"] = False
             connection.execute("UPDATE workspaces SET root=?,data=? WHERE id=?",
                 (str(target_private), json.dumps(record, separators=(",", ":")), workspace_id))
+            if schema >= 14:
+                if connection.execute("UPDATE path_bindings SET device=?,inode=? WHERE kind='workspace' AND id=?",
+                        (str(private_identity.st_dev), str(private_identity.st_ino), workspace_id)).rowcount != 1:
+                    raise RuntimeError("Restored private workspace has no source identity")
+            elif schema == 13:
+                connection.execute("INSERT OR REPLACE INTO path_bindings(kind,id,device,inode) VALUES('workspace',?,?,?)",
+                    (workspace_id, str(private_identity.st_dev), str(private_identity.st_ino)))
         connection.commit()
     finally:
         connection.close()
@@ -366,7 +375,8 @@ def resume_restore(home, value, profile_id):
     if accounts.exists() or accounts.is_symlink():
         managed_backup.directory(accounts)
     database = data / "sessions.sqlite"
-    if managed_backup.database_check(database, "sessions.sqlite") != 12:
+    schema = managed_backup.database_check(database, "sessions.sqlite")
+    if schema not in (12, 13, 14):
         raise RuntimeError("Unpublished profile schema is unsupported; registry was left unchanged")
     with contextlib.closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as connection:
         marker = connection.execute("SELECT worktree_lifecycle_needs_rebind,restored_from_backup FROM restore_fence WHERE id=1").fetchone()
@@ -385,6 +395,12 @@ def resume_restore(home, value, profile_id):
                 private = table == "workspaces" and indexed_root == str(directory / "workspace")
                 if record.get("needs_rebind") is not (not private):
                     raise RuntimeError(f"Unpublished {table} lost its restore fence: {record_id}")
+                if private and schema >= 13:
+                    identity = (directory / "workspace").stat()
+                    binding = connection.execute("SELECT device,inode FROM path_bindings WHERE kind='workspace' AND id=?",
+                                                 (record_id,)).fetchone()
+                    if binding != (str(identity.st_dev), str(identity.st_ino)):
+                        raise RuntimeError("Unpublished private workspace identity changed; registry was left unchanged")
     lifecycle = data / "sessions.worktrees" / "lifecycle.sqlite3"
     review = data / "sessions.review.sqlite3"
     if review.exists() or review.is_symlink():

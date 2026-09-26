@@ -3,13 +3,89 @@ use crate::model::*;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
-use std::path::{Path, PathBuf};
+use std::{
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+};
 
 const TEXT_LIMIT: usize = 1024 * 1024;
 const BUSY: &[&str] = &["starting", "running", "waiting", "cancelling"];
 pub struct Store {
     pub(crate) connection: Connection,
     data_directory: PathBuf,
+}
+fn binding_matches(db: &Connection, kind: &str, id: &str, root: &str) -> Result<bool> {
+    let saved: Option<(String, String)> = db
+        .query_row(
+            "SELECT device,inode FROM path_bindings WHERE kind=?1 AND id=?2",
+            params![kind, id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((device, inode)) = saved else {
+        return Ok(false);
+    };
+    let Ok(metadata) = std::fs::metadata(root) else {
+        return Ok(false);
+    };
+    Ok(metadata.is_dir()
+        && device == metadata.dev().to_string()
+        && inode == metadata.ino().to_string())
+}
+fn saved_binding_identity(db: &Connection, kind: &str, id: &str) -> Result<Option<(u64, u64)>> {
+    let saved: Option<(Option<String>, Option<String>)> = db
+        .query_row(
+            "SELECT source_device,source_inode FROM path_bindings WHERE kind=?1 AND id=?2",
+            params![kind, id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    saved
+        .and_then(|(device, inode)| device.zip(inode))
+        .map(|(device, inode)| Ok((device.parse()?, inode.parse()?)))
+        .transpose()
+}
+fn write_binding(db: &Connection, kind: &str, id: &str, root: &str) -> Result<()> {
+    let metadata = std::fs::metadata(root).context("Selected directory is unavailable")?;
+    ensure!(metadata.is_dir(), "Selected path must be a directory");
+    write_binding_identity(db, kind, id, (metadata.dev(), metadata.ino()))
+}
+fn write_binding_identity(
+    db: &Connection,
+    kind: &str,
+    id: &str,
+    identity: (u64, u64),
+) -> Result<()> {
+    db.execute("INSERT INTO path_bindings(kind,id,device,inode,source_device,source_inode) VALUES(?1,?2,?3,?4,?3,?4) ON CONFLICT(kind,id) DO UPDATE SET device=excluded.device,inode=excluded.inode",
+        params![kind, id, identity.0.to_string(), identity.1.to_string()])?;
+    Ok(())
+}
+fn ensure_not_source_directory(db: &Connection, root: &str) -> Result<()> {
+    let mut rows = db.prepare("SELECT source_device,source_inode FROM path_bindings WHERE source_device IS NOT NULL AND source_inode IS NOT NULL")?;
+    let sources: Vec<(String, String)> = rows
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for ancestor in Path::new(root).ancestors() {
+        let Ok(metadata) = std::fs::metadata(ancestor) else {
+            continue;
+        };
+        ensure!(
+            !sources
+                .iter()
+                .any(|(device, inode)| device == &metadata.dev().to_string()
+                    && inode == &metadata.ino().to_string()),
+            "Selected directory belongs to a saved source workspace or repository"
+        );
+    }
+    Ok(())
+}
+fn verify_binding_identity(root: &str, identity: (u64, u64)) -> Result<()> {
+    let metadata = std::fs::metadata(root).context("Selected directory is unavailable")?;
+    ensure!(
+        metadata.is_dir() && (metadata.dev(), metadata.ino()) == identity,
+        "Selected directory changed during rebind"
+    );
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -437,7 +513,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=12).contains(&version),
+            (0..=14).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -581,6 +657,67 @@ impl Store {
             tx.execute_batch("CREATE TABLE restore_fence(id INTEGER PRIMARY KEY CHECK(id=1), worktree_lifecycle_needs_rebind INTEGER NOT NULL CHECK(worktree_lifecycle_needs_rebind IN (0,1)), restored_from_backup INTEGER NOT NULL CHECK(restored_from_backup IN (0,1))); INSERT INTO restore_fence VALUES(1,0,0); PRAGMA user_version=12;")?;
             tx.execute(
                 "INSERT OR IGNORE INTO schema_migrations VALUES(12,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        if version < 13 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS path_bindings(kind TEXT NOT NULL CHECK(kind IN ('workspace','repository')), id TEXT NOT NULL, device TEXT NOT NULL, inode TEXT NOT NULL, source_device TEXT, source_inode TEXT, PRIMARY KEY(kind,id));")?;
+            let repositories: Vec<Repository> = all(&tx, "SELECT data FROM repositories")?;
+            for mut repository in repositories {
+                if repository.needs_rebind {
+                    continue;
+                }
+                if std::fs::metadata(&repository.root).is_ok_and(|item| item.is_dir()) {
+                    write_binding(&tx, "repository", &repository.id, &repository.root)?;
+                } else {
+                    repository.needs_rebind = true;
+                    tx.execute(
+                        "UPDATE repositories SET data=?2 WHERE id=?1",
+                        params![repository.id, encode(&repository)?],
+                    )?;
+                }
+            }
+            let workspaces: Vec<WorkspaceRecord> = all(&tx, "SELECT data FROM workspaces")?;
+            for mut workspace in workspaces {
+                if workspace.needs_rebind {
+                    continue;
+                }
+                if std::fs::metadata(&workspace.root).is_ok_and(|item| item.is_dir()) {
+                    write_binding(&tx, "workspace", &workspace.id, &workspace.root)?;
+                } else {
+                    workspace.needs_rebind = true;
+                    tx.execute(
+                        "UPDATE workspaces SET data=?2 WHERE id=?1",
+                        params![workspace.id, encode(&workspace)?],
+                    )?;
+                }
+            }
+            tx.execute_batch("PRAGMA user_version=13;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(13,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        if version < 14 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            let has_source = tx
+                .prepare("PRAGMA table_info(path_bindings)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .iter()
+                .any(|column| column == "source_device");
+            if !has_source {
+                tx.execute_batch("ALTER TABLE path_bindings ADD COLUMN source_device TEXT; ALTER TABLE path_bindings ADD COLUMN source_inode TEXT;")?;
+            }
+            // A previously restored schema-13 profile may already have rebound.
+            // Its original source cannot be reconstructed from the current row.
+            tx.execute("UPDATE path_bindings SET source_device=device,source_inode=inode WHERE (SELECT restored_from_backup FROM restore_fence WHERE id=1)=0", [])?;
+            tx.execute_batch("PRAGMA user_version=14;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(14,?1)",
                 [now_ms()],
             )?;
             tx.commit()?;
@@ -1082,25 +1219,210 @@ impl Store {
     pub fn workspace(&self, id: &str) -> Result<WorkspaceRecord> {
         one(&self.connection, "workspaces", id)
     }
+    pub fn repository(&self, id: &str) -> Result<Repository> {
+        one(&self.connection, "repositories", id)
+    }
+    pub fn repository_bound(&self, id: &str) -> Result<bool> {
+        let repository = self.repository(id)?;
+        Ok(!repository.needs_rebind
+            && binding_matches(&self.connection, "repository", id, &repository.root)?)
+    }
     pub fn ensure_workspace_bound(&self, id: &str) -> Result<()> {
+        // A path can be replaced by an external process after this check and
+        // before a spawned child opens it. Callers recheck at admission and
+        // launch; durable device/inode identity catches later attempts, but
+        // path-based OS APIs cannot make that handoff fully atomic.
         let workspace = self.workspace(id)?;
         if workspace.needs_rebind {
             return Err(ade_core::error::NeedsRebind.into());
         }
+        if !binding_matches(&self.connection, "workspace", id, &workspace.root)? {
+            return Err(ade_core::error::NeedsRebind.into());
+        }
         if let Some(repository_id) = &workspace.repository_id {
             let repository: Repository = one(&self.connection, "repositories", repository_id)?;
-            if repository.needs_rebind {
+            if repository.needs_rebind
+                || !binding_matches(
+                    &self.connection,
+                    "repository",
+                    repository_id,
+                    &repository.root,
+                )?
+            {
                 return Err(ade_core::error::NeedsRebind.into());
             }
         }
         Ok(())
     }
     pub fn has_pending_rebind(&self) -> Result<bool> {
+        let marker: i64 = self.connection.query_row(
+            "SELECT worktree_lifecycle_needs_rebind FROM restore_fence WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(marker != 0 || self.has_unbound_records()?)
+    }
+    pub fn has_unbound_records(&self) -> Result<bool> {
         let pending: i64 = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM restore_fence WHERE id=1 AND worktree_lifecycle_needs_rebind=1 UNION ALL SELECT 1 FROM workspaces WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1 UNION ALL SELECT 1 FROM repositories WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1)",
+            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1 UNION ALL SELECT 1 FROM repositories WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1)",
             [], |row| row.get(0),
         )?;
-        Ok(pending != 0)
+        if pending != 0 {
+            return Ok(true);
+        }
+        let workspaces: Vec<WorkspaceRecord> =
+            all(&self.connection, "SELECT data FROM workspaces")?;
+        for workspace in workspaces {
+            if !binding_matches(
+                &self.connection,
+                "workspace",
+                &workspace.id,
+                &workspace.root,
+            )? {
+                return Ok(true);
+            }
+        }
+        let repositories: Vec<Repository> = all(&self.connection, "SELECT data FROM repositories")?;
+        for repository in repositories {
+            if !binding_matches(
+                &self.connection,
+                "repository",
+                &repository.id,
+                &repository.root,
+            )? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    pub fn release_restore_fence(&self) -> Result<()> {
+        ensure!(
+            !self.has_unbound_records()?,
+            "Restore bindings remain unresolved"
+        );
+        self.connection.execute(
+            "UPDATE restore_fence SET worktree_lifecycle_needs_rebind=0 WHERE id=1",
+            [],
+        )?;
+        Ok(())
+    }
+    /// The indexed root and public JSON change in one SQLite transaction. An
+    /// interrupted command therefore leaves the old fenced row or the new row.
+    pub fn rebind_repository(
+        &self,
+        id: &str,
+        common: &str,
+        identity: (u64, u64),
+    ) -> Result<Repository> {
+        let tx = self.transaction()?;
+        let mut repository: Repository = one(&tx, "repositories", id)?;
+        let source_identity = saved_binding_identity(&tx, "repository", id)?
+            .context("Saved repository physical identity is unavailable; rebind remains fenced")?;
+        ensure!(
+            source_identity != identity,
+            "Select a different physical repository from the saved checkout"
+        );
+        ensure_not_source_directory(&tx, common)?;
+        ensure!(
+            repository.needs_rebind || !binding_matches(&tx, "repository", id, &repository.root)?,
+            "Repository is already bound"
+        );
+        ensure!(
+            repository.root != common || !binding_matches(&tx, "repository", id, common)?,
+            "Select a different repository from the source checkout"
+        );
+        let collision: Option<String> = tx
+            .query_row(
+                "SELECT id FROM repositories WHERE root=?1 AND id!=?2",
+                params![common, id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        ensure!(
+            collision.is_none(),
+            "Repository path belongs to another identity"
+        );
+        repository.root = common.into();
+        repository.needs_rebind = false;
+        repository.worktree_lifecycle_needs_rebind = false;
+        tx.execute(
+            "UPDATE repositories SET root=?2,data=?3 WHERE id=?1",
+            params![id, common, encode(&repository)?],
+        )?;
+        verify_binding_identity(common, identity)?;
+        write_binding_identity(&tx, "repository", id, identity)?;
+        tx.commit()?;
+        Ok(repository)
+    }
+    pub fn repository_source_identity(&self, id: &str) -> Result<(u64, u64)> {
+        saved_binding_identity(&self.connection, "repository", id)?
+            .context("Saved repository physical identity is unavailable; rebind remains fenced")
+    }
+    pub fn reject_source_path(&self, path: &str) -> Result<()> {
+        ensure_not_source_directory(&self.connection, path)
+    }
+    pub fn rebind_workspace(
+        &self,
+        id: &str,
+        root: &str,
+        common: Option<&str>,
+        identity: (u64, u64),
+    ) -> Result<WorkspaceRecord> {
+        let tx = self.transaction()?;
+        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        let source_identity = saved_binding_identity(&tx, "workspace", id)?
+            .context("Saved workspace physical identity is unavailable; rebind remains fenced")?;
+        ensure!(
+            source_identity != identity,
+            "Select a different physical directory from the saved workspace"
+        );
+        ensure!(
+            workspace.repository_id.is_some() || common.is_none(),
+            "An ordinary workspace cannot rebind to a Git checkout; bind a repository first"
+        );
+        ensure_not_source_directory(&tx, root)?;
+        ensure!(
+            workspace.needs_rebind || !binding_matches(&tx, "workspace", id, &workspace.root)?,
+            "Workspace is already bound"
+        );
+        ensure!(
+            workspace.root != root || !binding_matches(&tx, "workspace", id, root)?,
+            "Select a different directory from the source workspace"
+        );
+        let collision: Option<String> = tx
+            .query_row(
+                "SELECT id FROM workspaces WHERE root=?1 AND id!=?2",
+                params![root, id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        ensure!(
+            collision.is_none(),
+            "Workspace path belongs to another identity"
+        );
+        if let Some(repository_id) = &workspace.repository_id {
+            let repository: Repository = one(&tx, "repositories", repository_id)?;
+            ensure!(
+                !repository.needs_rebind
+                    && binding_matches(&tx, "repository", repository_id, &repository.root)?,
+                "Rebind the repository first"
+            );
+            ensure!(
+                Some(repository.root.as_str()) == common,
+                "Workspace Git common directory differs from its repository binding"
+            );
+        }
+        workspace.root = root.into();
+        workspace.needs_rebind = false;
+        workspace.worktree_lifecycle_needs_rebind = false;
+        tx.execute(
+            "UPDATE workspaces SET root=?2,data=?3 WHERE id=?1",
+            params![id, root, encode(&workspace)?],
+        )?;
+        verify_binding_identity(root, identity)?;
+        write_binding_identity(&tx, "workspace", id, identity)?;
+        tx.commit()?;
+        Ok(workspace)
     }
     pub fn restored_from_backup(&self) -> Result<bool> {
         let restored: i64 = self.connection.query_row(
@@ -1263,7 +1585,26 @@ impl Store {
             })
             .optional()?;
         if let Some(existing) = existing {
-            return decode(existing);
+            let mut workspace: WorkspaceRecord = decode(existing)?;
+            let repository_changed = if let Some(repository_id) = &workspace.repository_id {
+                let repository: Repository = one(&tx, "repositories", repository_id)?;
+                repository.needs_rebind
+                    || !binding_matches(&tx, "repository", repository_id, &repository.root)?
+            } else {
+                false
+            };
+            if !workspace.needs_rebind
+                && (repository_changed
+                    || !binding_matches(&tx, "workspace", &workspace.id, &workspace.root)?)
+            {
+                workspace.needs_rebind = true;
+                tx.execute(
+                    "UPDATE workspaces SET data=?2 WHERE id=?1",
+                    params![workspace.id, encode(&workspace)?],
+                )?;
+            }
+            tx.commit()?;
+            return Ok(workspace);
         }
         let repository_id = if let Some(repository_root) = repository_root {
             ensure!(!repository_root.is_empty(), "Repository root is empty");
@@ -1287,6 +1628,9 @@ impl Store {
                     "INSERT INTO repositories VALUES(?1,?2,?3)",
                     params![repository.id, repository.root, encode(&repository)?],
                 )?;
+                if !needs_rebind {
+                    write_binding(&tx, "repository", &repository.id, &repository.root)?;
+                }
                 repository.id
             })
         } else {
@@ -1294,7 +1638,8 @@ impl Store {
         };
         if let Some(id) = &repository_id {
             let repository: Repository = one(&tx, "repositories", id)?;
-            needs_rebind |= repository.needs_rebind;
+            needs_rebind |= repository.needs_rebind
+                || !binding_matches(&tx, "repository", id, &repository.root)?;
         }
         let workspace = WorkspaceRecord {
             extra_terminals: Vec::new(),
@@ -1320,6 +1665,7 @@ impl Store {
                 encode(&workspace)?
             ],
         )?;
+        write_binding(&tx, "workspace", &workspace.id, &workspace.root)?;
         tx.commit()?;
         Ok(workspace)
     }

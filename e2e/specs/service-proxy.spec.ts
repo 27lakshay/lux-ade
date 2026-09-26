@@ -459,7 +459,7 @@ with sqlite3.connect(sys.argv[1]) as db:
     expect(upgradedRoutes[0]?.route_id).toBe(restored.route_id)
     const { stdout } = await execFileAsync('python3', ['-c',
       'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA user_version").fetchone()[0])', database])
-    expect(stdout.trim()).toBe('12')
+    expect(stdout.trim()).toBe('14')
   } finally {
     if (child && child.exitCode === null && hello) {
       await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id }).catch(() => undefined)

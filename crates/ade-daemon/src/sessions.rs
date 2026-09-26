@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpStream},
+    os::unix::fs::MetadataExt,
     path::Path,
     process::Command,
     sync::{
@@ -224,6 +225,62 @@ pub struct Sessions {
     pub boot_id: String,
     runtime: Arc<Supervisor>,
     queue_wake: mpsc::SyncSender<()>,
+}
+#[derive(PartialEq, Eq)]
+struct SelectedBinding {
+    root: String,
+    common: Option<String>,
+    root_identity: (u64, u64),
+    common_identity: Option<(u64, u64)>,
+}
+fn selected_binding(path: &str, require_git: bool) -> Result<SelectedBinding> {
+    let root = std::fs::canonicalize(path).context("Selected directory is unavailable")?;
+    ensure!(root.is_dir(), "Selected path must be a directory");
+    let metadata = std::fs::metadata(&root)?;
+    let root_text = root.to_str().context("Selected path must be UTF-8")?;
+    let common = crate::worktrees::git(
+        root_text,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()
+    .and_then(|value| std::fs::canonicalize(value).ok());
+    let common_metadata = common.as_ref().map(std::fs::metadata).transpose()?;
+    if require_git {
+        ensure!(
+            common.is_some(),
+            "Selected directory must belong to a Git repository"
+        );
+    }
+    let verified = std::fs::canonicalize(path)?;
+    let after = std::fs::metadata(&verified)?;
+    ensure!(
+        verified == root && after.dev() == metadata.dev() && after.ino() == metadata.ino(),
+        "Selected directory changed during rebind"
+    );
+    if let Some(expected) = &common {
+        let current = crate::worktrees::git(
+            root_text,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        ensure!(
+            std::fs::canonicalize(current)? == *expected,
+            "Git common directory changed during rebind"
+        );
+        let current_metadata = std::fs::metadata(expected)?;
+        let original = common_metadata
+            .as_ref()
+            .context("Git common directory is unavailable")?;
+        ensure!(
+            current_metadata.dev() == original.dev() && current_metadata.ino() == original.ino(),
+            "Git common directory changed during rebind"
+        );
+    }
+    Ok(SelectedBinding {
+        root: root_text.into(),
+        common: common.map(|value| value.to_string_lossy().into_owned()),
+        root_identity: (metadata.dev(), metadata.ino()),
+        common_identity: common_metadata.map(|value| (value.dev(), value.ino())),
+    })
 }
 impl Sessions {
     /// A bounded join key for local diagnostics; never expose the Conversation contents.
@@ -549,6 +606,16 @@ impl Sessions {
     pub fn ensure_workspace_bound(&self, id: &str) -> Result<()> {
         self.data.lock().unwrap().store.ensure_workspace_bound(id)
     }
+    fn release_restore_fence_if_bound(&self) -> Result<()> {
+        if self.worktrees.has_pending_rebind()? {
+            return Ok(());
+        }
+        let d = self.data.lock().unwrap();
+        if !d.store.has_unbound_records()? {
+            d.store.release_restore_fence()?;
+        }
+        Ok(())
+    }
     pub fn terminal_reserved(&self, terminal: &str) -> Result<bool> {
         self.data.lock().unwrap().store.terminal_reserved(terminal)
     }
@@ -648,6 +715,8 @@ impl Sessions {
         let op = request["op"].as_str().unwrap_or("");
         if op.starts_with("worktree.")
             && op != "worktree.operation"
+            && op != "worktree.rebind"
+            && op != "worktree.rebind.list"
             && self.data.lock().unwrap().store.has_pending_rebind()?
         {
             return Err(ade_core::error::NeedsRebind.into());
@@ -678,7 +747,22 @@ impl Sessions {
             .as_str()
             .is_some_and(|op| op.starts_with("worktree."))
         {
-            return self.worktrees.command(request);
+            if op == "worktree.rebind" {
+                let selected = selected_binding(string("path")?, true)?;
+                let d = self.data.lock().unwrap();
+                d.store.reject_source_path(&selected.root)?;
+                d.store.reject_source_path(
+                    selected
+                        .common
+                        .as_deref()
+                        .context("Git common directory is unavailable")?,
+                )?;
+            }
+            let response = self.worktrees.command(request)?;
+            if op == "worktree.rebind" {
+                self.release_restore_fence_if_bound()?;
+            }
+            return Ok(response);
         }
         if request["op"]
             .as_str()
@@ -702,9 +786,11 @@ impl Sessions {
             }
             let workspace = self.workspace(string("workspace_id")?)?;
             let register = |run_id: &str| -> Result<()> {
+                self.ensure_workspace_bound(&workspace.id)?;
                 let lease = self.worktrees.agent_lease(&workspace.root)?;
                 let mut d = self.data.lock().unwrap();
                 ensure!(!d.draining, "Application daemon is restarting");
+                d.store.ensure_workspace_bound(&workspace.id)?;
                 d.store.register_script_run(&workspace.id, run_id)?;
                 d.terminal_leases.insert(run_id.to_owned(), lease);
                 Ok(())
@@ -1027,6 +1113,81 @@ impl Sessions {
             ),
             "workspace.open" => {
                 Ok(json!({"type":"ack","workspace":self.open_workspace(string("path")?)?}))
+            }
+            "repository.rebind" => {
+                ensure!(
+                    !self.worktrees.has_pending_rebind()?,
+                    "Rebind restored Worktrunk repositories first"
+                );
+                let selected = string("path")?;
+                let binding = selected_binding(selected, true)?;
+                let common = binding
+                    .common
+                    .as_deref()
+                    .context("Git common directory is unavailable")?;
+                let common_identity = binding
+                    .common_identity
+                    .context("Git common directory is unavailable")?;
+                let repository_id = string("repository_id")?;
+                let saved = self.data.lock().unwrap().store.repository(repository_id)?;
+                let source_identity = self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .repository_source_identity(repository_id)?;
+                ensure!(
+                    !self
+                        .data
+                        .lock()
+                        .unwrap()
+                        .store
+                        .repository_bound(repository_id)?,
+                    "Repository is already bound"
+                );
+                self.worktrees
+                    .validate_core_binding(&saved.root, source_identity, common)?;
+                let mut d = self.data.lock().unwrap();
+                let checked = selected_binding(selected, true)?;
+                ensure!(
+                    binding == checked,
+                    "Selected repository changed during rebind"
+                );
+                ensure!(
+                    d.store.repository(repository_id)?.root == saved.root,
+                    "Repository binding changed during rebind"
+                );
+                let repository =
+                    d.store
+                        .rebind_repository(repository_id, common, common_identity)?;
+                self.catalog_changed(&mut d)?;
+                drop(d);
+                self.release_restore_fence_if_bound()?;
+                Ok(json!({"type":"ack","repository":repository}))
+            }
+            "workspace.rebind" => {
+                ensure!(
+                    !self.worktrees.has_pending_rebind()?,
+                    "Rebind restored Worktrunk repositories first"
+                );
+                let selected = string("path")?;
+                let binding = selected_binding(selected, false)?;
+                let mut d = self.data.lock().unwrap();
+                let checked = selected_binding(selected, false)?;
+                ensure!(
+                    binding == checked,
+                    "Selected workspace changed during rebind"
+                );
+                let workspace = d.store.rebind_workspace(
+                    string("workspace_id")?,
+                    &binding.root,
+                    binding.common.as_deref(),
+                    binding.root_identity,
+                )?;
+                self.catalog_changed(&mut d)?;
+                drop(d);
+                self.release_restore_fence_if_bound()?;
+                Ok(json!({"type":"ack","workspace":workspace}))
             }
             "terminal.create" => {
                 let mut d = self.data.lock().unwrap();
@@ -1989,6 +2150,7 @@ impl Sessions {
     fn start_service(&self, workspace: &str, name: &str) -> Result<Value> {
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
+        d.store.ensure_workspace_bound(workspace)?;
         let mut w = d.store.workspace(workspace)?;
         let before = d.store.service(workspace, name)?;
         if let Some(owner) = &before.terminal_owner {
@@ -2177,6 +2339,7 @@ impl Sessions {
                 );
             }
             let workspace = d.store.workspace(&d.store.conversation(id)?.workspace_id)?;
+            d.store.ensure_workspace_bound(&workspace.id)?;
             let lease = self.worktrees.agent_lease(&workspace.root)?;
             let prompt = d.store.prompt(id, text, attachments)?;
             let mut begin = d
@@ -2317,6 +2480,7 @@ impl Sessions {
             }
             ensure!(d.agents.len() < 16, "Limit of 16 connected Agents reached");
             let workspace = d.store.workspace(&c.workspace_id)?;
+            d.store.ensure_workspace_bound(&workspace.id)?;
             let lease = self.worktrees.agent_lease(&workspace.root)?;
             c.status = "starting".into();
             c.error = None;

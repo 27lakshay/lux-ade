@@ -39,9 +39,9 @@ LIMITATIONS = [
     "Running agent, terminal and service processes are not restored",
 ]
 DATABASES = {
-    "sessions.sqlite": (1, 12),
+    "sessions.sqlite": (1, 14),
     "sessions.review.sqlite3": (0, 0),
-    "sessions.worktrees/lifecycle.sqlite3": (1, 1),
+    "sessions.worktrees/lifecycle.sqlite3": (1, 3),
 }
 MANIFESTS = {
     "sessions.worktrees/empty.toml": 1024 * 1024,

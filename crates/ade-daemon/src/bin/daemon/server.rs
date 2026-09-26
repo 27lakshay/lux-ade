@@ -369,6 +369,7 @@ impl Host {
         } else {
             None
         };
+        self.sessions.ensure_workspace_bound(id)?;
         let result=self.runtime.command(json!({"op":if restart {"terminal.restart"}else{"terminal.ensure"},"workspace":workspace,"terminal_key":key,"existing_only":reserved,"session_subscribers":self.sessions.subscribers.load(Ordering::Relaxed)}))?;
         if result["metrics"]["shell_running"] == true
             && let Some(lease) = lease

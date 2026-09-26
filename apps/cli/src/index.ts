@@ -20,6 +20,10 @@ Commands:
   status                                Inspect the selected profile daemon
   workspace list                        List registered workspaces
   workspace open PATH                   Register a repository or folder
+  workspace rebind WORKSPACE_ID PATH    Bind a restored workspace to a verified directory
+  repository rebind REPOSITORY_ID PATH  Bind a restored Git repository before its workspaces
+  worktree rebind-list                 List restored lifecycle repositories requiring a path
+  worktree rebind REPOSITORY_ID PATH    Bind restored Worktrunk lifecycle history first
   conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
   conversation export ID FILE            Write complete readable JSON history to a new file
@@ -323,6 +327,28 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
   if (area === 'status' && !action) return requestDaemon(socketPath, 'hello')
   if (area === 'workspace' && action === 'list') return { type: 'workspaces', workspaces: (await catalog(socketPath)).workspaces }
   if (area === 'workspace' && action === 'open') return requestDaemon(socketPath, 'workspace.open', { path: required(rest[0], 'PATH') })
+  if (area === 'workspace' && action === 'rebind') {
+    if (rest.length !== 2) throw new CliError('usage', 'workspace rebind requires WORKSPACE_ID PATH.')
+    return requestDaemon(socketPath, 'workspace.rebind', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
+    })
+  }
+  if (area === 'repository' && action === 'rebind') {
+    if (rest.length !== 2) throw new CliError('usage', 'repository rebind requires REPOSITORY_ID PATH.')
+    return requestDaemon(socketPath, 'repository.rebind', {
+      repository_id: required(rest[0], 'REPOSITORY_ID'), path: required(rest[1], 'PATH'),
+    })
+  }
+  if (area === 'worktree' && action === 'rebind') {
+    if (rest.length !== 2) throw new CliError('usage', 'worktree rebind requires REPOSITORY_ID PATH.')
+    return requestDaemon(socketPath, 'worktree.rebind', {
+      repository_id: required(rest[0], 'REPOSITORY_ID'), path: required(rest[1], 'PATH'),
+    })
+  }
+  if (area === 'worktree' && action === 'rebind-list') {
+    if (rest.length) throw new CliError('usage', 'worktree rebind-list does not accept arguments.')
+    return requestDaemon(socketPath, 'worktree.rebind.list')
+  }
   if (area === 'conversation' && action === 'list') {
     const all = (await catalog(socketPath)).conversations
     if (!Array.isArray(all)) throw new CliError('protocol', 'Daemon catalog has no conversations.')

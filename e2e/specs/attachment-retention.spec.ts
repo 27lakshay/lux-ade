@@ -190,7 +190,7 @@ with sqlite3.connect(sys.argv[1]) as db:
       const { stdout } = await execFileAsync('python3', ['-c',
         'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA user_version").fetchone()[0])',
         join(restored, 'sessions.sqlite')])
-      expect(stdout.trim()).toBe('12')
+      expect(stdout.trim()).toBe('14')
     } finally {
       await upgraded.stop()
     }
@@ -233,7 +233,7 @@ test('a backend snapshot remains valid while attachment reclaim runs', async () 
     const snapshot = await create
     expect(JSON.parse(snapshot.stdout)).toMatchObject({ type: 'managed_backup', operation: 'create',
       manifest: { scope: 'backend-snapshot-only', entries: expect.arrayContaining([
-        expect.objectContaining({ path: 'sessions.sqlite', schema: 12 }),
+        expect.objectContaining({ path: 'sessions.sqlite', schema: 14 }),
       ]) } })
     expect(reclaimed).toMatchObject({ reclaimed_payload_bytes: freeAttachment.size })
     const inspected = await execFileAsync('python3', ['scripts/managed_backup.py', 'inspect', '--backup', backup],

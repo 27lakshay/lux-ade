@@ -12,7 +12,10 @@ use std::{
     io::{Read, Write},
     os::{
         fd::AsRawFd,
-        unix::{fs::OpenOptionsExt, process::CommandExt},
+        unix::{
+            fs::{MetadataExt, OpenOptionsExt},
+            process::CommandExt,
+        },
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -28,7 +31,27 @@ struct Repository {
     root: String,
     common_dir: String,
     #[serde(default)]
+    source_common_dir: Option<String>,
+    #[serde(default)]
+    root_device: Option<String>,
+    #[serde(default)]
+    root_inode: Option<String>,
+    #[serde(default)]
+    source_root_device: Option<String>,
+    #[serde(default)]
+    source_root_inode: Option<String>,
+    #[serde(default)]
+    common_device: Option<String>,
+    #[serde(default)]
+    common_inode: Option<String>,
+    #[serde(default)]
+    source_common_device: Option<String>,
+    #[serde(default)]
+    source_common_inode: Option<String>,
+    #[serde(default)]
     needs_rebind: bool,
+    #[serde(default)]
+    binding_generation: i64,
     config: Config,
     cache: Value,
     refreshed_at: Option<i64>,
@@ -37,6 +60,8 @@ struct Repository {
 struct Operation {
     id: String,
     repository_id: String,
+    #[serde(default)]
+    binding_generation: i64,
     request: Value,
     #[serde(default)]
     worktree_path: Option<String>,
@@ -64,17 +89,50 @@ struct Data {
     leases: HashMap<PathBuf, usize>,
     removing: HashSet<PathBuf>,
 }
+fn identity(path: &str) -> Result<(String, String)> {
+    let metadata = std::fs::metadata(path).context("Repository path is unavailable")?;
+    ensure!(metadata.is_dir(), "Repository path must be a directory");
+    Ok((metadata.dev().to_string(), metadata.ino().to_string()))
+}
+fn within_saved_identity(path: &Path, saved: (&str, &str)) -> bool {
+    path.ancestors().any(|ancestor| {
+        std::fs::metadata(ancestor).is_ok_and(|metadata| {
+            metadata.dev().to_string() == saved.0 && metadata.ino().to_string() == saved.1
+        })
+    })
+}
+fn repository_binding_matches(repository: &Repository) -> bool {
+    let Some((root_device, root_inode, common_device, common_inode)) = repository
+        .root_device
+        .as_deref()
+        .zip(repository.root_inode.as_deref())
+        .zip(
+            repository
+                .common_device
+                .as_deref()
+                .zip(repository.common_inode.as_deref()),
+        )
+        .map(|((a, b), (c, d))| (a, b, c, d))
+    else {
+        return false;
+    };
+    identity(&repository.root)
+        .is_ok_and(|(device, inode)| device == root_device && inode == root_inode)
+        && identity(&repository.common_dir)
+            .is_ok_and(|(device, inode)| device == common_device && inode == common_inode)
+}
 // Operation receipts are the durable setup ledger. Refreshing the Git listing or
 // changing configuration must not turn a failed/interrupted setup into success.
 fn setup_state(
     db: &Connection,
     repository: &str,
+    binding_generation: i64,
     branch: &str,
     path: &str,
 ) -> Result<&'static str> {
     let receipt: Option<String> = db.query_row(
-        "SELECT data FROM operations WHERE json_extract(data,'$.repository_id')=?1 AND json_extract(data,'$.request.op')='worktree.switch' AND (json_extract(data,'$.request.target')=?2 OR json_extract(data,'$.request.target')=?3 OR json_extract(data,'$.worktree_path')=?3) ORDER BY rowid DESC LIMIT 1",
-        params![repository, branch, path], |row| row.get(0),
+        "SELECT data FROM operations WHERE json_extract(data,'$.repository_id')=?1 AND COALESCE(json_extract(data,'$.binding_generation'),0)=?2 AND json_extract(data,'$.request.op')='worktree.switch' AND (json_extract(data,'$.request.target')=?3 OR json_extract(data,'$.request.target')=?4 OR json_extract(data,'$.worktree_path')=?4) ORDER BY rowid DESC LIMIT 1",
+        params![repository, binding_generation, branch, path], |row| row.get(0),
     ).optional()?;
     Ok(match receipt {
         Some(row) => match serde_json::from_str::<Operation>(&row)?.status.as_str() {
@@ -294,13 +352,64 @@ impl Worktrees {
         let db = Connection::open(directory.join("lifecycle.sqlite3"))?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=1).contains(&version),
+            (0..=3).contains(&version),
             "Unsupported lifecycle database version {version}"
         );
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS owned(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
-        db.pragma_update(None, "user_version", 1)?;
+        if version < 2 {
+            let tx = rusqlite::Transaction::new_unchecked(
+                &db,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let rows: Vec<String> = tx
+                .prepare("SELECT data FROM repositories")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for row in rows {
+                let mut repository: Repository = serde_json::from_str(&row)?;
+                if repository.needs_rebind {
+                    continue;
+                }
+                match (identity(&repository.root), identity(&repository.common_dir)) {
+                    (Ok((root_device, root_inode)), Ok((common_device, common_inode))) => {
+                        repository.root_device = Some(root_device);
+                        repository.root_inode = Some(root_inode);
+                        repository.common_device = Some(common_device);
+                        repository.common_inode = Some(common_inode);
+                    }
+                    _ => repository.needs_rebind = true,
+                }
+                put(&tx, "repositories", &repository.id, &repository)?;
+            }
+            tx.pragma_update(None, "user_version", 2)?;
+            tx.commit()?;
+        }
+        if version < 3 {
+            let tx = rusqlite::Transaction::new_unchecked(
+                &db,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let rows: Vec<String> = tx
+                .prepare("SELECT data FROM repositories")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for row in rows {
+                let mut repository: Repository = serde_json::from_str(&row)?;
+                // A schema-2 repository already rebound once has lost its source
+                // identity. Leave it unknown so another rebind fails closed.
+                if repository.binding_generation == 0 {
+                    repository.source_root_device = repository.root_device.clone();
+                    repository.source_root_inode = repository.root_inode.clone();
+                    repository.source_common_device = repository.common_device.clone();
+                    repository.source_common_inode = repository.common_inode.clone();
+                }
+                put(&tx, "repositories", &repository.id, &repository)?;
+            }
+            tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
+        }
         let pending: Vec<String> = db
             .prepare("SELECT data FROM operations")?
             .query_map([], |r| r.get(0))?
@@ -338,6 +447,9 @@ impl Worktrees {
         self.acquire_lease(root, true)
     }
     fn acquire_lease(self: &Arc<Self>, root: &str, agent: bool) -> Result<Lease> {
+        if self.has_pending_rebind()? {
+            return Err(ade_core::error::NeedsRebind.into());
+        }
         let path = std::fs::canonicalize(root)?;
         let common = if agent {
             git(
@@ -366,6 +478,10 @@ impl Worktrees {
                     .collect::<rusqlite::Result<_>>()?;
             for row in rows {
                 let repo: Repository = serde_json::from_str(&row)?;
+                ensure!(
+                    repository_binding_matches(&repo),
+                    ade_core::error::NeedsRebind
+                );
                 let belongs = common.as_deref() == Some(Path::new(&repo.common_dir))
                     || path.starts_with(&repo.root)
                     || repo.cache.as_array().is_some_and(|items| {
@@ -383,6 +499,7 @@ impl Worktrees {
                 let state = setup_state(
                     &d.db,
                     &repo.id,
+                    repo.binding_generation,
                     &branch,
                     path.to_str().context("Path must be UTF-8")?,
                 )?;
@@ -513,8 +630,13 @@ impl Worktrees {
         if let Some(items) = cache.as_array_mut() {
             for item in items {
                 if let Some(path) = item["path"].as_str() {
-                    let readiness =
-                        setup_state(&d.db, id, item["branch"].as_str().unwrap_or(""), path)?;
+                    let readiness = setup_state(
+                        &d.db,
+                        id,
+                        r.binding_generation,
+                        item["branch"].as_str().unwrap_or(""),
+                        path,
+                    )?;
                     let owner: Option<String> =
                         d.db.query_row("SELECT data FROM owned WHERE id=?1", [path], |r| r.get(0))
                             .optional()?;
@@ -542,16 +664,258 @@ impl Worktrees {
             json!({"type":"worktree_state","repository":repository,"worktrees":cache,"busy":d.busy.contains(id),"operations":operations.into_iter().filter(|o|o["repository_id"]==id).collect::<Vec<_>>()}),
         )
     }
+    pub fn has_pending_rebind(&self) -> Result<bool> {
+        let d = self.data.lock().unwrap();
+        let rows: Vec<String> =
+            d.db.prepare("SELECT data FROM repositories")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+        for row in rows {
+            let repository: Repository = serde_json::from_str(&row)?;
+            if repository.needs_rebind || !repository_binding_matches(&repository) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    /// If this profile had a lifecycle record for the saved core repository,
+    /// the core binding must select the same physical Git repository.
+    pub fn validate_core_binding(
+        &self,
+        saved_common: &str,
+        source_identity: (u64, u64),
+        selected_common: &str,
+    ) -> Result<()> {
+        let d = self.data.lock().unwrap();
+        let rows: Vec<String> =
+            d.db.prepare("SELECT data FROM repositories")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+        for row in rows {
+            let repository: Repository = serde_json::from_str(&row)?;
+            for saved in [
+                repository
+                    .source_root_device
+                    .as_deref()
+                    .zip(repository.source_root_inode.as_deref()),
+                repository
+                    .source_common_device
+                    .as_deref()
+                    .zip(repository.source_common_inode.as_deref()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                ensure!(
+                    !within_saved_identity(Path::new(selected_common), saved),
+                    "Selected directory belongs to a saved source Worktrunk repository"
+                );
+            }
+            let same_source = repository
+                .source_common_device
+                .as_deref()
+                .zip(repository.source_common_inode.as_deref())
+                .is_some_and(|(device, inode)| {
+                    device == source_identity.0.to_string()
+                        && inode == source_identity.1.to_string()
+                });
+            if same_source
+                || repository.source_common_dir.as_deref() == Some(saved_common)
+                || repository.needs_rebind && repository.common_dir == saved_common
+            {
+                ensure!(
+                    !repository.needs_rebind && repository_binding_matches(&repository),
+                    "Rebind the matching Worktrunk repository first"
+                );
+                ensure!(
+                    repository.common_dir == selected_common,
+                    "Selected Git common directory differs from the Worktrunk binding"
+                );
+            }
+        }
+        Ok(())
+    }
+    fn rebind_repository(&self, id: &str, selected: &str) -> Result<Value> {
+        let path = std::fs::canonicalize(selected)
+            .context("Selected repository directory is unavailable")?;
+        ensure!(path.is_dir(), "Selected repository must be a directory");
+        let path_text = path.to_str().context("Path must be UTF-8")?;
+        let selected_identity = identity(path_text)?;
+        let common = std::fs::canonicalize(git(
+            path_text,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?)?;
+        ensure!(common.is_dir(), "Git common directory is unavailable");
+        let common_text = common
+            .to_str()
+            .context("Git common directory must be UTF-8")?;
+        let common_identity = identity(common_text)?;
+        let listing = git(path_text, &["worktree", "list", "--porcelain", "-z"])?;
+        let primary = listing
+            .split('\0')
+            .find_map(|line| line.strip_prefix("worktree "))
+            .context("Repository has no primary worktree")?;
+        let primary = std::fs::canonicalize(primary)?;
+        ensure!(
+            primary.is_dir(),
+            "Primary checkout directory is unavailable"
+        );
+        let primary_text = primary
+            .to_str()
+            .context("Primary checkout path must be UTF-8")?;
+        let primary_identity = identity(primary_text)?;
+        let primary_common = std::fs::canonicalize(git(
+            primary_text,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?)?;
+        ensure!(
+            primary_common == common,
+            "Selected checkout and primary checkout differ"
+        );
+        let d = self.data.lock().unwrap();
+        let mut repository: Repository = read_json(&d.db, "repositories", id)?;
+        let saved_root = repository
+            .source_root_device
+            .as_deref()
+            .zip(repository.source_root_inode.as_deref())
+            .context("Saved repository root identity is unavailable; rebind remains fenced")?;
+        let saved_common = repository
+            .source_common_device
+            .as_deref()
+            .zip(repository.source_common_inode.as_deref())
+            .context("Saved Git common directory identity is unavailable; rebind remains fenced")?;
+        ensure!(
+            saved_root != (primary_identity.0.as_str(), primary_identity.1.as_str())
+                && saved_common != (common_identity.0.as_str(), common_identity.1.as_str()),
+            "Select a different physical repository from the saved checkout"
+        );
+        ensure!(
+            repository.needs_rebind || !repository_binding_matches(&repository),
+            "Repository is already bound"
+        );
+        ensure!(
+            common != Path::new(&repository.common_dir) || !repository_binding_matches(&repository),
+            "Select a different repository from the source checkout"
+        );
+        ensure!(
+            !d.busy.contains(id),
+            "Repository lifecycle operation is running"
+        );
+        ensure!(
+            !d.leases
+                .keys()
+                .any(|lease| lease.starts_with(&path) || lease.starts_with(&primary)),
+            "Repository has an active execution lease"
+        );
+        let rows: Vec<String> =
+            d.db.prepare("SELECT data FROM repositories WHERE id!=?1")?
+                .query_map([id], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+        for row in rows {
+            let other: Repository = serde_json::from_str(&row)?;
+            for saved in [
+                other
+                    .source_root_device
+                    .as_deref()
+                    .zip(other.source_root_inode.as_deref()),
+                other
+                    .source_common_device
+                    .as_deref()
+                    .zip(other.source_common_inode.as_deref()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                ensure!(
+                    !within_saved_identity(&primary, saved)
+                        && !within_saved_identity(&common, saved),
+                    "Selected directory belongs to another saved source repository"
+                );
+            }
+            ensure!(
+                other.common_dir != common.to_string_lossy(),
+                "Git common directory belongs to another repository identity"
+            );
+        }
+        ensure!(
+            std::fs::canonicalize(selected)? == path
+                && std::fs::canonicalize(primary_text)? == primary,
+            "Repository path changed during rebind"
+        );
+        let verified_common = std::fs::canonicalize(git(
+            path_text,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?)?;
+        ensure!(
+            verified_common == common,
+            "Git common directory changed during rebind"
+        );
+        ensure!(
+            identity(path_text)? == selected_identity
+                && identity(primary_text)? == primary_identity
+                && identity(common_text)? == common_identity,
+            "Repository directory changed during rebind"
+        );
+        repository.root = primary_text.into();
+        repository
+            .source_common_dir
+            .get_or_insert_with(|| repository.common_dir.clone());
+        repository.common_dir = common
+            .to_str()
+            .context("Git common directory must be UTF-8")?
+            .into();
+        let (root_device, root_inode) = primary_identity;
+        let (common_device, common_inode) = common_identity;
+        repository.root_device = Some(root_device);
+        repository.root_inode = Some(root_inode);
+        repository.common_device = Some(common_device);
+        repository.common_inode = Some(common_inode);
+        repository.needs_rebind = false;
+        repository.binding_generation = repository
+            .binding_generation
+            .checked_add(1)
+            .context("Repository binding generation overflow")?;
+        repository.cache = json!([]);
+        repository.refreshed_at = None;
+        repository.config = Config::default();
+        let tx =
+            rusqlite::Transaction::new_unchecked(&d.db, rusqlite::TransactionBehavior::Immediate)?;
+        put(&tx, "repositories", id, &repository)?;
+        tx.execute(
+            "DELETE FROM owned WHERE json_extract(data,'$.repository_id')=?1",
+            [id],
+        )?;
+        tx.commit()?;
+        drop(d);
+        self.snapshot(id)
+    }
+    fn rebind_catalog(&self) -> Result<Value> {
+        let d = self.data.lock().unwrap();
+        let rows: Vec<String> =
+            d.db.prepare("SELECT data FROM repositories ORDER BY rowid")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+        let mut repositories = Vec::with_capacity(rows.len());
+        for row in rows {
+            let repository: Repository = serde_json::from_str(&row)?;
+            repositories.push(json!({"id":repository.id,"root":repository.root,
+                "common_dir":repository.common_dir,
+                "needs_rebind":repository.needs_rebind || !repository_binding_matches(&repository),
+                "binding_generation":repository.binding_generation}));
+        }
+        Ok(json!({"type":"worktree_rebind_catalog","repositories":repositories}))
+    }
     pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let op = field(request, "op")?;
-        if op != "worktree.operation" {
-            let pending: i64 = self.data.lock().unwrap().db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM repositories WHERE json_extract(data,'$.needs_rebind')=1)",
-                [], |row| row.get(0),
-            )?;
-            if pending != 0 {
-                return Err(ade_core::error::NeedsRebind.into());
-            }
+        if op == "worktree.rebind.list" {
+            return self.rebind_catalog();
+        }
+        if op == "worktree.rebind" {
+            return self
+                .rebind_repository(field(request, "repository_id")?, field(request, "path")?);
+        }
+        if op != "worktree.operation" && self.has_pending_rebind()? {
+            return Err(ade_core::error::NeedsRebind.into());
         }
         if op == "worktree.repository" {
             let path = std::fs::canonicalize(field(request, "path")?)?;
@@ -583,6 +947,7 @@ impl Worktrees {
             for row in rows {
                 let mut r: Repository = serde_json::from_str(&row)?;
                 if r.common_dir == common {
+                    ensure!(repository_binding_matches(&r), ade_core::error::NeedsRebind);
                     if !d.busy.contains(&r.id) {
                         r.root = root.clone();
                         put(&d.db, "repositories", &r.id, &r)?;
@@ -593,10 +958,20 @@ impl Worktrees {
             }
             let r = Repository {
                 id: new_id("repository"),
+                root_device: Some(identity(&root)?.0),
+                root_inode: Some(identity(&root)?.1),
+                source_root_device: Some(identity(&root)?.0),
+                source_root_inode: Some(identity(&root)?.1),
+                common_device: Some(identity(&common)?.0),
+                common_inode: Some(identity(&common)?.1),
+                source_common_device: Some(identity(&common)?.0),
+                source_common_inode: Some(identity(&common)?.1),
                 root,
                 common_dir: common,
+                source_common_dir: None,
                 config: Config::default(),
                 needs_rebind: false,
+                binding_generation: 0,
                 cache: json!([]),
                 refreshed_at: None,
             };
@@ -737,6 +1112,7 @@ impl Worktrees {
         let job = Operation {
             id: request_id.into(),
             repository_id: id.into(),
+            binding_generation: repo.binding_generation,
             request: request.clone(),
             worktree_path: None,
             status: "running".into(),
@@ -772,6 +1148,13 @@ impl Worktrees {
         remove_path: Option<PathBuf>,
     ) {
         let result = (|| -> Result<()> {
+            // Recheck after admission and immediately before Worktrunk receives
+            // the directory. A later external rename remains detectable on the
+            // next command, but cannot be made atomic with an external process.
+            ensure!(
+                repository_binding_matches(&repo),
+                ade_core::error::NeedsRebind
+            );
             for path in [&repo.config.user_config, &repo.config.project_config]
                 .into_iter()
                 .flatten()

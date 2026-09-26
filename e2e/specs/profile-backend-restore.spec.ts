@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { execFile, spawn } from 'node:child_process'
-import { access, cp, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -22,8 +22,12 @@ test('registered backend restore publishes a new profile last and remaps its pri
   const directory = await mkdtemp(join(tmpdir(), 'ade-registered-restore-e2e-'))
   const home = join(directory, 'profiles')
   const bundle = join(directory, 'bundle')
+  const sourceExternal = join(directory, 'source-external')
+  const reboundExternal = join(directory, 'rebound-external')
   const owned: ManagedProfileOwner[] = []
   try {
+    await mkdir(sourceExternal)
+    await mkdir(reboundExternal)
     const source = (await command(home, 'create', 'Source')).profile as Profile
     const sourceLaunch = await command(home, 'start', source.id) as Launch
     owned.push(await managedProfileOwner(sourceLaunch.socket))
@@ -32,6 +36,8 @@ test('registered backend restore publishes a new profile last and remaps its pri
     const created = await rpc(sourceLaunch.socket, { op: 'conversation.create',
       workspace_id: workspace.id, provider: 'codex', title: 'Retained history' })
     const conversationId = (created.conversation as { id: string }).id
+    const opened = await rpc(sourceLaunch.socket, { op: 'workspace.open', path: sourceExternal })
+    const externalId = (opened.workspace as { id: string }).id
     await command(home, 'backup-backend', '--out', bundle, source.id)
 
     const corrupt = join(directory, 'corrupt')
@@ -61,11 +67,22 @@ test('registered backend restore publishes a new profile last and remaps its pri
       root: await realpath(join(home, 'profiles', target.id, 'workspace')), needs_rebind: false })
     expect((await rpc(targetLaunch.socket, { op: 'conversation.get', conversation_id: conversationId })).conversation)
       .toMatchObject({ id: conversationId, title: 'Retained history' })
+    const fenced = await rpc(targetLaunch.socket, { op: 'catalog.get' })
+    expect((fenced.catalog as { workspaces: Array<{ id: string; needs_rebind: boolean }> }).workspaces)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: externalId, needs_rebind: true })]))
+    const cli = resolve('apps/cli/dist/index.js')
+    const rebound = await execFileAsync(process.execPath, [cli, '--socket', targetLaunch.socket,
+      'workspace', 'rebind', externalId, reboundExternal], { timeout: 12_000 })
+    expect(JSON.parse(rebound.stdout)).toMatchObject({ type: 'ack', workspace: { id: externalId,
+      root: await realpath(reboundExternal), needs_rebind: false } })
     const sourceAfter = await rpc(sourceLaunch.socket, { op: 'catalog.get' })
     expect((sourceAfter.catalog as { workspaces: Array<{ id: string; root: string }> }).workspaces[0])
       .toMatchObject({ id: workspace.id, root: workspace.root })
     expect((await rpc(sourceLaunch.socket, { op: 'conversation.get', conversation_id: conversationId })).conversation)
       .toMatchObject({ id: conversationId, title: 'Retained history' })
+    expect((sourceAfter.catalog as { workspaces: Array<{ id: string; root: string }> }).workspaces)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: externalId,
+        root: await realpath(sourceExternal) })]))
   } finally {
     await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
