@@ -8,18 +8,20 @@ An account belongs to one ADE profile and one provider. Its stable ID, display n
 
 `account.create` accepts a provider ID and name. `account.list` returns registered metadata. `conversation.create` accepts an optional `account_id` and rejects a missing account or provider mismatch. A conversation pins its account ID and exposes `account_context: managed`. Existing and newly created conversations without an account ID expose `account_context: legacy_ambient`; this preserves their current process environment behavior and makes that limitation visible. A stored conversation cannot change its account association through normal updates.
 
-The daemon passes a managed conversation's account ID, provider, native home, generation and pinned identity to its runtime execution context. It derives the native home from the active profile and rejects redirected or overly accessible account directories. Managed Codex, Oh My Pi and OpenCode still reject execution. Codex can use the OS keyring, and Oh My Pi can rotate among saved OAuth credentials; neither adapter has the required native readback yet.
+The daemon passes a managed conversation's account ID, provider, native home, generation and pinned identity to its runtime execution context. It derives the native home from the active profile and rejects redirected or overly accessible account directories. Managed Oh My Pi and OpenCode still reject execution. ADE's project-local Oh My Pi v18.3.0 CLI can rotate among saved OAuth credentials and its adapter lacks exact-account native readback. The earlier live Oh My Pi run exercised ambient authentication through the Bun bridge, not a managed account.
+
+Managed Codex uses a private `CODEX_HOME` with `cli_auth_credentials_store = "file"` and a sanitized environment. Its bounded app-server inspection reads effective configuration and native ChatGPT account identity without returning tokens. This slice accepts only native Codex 0.157.0 and requires its observed experimental `workspaceRouting.chatgptAccountId` alongside email. Missing routing, changed identity, keyring or gateway overrides, unsafe or hard-linked credential files, and an unrecognized version fail closed. The selected workspace-routing response is not a stable documented identity contract, so actual hosted-account validation and a compatibility plan remain required. The managed adapter repeats identity readback in the launched app-server before opening a session and before each new turn.
 
 For Claude, `account.inspect` runs a fresh bounded `claude --version` and `claude --setting-sources '' auth status` through the runtime in a sanitized environment with `CLAUDE_CONFIG_DIR` and `ANTHROPIC_CONFIG_DIR` set to the account home. The setting-sources syntax was checked against the installed CLI; the flag must precede `auth status`. It reports missing executable, unauthenticated, incompatible or ready without returning raw command output. The current parser accepts Claude Code 2.1.283 or a later 2.1.x patch only when all observed status fields are present and identify a first-party subscription account. This is a compatibility gate over an undocumented JSON shape, not a guarantee for future releases. `account.verify` saves the observed identity only when the caller's expected generation still matches. Managed Claude launch runs the same fresh check before starting its SDK sidecar, rejects identity drift and nonempty settings sources, and gives the sidecar the same sanitized environment. External CLI replacement is rechecked at each inspection and launch. Native login remains in the unmodified Claude CLI; ADE stores no token.
 
-`account.disable` is an ADE-only binding change: it increments generation, clears the verified identity and fences a late `account.verify`. It does not log out the native CLI or stop an already running Agent. Native logout/readback and its full R012 race acceptance remain separate work.
+`account.disable` is an ADE-only binding change: it increments generation, clears the verified identity and fences a late `account.verify`. It does not log out the native CLI or interrupt an active turn. The daemon rejects future sends and resumes for a disabled account, including an Agent already connected before Disable. Native logout/readback and its full R012 race acceptance remain separate work.
 
 Inspect-to-verify consent is fenced: `account.verify` requires the complete
 `expected_identity` returned by a prior `account.inspect`, plus its generation.
 The daemon performs a fresh native probe and rejects an identity change even
 when the ADE generation has not changed. The CLI accepts that identity as JSON;
-the Electron Accounts view forwards the inspected identity. The view offers a
-shell-quoted native Claude login command, displays both inspected and pinned
+the Electron Accounts view forwards the inspected identity. The view offers
+shell-quoted native Claude and Codex login commands, displays inspected and pinned
 identities, and labels legacy ambient conversation selection explicitly. A
 profile switch during a delayed inspection cannot render the prior profile’s
 identity or enable Verify in the new profile.
@@ -33,12 +35,18 @@ After runtime creation, the daemon rechecks the account's generation, verified s
 - Exercise native credential refresh and logout, including late readback, before claiming R012 completion.
 - Record real-provider evidence separately from deterministic external protocol fixtures, as required by the provider specification.
 
+The running-daemon `codex-account-readiness.spec.ts` uses an external native
+app-server fixture to exercise two private homes, inspection-to-verification
+drift, sanitized launch, same-process per-turn drift readback, hard-linked
+file rejection, and Disable fencing on connected and delayed Agents. These
+fixture results do not establish hosted Codex account compatibility.
+
 Integrated evidence (26 September 2026, macOS arm64): the running-daemon
 `account-readiness.spec.ts` rejects a changed identity between Inspect and
-Verify. `desktop-accounts.spec.ts` exercises account creation, readiness,
+Verify. `desktop-accounts.spec.ts` exercises Claude and Codex account creation, readiness,
 verification, conversation binding, ADE-only disable, identity drift and a
 paused probe across a profile switch through hidden Electron. The CLI’s
 `local-cli.spec.ts` verifies and sends through a managed Claude home using an
-external CLI/SDK fixture. The 50-case `pnpm check` suite, Rust formatting and
+external CLI/SDK fixture. The 52-case `pnpm check` suite, Rust formatting and
 strict Clippy pass on the combined source tree. Hosted two-account verification
 and native logout remain open; fixture passes do not establish them.

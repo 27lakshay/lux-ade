@@ -20,7 +20,7 @@ full acceptance in its owning spec:
 | Slice and requirement IDs | Observable gate | Current gap |
 |---|---|---|
 | Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged app, one profile, shell and deterministic turns pass; installed multi-profile and real-agent continuity remain |
-| Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live prompts passed; Oh My Pi lacks configured account; Claude identity readback/pinning passes deterministic E2E but hosted two-account execution and full controls remain |
+| Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live ambient prompts passed; Oh My Pi lacks configured account; Claude and Codex managed identity pinning pass deterministic E2E but hosted two-account execution and full controls remain |
 | Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
 | Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, service controls and recurring HTTP health checks, listener and bounded log inspection, and browser preview with profile cookie persistence pass; persistent logs/history and full F086 acceptance remain |
 | Shared control: F101, F102, F103 | CLI and Electron target the same profile/workspace/conversation/terminal with structured outcomes | Local CLI subset works; public command coverage remains |
@@ -72,6 +72,19 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `56cea4d` | CLI managed account controls | Explicit account selection; external Claude fixture verifies and sends through the selected native home |
 | `edc4562` | Desktop managed Claude accounts | Inspect/Verify identity consent, profile-switch fence, explicit account selection and native login guidance |
 | `2c2d710` | Durable managed-service output | Bounded run-fenced output survives daemon handoff and runtime loss; Electron shows monitored health and recorded output |
+| `7733e9c` | Service capture consistency | Error state and test construction match durable output ownership; strict all-target Clippy passes |
+| `4728251` | Managed Codex identity | Private file-backed native homes, fresh identity readback, connected-turn fences and hard-link rejection through real-daemon E2E |
+| `f7d6d4f` | Codex account controls in Electron | Native login guidance, inspect/verify and explicit conversation binding through hidden Electron E2E |
+
+At `f7d6d4f` on macOS arm64, `pnpm check` passed type checking, Fallow,
+backend/desktop/CLI builds and 52/52 real-process E2Es. Rust formatting and
+strict workspace Clippy passed, as did the GPUI prototype build-only package.
+The rebuilt unsigned macOS app directory passed all 3 packaged E2Es with
+hidden windows. The existing local ZIP predates this revision and was not
+regenerated. Managed Codex checks are pinned to native 0.157.0 and an observed
+experimental identity response; the fixture cannot prove hosted credential
+selection, native logout or two real accounts. No requirement is newly marked
+complete by this checkpoint.
 
 At `2c2d710` on macOS arm64, `pnpm check` passed TypeScript type
 checking, Fallow, backend/desktop/CLI builds and 50/50 real-process E2Es.
@@ -137,7 +150,7 @@ returned the expected answer in 5.9 seconds; Claude Code 2.1.282 did so in
 the failure may have another cause and needs a configured-account rerun.
 The repeatable command is `pnpm test:e2e:live codex claude omp`.
 
-The 36 main E2E cases and 3 packaged cases are narrow slices. No entire v1
+The 52 main E2E cases and 3 packaged cases are narrow slices. No entire v1
 domain or 140-item requirement
 register is marked complete by this record.
 
@@ -148,6 +161,23 @@ recorded identities. The local command guard refused recursive deletion of the
 disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 
 ## Active and next work
+
+- After `235dece`, managed Codex inspection, verification and per-turn
+  readback were added against an isolated native home and a version-gated
+  app-server contract. Electron and CLI expose the account flow. Independent
+  review found hard-link and connected-session gaps; these are fixed with
+  fixture E2E for native file isolation, identity drift and Disable fencing.
+  The combined 52-case source E2E suite and strict Rust Clippy pass. Actual
+  hosted Codex two-account execution, native refresh/logout and the narrow
+  readback-to-turn handoff race remain unproven. These slices do not close
+  F025/F027/R012.
+- Read-only Oh My Pi research found that ADE runs the project-local v18.3.0
+  published CLI through its Bun bridge. That CLI can rotate among stored OAuth
+  credentials and lacks verified exact-account status. A managed account needs
+  a version-pinned isolated store, token-free SDK identity readback, effective
+  credential-source and per-turn confirmation, plus a real OAuth run. The
+  earlier live attempt reached provider execution but did not establish any
+  managed-account identity contract.
 
 - The `client_connection` worker began the browser slice but its tool access
   failed with a 401; root finished and integrated the slice. An independent
