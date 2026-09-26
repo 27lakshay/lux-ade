@@ -462,6 +462,12 @@ test('Quit reconciles an accepted prompt without redispatch and stays open while
       (globalThis as typeof globalThis & { __adeQuitWarnings?: string[] }).__adeQuitWarnings ?? []))
       .toEqual(['ADE is staying open until the prompt is reconciled.'])
     expect(application.process().exitCode).toBeNull()
+    await new Promise((done) => setTimeout(done, 100))
+    await application.evaluate(({ app }) => app.quit())
+    await new Promise((done) => setTimeout(done, 400))
+    expect(await application.evaluate(() =>
+      (globalThis as typeof globalThis & { __adeQuitWarnings?: string[] }).__adeQuitWarnings ?? []))
+      .toEqual(['ADE is staying open until the prompt is reconciled.'])
     blockComplete = false
     await application.close()
     const owner = JSON.parse(await readFile(join(userData, 'window-owner-v1.json'), 'utf8')) as { id: string }
@@ -472,6 +478,7 @@ test('Quit reconciles an accepted prompt without redispatch and stays open while
     const calls = (await readFile(join(mockDirectory, 'calls.jsonl'), 'utf8')).split('\n').filter(Boolean)
     expect(calls.filter((line) => JSON.parse(line).method === 'turn/start')).toHaveLength(1)
   } finally {
+    blockComplete = false
     await application.close().catch(() => undefined)
     for (const peer of peers) peer.destroy()
     await new Promise<void>((resolveClose) => proxy.close(() => resolveClose()))

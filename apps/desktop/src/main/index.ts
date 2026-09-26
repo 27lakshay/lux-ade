@@ -739,6 +739,26 @@ ipcMain.on('ade:terminal-detach', (event, connectionId: unknown) => {
   terminals.delete(key)
 })
 
+let warnedPendingSends: string | null = null
+async function warnPendingSends(window?: BrowserWindow): Promise<void> {
+  const pending = [...drafts.entries()]
+    .filter(([key, entry]) => entry.send && (!window || key.startsWith(`${window.webContents.id}:`)))
+    .map(([key, entry]) => `${key}:${entry.send?.requestId}`)
+    .sort()
+    .join('\n')
+  if (!pending || pending === warnedPendingSends) return
+  warnedPendingSends = pending
+  const options = window
+    ? { type: 'warning' as const, title: 'Prompt delivery is unconfirmed',
+        message: 'This window is staying open until the prompt is reconciled.',
+        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' }
+    : { type: 'warning' as const, title: 'Prompt delivery is unconfirmed',
+        message: 'ADE is staying open until the prompt is reconciled.',
+        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' }
+  if (window) await dialog.showMessageBox(window, options)
+  else await dialog.showMessageBox(options)
+}
+
 function openMainWindow(): void {
   const window = new BrowserWindow({
     show: process.env.ADE_E2E_HIDE_WINDOW !== '1',
@@ -773,9 +793,7 @@ function openMainWindow(): void {
     void (async () => {
       await Promise.allSettled(owned.filter((entry) => entry.send).map(reconcileAcceptedSend))
       if (hasWindowSend()) {
-        await dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
-          message: 'This window is staying open until the prompt is reconciled.',
-          detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+        await warnPendingSends(window)
         return
       }
       const pending = owned.filter((entry) => entry.timer || entry.savedRevision < entry.draft.revision)
@@ -787,9 +805,7 @@ function openMainWindow(): void {
         return
       }
       if (hasWindowSend()) {
-        await dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
-          message: 'This window is staying open until the prompt is reconciled.',
-          detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+        await warnPendingSends(window)
         return
       }
       readyForClose = true
@@ -862,9 +878,7 @@ app.on('before-quit', (event) => {
       void (async () => {
         await Promise.allSettled(owned.filter((entry) => entry.send).map(reconcileAcceptedSend))
         if ([...drafts.values()].some((entry) => entry.send)) {
-          await dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
-            message: 'ADE is staying open until the prompt is reconciled.',
-            detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+          await warnPendingSends()
           return
         }
         const pending = owned.filter((entry) => entry.timer || entry.savedRevision < entry.draft.revision)
@@ -876,9 +890,7 @@ app.on('before-quit', (event) => {
           return
         }
         if ([...drafts.values()].some((entry) => entry.send)) {
-          await dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
-            message: 'ADE is staying open until the prompt is reconciled.',
-            detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+          await warnPendingSends()
           return
         }
         readyToQuit = true
