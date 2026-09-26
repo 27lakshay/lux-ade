@@ -29,8 +29,9 @@ Recorded evidence: `e2e/specs/local-cli.spec.ts` passed against a real isolated
 daemon and Electron. CLI and desktop observed the same terminal ID and shell
 PID; shell output submitted by CLI appeared in Electron. Missing and
 incompatible endpoints returned stable structured errors. Terminal input
-acknowledgement does not prove shell command completion. Profile discovery,
-remote transport, attach mode, and stable public schemas remain open.
+acknowledgement does not prove shell command completion. At this initial slice,
+profile discovery, remote transport, attach mode, and stable public schemas
+remained open; the later local slices below supersede discovery and attach.
 
 Additional partial F085/F086/F102 evidence, 26 September 2026: named
 `listener list` and `service inspect WORKSPACE_ID NAME [TAIL_BYTES]` commands
@@ -59,3 +60,16 @@ inspection. The daemon compares that exact identity with a fresh native probe;
 CLI E2E rejects a different expected email and completes a managed fixture
 turn with the matching identity. The combined 50-case source E2E suite passed
 at `2c2d710` on macOS arm64.
+
+Daily-use CLI slices, 27 September 2026 (F101/F102/F103/R001/R002 partial):
+`a979b98` adds interactive attachment to the runtime-owned terminal with real
+PTY resize, large paste and safe detach. `fbd7f39` discovers and explicitly
+targets GUI-created managed profiles. `0b400c3` ships the same CLI and client
+code inside the macOS app; the installed E2E launches it with a stripped PATH,
+preserves the GUI selection and cold-starts one stopped profile. `dfc82fe`
+accepts a caller-owned prompt request ID so a lost daemon reply can be retried
+after daemon handoff; its E2E sees one fixture provider dispatch and conflicts
+for altered payload or target. The final source check passed 184 E2Es with one
+host skip, and rebuilt installed checks passed 9/9 at `dfc82fe` on macOS
+arm64. Full F101–F103 and R001/R002 acceptance remains open for the other
+selected commands, crash boundaries and real providers.
