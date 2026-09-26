@@ -156,41 +156,10 @@ fn declaration(workspace: &Path) -> Result<Declaration> {
 
 fn tool_dirs() -> Vec<PathBuf> {
     let mut directories = Vec::new();
-    for name in ["ADE_PROJECT_TOOL_PATHS", "PATH"] {
-        if let Some(value) = std::env::var_os(name) {
-            directories.extend(std::env::split_paths(&value));
-        }
+    if let Some(value) = std::env::var_os("ADE_PROJECT_TOOL_PATHS") {
+        directories.extend(std::env::split_paths(&value));
     }
-    directories.extend(
-        ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-            .into_iter()
-            .map(PathBuf::from),
-    );
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        directories.extend(
-            [".local/bin", ".bun/bin", ".local/share/mise/shims"]
-                .into_iter()
-                .map(|p| home.join(p)),
-        );
-        for (base, suffix) in [
-            (".local/share/mise/installs/node", "bin"),
-            (".local/share/mise/installs/pnpm", "bin"),
-            (".local/share/mise/installs/yarn", "bin"),
-            (".nvm/versions/node", "bin"),
-            (".fnm/node-versions", "installation/bin"),
-        ] {
-            if let Ok(entries) = fs::read_dir(home.join(base)) {
-                let mut paths = entries
-                    .flatten()
-                    .map(|entry| entry.path().join(suffix))
-                    .collect::<Vec<_>>();
-                paths.sort();
-                paths.reverse();
-                directories.extend(paths);
-            }
-        }
-    }
+    directories.extend(ade_platform::tool_paths::host_tool_dirs());
     let mut seen = BTreeSet::new();
     directories.retain(|path| path.is_dir() && seen.insert(path.clone()));
     directories

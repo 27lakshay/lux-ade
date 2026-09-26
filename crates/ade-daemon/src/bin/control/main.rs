@@ -314,7 +314,11 @@ fn start_runtime(
     if packaged {
         command
             .env_remove("ADE_ROOT")
-            .env("ADE_WORKSPACE_SELECTION", "1");
+            .env("ADE_WORKSPACE_SELECTION", "1")
+            .env(
+                "PATH",
+                std::env::join_paths(ade_platform::tool_paths::host_tool_dirs())?,
+            );
     } else {
         command.env("ADE_ROOT", private_workspace);
     }
