@@ -448,3 +448,20 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   not establish live-account compatibility or quality.
 
 See each domain `issues/` ticket for slice-specific acceptance and limits.
+
+- Commit `fbd7ba0` suppresses native Electron error dialogs for isolated E2E
+  profiles. The startup `showErrorBox` was already suppressed when
+  `ADE_E2E_USER_DATA_DIR` was set; pending-send and draft-close dialogs were
+  the remaining native paths. The focused recovery/startup tests pass 12/12.
+  An orphan runtime from an older diagnostics test was stopped after its PID,
+  instance, and data directory were verified. The separate prototype
+  daemon/runtime pair has an active terminal and was left running.
+- Commit `0f3e0bc` adds inherited working-directory and Git-common identity
+  checks to review and Worktrunk workers, plus a removal-target check. Six
+  real-process E2Es cover replacement at the worker handoff. The committed
+  revision passes `pnpm check` (123/123 source E2Es), `pnpm package:mac`,
+  packaged E2Es (6/6), Rust formatting, and strict Clippy. The test runs left
+  no new ADE processes. This narrows a path replacement race but does not
+  close it: Git/Worktrunk can reopen Git metadata or a removal path after the
+  final worker check, and provider, PTY, service, and script launches still
+  need execution-bound identities. F061/R007/R014 remain open.
