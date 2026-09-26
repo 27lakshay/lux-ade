@@ -12,6 +12,7 @@
     "test:e2e": "pnpm build:backend && pnpm build && playwright test",
     "test:e2e:package": "playwright test --config playwright.package.config.ts",
     "test:e2e:live": "python3 scripts/live_provider_check.py",
+    "test:e2e:live:desktop": "playwright test --config playwright.live.config.ts",
     "deadcode": "fallow dead-code --workspace '@ade/*'",
     "check": "pnpm typecheck && pnpm deadcode && pnpm test:e2e"
   },

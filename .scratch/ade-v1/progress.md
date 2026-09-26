@@ -25,7 +25,7 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 
 | Daily-use gate and IDs | Verified | Remaining before gate closes |
 |---|---|---|
-| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen; a source desktop E2E keeps an admitted provider tool alive after the last window closes and renders its result once on reopen; a real daemon/runtime handoff E2E keeps the fixture provider tool and native session alive without replay; ambient live Codex and Claude runs survive compatible daemon handoff | Real-agent continuity across renderer closure and complete isolation acceptance in the installed flow |
+| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen; a source desktop E2E keeps an admitted provider tool alive after the last window closes and renders its result once on reopen; ambient real Codex and Claude turns each survive source desktop closure and reopen with the same daemon/runtime/native thread and one prompt; ambient real Codex and Claude runs also survive compatible daemon handoff | Installed real-agent continuity and complete isolation acceptance in the installed flow |
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen; an unknown Codex item retains safe metadata and ordering across profile and desktop restart | Real Oh My Pi account; real managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider; complete F031 multi-provider acceptance |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; CLI can attach a real TTY to the runtime-owned shell, resize, send a large paste and detach without stopping it; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
@@ -34,9 +34,9 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 Blockers: a real Oh My Pi account is unavailable; the user chose to keep
 real two-account verification pending rather than authenticate two ADE-managed
 Claude homes now. Fixtures are not live-account proof. Active worker owners:
-none; the coordinator integrated and verified the reviewed caller-owned CLI
-prompt retry slice as `dfc82fe`. Next assignment: enumerate and close the
-remaining daily-use CLI/API parity gaps while preserving the pending real
+none; the coordinator verified source desktop closure and reopen with ambient
+real Codex and Claude. Next assignment: enumerate and close the remaining
+daily-use CLI/API parity gaps while preserving the pending managed real
 provider criteria. The remaining rows
 are partial evidence, not closed feature IDs. F075/06-S06 and unrelated v1
 work remain queued.
@@ -138,6 +138,18 @@ partial; the E2E procedure is in `scripts/test_agent_handoff_live.py`.
 | `1d45a52` | Structured CLI E2E errors | Playwright child Node commands no longer mix conflicting color settings into JSON stderr; affected focused 8/8 and full source 183 passed/one host skip |
 | `0b400c3` | Installed macOS CLI | App bundle includes `ade` and its client closure; stripped-PATH symlink invocation, GUI profile isolation and cold CLI daemon start; packaged 9/9 |
 | `dfc82fe` | Caller-owned CLI prompt retry | Dropped accepted daemon reply, same-ID retry across compatible handoff, one Codex fixture dispatch, payload and target conflicts |
+
+Daily-use real desktop continuity checkpoint, 2026-09-27: no feature ID is
+fully closed by this source-only evidence. `ADE_RUN_LIVE_PROVIDERS=1 pnpm
+test:e2e:live:desktop` passed 2/2 on macOS arm64 against ambient authenticated
+Codex and Claude. Each real turn continued after the last Electron window
+closed and the same conversation completed after reopen, with one user prompt,
+the same provider thread and unchanged daemon boot/runtime instance. This does
+not establish ADE-managed account continuity or installed-app behavior. The
+new opt-in live suite is excluded from the normal deterministic source suite;
+the previous integrated source suite passed 184 E2Es with one host skip.
+Implementation took about 3 minutes, review about 2 minutes, the live checks
+1.7 minutes, and packaging 0 minutes because no packaging input changed.
 
 Daily-use CLI retry checkpoint, 2026-09-27: no feature ID is fully closed by
 this fixture-backed boundary. On macOS arm64, `pnpm check` passed 184 E2Es with
