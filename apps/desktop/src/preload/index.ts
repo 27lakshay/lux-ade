@@ -51,6 +51,10 @@ contextBridge.exposeInMainWorld('adeHost', {
     ipcRenderer.invoke('ade:send-journal-import', bundle, sourceProfileId, targetProfileId),
   openWorkspace: (folder: string) => ipcRenderer.invoke('ade:workspace-open', folder),
   chooseWorkspace: () => ipcRenderer.invoke('ade:workspace-choose'),
+  listRestoreBindings: () => ipcRenderer.invoke('ade:restore-bindings'),
+  rebindRestored: (profileId: string, kind: 'worktree' | 'repository' | 'workspace', id: string, folder: string) =>
+    ipcRenderer.invoke('ade:restore-binding', profileId, kind, id, folder),
+  chooseRestoreFolder: () => ipcRenderer.invoke('ade:restore-choose-folder'),
   selectWorkspace: (id: string, conversationId: string | null): Promise<boolean> =>
     ipcRenderer.invoke('ade:workspace-select', id, conversationId),
   onProfileState: (listener: (state: unknown) => void): (() => void) => {

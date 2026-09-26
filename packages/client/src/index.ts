@@ -13,6 +13,9 @@ export interface Workspace {
   root: string
   name: string
   terminal_id: string
+  repository_id: string | null
+  needs_rebind: boolean
+  worktree_lifecycle_needs_rebind: boolean
 }
 
 export interface Conversation {
@@ -64,7 +67,16 @@ function stringFields(value: unknown, keys: string[]): string[] | null {
 
 function parseWorkspace(value: unknown): Workspace | null {
   const fields = stringFields(value, ['id', 'root', 'name', 'terminal_id'])
-  return fields ? { id: fields[0], root: fields[1], name: fields[2], terminal_id: fields[3] } : null
+  const source = record(value)
+  if (!fields || !source) return null
+  const repositoryId = source.repository_id
+  if (repositoryId !== undefined && repositoryId !== null && typeof repositoryId !== 'string') return null
+  if (source.needs_rebind !== undefined && typeof source.needs_rebind !== 'boolean') return null
+  if (source.worktree_lifecycle_needs_rebind !== undefined && typeof source.worktree_lifecycle_needs_rebind !== 'boolean') return null
+  return { id: fields[0], root: fields[1], name: fields[2], terminal_id: fields[3],
+    repository_id: (repositoryId ?? null) as string | null,
+    needs_rebind: source.needs_rebind === true,
+    worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true }
 }
 
 function parseConversation(value: unknown): Conversation | null {

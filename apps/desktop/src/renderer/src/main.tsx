@@ -36,6 +36,10 @@ function accountIdentityLabel(identity: AccountIdentity): string {
 }
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
+type RestoreKind = 'worktree' | 'repository' | 'workspace'
+type RestoreEntry = { id: string; root: string; needs_rebind: boolean; rebindable?: boolean }
+type RestoreBindings = { lifecycle: RestoreEntry[]; repositories: RestoreEntry[];
+  workspaces: Array<RestoreEntry & { name: string }> }
 type Service = { name: string; identity: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>;
   config: { program: string; peers?: Record<string, { service: string; port_variable: string }> } }
 type ServiceState = { state: string; metrics: Frame | null }
@@ -90,6 +94,9 @@ declare global {
       onProfileState(listener: (state: ProfileState) => void): () => void
       openWorkspace(folder: string): Promise<Frame>
       chooseWorkspace(): Promise<Frame | null>
+      listRestoreBindings(): Promise<RestoreBindings>
+      rebindRestored(profileId: string, kind: RestoreKind, id: string, folder: string): Promise<Frame>
+      chooseRestoreFolder(): Promise<string | null>
       selectWorkspace(id: string, conversationId: string | null): Promise<boolean>
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
       listPendingSends(): Promise<PendingSend[]>
@@ -540,8 +547,8 @@ function RequestForm({ request, busy, onAnswer }: {
   </section>
 }
 
-function ConversationView({ conversation, bootId, accountLabel }: { conversation: Conversation; bootId: string | null;
-  accountLabel: string }): React.JSX.Element {
+function ConversationView({ conversation, bootId, accountLabel, fenced }: { conversation: Conversation; bootId: string | null;
+  accountLabel: string; fenced: boolean }): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<Snapshot | null>(null)
   const [draft, setDraft] = React.useState('')
   const [draftLoaded, setDraftLoaded] = React.useState(false)
@@ -650,7 +657,7 @@ function ConversationView({ conversation, bootId, accountLabel }: { conversation
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
     const text = draft.trim()
-    if (!text || busy || sentDraftPendingClear || sendPending) return
+    if (fenced || !text || busy || sentDraftPendingClear || sendPending) return
     setBusy(true)
     try {
       const response = await window.adeHost.requestConversation('agent.send', {
@@ -709,6 +716,7 @@ function ConversationView({ conversation, bootId, accountLabel }: { conversation
     finally { setBusy(false) }
   }
   const answer = async (request: PendingRequest, decision: 'accept' | 'decline' | 'answer', answers?: Record<string, string | string[]>): Promise<void> => {
+    if (fenced) return
     setBusy(true)
     try {
       await window.adeHost.requestConversation('agent.answer', {
@@ -738,18 +746,98 @@ function ConversationView({ conversation, bootId, accountLabel }: { conversation
             <pre>{contentSummary(message)}</pre>
           </article>
         ))}
-        {snapshot?.requests.map((request) => <RequestForm key={request.id} request={request} busy={busy}
+        {snapshot?.requests.map((request) => <RequestForm key={request.id} request={request} busy={busy || fenced}
           onAnswer={(decision, answers) => answer(request, decision, answers)} />)}
       </div>
+      {fenced && <p role="status" className="inline-error">This workspace needs a replacement folder before agent actions can run. Its history remains readable.</p>}
       <form className="composer" onSubmit={(event) => void send(event)}>
         <label htmlFor="prompt">Prompt</label>
         <textarea id="prompt" value={draft} disabled={busy || !draftLoaded || sentDraftPendingClear || sendPending} onChange={(event) => updateDraft(event.target.value)} placeholder="Ask your agent…" rows={3} />
-        <button type="submit" disabled={busy || sentDraftPendingClear || sendPending || !draftLoaded || !draft.trim() || !snapshot || !['idle', 'ready', 'error', 'interrupted'].includes(status)}>Send</button>
-        {sendPending && <button type="button" disabled={busy} onClick={() => void retryPendingSend()}>Retry prompt delivery</button>}
+        <button type="submit" disabled={fenced || busy || sentDraftPendingClear || sendPending || !draftLoaded || !draft.trim() || !snapshot || !['idle', 'ready', 'error', 'interrupted'].includes(status)}>Send</button>
+        {sendPending && <button type="button" disabled={busy || fenced} onClick={() => void retryPendingSend()}>Retry prompt delivery</button>}
         {sentDraftPendingClear && <button type="button" disabled={busy} onClick={() => void retryClear()}>Retry clearing sent draft</button>}
       </form>
     </section>
   )
+}
+
+function RestoreBindingsPanel({ bootId, profileKey, onWorkspaceBindings }: {
+  bootId: string | null; profileKey: string; onWorkspaceBindings: (ids: string[]) => void
+}): React.JSX.Element | null {
+  const [bindings, setBindings] = React.useState<RestoreBindings | null>(null)
+  const [targetPath, setTargetPath] = React.useState('')
+  const [loading, setLoading] = React.useState(true)
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const [revision, setRevision] = React.useState(0)
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setRevision((value) => value + 1), 5_000)
+    return () => window.clearInterval(timer)
+  }, [bootId])
+  React.useEffect(() => {
+    let active = true
+    setLoading(true)
+    void window.adeHost.listRestoreBindings().then((next) => {
+      if (active) {
+        setBindings(next)
+        onWorkspaceBindings(next.workspaces.filter((item) => item.needs_rebind).map((item) => item.id))
+        setError('')
+      }
+    }).catch((reason) => { if (active) setError(`Recovery status could not be loaded: ${String(reason)}`) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [bootId, revision])
+  const pending: Array<{ kind: RestoreKind; entry: RestoreEntry; label: string }> = bindings ? [
+    ...bindings.lifecycle.filter((entry) => entry.needs_rebind).map((entry) =>
+      ({ kind: 'worktree' as const, entry, label: 'Worktree repository' })),
+    ...bindings.repositories.filter((entry) => entry.needs_rebind).map((entry) =>
+      ({ kind: 'repository' as const, entry, label: 'Git repository' })),
+    ...bindings.workspaces.filter((entry) => entry.needs_rebind).map((entry) =>
+      ({ kind: 'workspace' as const, entry, label: entry.name })),
+  ] : []
+  const next = pending[0]
+  if (!next && !error) return null
+  const bind = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!next || !targetPath.trim() || busy || loading) return
+    setBusy(true)
+    setError('')
+    try {
+      await window.adeHost.rebindRestored(profileKey, next.kind, next.entry.id, targetPath.trim())
+      setTargetPath('')
+      setRevision((value) => value + 1)
+    } catch (reason) { setError(`Could not bind ${next.label}: ${String(reason)}`) }
+    finally { setBusy(false) }
+  }
+  const choose = async (): Promise<void> => {
+    if (busy || loading) return
+    try {
+      const selected = await window.adeHost.chooseRestoreFolder()
+      if (selected) setTargetPath(selected)
+    } catch (reason) { setError(`Could not choose a folder: ${String(reason)}`) }
+  }
+  return <section className="restore-bindings" aria-label="Restore workspace paths">
+    <h2>Restore workspace paths</h2>
+    {loading && <p role="status">Checking saved paths…</p>}
+    {next && !loading && <>
+      <p className="restore-progress" role="status">{pending.length} path{pending.length === 1 ? '' : 's'} remaining · Next: {next.label}</p>
+      <p className="workspace-root" title={next.entry.root}>Saved path: {next.entry.root}</p>
+      {next.entry.rebindable === false ? <p role="alert" className="inline-error">This backup lacks the saved physical identity needed to verify a replacement. Restore a newer backup to recover this path safely.</p> : <>
+      <p className="muted">Choose a different folder for each saved resource. ADE keeps its history and verifies the selected directory before work resumes.</p>
+      <form onSubmit={(event) => void bind(event)}>
+        <label className="field-label" htmlFor="restore-target">Replacement folder</label>
+        <input id="restore-target" value={targetPath} onChange={(event) => setTargetPath(event.target.value)}
+          placeholder="/path/to/new-checkout" disabled={busy} />
+        <div className="restore-actions">
+          <button type="button" disabled={busy} onClick={() => void choose()}>Browse…</button>
+          <button type="submit" disabled={busy || !targetPath.trim()}>{busy ? 'Checking…' : 'Bind folder'}</button>
+        </div>
+      </form>
+      </>}
+    </>}
+    {error && <p role="alert" className="inline-error">{error}</p>}
+    {!busy && !loading && <button type="button" className="restore-refresh" onClick={() => setRevision((value) => value + 1)}>Refresh paths</button>}
+  </section>
 }
 
 function ConnectedContent({ state, profileKey }: { state: ClientState; profileKey: string }): React.JSX.Element {
@@ -770,6 +858,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const [accountBusy, setAccountBusy] = React.useState(false)
   const [accountError, setAccountError] = React.useState('')
   const [folderPath, setFolderPath] = React.useState('')
+  const [effectiveUnboundIds, setEffectiveUnboundIds] = React.useState<string[]>([])
   const [opening, setOpening] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
   const [pendingCreatedId, setPendingCreatedId] = React.useState<string | null>(null)
@@ -778,6 +867,8 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const visibleSelectionRequest = React.useRef(0)
   const [error, setError] = React.useState('')
   const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0]
+  const workspaceFenced = Boolean(workspace?.needs_rebind || workspace?.worktree_lifecycle_needs_rebind ||
+    (workspace && effectiveUnboundIds.includes(workspace.id)))
   const workspaceConversations = conversations.filter((item) => item.workspace_id === workspace?.id)
   const selectedConversation = workspaceConversations.find((item) => item.id === conversationId)
   const awaitingCreated = pendingCreatedId === conversationId && !selectedConversation
@@ -883,7 +974,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     return `Account: ${accounts.find((account) => account.id === pinned.account_id)?.name ?? pinned.account_id}`
   }
   const create = async (): Promise<void> => {
-    if (!workspace || creating || opening || invalidManagedAccount) return
+    if (!workspace || workspaceFenced || creating || opening || invalidManagedAccount) return
     setCreating(true)
     try {
       const response = await window.adeHost.requestConversation('conversation.create', {
@@ -938,6 +1029,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
           {workspaces.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
         </select>}
         {workspace && <p className="workspace-root" title={workspace.root}>{workspace.root}</p>}
+        <RestoreBindingsPanel bootId={state.bootId} profileKey={profileKey} onWorkspaceBindings={setEffectiveUnboundIds} />
         <form className="open-workspace" onSubmit={(event) => void openFolder(event)}>
           <label className="field-label" htmlFor="folder-path">Open folder</label>
           <input id="folder-path" value={folderPath} placeholder="/path/to/project" onChange={(event) => setFolderPath(event.target.value)} />
@@ -966,7 +1058,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
               <option value={item.id} key={item.id}>{item.name} · managed</option>)}
           </select>
           {invalidManagedAccount && <p role="alert" className="inline-error">Selected account is unavailable. Choose another account or the legacy ambient account.</p>}
-          <button disabled={creating || opening || invalidManagedAccount || !workspace || providers.length === 0} onClick={() => void create()}>New conversation</button>
+          <button disabled={creating || opening || workspaceFenced || invalidManagedAccount || !workspace || providers.length === 0} onClick={() => void create()}>New conversation</button>
         </div>
         <section className="accounts-panel" aria-label="Accounts">
           <div className="account-heading"><h2>Accounts</h2><button type="button" disabled={accountBusy}
@@ -1022,9 +1114,9 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
       <div className="work-area">
         {creating || awaitingCreated ? <section className="empty-conversation" role="status">Creating conversation…</section>
           : conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId}
-            accountLabel={accountLabel(conversation)} />
+            accountLabel={accountLabel(conversation)} fenced={workspaceFenced} />
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
-        {workspace && <>{acknowledgedSelection === selectionKey && <ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
+        {workspace && !workspaceFenced && <>{acknowledgedSelection === selectionKey && <ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
           workspace={workspace} conversation={conversation} profileKey={profileKey} />}
           <ServicePane key={`${state.bootId}:${workspace.id}`} workspace={workspace} /><ScriptPane key={`scripts:${workspace.id}`} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
       </div>

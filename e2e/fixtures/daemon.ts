@@ -105,6 +105,25 @@ export async function stopManagedProfiles(owners: ManagedProfileOwner[]): Promis
   if (failures.length) throw new Error(`Managed ADE cleanup is unconfirmed; retain test data:\n${failures.join('\n')}`)
 }
 
+/** Recover a test-owned supervisor when a profile daemon failed before reporting its identity. */
+export async function stopOrphanRuntime(dataDirectory: string): Promise<void> {
+  const log = await readFile(join(dataDirectory, 'runtime.log'), 'utf8').catch(() => '')
+  const launches = [...log.matchAll(/lux-ade runtime (\d+) listening at (\/\S+)/g)]
+  const latest = launches.at(-1)
+  if (!latest) return
+  const socket = latest[2]
+  const hello = await rpc(socket, { op: 'hello' }, 500).catch(() => null)
+  if (!hello) return
+  const expected = await realpath(dataDirectory)
+  const actual = typeof hello.data_directory === 'string' ? await realpath(hello.data_directory) : ''
+  if (actual !== expected || hello.pid !== Number(latest[1]) ||
+    typeof hello.instance_id !== 'string') {
+    throw new Error(`Refusing to stop a runtime with unexpected test identity at ${socket}`)
+  }
+  await stopRuntime(socket, hello.instance_id, hello.pid)
+  await waitForRuntimeExit(socket, hello.instance_id, hello.pid)
+}
+
 async function waitForOwnedExit(socket: string, pid: number, role: string): Promise<void> {
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {

@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { managedProfileOwner, rpc, stopManagedProfiles, type ManagedProfileOwner } from '../fixtures/daemon'
+import { managedProfileOwner, rpc, stopManagedProfiles, stopOrphanRuntime, type ManagedProfileOwner } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const electronExecutable = createRequire(join(desktopDirectory, 'package.json'))('electron') as string
@@ -31,6 +31,7 @@ test('pending-send transfer validates restored intent and holds replay across pr
       ADE_E2E_SEND_JOURNAL_SIGNAL: signal, ADE_E2E_SEND_JOURNAL_RELEASE: release } }
   let application = await electron.launch(options)
   const owned: ManagedProfileOwner[] = []
+  let restoredData: string | null = null
   try {
     let window = await application.firstWindow()
     await window.getByRole('textbox', { name: 'New profile' }).fill('Source')
@@ -80,6 +81,7 @@ test('pending-send transfer validates restored intent and holds replay across pr
     const binding = JSON.parse(await readFile(join(source.home, 'runtime.json'), 'utf8')) as { data_directory: string }
     await run('python3', [resolve('scripts/managed_backup.py'), 'create', '--data-dir', binding.data_directory, '--out', backend])
     const targetData = join(target.home, 'data')
+    restoredData = targetData
     await mkdir(target.home, { recursive: true })
     await run('python3', [resolve('scripts/managed_backup.py'), 'restore', '--backup', backend, '--data-dir', targetData])
     await run('python3', [resolve('scripts/runtime.py'), 'adopt', '--home', target.home, '--data-dir', targetData])
@@ -176,6 +178,7 @@ test('pending-send transfer validates restored intent and holds replay across pr
   } finally {
     await application.close().catch(() => undefined)
     await stopManagedProfiles(owned)
+    if (restoredData) await stopOrphanRuntime(restoredData)
     await rm(root, { recursive: true, force: true })
   }
 })

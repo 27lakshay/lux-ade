@@ -19,6 +19,7 @@ let clientGeneration = 0
 let unsubscribeClient: (() => void) | null = null
 let unsubscribeFeed: (() => void) | null = null
 let switching = false
+let restoringBinding = false
 let startupProfileSelection: Promise<void> | null = null
 let profileState: ProfileState = { managed: managedProfiles, profiles: [], selectedId: null, activeId: null, error: '' }
 const execFileAsync = promisify(execFile)
@@ -567,6 +568,7 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
 async function selectProfile(id: string, updateDefault: boolean): Promise<ProfileState> {
   if (!managedProfiles) throw new Error('The socket is fixed by ADE_SOCKET')
   if (switching) throw new Error('A profile switch is already in progress')
+  if (restoringBinding) throw new Error('Wait for workspace recovery to finish before switching profiles')
   if (!profileState.profiles.some((item) => item.id === id)) throw new Error('Unknown profile')
   switching = true
   try {
@@ -719,6 +721,63 @@ ipcMain.handle('ade:workspace-choose', async (event) => {
   const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
   if (result.canceled || !result.filePaths[0]) return null
   return openWorkspace(result.filePaths[0])
+})
+ipcMain.handle('ade:restore-bindings', async () => {
+  if (startupProfileSelection) await startupProfileSelection
+  const endpoint = socket
+  const generation = clientGeneration
+  if (!endpoint || switching || client.getState().status !== 'connected') throw new Error('Profile daemon is unavailable')
+  const [lifecycle, repositories, workspaces] = await Promise.all([
+    requestDaemon(endpoint, 'worktree.rebind.list'),
+    requestDaemon(endpoint, 'repository.rebind.list'),
+    requestDaemon(endpoint, 'workspace.rebind.list'),
+  ])
+  if (socket !== endpoint || clientGeneration !== generation || switching) throw new Error('Profile changed while loading recovery state')
+  if (!Array.isArray(lifecycle.repositories) || !Array.isArray(repositories.repositories) ||
+    !Array.isArray(workspaces.workspaces)) {
+    throw new Error('Profile daemon returned an invalid recovery catalog')
+  }
+  return { lifecycle: lifecycle.repositories, repositories: repositories.repositories,
+    workspaces: workspaces.workspaces }
+})
+ipcMain.handle('ade:restore-binding', async (_event, expectedProfile: unknown, kind: unknown, id: unknown, folder: unknown) => {
+  if (startupProfileSelection) await startupProfileSelection
+  if (kind !== 'worktree' && kind !== 'repository' && kind !== 'workspace') throw new Error('Invalid recovery kind')
+  if (!validId(id)) throw new Error('Invalid recovery identity')
+  const endpoint = socket
+  const generation = clientGeneration
+  const activeProfile = managedProfiles ? profileState.activeId : 'fixed'
+  if (expectedProfile !== activeProfile) throw new Error('Profile changed while preparing workspace recovery')
+  if (!endpoint || switching || restoringBinding || client.getState().status !== 'connected') {
+    throw new Error('Profile recovery is unavailable or already in progress')
+  }
+  restoringBinding = true
+  try {
+    if (typeof folder !== 'string' || !isAbsolute(folder) || folder.length > 4096 || !(await stat(folder)).isDirectory()) {
+      throw new Error('Choose an absolute folder path')
+    }
+    if (socket !== endpoint || clientGeneration !== generation || profileState.activeId !== (managedProfiles ? activeProfile : null)) {
+      throw new Error('Profile changed while checking the replacement folder')
+    }
+    const op = kind === 'worktree' ? 'worktree.rebind' : kind === 'repository' ? 'repository.rebind' : 'workspace.rebind'
+    const field = kind === 'workspace' ? 'workspace_id' : 'repository_id'
+    const result = await requestDaemon(endpoint, op, { [field]: id, path: folder })
+    if (socket !== endpoint || clientGeneration !== generation) throw new Error('Profile changed during workspace recovery')
+    return result
+  } finally { restoringBinding = false }
+})
+ipcMain.handle('ade:restore-choose-folder', async (event) => {
+  if (startupProfileSelection) await startupProfileSelection
+  const endpoint = socket
+  const generation = clientGeneration
+  if (!endpoint || switching || client.getState().status !== 'connected') throw new Error('Profile daemon is unavailable')
+  const parent = BrowserWindow.fromWebContents(event.sender)
+  const options: Electron.OpenDialogOptions = {
+    title: 'Choose replacement folder', properties: ['openDirectory'], buttonLabel: 'Use this folder',
+  }
+  const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
+  if (socket !== endpoint || clientGeneration !== generation || switching) throw new Error('Profile changed while choosing a replacement folder')
+  return result.canceled ? null : result.filePaths[0] ?? null
 })
 ipcMain.handle('ade:workspace-select', async (event, workspaceId: unknown, conversationId: unknown) => {
   if (!validId(workspaceId) || (conversationId !== null && !validId(conversationId))) {

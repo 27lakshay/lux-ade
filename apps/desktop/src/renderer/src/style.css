@@ -79,6 +79,15 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .sidebar select { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 8px; width: 100%; }
 .field-label { color: #b7bfc0; display: block; font-size: 12px; margin: 20px 0 7px; }
 .workspace-root { color: #929c9d; font-size: 11px; overflow-wrap: anywhere; }
+.restore-bindings { margin: 18px 0; padding: 12px; border: 1px solid #957344; border-radius: 9px; background: #2a271f; }
+.restore-bindings h2 { margin: 0 0 8px; color: #f1d0a0; }
+.restore-bindings p { line-height: 1.45; }
+.restore-bindings .field-label { margin-top: 12px; }
+.restore-bindings input { background: #242829; border: 1px solid #72654e; border-radius: 7px; color: inherit; padding: 8px; width: 100%; }
+.restore-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.restore-bindings button { background: #35342f; border: 1px solid #72654e; border-radius: 7px; color: inherit; font-size: 12px; padding: 7px 9px; }
+.restore-bindings .restore-refresh { margin-top: 10px; }
+.restore-progress { color: #f1d0a0; font-size: 12px; }
 .open-workspace { margin-top: 18px; }
 .open-workspace .field-label { margin-top: 0; }
 .open-workspace input { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 8px; width: 100%; }
