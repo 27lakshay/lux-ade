@@ -275,9 +275,11 @@ reconciliation or explicit recovery. Registry startup and migration serialize wi
 older live runtimes. Corruption must not trigger an empty replacement registry
 that forgets existing owners.
 
-Worktrunk remains the worktree lifecycle adapter; the tool that created a worktree
-removes it. ADE's claims coordinate its own operations around that owner. External
-programs that ignore these claims remain outside the guarantee.
+ADE uses direct Git worktree commands under its own lifecycle claims. External
+worktrees are protected by default; explicit adoption can grant ADE removal
+authority after repository and physical-path checks. Dirty, locked, active and
+uncertain trees remain protected regardless of authority. External programs
+that ignore ADE's claims remain outside the guarantee.
 
 Port discovery is advisory. A probe followed by closing the socket does not reserve
 a port. Where a child supports inherited listening sockets, retain and hand off the

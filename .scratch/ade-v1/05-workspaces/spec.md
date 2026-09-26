@@ -33,7 +33,7 @@ Manage stable workspace identities and creator-owned worktree lifecycle with exp
 1. HostResources is initially a module shared by per-profile runtimes with a host-local registry and resource-specific OS guards, not a new always-on broker.
 2. Key physical checkout claims by host/filesystem identity and generation, not profile path alone. Handle aliases, replacement and unborn-path reservations.
 3. Runtime-owned shared-use claims conflict with exclusive removal/lifecycle claims. Persist phases before launching work. Reconcile owners before new conflicting admission after daemon restart.
-4. Worktrunk remains the worktree lifecycle adapter. The tool that created a tree removes it. Adoption must not take ownership away from an external creator.
+4. ADE uses direct Git worktree commands under its own lifecycle claims. External trees are protected by default. Explicit adoption grants ADE removal authority after repository/path identity confirmation; removal still requires a clean, unlocked tree with no active ADE work. The original creator is not a permanent restriction.
 5. Missing heartbeat/PID or released lock does not prove descendants exited. Quarantine unresolved claims. Registry corruption/migration must not silently forget live owners.
 6. Concurrent agents in one checkout can conflict with each other and external Git. Make shared workspace versus new worktree an explicit choice.
 7. File checkpoints declare coverage and are not process snapshots. Restore and carry-change operations preview effects, detect changed preconditions and report partial failures.
@@ -52,13 +52,13 @@ Prior art: Prototype creator markers/worktree leases; Orca shared/exclusive muta
 |---|---|
 | F061 | Register each kind, reopen it with stable identity and report missing or replaced directories without silently binding unrelated content. |
 | F062 | Clone into a selected host/path; publish through configured Git remote/auth flow; preserve partial-operation evidence and never overwrite an existing path silently. |
-| F063 | Create a worktree through its lifecycle owner; reserve its physical resource before launch; failed setup is visible and recoverable. |
+| F063 | Create a worktree at an explicit or deterministic path through ADE's Git lifecycle; reserve its physical resource before launch; failed setup is visible and recoverable without deleting the tree. |
 | F064 | Preview and transfer selected dirty changes; preserve the source until success and report conflicts without discarding unselected work. |
-| F065 | Adopt existing resources without ownership takeover; resolve a supported PR source into a checkout without adding the excluded PR management workflow. |
+| F065 | Open external trees without taking removal authority; allow explicit, confirmed adoption after repository and physical-path checks. Resolve a supported PR source into a checkout without adding the excluded PR management workflow. |
 | F066 | Apply naming/base defaults, detect collisions, and record the resolved branch and directory before running hooks. |
 | F067 | Run configured hooks with the correct host/workspace context; stream status; expose failure and require safe recovery before destructive cleanup. |
 | F068 | Apply explicit copy/link/share rules, report conflicts and preserve externally owned files during cleanup. |
-| F069 | Inspect dirty/active state; refuse conflicting removal; route removal through the creator tool and quarantine uncertain execution ownership. |
+| F069 | Inspect dirty, locked and active state; refuse conflicting removal. Permit ADE removal only for its own or explicitly adopted tree under confirmed authority, and quarantine uncertain execution ownership. Branch deletion is a separate, reported outcome. |
 | F070 | Create a defined file checkpoint, preview restore, handle concurrent edits and disclose untracked/ignored/binary coverage; checkpoint is not arbitrary process rollback. |
 | 05-S11 | Race launch and removal through different profiles; only a valid claim wins and no active checkout is deleted. |
 | 05-S12 | Escape a fixture descendant and lose its parent; keep the resource uncertain until explicit reconciliation. |

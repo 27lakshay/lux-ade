@@ -89,7 +89,7 @@ test('registered backend restore publishes a new profile last and remaps its pri
   }
 })
 
-test('registered restore starts with a fenced Worktrunk repository and no default terminal launch', async () => {
+test('registered restore starts with a fenced Git lifecycle repository and no default terminal launch', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ade-registered-lifecycle-restore-e2e-'))
   const home = join(directory, 'profiles')
   const checkout = join(directory, 'source-checkout')

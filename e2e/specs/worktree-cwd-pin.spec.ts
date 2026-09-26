@@ -30,7 +30,7 @@ async function waitForOperation(socket: string, repositoryId: string, requestId:
   }
 }
 
-test('a Worktrunk operation refuses a replacement checkout installed before worker spawn', async () => {
+test('a Git lifecycle operation refuses a replacement checkout installed before worker spawn', async () => {
   test.setTimeout(45_000)
   const outside = await mkdtemp(join(tmpdir(), 'ade-worktree-cwd-pin-'))
   const pause = join(outside, 'pause')
@@ -50,7 +50,7 @@ test('a Worktrunk operation refuses a replacement checkout installed before work
     await expect.poll(async () => readFile(join(pause, 'signal'), 'utf8').catch(() => null),
       { timeout: 5_000 }).toBe('ready')
 
-    // The daemon admitted the original checkout. Its first Worktrunk command is
+    // The daemon admitted the original checkout. Its first Git command is
     // paused before spawning, so the worker will inherit a different directory.
     await rename(repository, moved)
     await commitFixture(repository, 'replacement physical checkout\n')
@@ -72,7 +72,7 @@ test('a Worktrunk operation refuses a replacement checkout installed before work
   }
 })
 
-test('a Worktrunk worker refuses an in-place replacement Git common directory', async () => {
+test('a Git lifecycle worker refuses an in-place replacement Git common directory', async () => {
   test.setTimeout(45_000)
   const outside = await mkdtemp(join(tmpdir(), 'ade-worktree-common-pin-'))
   const pause = join(outside, 'pause')
@@ -109,7 +109,7 @@ test('a Worktrunk worker refuses an in-place replacement Git common directory', 
   }
 })
 
-test('Worktrunk remove refuses a replacement target installed after ownership validation', async () => {
+test('Git lifecycle removal refuses a replacement target installed after ownership validation', async () => {
   test.setTimeout(60_000)
   const outside = await mkdtemp(join(tmpdir(), 'ade-worktree-remove-pin-'))
   const pause = join(outside, 'pause')

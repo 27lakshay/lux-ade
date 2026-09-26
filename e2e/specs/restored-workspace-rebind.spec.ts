@@ -127,7 +127,7 @@ test('restored repository and shared workspaces rebind explicitly without source
       .toMatchObject({ type: 'error', code: 'needs_rebind' })
     expect(await reply(restarted, { op: 'repository.rebind', repository_id: first.repository_id,
       path: otherCheckout })).toMatchObject({ type: 'error', message:
-      expect.stringContaining('Worktrunk binding') })
+      expect.stringContaining('lifecycle binding') })
     expect((await rpc(restarted, { op: 'repository.rebind', repository_id: first.repository_id,
       path: targetCheckout })).repository).toMatchObject({ id: first.repository_id,
         root: await realpath(join(targetCheckout, '.git')), needs_rebind: false })
@@ -378,7 +378,7 @@ test('core rebind follows the same lifecycle repository after a second lifecycle
     await rpc(socket, { op: 'worktree.rebind', repository_id: lifecycle.id, path: cloneB })
     expect(await reply(socket, { op: 'repository.rebind', repository_id: workspace.repository_id,
       path: cloneC })).toMatchObject({ type: 'error', message:
-      expect.stringContaining('differs from the Worktrunk binding') })
+      expect.stringContaining('differs from the lifecycle binding') })
     expect((await rpc(socket, { op: 'repository.rebind',
       repository_id: workspace.repository_id, path: cloneB })).repository)
       .toMatchObject({ id: workspace.repository_id, root: await realpath(join(cloneB, '.git')) })
@@ -417,7 +417,7 @@ test('core and lifecycle rebinds reject each other’s unrelated source checkout
     await rpc(socket, { op: 'worktree.rebind', repository_id: lifecycle.id, path: targetLife })
     expect(await reply(socket, { op: 'repository.rebind', repository_id: workspace.repository_id,
       path: sourceLife })).toMatchObject({ type: 'error', message:
-      expect.stringContaining('saved source Worktrunk repository') })
+      expect.stringContaining('saved source Git lifecycle repository') })
     await rpc(socket, { op: 'repository.rebind', repository_id: workspace.repository_id,
       path: targetCore })
     await rename(targetLife, join(outside, 'target-life-moved'))

@@ -1,4 +1,4 @@
-//! Worktrunk lifecycle operations. No shell aliases, editor launch, or provisioning policy.
+//! Git worktree lifecycle operations. No shell aliases, editor launch, or provisioning policy.
 //! Commands run off the client/Conversation path; intent survives daemon failure.
 use crate::model::{new_id, now_ms};
 use ade_core::error::LifecycleFailure;
@@ -149,7 +149,6 @@ fn setup_state(
 pub struct Worktrees {
     data: Mutex<Data>,
     directory: PathBuf,
-    binary: String,
     worker: PathBuf,
 }
 pub struct Lease {
@@ -317,8 +316,8 @@ pub(crate) fn run_input(
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    // A background hook may keep inherited pipes open after wt exits. Do not join
-    // it indefinitely; the repository flock remains inherited by that hook.
+    // A Git helper may keep inherited pipes open. Do not join it indefinitely;
+    // the repository flock remains held by the supervised worker.
     let pipe_deadline = Instant::now() + Duration::from_secs(2);
     while (!stdout.is_finished() || !stderr.is_finished()) && Instant::now() < pipe_deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -366,6 +365,73 @@ pub(crate) fn git(root: &str, args: &[&str]) -> Result<String> {
     c.current_dir(root).args(args);
     let o = run(c, 10, None)?;
     Ok(successful(&o)?.trim_end().to_owned())
+}
+
+fn creation_path(repo: &Repository, request: &Value) -> Result<PathBuf> {
+    let target = field(request, "target")?;
+    ensure!(!target.starts_with('-'), "Invalid branch name");
+    let slug = target.replace('/', "-");
+    ensure!(
+        slug != "." && slug != ".." && !slug.is_empty(),
+        "Invalid branch name"
+    );
+    let default_parent = Path::new(&repo.root)
+        .parent()
+        .context("Repository has no parent")?;
+    let parent = repo
+        .config
+        .directory
+        .as_deref()
+        .map(Path::new)
+        .unwrap_or(default_parent);
+    let parent = parent
+        .canonicalize()
+        .context("Worktree directory is unavailable")?;
+    ensure!(parent.is_dir(), "Worktree directory is not a directory");
+    let candidate = if let Some(path) = request["path"].as_str() {
+        let path = PathBuf::from(path);
+        ensure!(path.is_absolute(), "Worktree path must be absolute");
+        path
+    } else {
+        parent.join(format!(
+            "{}-{slug}",
+            Path::new(&repo.root)
+                .file_name()
+                .context("Repository has no directory name")?
+                .to_string_lossy()
+        ))
+    };
+    ensure!(
+        candidate
+            .parent()
+            .is_some_and(|path| path.canonicalize().ok().as_deref() == Some(parent.as_path())),
+        "Worktree path must be directly inside its configured directory"
+    );
+    ensure!(
+        !candidate.exists() && std::fs::symlink_metadata(&candidate).is_err(),
+        "Worktree path already exists"
+    );
+    Ok(candidate)
+}
+
+fn claim_worktree(db: &Connection, repository_id: &str, path: &str, adopted: bool) -> Result<()> {
+    let admin = git(path, &["rev-parse", "--absolute-git-dir"])?;
+    let marker = Path::new(&admin).join("ade-owner");
+    let token = new_id("ownership");
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&marker)?
+        .write_all(token.as_bytes())?;
+    put(
+        db,
+        "owned",
+        path,
+        &json!({"repository_id":repository_id,
+        "marker":marker,"token":token,"adopted":adopted}),
+    )?;
+    Ok(())
 }
 
 impl Worktrees {
@@ -465,7 +531,6 @@ impl Worktrees {
             }),
             directory: directory.into(),
             worker: std::env::current_exe()?,
-            binary: std::env::var("ADE_WT_BIN").unwrap_or_else(|_| "wt".into()),
         }))
     }
     pub fn active_operations(&self) -> usize {
@@ -571,7 +636,7 @@ impl Worktrees {
             .open(self.directory.join(format!("{id}.lock")))?;
         ensure!(
             unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-            "A Git or Worktrunk command still holds the repository lock"
+            "A Git lifecycle command still holds the repository lock"
         );
         d.busy.insert(id.clone());
         Ok(ReviewGuard {
@@ -593,66 +658,65 @@ impl Worktrees {
             .zip(repo.common_inode.as_deref())
             .ok_or(ade_core::error::NeedsRebind)?;
         let mut c = Command::new(&self.worker);
-        c.arg("--worktree-worker").arg(&self.binary);
+        c.arg("--worktree-worker").arg("git");
         neutral(&mut c);
         c.current_dir(&repo.root)
             .env("ADE_EXPECT_CWD_DEV", device)
             .env("ADE_EXPECT_CWD_INO", inode)
             .env("ADE_EXPECT_GIT_COMMON_DEV", common_device)
             .env("ADE_EXPECT_GIT_COMMON_INO", common_inode);
-        let empty = self.directory.join("empty.toml");
-        c.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &empty);
-        c.arg("--config").arg(
-            repo.config
-                .user_config
-                .as_deref()
-                .map(Path::new)
-                .unwrap_or(&empty),
-        );
-        if let Some(p) = &repo.config.project_config {
-            c.env("WORKTRUNK_PROJECT_CONFIG_PATH", p);
-        }
-        if !repo.config.hooks {
-            c.env("GIT_CONFIG_COUNT", "1")
-                .env("GIT_CONFIG_KEY_0", "core.hooksPath")
-                .env("GIT_CONFIG_VALUE_0", "/dev/null");
-        }
-        c.args([
-            "--config-set",
-            "list.json-schema=2",
-            "--config-set",
-            "list.full=false",
-        ]);
-        if let Some(template) = &repo.config.path_template {
-            c.arg("--config-set").arg(format!(
-                "worktree-path={}",
-                serde_json::to_string(template).unwrap()
-            ));
-        }
+        c.env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+            .env("GIT_CONFIG_VALUE_0", "/dev/null");
         c.args(args);
         Ok(c)
     }
     fn list(&self, repo: &Repository, lock: &File) -> Result<Value> {
         let result = run(
-            self.command_for(repo, &["list".into(), "--format=json".into()])?,
+            self.command_for(
+                repo,
+                &[
+                    "worktree".into(),
+                    "list".into(),
+                    "--porcelain".into(),
+                    "-z".into(),
+                ],
+            )?,
             repo.config.timeout_seconds,
             Some(lock),
         )?;
-        let list: Value =
-            serde_json::from_str(successful(&result)?).context("Invalid Worktrunk list JSON")?;
-        ensure!(
-            list["schema"] == 2,
-            "Unsupported Worktrunk list schema; schema 2 is required"
-        );
-        let mut items = list["items"]
-            .as_array()
-            .context("Worktrunk omitted items")?
-            .clone();
-        for item in &mut items {
-            if let Some(path) = item["worktree"]["path"].as_str() {
-                item["path"] = json!(path);
+        let mut items = Vec::new();
+        let mut item = serde_json::Map::new();
+        for line in successful(&result)?.split('\0') {
+            if line.is_empty() {
+                if !item.is_empty() {
+                    ensure!(
+                        item.contains_key("path"),
+                        "Git worktree listing omitted a path"
+                    );
+                    items.push(Value::Object(std::mem::take(&mut item)));
+                }
+                continue;
+            }
+            if let Some(path) = line.strip_prefix("worktree ") {
+                ensure!(item.is_empty(), "Invalid Git worktree listing");
+                item.insert("path".into(), json!(path));
+            } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+                item.insert("branch".into(), json!(branch));
+            } else if line == "detached" {
+                item.insert("detached".into(), json!(true));
+            } else if line == "bare" {
+                item.insert("bare".into(), json!(true));
+            } else if line == "locked" || line.starts_with("locked ") {
+                item.insert("locked".into(), json!(true));
+                if let Some(reason) = line.strip_prefix("locked ") {
+                    item.insert("lock_reason".into(), json!(reason));
+                }
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                item.insert("prunable".into(), json!(true));
             }
         }
+        ensure!(item.is_empty(), "Unterminated Git worktree listing");
         Ok(json!(items))
     }
     fn snapshot(&self, id: &str) -> Result<Value> {
@@ -755,7 +819,7 @@ impl Worktrees {
             {
                 ensure!(
                     !within_saved_identity(Path::new(selected_common), saved),
-                    "Selected directory belongs to a saved source Worktrunk repository"
+                    "Selected directory belongs to a saved source Git lifecycle repository"
                 );
             }
             let same_source = repository
@@ -772,11 +836,11 @@ impl Worktrees {
             {
                 ensure!(
                     !repository.needs_rebind && repository_binding_matches(&repository),
-                    "Rebind the matching Worktrunk repository first"
+                    "Rebind the matching Git lifecycle repository first"
                 );
                 ensure!(
                     repository.common_dir == selected_common,
-                    "Selected Git common directory differs from the Worktrunk binding"
+                    "Selected Git common directory differs from the lifecycle binding"
                 );
             }
         }
@@ -1051,21 +1115,10 @@ impl Worktrees {
                 (5..=300).contains(&config.timeout_seconds),
                 "Timeout must be 5–300 seconds"
             );
-            for p in [&config.user_config, &config.project_config]
-                .into_iter()
-                .flatten()
-            {
+            if let Some(directory) = &config.directory {
                 ensure!(
-                    Path::new(p).is_absolute() && Path::new(p).is_file(),
-                    "Config must name an existing absolute file"
-                );
-            }
-            if let Some(template) = &config.path_template {
-                ensure!(
-                    !template.is_empty()
-                        && template.len() <= 4096
-                        && !template.chars().any(char::is_control),
-                    "Invalid worktree path template"
+                    Path::new(directory).is_absolute() && Path::new(directory).is_dir(),
+                    "Worktree directory must be an existing absolute directory"
                 );
             }
             let d = self.data.lock().unwrap();
@@ -1076,6 +1129,67 @@ impl Worktrees {
             let mut r: Repository = read_json(&d.db, "repositories", id)?;
             r.config = config;
             put(&d.db, "repositories", id, &r)?;
+            drop(d);
+            return self.snapshot(id);
+        }
+        if op == "worktree.adopt" {
+            let path = std::fs::canonicalize(field(request, "path")?)?;
+            let text = path.to_str().context("Path must be UTF-8")?;
+            ensure!(
+                request["confirm_path"].as_str() == Some(text),
+                "Adoption requires confirm_path matching the full path"
+            );
+            let repo: Repository = read_json(&self.data.lock().unwrap().db, "repositories", id)?;
+            ensure!(
+                repository_binding_matches(&repo),
+                ade_core::error::NeedsRebind
+            );
+            ensure!(
+                path != Path::new(&repo.root),
+                "The primary checkout cannot be adopted"
+            );
+            let lock = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(self.directory.join(format!("{id}.lock")))?;
+            ensure!(
+                unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+                "Repository lifecycle operation is running"
+            );
+            let listing = self.list(&repo, &lock)?;
+            ensure!(
+                listing
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|item| item["path"].as_str() == Some(text) && item["prunable"] != true),
+                "Selected path is not an available linked worktree"
+            );
+            let common = std::fs::canonicalize(git(
+                text,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            )?)?;
+            ensure!(
+                common == Path::new(&repo.common_dir),
+                "Worktree belongs to another repository"
+            );
+            let physical = identity(text)?;
+            let d = self.data.lock().unwrap();
+            ensure!(
+                !d.busy.contains(id) && !d.leases.keys().any(|held| held.starts_with(&path)),
+                "Worktree has active ADE work"
+            );
+            ensure!(
+                d.db.query_row("SELECT 1 FROM owned WHERE id=?1", [text], |_| Ok(()))
+                    .optional()?
+                    .is_none(),
+                "Worktree already has ADE removal authority"
+            );
+            ensure!(identity(text)? == physical, ade_core::error::NeedsRebind);
+            claim_worktree(&d.db, id, text, true)?;
             drop(d);
             return self.snapshot(id);
         }
@@ -1110,13 +1224,17 @@ impl Worktrees {
             }
         }
         if op == "worktree.remove" {
+            ensure!(
+                request["force"] != true,
+                "Forced worktree removal is unavailable"
+            );
             let path = std::fs::canonicalize(field(request, "path")?)?;
             let text = path.to_str().context("Path must be UTF-8")?;
             let owner: Option<String> =
                 d.db.query_row("SELECT data FROM owned WHERE id=?1", [text], |r| r.get(0))
                     .optional()?;
             let ownership: Value = serde_json::from_str(&owner.context(
-                "This worktree was not created by lux-ade. Remove it with its original owner.",
+                "This external worktree has no ADE removal authority; explicitly adopt it first.",
             )?)?;
             ensure!(
                 ownership["repository_id"] == id
@@ -1124,7 +1242,7 @@ impl Worktrees {
                         .ok()
                         .as_deref()
                         == ownership["token"].as_str(),
-                "Worktree ownership changed; refresh and use its original owner"
+                "Worktree removal authority changed; refresh and inspect before retrying"
             );
             ensure!(
                 path != Path::new(&repo.root),
@@ -1148,7 +1266,7 @@ impl Worktrees {
             remove_identity = Some(identity(text)?);
             remove_path = Some(path);
         }
-        // A supervisor retains the lock if this daemon dies. Its wt child does not
+        // A supervisor retains the lock if this daemon dies. Its Git child does not
         // inherit the descriptor, so background Git helpers cannot strand it.
         let lock = OpenOptions::new()
             .create(true)
@@ -1161,14 +1279,16 @@ impl Worktrees {
             if let Some(p) = &remove_path {
                 d.removing.remove(p);
             }
-            bail!("A previous Worktrunk command or hook still holds the repository lock");
+            bail!("A previous Git lifecycle command still holds the repository lock");
         }
         let job = Operation {
             id: request_id.into(),
             repository_id: id.into(),
             binding_generation: repo.binding_generation,
             request: request.clone(),
-            worktree_path: None,
+            worktree_path: remove_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
             status: "running".into(),
             result: Value::Null,
             error: None,
@@ -1203,31 +1323,13 @@ impl Worktrees {
         remove_identity: Option<(String, String)>,
     ) {
         let result = (|| -> Result<()> {
-            // Recheck after admission and immediately before Worktrunk receives
+            // Recheck after admission and immediately before Git receives
             // the directory. A later external rename remains detectable on the
             // next command, but cannot be made atomic with an external process.
             ensure!(
                 repository_binding_matches(&repo),
                 ade_core::error::NeedsRebind
             );
-            for path in [&repo.config.user_config, &repo.config.project_config]
-                .into_iter()
-                .flatten()
-            {
-                ensure!(
-                    Path::new(path).is_file(),
-                    "Configured Worktrunk file is unavailable: {path}"
-                );
-            }
-            let validation = run(
-                self.command_for(
-                    &repo,
-                    &["config".into(), "show".into(), "--format=json".into()],
-                )?,
-                repo.config.timeout_seconds,
-                Some(&lock),
-            )?;
-            successful(&validation).context("Worktrunk configuration is invalid")?;
             let before = self.list(&repo, &lock)?;
             if job.request["op"] == "worktree.refresh" {
                 repo.cache = before;
@@ -1242,60 +1344,40 @@ impl Worktrees {
                 job.worktree_path = Some(field(item, "path")?.into());
                 put(&self.data.lock().unwrap().db, "operations", &job.id, &job)?;
             }
-            // Worktrunk only runs pre-start automatically on creation. An
-            // existing checkout left by failed setup needs that blocking hook
-            // rerun before a successful switch can clear its admission barrier.
-            if job.request["op"] == "worktree.switch"
-                && repo.config.hooks
-                && let Some(item) = before.as_array().unwrap().iter().find(|item| {
-                    item["branch"] == job.request["target"] || item["path"] == job.request["target"]
-                })
-            {
-                let path = field(item, "path")?;
-                let failed_before = {
-                    let d = self.data.lock().unwrap();
-                    let rows: Vec<String> = d.db.prepare("SELECT data FROM operations WHERE json_extract(data,'$.repository_id')=?1 AND id!=?2 ORDER BY rowid DESC")?
-                            .query_map(params![repo.id, job.id], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
-                    rows.iter()
-                        .filter_map(|row| serde_json::from_str::<Operation>(row).ok())
-                        .find(|op| {
-                            op.request["op"] == "worktree.switch"
-                                && (op.request["target"] == item["branch"]
-                                    || op.request["target"] == item["path"]
-                                    || op.worktree_path.as_deref() == Some(path))
-                        })
-                        .is_some_and(|op| op.status != "succeeded")
-                };
-                if failed_before {
-                    let mut target = repo.clone();
-                    target.root = path.into();
-                    let (device, inode) = identity(path)?;
-                    let target_common = std::fs::canonicalize(git(
-                        path,
-                        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-                    )?)?;
+            let mut removed_branch = None;
+            let args = if job.request["op"] == "worktree.switch" {
+                let target = field(&job.request, "target")?;
+                git(&repo.root, &["check-ref-format", "--branch", target])?;
+                if let Some(existing) = before
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|item| item["branch"] == target)
+                {
                     ensure!(
-                        target_common == Path::new(&repo.common_dir)
-                            && identity(path)? == (device.clone(), inode.clone()),
-                        ade_core::error::NeedsRebind
+                        job.request["create"] != true,
+                        "Branch is already checked out"
                     );
-                    target.root_device = Some(device);
-                    target.root_inode = Some(inode);
-                    job.result = run(
-                        self.command_for(&target, &["hook".into(), "pre-start".into()])?,
-                        repo.config.timeout_seconds,
-                        Some(&lock),
-                    )?;
-                    successful(&job.result).context("Worktree setup retry failed")?;
+                    job.worktree_path = Some(field(existing, "path")?.into());
+                    repo.cache = before;
+                    repo.refreshed_at = Some(now_ms());
+                    job.result =
+                        json!({"exit_code":0,"value":{"path":job.worktree_path,"existing":true}});
+                    return Ok(());
                 }
-            }
-            let mut args = if job.request["op"] == "worktree.switch" {
-                let mut a = vec!["switch".into(), "--format=json".into(), "--no-cd".into()];
-                if job.request["create"].as_bool() == Some(true) {
-                    a.push("--create".into());
+                let path = creation_path(&repo, &job.request)?;
+                job.worktree_path = Some(path.to_string_lossy().into_owned());
+                let mut a = vec!["worktree".into(), "add".into()];
+                if job.request["create"] == true {
+                    a.extend(["-b".into(), target.into()]);
                 }
-                if let Some(base) = job.request["base"].as_str() {
-                    a.extend(["--base".into(), base.into()]);
+                a.push(path.to_string_lossy().into_owned());
+                if job.request["create"] == true {
+                    let base = job.request["base"].as_str().unwrap_or("HEAD");
+                    ensure!(!base.starts_with('-'), "Invalid base");
+                    a.push(base.into());
+                } else {
+                    a.push(target.into());
                 }
                 a
             } else {
@@ -1332,30 +1414,31 @@ impl Worktrees {
                         .any(|i| i["path"].as_str() == path.to_str()),
                     "Worktree no longer belongs to this repository"
                 );
-                let mut a = vec![
+                let item = before
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|item| item["path"].as_str() == path.to_str())
+                    .context("Worktree is absent from Git listing")?;
+                ensure!(
+                    item["locked"] != true && item["prunable"] != true,
+                    "Locked or unavailable worktree cannot be removed"
+                );
+                ensure!(
+                    git(
+                        path.to_str().unwrap(),
+                        &["status", "--porcelain", "--untracked-files=all"]
+                    )?
+                    .is_empty(),
+                    "Worktree has uncommitted or untracked files"
+                );
+                removed_branch = item["branch"].as_str().map(str::to_owned);
+                vec![
+                    "worktree".into(),
                     "remove".into(),
-                    "--format=json".into(),
-                    "--foreground".into(),
-                ];
-                if job.request["delete_branch"].as_str() != Some("merged") {
-                    a.push("--no-delete-branch".into());
-                }
-                if job.request["force"].as_bool() == Some(true) {
-                    a.push("--force".into());
-                }
-                a
+                    path.to_string_lossy().into_owned(),
+                ]
             };
-            if !repo.config.hooks {
-                args.push("--no-hooks".into());
-            }
-            if remove_path.is_some() {
-                args.push("--".into());
-            }
-            args.push(if let Some(path) = &remove_path {
-                path.to_string_lossy().into_owned()
-            } else {
-                field(&job.request, "target")?.into()
-            });
             let mut command = self.command_for(&repo, &args)?;
             if let (Some(path), Some((device, inode))) = (&remove_path, &remove_identity) {
                 ensure!(
@@ -1373,7 +1456,7 @@ impl Worktrees {
                     .env("ADE_EXPECT_REMOVE_INO", inode);
             }
             let output = run(command, repo.config.timeout_seconds, Some(&lock));
-            // A failing hook/timeout is not a rollback. Always inspect actual state.
+            // A failed or timed-out Git command is not a rollback. Inspect actual state.
             let after = self.list(&repo, &lock);
             if let Ok(after) = &after {
                 repo.cache = after.clone();
@@ -1393,36 +1476,15 @@ impl Worktrees {
                             && item["branch"] == job.request["target"]
                             && job.request["op"] == "worktree.switch"
                         {
-                            let admin = git(path, &["rev-parse", "--absolute-git-dir"])?;
-                            let marker = Path::new(&admin).join("ade-owner");
-                            let token = new_id("ownership");
-                            OpenOptions::new()
-                                .create_new(true)
-                                .write(true)
-                                .mode(0o600)
-                                .open(&marker)?
-                                .write_all(token.as_bytes())?;
-                            self.data.lock().unwrap().db.execute(
-                                "INSERT OR REPLACE INTO owned(id,data) VALUES(?1,?2)",
-                                params![
-                                    path,
-                                    json!({"repository_id":repo.id,"marker":marker,"token":token})
-                                        .to_string()
-                                ],
-                            )?;
+                            claim_worktree(&self.data.lock().unwrap().db, &repo.id, path, false)?;
                         }
                     }
                 }
             }
             job.result = output?;
             let command_result = successful(&job.result).map(|_| ());
-            if let Some(stdout) = job.result["stdout"].as_str()
-                && let Ok(value) = serde_json::from_str::<Value>(stdout)
-            {
-                let first = value.as_array().and_then(|a| a.first()).unwrap_or(&value);
-                job.result["branch_outcome"] = first["branch_outcome"].clone();
-                job.result["value"] = value;
-            }
+            job.result["value"] =
+                json!({"path":job.worktree_path,"git_exit_code":job.result["exit_code"]});
             if let Err(error) = after {
                 if let Err(command_error) = command_result {
                     return Err(command_error.context(format!(
@@ -1432,10 +1494,6 @@ impl Worktrees {
                 bail!("Command completed; reconciliation failed: {error}");
             }
             command_result?;
-            ensure!(
-                !job.result["value"].is_null(),
-                "Worktrunk returned invalid operation JSON; inspect the refreshed worktree state"
-            );
             if let Some(path) = &remove_path {
                 ensure!(
                     !repo
@@ -1450,11 +1508,35 @@ impl Worktrees {
                     "DELETE FROM owned WHERE id=?1",
                     [path.to_string_lossy().as_ref()],
                 )?;
+                if job.request["delete_branch"] == "merged" {
+                    let branch =
+                        removed_branch.context("Detached worktree has no branch to delete")?;
+                    let command =
+                        self.command_for(&repo, &["branch".into(), "-d".into(), branch.clone()])?;
+                    let deletion = run(command, repo.config.timeout_seconds, Some(&lock))?;
+                    job.result["branch_deletion"] = deletion.clone();
+                    if deletion["exit_code"] != 0 {
+                        bail!(
+                            "Worktree removed; branch {branch} was retained. Inspect its merge state before deleting it."
+                        );
+                    }
+                }
             }
             Ok(())
         })();
+        let partial = result.is_err()
+            && job.request["op"] == "worktree.remove"
+            && job.result["branch_deletion"].is_object()
+            && job.worktree_path.as_deref().is_some_and(|path| {
+                !repo
+                    .cache
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item["path"] == path))
+            });
         job.status = if result.is_ok() {
             "succeeded"
+        } else if partial {
+            "partial"
         } else {
             "failed"
         }
@@ -1464,7 +1546,7 @@ impl Worktrees {
         }
         job.finished_at = Some(now_ms());
         // Successful daemon completion releases the inherited lock explicitly;
-        // daemon death leaves the supervisor holding it until wt exits.
+        // daemon death leaves the supervisor holding it until Git exits.
         unsafe {
             libc::flock(lock.as_raw_fd(), libc::LOCK_UN);
         }
@@ -1567,7 +1649,7 @@ pub fn worker_main() -> Result<()> {
         .env_remove("ADE_E2E_WORKTREE_SPAWN_PAUSE_DIR")
         .env_remove("ADE_E2E_WORKTREE_REMOVE_PAUSE_DIR")
         .status()
-        .context("Could not start supervised command; check Git or Worktrunk installation")?;
+        .context("Could not start supervised command; check Git installation")?;
     std::process::exit(status.code().unwrap_or(1));
 }
 

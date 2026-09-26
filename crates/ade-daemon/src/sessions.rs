@@ -1269,7 +1269,7 @@ impl Sessions {
             "repository.rebind" => {
                 ensure!(
                     !self.worktrees.has_pending_rebind()?,
-                    "Rebind restored Worktrunk repositories first"
+                    "Rebind restored Git lifecycle repositories first"
                 );
                 let selected = string("path")?;
                 let binding = selected_binding(selected, true)?;
@@ -1320,7 +1320,7 @@ impl Sessions {
             "workspace.rebind" => {
                 ensure!(
                     !self.worktrees.has_pending_rebind()?,
-                    "Rebind restored Worktrunk repositories first"
+                    "Rebind restored Git lifecycle repositories first"
                 );
                 let selected = string("path")?;
                 let binding = selected_binding(selected, false)?;

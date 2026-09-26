@@ -256,7 +256,7 @@ pub enum LifecycleFailure {
     )]
     LifecycleOutcomeUnknown,
     #[error(
-        "lux-ade could not start the Git or worktree command. Check that Git and Worktrunk are installed and executable"
+        "lux-ade could not start the Git worktree command. Check that Git is installed and executable"
     )]
     LifecycleUnavailable,
     #[error(

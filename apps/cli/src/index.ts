@@ -24,8 +24,16 @@ Commands:
   workspace open PATH                   Register a repository or folder
   workspace rebind WORKSPACE_ID PATH    Bind a restored workspace to a verified directory
   repository rebind REPOSITORY_ID PATH  Bind a restored Git repository before its workspaces
-  worktree rebind-list                 List restored lifecycle repositories requiring a path
-  worktree rebind REPOSITORY_ID PATH    Bind restored Worktrunk lifecycle history first
+  worktree register PATH                Register a Git repository lifecycle
+  worktree list REPOSITORY_ID           Inspect linked trees and removal authority
+  worktree create REPOSITORY_ID BRANCH BASE [PATH]
+                                        Create a branch and linked tree
+  worktree adopt REPOSITORY_ID PATH CONFIRM_PATH
+                                        Explicitly take ADE removal authority
+  worktree remove REPOSITORY_ID PATH [--delete-merged]
+                                        Remove a clean ADE-authorized tree
+  worktree rebind-list                  List restored lifecycle repositories requiring a path
+  worktree rebind REPOSITORY_ID PATH    Bind restored Git lifecycle history first
   conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
   conversation export ID FILE            Write complete readable JSON history to a new file
@@ -482,6 +490,30 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
   if (area === 'worktree' && action === 'rebind-list') {
     if (rest.length) throw new CliError('usage', 'worktree rebind-list does not accept arguments.')
     return requestDaemon(socketPath, 'worktree.rebind.list')
+  }
+  if (area === 'worktree' && action === 'register') {
+    if (rest.length !== 1) throw new CliError('usage', 'worktree register requires PATH.')
+    return requestDaemon(socketPath, 'worktree.repository', { path: rest[0] })
+  }
+  if (area === 'worktree' && action === 'list') {
+    if (rest.length !== 1) throw new CliError('usage', 'worktree list requires REPOSITORY_ID.')
+    return requestDaemon(socketPath, 'worktree.get', { repository_id: rest[0] })
+  }
+  if (area === 'worktree' && action === 'create') {
+    if (rest.length < 3 || rest.length > 4) throw new CliError('usage', 'worktree create requires REPOSITORY_ID BRANCH BASE [PATH].')
+    return requestDaemon(socketPath, 'worktree.switch', { repository_id: rest[0], target: rest[1],
+      base: rest[2], ...(rest[3] ? { path: rest[3] } : {}), create: true, request_id: randomUUID() })
+  }
+  if (area === 'worktree' && action === 'adopt') {
+    if (rest.length !== 3) throw new CliError('usage', 'worktree adopt requires REPOSITORY_ID PATH CONFIRM_PATH.')
+    return requestDaemon(socketPath, 'worktree.adopt', { repository_id: rest[0], path: rest[1], confirm_path: rest[2] })
+  }
+  if (area === 'worktree' && action === 'remove') {
+    if (rest.length < 2 || rest.length > 3 || (rest[2] && rest[2] !== '--delete-merged')) {
+      throw new CliError('usage', 'worktree remove requires REPOSITORY_ID PATH [--delete-merged].')
+    }
+    return requestDaemon(socketPath, 'worktree.remove', { repository_id: rest[0], path: rest[1],
+      delete_branch: rest[2] ? 'merged' : 'keep', request_id: randomUUID() })
   }
   if (area === 'conversation' && action === 'list') {
     const all = (await catalog(socketPath)).conversations
