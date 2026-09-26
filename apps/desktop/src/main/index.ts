@@ -1201,6 +1201,10 @@ async function warnPendingSends(window?: BrowserWindow): Promise<void> {
     .join('\n')
   if (!pending || pending === warnedPendingSends) return
   warnedPendingSends = pending
+  if (process.env.ADE_E2E_USER_DATA_DIR) {
+    console.error('Prompt delivery is unconfirmed; pending request IDs:', pending)
+    return
+  }
   const options = window
     ? { type: 'warning' as const, title: 'Prompt delivery is unconfirmed',
         message: 'This window is staying open until the prompt is reconciled.',
@@ -1250,7 +1254,8 @@ function openMainWindow(): void {
       const pending = owned.filter((entry) => !entry.send && (entry.timer || entry.savedRevision < entry.draft.revision))
       const results = await Promise.allSettled(pending.map(flushDraft))
       if (results.some((result) => result.status === 'rejected')) {
-        await dialog.showMessageBox(window, { type: 'error', title: 'Draft was not saved',
+        if (process.env.ADE_E2E_USER_DATA_DIR) console.error('Draft was not saved during window close')
+        else await dialog.showMessageBox(window, { type: 'error', title: 'Draft was not saved',
           message: 'This window is staying open because a draft could not be saved.',
           detail: 'Restore the profile daemon and try closing the window again.' })
         return
@@ -1342,7 +1347,8 @@ app.on('before-quit', (event) => {
         const pending = owned.filter((entry) => !entry.send && (entry.timer || entry.savedRevision < entry.draft.revision))
         const results = await Promise.allSettled(pending.map(flushDraft))
         if (results.some((result) => result.status === 'rejected')) {
-          await dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
+          if (process.env.ADE_E2E_USER_DATA_DIR) console.error('Draft was not saved during app quit')
+          else await dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
             message: 'ADE is staying open because a draft could not be saved.',
             detail: 'Restore the profile daemon and try closing ADE again.' })
           return
@@ -1366,7 +1372,7 @@ app.on('before-quit', (event) => {
         app.quit()
       }).catch((error) => {
         browserFlushInProgress = false
-        if (process.env.ADE_E2E_HIDE_WINDOW === '1') {
+        if (process.env.ADE_E2E_USER_DATA_DIR || process.env.ADE_E2E_HIDE_WINDOW === '1') {
           console.error('Browser state could not be saved', error)
           browserReadyToQuit = true
           app.quit()
