@@ -28,8 +28,13 @@ test('CLI and Electron expose one stable local service URL and open its preview'
     })
     const { stdout } = await execFileAsync(process.execPath, [cli, '--socket', daemon.socket,
       'service', 'url', workspace.id, 'web', 'PORT'], { timeout: 12_000 })
-    const url = (JSON.parse(stdout) as { url: string }).url
+    const initialRoute = JSON.parse(stdout) as { url: string; route_id: string }
+    const url = initialRoute.url
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/)
+    const recovery = await execFileAsync(process.execPath, [cli, '--socket', daemon.socket,
+      'service', 'url-recovery'], { timeout: 12_000 })
+    expect(JSON.parse(recovery.stdout)).toMatchObject({ status: 'healthy',
+      routes: [expect.objectContaining({ route_id: initialRoute.route_id, availability: 'bound' })] })
     expect((await fetch(url)).status).toBe(503)
     await rpc(daemon.socket, { op: 'service.start', workspace_id: workspace.id, name: 'web' })
     await expect.poll(async () => (await (await fetch(url)).text())).toBe('proxy-preview-ready')

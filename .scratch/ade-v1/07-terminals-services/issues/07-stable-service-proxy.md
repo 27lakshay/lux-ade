@@ -141,6 +141,9 @@ The final run also covered duplicate route IDs, oversized files, a directory,
 and a FIFO at the registry path, each refusing unsafe reset while the daemon
 stayed available. After descriptor-based open hardening, `pnpm build:backend`
 and the focused proxy E2E passed 3/3 in 24.3 seconds.
+The CLI now exposes `service url-recovery`, `service url-retry`, and
+`service url-recovery-reset`; the real-process E2E uses the latter two for a
+successful fenced rebind and digest-fenced reset.
 
 ## Remaining F088 work
 
@@ -154,9 +157,9 @@ An absolute guarantee against a process swapping that listener after the final
 OS proof but before the first forwarded byte requires inherited sockets or a
 stronger connected-socket owner proof and remains open. The E2E confirms the
 common close-and-rebind takeover fails closed.
-Broader URL discovery remains before closing F088. Recovery is profile local
-and protocol-only so far; a guided CLI/Electron repair surface and managed
-backup restore remain open. Reset is an explicit destructive choice when no
+Broader URL discovery remains before closing F088. Recovery is profile local;
+the CLI exposes the raw repair operations, while an Electron recovery flow and
+managed backup restore remain open. Reset is an explicit destructive choice when no
 known-good registry can be restored. Disk failures after an atomic rename may
 leave an uncertain outcome, which requires operator reconciliation with the
 retained archive and current recovery status.

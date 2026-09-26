@@ -47,6 +47,11 @@ Commands:
                                         Remap only if both reviewed targets still match
   service url-retire WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT
                                         Retire exactly one reviewed stable URL
+  service url-recovery                    Inspect blocked routes or a corrupt proxy registry
+  service url-retry WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT
+                                        Rebind only the reviewed route's original port
+  service url-recovery-reset EXPECTED_REGISTRY_SHA256 --confirm-reset
+                                        Archive and reset an inspected corrupt registry
   script list WORKSPACE_ID               Discover package scripts in a workspace
   script runs WORKSPACE_ID               List retained script runs
   script start WORKSPACE_ID NAME         Run a configured workspace script
@@ -138,6 +143,13 @@ function port(value: string | undefined, label: string): number {
     throw new CliError('usage', `${label} must be a TCP port from 1 to 65535.`)
   }
   return number
+}
+
+function sha256(value: string | undefined): string {
+  if (!value || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new CliError('usage', 'EXPECTED_REGISTRY_SHA256 must be 64 lowercase hexadecimal characters from service url-recovery.')
+  }
+  return value
 }
 
 function jsonObject(value: string | undefined, label: string): Record<string, unknown> {
@@ -344,6 +356,29 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
       expected_service_identity: required(rest[4], 'EXPECTED_SERVICE_ID'),
       expected_target_port: port(rest[5], 'EXPECTED_TARGET_PORT'),
       expected_proxy_port: port(rest[6], 'EXPECTED_PROXY_PORT'),
+    })
+  }
+  if (area === 'service' && action === 'url-recovery') {
+    if (rest.length) throw new CliError('usage', 'service url-recovery does not accept arguments.')
+    return requestDaemon(socketPath, 'service.proxy.recovery.inspect')
+  }
+  if (area === 'service' && action === 'url-retry') {
+    if (rest.length !== 7) throw new CliError('usage',
+      'service url-retry requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT.')
+    return requestDaemon(socketPath, 'service.proxy.recovery.retry', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      port_variable: required(rest[2], 'PORT_VARIABLE'),
+      expected_route_id: required(rest[3], 'EXPECTED_ROUTE_ID'),
+      expected_service_identity: required(rest[4], 'EXPECTED_SERVICE_ID'),
+      expected_target_port: port(rest[5], 'EXPECTED_TARGET_PORT'),
+      expected_proxy_port: port(rest[6], 'EXPECTED_PROXY_PORT'),
+    })
+  }
+  if (area === 'service' && action === 'url-recovery-reset') {
+    if (rest.length !== 2 || rest[1] !== '--confirm-reset') throw new CliError('usage',
+      'service url-recovery-reset requires EXPECTED_REGISTRY_SHA256 --confirm-reset. Inspect first; the corrupt bytes are archived.')
+    return requestDaemon(socketPath, 'service.proxy.recovery.reset', {
+      expected_registry_sha256: sha256(rest[0]),
     })
   }
   if (area === 'service' && action === 'configure') {

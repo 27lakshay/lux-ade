@@ -556,7 +556,11 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
     await expect(rpc(socket, retry)).rejects.toThrow(/port remains unavailable/)
     await new Promise<void>((done, fail) => occupied!.close((error) => error ? fail(error) : done()))
     occupied = undefined
-    expect((await rpc(socket, retry)).url).toBe(first.url)
+    const retried = await execFileAsync(process.execPath, [resolve('apps/cli/dist/index.js'),
+      '--socket', socket, 'service', 'url-retry', workspace.id, 'one', 'PORT',
+      first.route_id as string, first.service_identity as string,
+      String(first.target_port), String(first.port)])
+    expect(JSON.parse(retried.stdout).url).toBe(first.url)
     await rpc(socket, { op: 'service.start', workspace_id: workspace.id, name: 'one' })
     await expect.poll(async () => (await (await fetch(first.url as string)).text())).toBe('one')
     expect((await (await fetch(second.url as string)).text())).toBe('two')
@@ -624,8 +628,10 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
     await expect(rpc(socket, { op: 'service.proxy.recovery.reset',
       expected_registry_sha256: current.registry_sha256 })).rejects.toThrow(/registry changed/)
     await writeFile(registry, broken)
-    const reset = await rpc(socket, { op: 'service.proxy.recovery.reset',
-      expected_registry_sha256: current.registry_sha256 })
+    const resetCommand = await execFileAsync(process.execPath, [resolve('apps/cli/dist/index.js'),
+      '--socket', socket, 'service', 'url-recovery-reset',
+      current.registry_sha256 as string, '--confirm-reset'])
+    const reset = JSON.parse(resetCommand.stdout)
     expect(reset).toMatchObject({ type: 'service_proxy_recovery_reset', status: 'reset' })
     expect(await readFile(reset.archive as string)).toEqual(broken)
     expect((await rpc(socket, { op: 'service.proxy.recovery.inspect' })).status).toBe('healthy')
