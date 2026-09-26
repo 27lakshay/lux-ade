@@ -11,7 +11,7 @@ use std::{
     os::unix::{fs::OpenOptionsExt, net::UnixStream},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
@@ -35,11 +35,16 @@ struct Record {
     service_identity: String,
     #[serde(default)]
     target_port: u16,
+    #[serde(default)]
+    route_id: String,
     daemon_socket: PathBuf,
 }
 
 struct Route {
     record: Mutex<Record>,
+    admission: RwLock<()>,
+    retired: AtomicBool,
+    listener: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 pub(super) struct Manager {
@@ -52,13 +57,22 @@ pub(super) struct Manager {
 impl Manager {
     pub(super) fn open(directory: &Path) -> Result<Self> {
         let file = directory.join("service-proxies.json");
-        let saved: Vec<Record> = if file.exists() {
+        let mut saved: Vec<Record> = if file.exists() {
             serde_json::from_reader(File::open(&file)?)
                 .context("Cannot read stable service proxy registry")?
         } else {
             Vec::new()
         };
         ensure!(saved.len() <= 256, "Too many stable service proxy routes");
+        if saved.iter().any(|record| record.route_id.is_empty()) {
+            for record in &mut saved {
+                if record.route_id.is_empty() {
+                    record.route_id = format!("route_{}", uuid::Uuid::new_v4());
+                }
+            }
+            persist_values(&file, &saved)
+                .context("Cannot backfill stable proxy route identities")?;
+        }
         let manager = Self {
             file,
             records: Mutex::new(HashMap::new()),
@@ -73,6 +87,9 @@ impl Manager {
             );
             let route = Arc::new(Route {
                 record: Mutex::new(record.clone()),
+                admission: RwLock::new(()),
+                retired: AtomicBool::new(false),
+                listener: Mutex::new(None),
             });
             // A stolen port cannot be replaced by a new URL: fail runtime startup
             // so ADE never reports a stable address owned by another process.
@@ -152,8 +169,12 @@ impl Manager {
                 port,
                 service_identity: service_identity.to_owned(),
                 target_port,
+                route_id: format!("route_{}", uuid::Uuid::new_v4()),
                 daemon_socket: daemon_socket.to_path_buf(),
             }),
+            admission: RwLock::new(()),
+            retired: AtomicBool::new(false),
+            listener: Mutex::new(None),
         });
         records.insert(key.clone(), route.clone());
         if let Err(error) = persist(&self.file, &records) {
@@ -182,6 +203,71 @@ impl Manager {
         Ok(reply(&route.record.lock().unwrap()))
     }
 
+    pub(super) fn retire(
+        &self,
+        workspace_id: &str,
+        service_name: &str,
+        port_variable: &str,
+        expected_route_id: &str,
+        expected_service_identity: &str,
+        expected_target_port: u16,
+        expected_proxy_port: u16,
+    ) -> Result<Value> {
+        ensure!(!expected_route_id.is_empty(), "Missing expected route ID");
+        ensure!(
+            !expected_service_identity.is_empty(),
+            "Missing expected service identity"
+        );
+        ensure!(expected_target_port != 0, "Missing expected target port");
+        ensure!(expected_proxy_port != 0, "Missing expected proxy port");
+        let key = Key {
+            workspace_id: workspace_id.to_owned(),
+            service_name: service_name.to_owned(),
+            port_variable: port_variable.to_owned(),
+        };
+        let mut records = self.records.lock().unwrap();
+        let route = records
+            .get(&key)
+            .context("Stable service proxy route does not exist")?
+            .clone();
+        let snapshot = route.record.lock().unwrap().clone();
+        ensure!(
+            snapshot.route_id == expected_route_id
+                && snapshot.service_identity == expected_service_identity
+                && snapshot.target_port == expected_target_port
+                && snapshot.port == expected_proxy_port,
+            "Stable service proxy route changed; inspect it again"
+        );
+        // Fence requests that have been accepted but have not sent any bytes
+        // upstream. Established HTTP/WebSocket streams have already passed this
+        // gate and may drain against their original target.
+        let _admission = route.admission.write().unwrap();
+        let mut remaining = records.clone();
+        remaining.remove(&key);
+        if let Err(error) = persist(&self.file, &remaining) {
+            // If rename succeeded but directory sync failed, restore the original
+            // registry before returning. The live listener stays owned either way.
+            let recovery = persist(&self.file, &records);
+            return match recovery {
+                Ok(()) => Err(error.context("Stable proxy retirement failed; route remains active")),
+                Err(restore) => Err(error.context(format!(
+                    "Stable proxy retirement failed; route remains active in this runtime, registry recovery is uncertain: {restore}"
+                ))),
+            };
+        }
+        route.retired.store(true, Ordering::Release);
+        records.remove(&key);
+        drop(records);
+        if let Some(listener) = route.listener.lock().unwrap().take() {
+            listener
+                .join()
+                .map_err(|_| anyhow::anyhow!("Stable proxy listener thread panicked"))?;
+        }
+        let mut result = reply(&snapshot);
+        result["type"] = json!("service_proxy_retired");
+        Ok(result)
+    }
+
     pub(super) fn shutdown(&self) {
         self.stop.store(true, Ordering::Release);
     }
@@ -190,10 +276,15 @@ impl Manager {
         listener.set_nonblocking(true)?;
         let stop = self.stop.clone();
         let connections = self.connections.clone();
-        std::thread::spawn(move || {
-            while !stop.load(Ordering::Acquire) {
+        let active = route.clone();
+        let handle = std::thread::spawn(move || {
+            while !stop.load(Ordering::Acquire) && !active.retired.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((mut client, _)) => {
+                        if active.retired.load(Ordering::Acquire) {
+                            let _ = client.shutdown(Shutdown::Both);
+                            break;
+                        }
                         if client.set_nonblocking(false).is_err() {
                             continue;
                         }
@@ -202,7 +293,7 @@ impl Manager {
                             let _ = reject(&mut client, 503, "Service proxy is busy");
                             continue;
                         }
-                        let route = route.clone();
+                        let route = active.clone();
                         let connections = connections.clone();
                         std::thread::spawn(move || {
                             let _ = handle(client, &route);
@@ -216,6 +307,7 @@ impl Manager {
                 }
             }
         });
+        *route.listener.lock().unwrap() = Some(handle);
         Ok(())
     }
 }
@@ -223,7 +315,8 @@ impl Manager {
 fn reply(record: &Record) -> Value {
     json!({"type":"service_proxy","url":format!("http://127.0.0.1:{}/", record.port),
         "port":record.port,"scope":"local_private","owner":"runtime",
-        "service_identity":record.service_identity,"target_port":record.target_port})
+        "service_identity":record.service_identity,"target_port":record.target_port,
+        "route_id":record.route_id})
 }
 
 fn bind(port: Option<u16>) -> Result<TcpListener> {
@@ -252,6 +345,10 @@ fn persist(file: &Path, records: &HashMap<Key, Arc<Route>>) -> Result<()> {
                 &b.key.port_variable,
             ))
     });
+    persist_values(file, &values)
+}
+
+fn persist_values(file: &Path, values: &[Record]) -> Result<()> {
     let temporary = file.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> Result<()> {
         let mut out = OpenOptions::new()
@@ -496,6 +593,10 @@ fn handle(mut client: TcpStream, route: &Route) -> Result<()> {
             return Ok(());
         }
     };
+    if route.retired.load(Ordering::Acquire) {
+        let _ = reject(&mut client, 503, "Service proxy route retired");
+        return Ok(());
+    }
     let mut verified = None;
     for (host, address) in [
         (
@@ -526,7 +627,14 @@ fn handle(mut client: TcpStream, route: &Route) -> Result<()> {
         upstream.set_read_timeout(Some(Duration::from_secs(30)))?;
         upstream.set_write_timeout(Some(Duration::from_secs(30)))?;
     }
-    upstream.write_all(&first)?;
+    {
+        let _admission = route.admission.read().unwrap();
+        if route.retired.load(Ordering::Acquire) {
+            let _ = reject(&mut client, 503, "Service proxy route retired");
+            return Ok(());
+        }
+        upstream.write_all(&first)?;
+    }
     if matches!(body, Body::Upgrade) {
         let mut input = client.try_clone()?;
         let mut output = upstream.try_clone()?;

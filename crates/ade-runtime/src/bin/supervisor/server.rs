@@ -110,6 +110,33 @@ impl Host {
                     .as_str()
                     .context("Missing port variable")?,
             ),
+            "proxy.retire" => self.proxies.retire(
+                request["workspace_id"]
+                    .as_str()
+                    .context("Missing workspace ID")?,
+                request["service_name"]
+                    .as_str()
+                    .context("Missing service name")?,
+                request["port_variable"]
+                    .as_str()
+                    .context("Missing port variable")?,
+                request["expected_route_id"]
+                    .as_str()
+                    .context("Missing expected route ID")?,
+                request["expected_service_identity"]
+                    .as_str()
+                    .context("Missing expected service identity")?,
+                u16::try_from(
+                    request["expected_target_port"]
+                        .as_u64()
+                        .context("Missing expected target port")?,
+                )?,
+                u16::try_from(
+                    request["expected_proxy_port"]
+                        .as_u64()
+                        .context("Missing expected proxy port")?,
+                )?,
+            ),
             "terminal.list" => Ok(
                 json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics()})).collect::<Vec<_>>()}),
             ),

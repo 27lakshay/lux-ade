@@ -143,6 +143,39 @@ impl Host {
             "service_name":name,"port_variable":variable}))
     }
 
+    fn proxy_retire(&self, request: &Value) -> anyhow::Result<Value> {
+        let workspace = request["workspace_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        let name = request["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
+        let variable = request["port_variable"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing port variable"))?;
+        let route_id = request["expected_route_id"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Missing expected route ID"))?;
+        let identity = request["expected_service_identity"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Missing expected service identity"))?;
+        let target_port = request["expected_target_port"]
+            .as_u64()
+            .filter(|port| (1..=65535).contains(port))
+            .ok_or_else(|| anyhow::anyhow!("Missing expected target port"))?;
+        let proxy_port = request["expected_proxy_port"]
+            .as_u64()
+            .filter(|port| (1..=65535).contains(port))
+            .ok_or_else(|| anyhow::anyhow!("Missing expected proxy port"))?;
+        self.runtime
+            .command(json!({"op":"proxy.retire","workspace_id":workspace,
+            "service_name":name,"port_variable":variable,"expected_route_id":route_id,
+            "expected_service_identity":identity,"expected_target_port":target_port,
+            "expected_proxy_port":proxy_port}))
+    }
+
     fn proxy_target(&self, request: &Value) -> anyhow::Result<Value> {
         let (workspace, name, variable, listed) = self.proxy_service(request)?;
         anyhow::ensure!(
@@ -509,6 +542,8 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                     host.proxy_ensure(&request)
                 } else if op == "service.proxy.inspect" {
                     host.proxy_inspect(&request)
+                } else if op == "service.proxy.retire" {
+                    host.proxy_retire(&request)
                 } else if op == "service.proxy.target" {
                     host.proxy_target(&request)
                 } else if op == "terminal.stop" || op == "terminal.retire" {

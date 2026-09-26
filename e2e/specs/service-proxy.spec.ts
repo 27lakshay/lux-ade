@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -11,7 +11,7 @@ import { rpc } from '../fixtures/daemon'
 const execFileAsync = promisify(execFile)
 
 test('runtime-owned service URL preserves HTTP and WebSocket traffic across service and daemon restarts', async () => {
-  test.setTimeout(60_000)
+  test.setTimeout(150_000)
   const root = await mkdtemp(join(tmpdir(), 'ade-proxy-e2e-'))
   const dataDirectory = join(root, 'data')
   const socket = join(root, 'daemon.sock')
@@ -62,24 +62,36 @@ test('runtime-owned service URL preserves HTTP and WebSocket traffic across serv
       const peer = createConnection({ host: '127.0.0.1', port })
       peer.setTimeout(5_000, () => peer.destroy(new Error('Proxy response timed out')))
       peer.once('connect', () => peer.write('GET / HTTP/1.1\r\nHost: attacker.example\r\n\r\n'))
-      peer.once('data', (chunk) => {
-        peer.destroy()
-        done(Number(chunk.toString().split(' ')[1]))
+      let response = ''
+      peer.on('data', (chunk) => {
+        response += chunk.toString()
+        const status = /^HTTP\/1\.1 (\d{3})/.exec(response)?.[1]
+        if (status) { peer.destroy(); done(Number(status)) }
       })
       peer.once('error', fail)
     })
   }
+  const canConnect = async (port: number): Promise<boolean> => await new Promise((done) => {
+    const peer = createConnection({ host: '127.0.0.1', port })
+    peer.once('connect', () => { peer.destroy(); done(true) })
+    peer.once('error', () => { peer.destroy(); done(false) })
+  })
   const slowHeader = async (url: string): Promise<{ status: number; elapsed: number }> => {
     const started = performance.now()
     return await new Promise((done, fail) => {
       const peer = createConnection({ host: '127.0.0.1', port: Number(new URL(url).port) })
       const deadline = setTimeout(() => peer.destroy(new Error('Slow header was not bounded')), 8_000)
       const trickle = setInterval(() => peer.write('G'), 750)
-      peer.once('data', (chunk) => {
-        clearTimeout(deadline)
-        clearInterval(trickle)
-        peer.destroy()
-        done({ status: Number(chunk.toString().split(' ')[1]), elapsed: performance.now() - started })
+      let response = ''
+      peer.on('data', (chunk) => {
+        response += chunk.toString()
+        const status = /^HTTP\/1\.1 (\d{3})/.exec(response)?.[1]
+        if (status) {
+          clearTimeout(deadline)
+          clearInterval(trickle)
+          peer.destroy()
+          done({ status: Number(status), elapsed: performance.now() - started })
+        }
       })
       peer.once('error', (error) => {
         clearTimeout(deadline)
@@ -247,6 +259,92 @@ test('runtime-owned service URL preserves HTTP and WebSocket traffic across serv
       expected_route_port: pinned.target_port })).url).toBe(url)
     await expect.poll(async () => (await fetch(url)).status).toBe(200)
     await rpc(socket, { op: 'service.stop', workspace_id: workspace.id, name: 'web' })
+
+    await rpc(socket, { op: 'service.start', workspace_id: workspace.id, name: 'web' })
+    await expect.poll(async () => (await fetch(url)).status).toBe(200)
+    const live = await openWebSocket(url)
+    expect(await echo(live, 'before-retire')).toBe('before-retire')
+    const beforeRetire = await rpc(socket, { op: 'service.proxy.inspect', workspace_id: workspace.id,
+      name: 'web', port_variable: 'PORT' })
+    expect(beforeRetire.route_id).toMatch(/^route_/)
+    const retire = { op: 'service.proxy.retire', workspace_id: workspace.id, name: 'web',
+      port_variable: 'PORT', expected_route_id: beforeRetire.route_id,
+      expected_service_identity: beforeRetire.service_identity,
+      expected_target_port: beforeRetire.target_port, expected_proxy_port: beforeRetire.port }
+    await expect(rpc(socket, { ...retire, expected_proxy_port: 1 })).rejects.toThrow(/route changed/)
+
+    // A failed registry rename must leave the route and listener owned.
+    const registry = join(dataDirectory, 'service-proxies.json')
+    const backup = `${registry}.backup`
+    await rename(registry, backup)
+    await mkdir(registry)
+    try {
+      await expect(rpc(socket, retire)).rejects.toThrow(/retirement failed/)
+      expect((await rpc(socket, { op: 'service.proxy.inspect', workspace_id: workspace.id,
+        name: 'web', port_variable: 'PORT' })).route_id).toBe(beforeRetire.route_id)
+      expect((await fetch(url)).status).toBe(200)
+    } finally {
+      await rm(registry, { recursive: true, force: true })
+      await rename(backup, registry)
+    }
+
+    // The runtime already accepted this TCP connection, but it has not sent
+    // request headers. Retirement must fence a delayed request on that socket.
+    const idle = createConnection({ host: '127.0.0.1', port: Number(beforeRetire.port) })
+    await new Promise<void>((done, fail) => {
+      idle.once('connect', () => done())
+      idle.once('error', fail)
+    })
+    idle.setTimeout(5_000, () => idle.destroy(new Error('Idle proxy socket did not settle')))
+    await delay(100)
+    const idleReply = new Promise<string>((done, fail) => {
+      let reply = ''
+      idle.on('data', (chunk) => { reply += chunk.toString() })
+      idle.once('close', () => done(reply))
+      idle.once('error', fail)
+    })
+    expect((await rpc(socket, retire)).type).toBe('service_proxy_retired')
+    idle.write(`GET /late HTTP/1.1\r\nHost: 127.0.0.1:${beforeRetire.port}\r\n\r\n`)
+    expect(await idleReply).toMatch(/^HTTP\/1\.1 503/)
+    expect(await echo(live, 'after-retire')).toBe('after-retire')
+    live.close()
+    await expect.poll(() => canConnect(Number(beforeRetire.port))).toBe(false)
+    await expect(rpc(socket, { op: 'service.proxy.inspect', workspace_id: workspace.id,
+      name: 'web', port_variable: 'PORT' })).rejects.toThrow(/does not exist/)
+    const renewed = await rpc(socket, { op: 'service.proxy.ensure', workspace_id: workspace.id,
+      name: 'web', port_variable: 'PORT' })
+    expect(renewed.route_id).not.toBe(beforeRetire.route_id)
+    expect((await fetch(renewed.url as string)).status).toBe(200)
+    await expect(rpc(socket, retire)).rejects.toThrow(/route changed/)
+    expect((await rpc(socket, { op: 'service.proxy.inspect', workspace_id: workspace.id,
+      name: 'web', port_variable: 'PORT' })).route_id).toBe(renewed.route_id)
+
+    await stopDaemon()
+    await launch()
+    expect((await rpc(socket, { op: 'service.proxy.inspect', workspace_id: workspace.id,
+      name: 'web', port_variable: 'PORT' })).route_id).toBe(renewed.route_id)
+    await rpc(socket, { op: 'service.proxy.retire', workspace_id: workspace.id, name: 'web',
+      port_variable: 'PORT', expected_route_id: renewed.route_id,
+      expected_service_identity: renewed.service_identity,
+      expected_target_port: renewed.target_port, expected_proxy_port: renewed.port })
+    await expect.poll(() => canConnect(Number(renewed.port))).toBe(false)
+    // More than the 256-route limit may be created over time when retired slots are released.
+    for (let index = 0; index < 257; index++) {
+      const fresh = await rpc(socket, { op: 'service.proxy.ensure', workspace_id: workspace.id,
+        name: 'web', port_variable: 'PORT' })
+      await rpc(socket, { op: 'service.proxy.retire', workspace_id: workspace.id, name: 'web',
+        port_variable: 'PORT', expected_route_id: fresh.route_id,
+        expected_service_identity: fresh.service_identity,
+        expected_target_port: fresh.target_port, expected_proxy_port: fresh.port })
+    }
+    await stopDaemon()
+    if (typeof hello?.runtime_socket === 'string') {
+      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance,
+        stop_active: true })
+    }
+    await launch()
+    await expect(rpc(socket, { op: 'service.proxy.inspect', workspace_id: workspace.id,
+      name: 'web', port_variable: 'PORT' })).rejects.toThrow(/does not exist/)
   } finally {
     if (attacker && attacker.exitCode === null) attacker.kill()
     if (attacker && attacker.exitCode === null) await new Promise((done) => attacker?.once('exit', done))
@@ -330,12 +428,20 @@ with sqlite3.connect(sys.argv[1]) as db:
       } })).service as { identity: string }
     expect(edited.identity).toBe(firstIdentity)
     await stop()
+    const proxyRegistry = join(dataDirectory, 'service-proxies.json')
+    const legacyRoutes = JSON.parse(await readFile(proxyRegistry, 'utf8')) as Record<string, unknown>[]
+    for (const legacyRoute of legacyRoutes) delete legacyRoute.route_id
+    await writeFile(proxyRegistry, JSON.stringify(legacyRoutes))
     await launch()
     const afterRestart = (await rpc(socket, { op: 'service.list', workspace_id: workspace.id }))
       .services as { name: string; identity: string }[]
     expect(afterRestart.find((service) => service.name === 'first')?.identity).toBe(firstIdentity)
-    expect((await rpc(socket, { op: 'service.proxy.ensure', workspace_id: workspace.id,
-      name: 'first', port_variable: 'PORT' })).url).toBe(route.url)
+    const restored = await rpc(socket, { op: 'service.proxy.ensure', workspace_id: workspace.id,
+      name: 'first', port_variable: 'PORT' })
+    expect(restored.url).toBe(route.url)
+    expect(restored.route_id).toMatch(/^route_/)
+    const upgradedRoutes = JSON.parse(await readFile(proxyRegistry, 'utf8')) as { route_id: string }[]
+    expect(upgradedRoutes[0]?.route_id).toBe(restored.route_id)
     const { stdout } = await execFileAsync('python3', ['-c',
       'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA user_version").fetchone()[0])', database])
     expect(stdout.trim()).toBe('10')

@@ -16,6 +16,20 @@ Remapping requires the expected current service identity and target port from
 `service.list`, plus the expected previously pinned identity and target port from
 `service.proxy.inspect`. These four compare-and-set fields prevent a delayed
 remap from targeting a later replacement or a changed port.
+`service.proxy.retire` releases a route and its listening port. It requires the
+route key (`workspace_id`, `name`, `port_variable`) and four compare-and-set
+fields from `service.proxy.inspect`: `expected_route_id`,
+`expected_service_identity`, `expected_target_port`, and `expected_proxy_port`.
+The runtime persists route deletion before closing and joining its listener.
+The route ID is durable and unique to each creation, so a delayed retire cannot
+delete a newly created route even if the OS reuses the same port. Existing
+accepted HTTP and WebSocket connections may drain on their original upstream;
+new connections are refused after retire returns. A failed registry write keeps
+the live route and listener and returns an error; if recovery of an uncertain
+rename also fails, the error explicitly states that persistence is uncertain.
+An admission gate rejects a TCP connection accepted before retirement if it
+only sends its HTTP headers after the retire acknowledgement.
+Older registries receive route IDs before their listeners start.
 Each HTTP connection connects to a loopback candidate, then asks the current
 daemon for a fresh, family-specific listener and run-identity proof before it
 forwards any request bytes. An unavailable daemon, stopped
@@ -43,6 +57,11 @@ deadline; request bodies and chunk trailers have total time and size limits.
 - The runtime listener stays bound through a daemon handoff and returns 503
   while the daemon is absent. It serves the same target again after reconnect.
   A stopped runtime restores the persisted URL on restart if its port is free.
+- Retiring a route closes its listener and frees its quota slot while accepted
+  streams drain. A stale route ID or any changed pin rejects retirement. A
+  retired route stays absent after daemon/runtime restart; a newly ensured route
+  has a new route ID. More than 256 create/retire cycles are possible. Registry
+  persistence failure leaves the route reachable and inspectable.
 
 Focused evidence: `pnpm exec playwright test e2e/specs/service-proxy.spec.ts
 --reporter=list` passed 2/2 after `pnpm build:backend` on the current working
@@ -64,6 +83,17 @@ restarts the daemon. It verifies distinct identities are backfilled, retained
 through service edit and another restart, and used by the stable route. This
 models the v9 schema; it does not execute an older ADE binary.
 
+Retirement E2E runs through the same real daemon/runtime and managed HTTP and
+WebSocket service. It verifies a WebSocket remains usable after retire while
+the old listener closes, stale route-ID retirement fails after recreation,
+daemon/runtime handoff does not resurrect a retired route, a forced registry
+rename failure retains the original live route, and 257 consecutive
+create/retire cycles release route slots. It also verifies that an accepted
+idle socket cannot forward a delayed request after the retire acknowledgement.
+The migration E2E removes `route_id` from a stopped registry and verifies
+backfill on restart. After the admission gate and migration assertion,
+`pnpm build:backend` and the focused proxy E2E passed 2/2 in 21.0 seconds.
+
 ## Remaining F088 work
 
 This is a local/private slice. It does not provide an authenticated remote or
@@ -75,7 +105,6 @@ An absolute guarantee against a process swapping that listener after the final
 OS proof but before the first forwarded byte requires inherited sockets or a
 stronger connected-socket owner proof and remains open. The E2E confirms the
 common close-and-rebind takeover fails closed.
-Route retirement and broader URL discovery remain to be completed before
-closing F088. The runtime's persisted proxy registry is
+Broader URL discovery remains before closing F088. The runtime's persisted proxy registry is
 profile local; recovery from corruption and a rebind failure needs a dedicated
 recovery surface before full F088 acceptance.
