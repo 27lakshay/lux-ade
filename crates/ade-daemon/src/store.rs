@@ -849,7 +849,39 @@ impl Store {
         Ok(c)
     }
     pub fn terminal_reserved(&self, terminal: &str) -> Result<bool> {
+        if ade_core::scripts::run_name(terminal).is_ok() {
+            return Ok(true);
+        }
         Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE (json_extract(data,'$.terminal_owner.terminal_id')=?1 OR json_extract(data,'$.view_terminal.terminal_id')=?1) UNION ALL SELECT 1 FROM services WHERE json_extract(data,'$.terminal_id')=?1)", [terminal], |row| row.get(0))?)
+    }
+    pub fn register_script_run(&self, workspace_id: &str, run_id: &str) -> Result<()> {
+        ade_core::scripts::run_name(run_id)?;
+        let tx = self.transaction()?;
+        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", workspace_id)?;
+        ensure!(
+            workspace.extra_terminals.len() < 32,
+            "Workspace terminal limit reached"
+        );
+        ensure!(
+            !workspace.extra_terminals.iter().any(|id| id == run_id),
+            "Script run already exists"
+        );
+        workspace.extra_terminals.push(run_id.to_owned());
+        tx.execute(
+            "UPDATE workspaces SET data=?2 WHERE id=?1",
+            params![workspace_id, encode(&workspace)?],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn retire_script_run(&self, workspace_id: &str, run_id: &str) -> Result<()> {
+        ade_core::scripts::run_name(run_id)?;
+        let workspace = self.workspace(workspace_id)?;
+        ensure!(
+            workspace.extra_terminals.iter().any(|id| id == run_id),
+            "Script run is unavailable"
+        );
+        self.retire_terminal(workspace_id, run_id)
     }
     pub fn create_terminal(&self, id: &str) -> Result<String> {
         let tx = self.connection.unchecked_transaction()?;

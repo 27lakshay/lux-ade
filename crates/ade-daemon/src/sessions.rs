@@ -283,6 +283,9 @@ impl Sessions {
                 let Some(hub) = weak.upgrade() else {
                     break;
                 };
+                if let Err(error) = hub.release_exited_script_leases() {
+                    eprintln!("Script lease monitor: {error}");
+                }
                 if let Err(error) = hub.sample_due_service_health() {
                     eprintln!("Service health monitor: {error}");
                 }
@@ -337,6 +340,18 @@ impl Sessions {
         }
         Ok(())
     }
+    fn release_exited_script_leases(&self) -> Result<()> {
+        let catalogue = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let exited = catalogue["terminals"].as_array()
+            .context("Invalid terminal catalogue")?.iter()
+            .filter(|item| item["metrics"]["shell_running"] == false)
+            .filter_map(|item| item["workspace"]["terminal_id"].as_str())
+            .collect::<HashSet<_>>();
+        self.data.lock().unwrap().terminal_leases.retain(|id, _| {
+            ade_core::scripts::run_name(id).is_err() || !exited.contains(id.as_str())
+        });
+        Ok(())
+    }
     pub fn prepare_restart(&self) -> Result<()> {
         let mut d = self.data.lock().unwrap();
         for id in d.agents.keys() {
@@ -365,6 +380,33 @@ impl Sessions {
         for c in conversations {
             if c.view_terminal.is_some() || c.terminal_owner.is_some() {
                 self.clear_view_terminal(&c.id)?;
+            }
+        }
+        // Script runs use durable workspace terminal membership as their
+        // handoff lease. Reconcile a launch that died before runtime admission.
+        let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let terminals = terminals["terminals"].as_array().context("Invalid terminal catalogue")?;
+        {
+            let mut d = self.data.lock().unwrap();
+            for workspace in d.store.catalog()?.workspaces {
+                for run_id in workspace.extra_terminals.iter()
+                    .filter(|id| ade_core::scripts::run_name(id).is_ok()) {
+                    let runtime = terminals.iter().find(|item|
+                        item["workspace"]["id"] == workspace.id
+                            && item["workspace"]["terminal_id"] == *run_id);
+                    match runtime {
+                        Some(item) => {
+                            ensure!(item["workspace"]["root"] == workspace.root
+                                && item["metrics"]["transfer_id"].as_str().is_some(),
+                                "Runtime script does not match its durable workspace");
+                            if item["metrics"]["shell_running"] == true {
+                                d.terminal_leases.insert(run_id.clone(),
+                                    self.worktrees.lease(&workspace.root)?);
+                            }
+                        }
+                        None => d.store.retire_script_run(&workspace.id, run_id)?,
+                    }
+                }
             }
         }
         let response = self.runtime.agent(json!({"op":"agent.list"}))?;
@@ -584,6 +626,41 @@ impl Sessions {
         {
             let workspace = self.workspace(string("workspace_id")?)?;
             return self.review.command(&workspace.root, request);
+        }
+        if request["op"]
+            .as_str()
+            .is_some_and(|op| op.starts_with("script."))
+        {
+            if matches!(request["op"].as_str(), Some("script.start" | "script.stop" | "script.retire")) {
+                ensure!(
+                    !self.data.lock().unwrap().draining,
+                    "Application daemon is restarting"
+                );
+            }
+            let workspace = self.workspace(string("workspace_id")?)?;
+            let register = |run_id: &str| -> Result<()> {
+                let lease = self.worktrees.agent_lease(&workspace.root)?;
+                let mut d = self.data.lock().unwrap();
+                ensure!(!d.draining, "Application daemon is restarting");
+                d.store.register_script_run(&workspace.id, run_id)?;
+                d.terminal_leases.insert(run_id.to_owned(), lease);
+                Ok(())
+            };
+            let retire = |run_id: &str| -> Result<()> {
+                let mut d = self.data.lock().unwrap();
+                ensure!(!d.draining, "Application daemon is restarting");
+                d.store.retire_script_run(&workspace.id, run_id)?;
+                d.terminal_leases.remove(run_id);
+                Ok(())
+            };
+            return crate::scripts::command(
+                workspace.clone(),
+                &self.runtime,
+                self.subscribers.load(Ordering::Relaxed),
+                request,
+                &register,
+                &retire,
+            );
         }
         match request["op"].as_str().unwrap_or("") {
             "attachment.import" | "attachment.put" => {
