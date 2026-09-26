@@ -56,6 +56,7 @@ impl Host {
         let workspace = request["workspace_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        self.sessions.ensure_workspace_bound(workspace)?;
         let name = request["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
@@ -132,6 +133,7 @@ impl Host {
         let workspace = request["workspace_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        self.sessions.ensure_workspace_bound(workspace)?;
         let name = request["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
@@ -147,6 +149,7 @@ impl Host {
         let workspace = request["workspace_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        self.sessions.ensure_workspace_bound(workspace)?;
         let name = request["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
@@ -180,6 +183,7 @@ impl Host {
         let workspace = request["workspace_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        self.sessions.ensure_workspace_bound(workspace)?;
         let name = request["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
@@ -298,9 +302,12 @@ impl Host {
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Invalid terminal catalogue"))?
         {
+            let workspace: ade_daemon::model::WorkspaceRecord =
+                serde_json::from_value(terminal["workspace"].clone())?;
+            if self.sessions.ensure_workspace_bound(&workspace.id).is_err() {
+                continue;
+            }
             if terminal["metrics"]["shell_running"] != true {
-                let workspace: ade_daemon::model::WorkspaceRecord =
-                    serde_json::from_value(terminal["workspace"].clone())?;
                 let stored = self.sessions.workspace(&workspace.id)?;
                 if stored.terminal_id != workspace.terminal_id
                     && !stored.extra_terminals.contains(&workspace.terminal_id)
@@ -309,8 +316,6 @@ impl Host {
                 }
                 continue;
             }
-            let workspace: ade_daemon::model::WorkspaceRecord =
-                serde_json::from_value(terminal["workspace"].clone())?;
             let stored = self.sessions.workspace(&workspace.id)?;
             anyhow::ensure!(
                 stored.root == workspace.root
@@ -334,6 +339,7 @@ impl Host {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!id.is_empty(), "Choose a workspace folder first");
         let mut leases = self.leases.lock().unwrap();
+        self.sessions.ensure_workspace_bound(id)?;
         let mut workspace = self.sessions.workspace(id)?;
         let key = if let Some(terminal) = terminal_id {
             anyhow::ensure!(
@@ -391,6 +397,7 @@ impl Host {
         let workspace = request["workspace_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        self.sessions.ensure_workspace_bound(workspace)?;
         let terminal = request["terminal_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing terminal_id"))?;
@@ -716,7 +723,12 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         stopping: AtomicBool::new(false),
     });
     host.refresh_leases()?;
-    if !selection {
+    if !selection
+        && host
+            .sessions
+            .ensure_workspace_bound(&host.default_workspace)
+            .is_ok()
+    {
         host.ensure_terminal(&host.default_workspace, None, false)?;
     }
     let (listener, _socket) = runtime::SocketGuard::bind(Path::new(&socket))?;

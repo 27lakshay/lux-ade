@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { spawn, execFile, type ChildProcess } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -26,43 +26,13 @@ async function backupError(...args: string[]): Promise<string> {
   throw new Error('Backup operation unexpectedly succeeded')
 }
 
-async function restoredDaemon(dataDirectory: string, root: string): Promise<{ socket: string; stop: () => Promise<void> }> {
-  const socket = join(root, 'restored.sock')
-  const runtimeSocket = join(root, 'restored-runtime.sock')
-  const child: ChildProcess = spawn(resolve('target/debug/ade-daemon'), [], {
-    env: { ...process.env, ADE_DATA_DIR: dataDirectory, ADE_SOCKET: socket,
-      ADE_RUNTIME_SOCKET: runtimeSocket, ADE_ROOT: root, SHELL: '/bin/sh' },
-    stdio: ['ignore', 'ignore', 'pipe'],
-  })
-  let stderr = ''
-  child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString().slice(0, 8192) })
-  let hello: Record<string, unknown> | null = null
-  for (let attempt = 0; attempt < 150; attempt++) {
-    if (child.exitCode !== null) throw new Error(`Restored daemon exited: ${stderr}`)
-    try { hello = await rpc(socket, { op: 'hello' }); break }
-    catch { await delay(50) }
-  }
-  if (!hello) throw new Error(`Restored daemon did not start: ${stderr}`)
-  return { socket, stop: async () => {
-    try {
-      await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello?.boot_id })
-      await expect.poll(() => child.exitCode, { timeout: 10_000 }).not.toBeNull()
-      await rpc(String(hello?.runtime_socket), { op: 'runtime.stop',
-        instance_id: hello?.runtime_instance, stop_active: true }).catch(() => undefined)
-    } finally {
-      if (child.exitCode === null) child.kill('SIGKILL')
-      if (child.exitCode === null) await new Promise<void>((done) => child.once('exit', () => done()))
-    }
-  } }
-}
-
 test('live backend snapshot restores public state and rejects corrupt or future versions before target mutation', async () => {
   test.setTimeout(120_000)
   const daemon = await startDaemon()
   const root = await mkdtemp(join(tmpdir(), 'ade-backup-e2e-'))
   const output = join(root, 'backup')
   const target = join(root, 'restored-data')
-  let restored: Awaited<ReturnType<typeof restoredDaemon>> | null = null
+  let restored: Awaited<ReturnType<typeof startDaemon>> | null = null
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory }))
       .workspace as { id: string }
@@ -149,8 +119,10 @@ test('live backend snapshot restores public state and rejects corrupt or future 
       join(target, 'sessions.sqlite'), account.id])
     expect((JSON.parse(persisted.stdout) as { native_home: string }).native_home)
       .toBe(join(target, 'provider-accounts', account.id))
-    restored = await restoredDaemon(target, root)
+    restored = await startDaemon({ ADE_DATA_DIR: target })
     const catalog = await rpc(restored.socket, { op: 'catalog.get' })
+    expect((await rpc(restored.socket, { op: 'draft.send.get', conversation_id: conversation.id,
+      window_id: 'backup-window' })).restored_from_backup).toBe(true)
     expect((catalog.catalog as { conversations: Array<{ id: string }> }).conversations)
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: conversation.id })]))
     expect((await rpc(restored.socket, { op: 'conversation.get', conversation_id: conversation.id })).conversation)
@@ -165,12 +137,11 @@ test('live backend snapshot restores public state and rejects corrupt or future 
         state: 'unverified', native_home: join(await realpath(target), 'provider-accounts', account.id) })]))
     expect((await rpc(restored.socket, { op: 'service.proxy.recovery.inspect' })).routes).toEqual([])
     await expect(rpc(restored.socket, { op: 'service.proxy.inspect', workspace_id: workspace.id,
-      name: 'backup-web', port_variable: 'PORT' })).rejects.toThrow('does not exist')
-    const restoredWorktrees = (await rpc(restored.socket, { op: 'worktree.get', repository_id: sourceRepository.id }))
-      .worktrees as Array<{ path: string; branch: string; ade_owned: boolean }>
-    expect(restoredWorktrees.find((item) => item.path === ownedPath)?.ade_owned).toBe(false)
+      name: 'backup-web', port_variable: 'PORT' })).rejects.toThrow('needs_rebind')
+    await expect(rpc(restored.socket, { op: 'worktree.get', repository_id: sourceRepository.id }))
+      .rejects.toThrow('needs_rebind')
     await expect(rpc(restored.socket, { op: 'worktree.remove', repository_id: sourceRepository.id,
-      request_id: 'restored-must-not-remove-source', path: ownedPath })).rejects.toThrow('original owner')
+      request_id: 'restored-must-not-remove-source', path: ownedPath })).rejects.toThrow('needs_rebind')
     expect((await stat(ownedPath)).isDirectory()).toBe(true)
     await restored.stop()
     restored = null
@@ -189,6 +160,25 @@ test('live backend snapshot restores public state and rejects corrupt or future 
     await writeFile(join(corrupt, 'manifest.json'), '{"format_version":99}')
     expect(await backupError('restore', '--backup', corrupt, '--data-dir', marker)).toContain('Unsupported backup format')
     expect(await readFile(join(marker, 'sentinel'), 'utf8')).toBe('keep')
+
+    const preFence = join(root, 'pre-fence')
+    await mkdir(preFence)
+    for (const entry of await readdir(output)) await cp(join(output, entry), join(preFence, entry), { recursive: true })
+    await execFileAsync('python3', ['-c', 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("PRAGMA user_version=11"); c.close()',
+      join(preFence, 'sessions.sqlite')])
+    const preFenceDb = await readFile(join(preFence, 'sessions.sqlite'))
+    const preFenceManifest = JSON.parse(await readFile(join(preFence, 'manifest.json'), 'utf8')) as {
+      entries: Array<{ path: string; sha256: string; size: number; schema?: number }>
+    }
+    const preFenceEntry = preFenceManifest.entries.find((entry) => entry.path === 'sessions.sqlite')!
+    preFenceEntry.sha256 = createHash('sha256').update(preFenceDb).digest('hex')
+    preFenceEntry.size = preFenceDb.length
+    preFenceEntry.schema = 11
+    await writeFile(join(preFence, 'manifest.json'), JSON.stringify(preFenceManifest))
+    const preFenceTarget = join(root, 'pre-fence-target')
+    expect(await backupError('restore', '--backup', preFence, '--data-dir', preFenceTarget))
+      .toContain('Restore requires a schema-12 backup')
+    await expect(stat(preFenceTarget)).rejects.toThrow()
 
     const future = join(root, 'future')
     await mkdir(future)
@@ -209,8 +199,9 @@ test('live backend snapshot restores public state and rejects corrupt or future 
       .toContain('Unsupported sessions.sqlite schema version 99')
     await expect(stat(untouched)).rejects.toThrow()
   } finally {
-    await restored?.stop().catch(() => undefined)
-    await daemon.stop()
+    const results = await Promise.allSettled([restored?.stop(), daemon.stop()])
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failures.length) throw new Error(`Backup E2E process cleanup is unconfirmed; retain ${root}: ${failures.map((failure) => String(failure.reason)).join('; ')}`)
     await rm(root, { recursive: true, force: true })
   }
 })

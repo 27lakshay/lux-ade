@@ -380,6 +380,9 @@ impl Sessions {
         // Ordinary shell terminals and services are independent of Conversations.
         let conversations = self.data.lock().unwrap().store.catalog()?.conversations;
         for c in conversations {
+            if self.ensure_workspace_bound(&c.workspace_id).is_err() {
+                continue;
+            }
             if c.view_terminal.is_some() || c.terminal_owner.is_some() {
                 self.clear_view_terminal(&c.id)?;
             }
@@ -393,6 +396,9 @@ impl Sessions {
         {
             let mut d = self.data.lock().unwrap();
             for workspace in d.store.catalog()?.workspaces {
+                if d.store.ensure_workspace_bound(&workspace.id).is_err() {
+                    continue;
+                }
                 for run_id in workspace
                     .extra_terminals
                     .iter()
@@ -425,6 +431,9 @@ impl Sessions {
         {
             let mut d = self.data.lock().unwrap();
             for w in d.store.catalog()?.workspaces {
+                if d.store.ensure_workspace_bound(&w.id).is_err() {
+                    continue;
+                }
                 for service in d.store.services(&w.id)? {
                     if let Some(owner) = service.terminal_owner {
                         d.terminal_leases
@@ -433,6 +442,9 @@ impl Sessions {
                 }
             }
             for c in d.store.catalog()?.conversations {
+                if d.store.ensure_workspace_bound(&c.workspace_id).is_err() {
+                    continue;
+                }
                 if c.terminal_owner.is_some() {
                     let w = d.store.workspace(&c.workspace_id)?;
                     d.terminal_leases
@@ -446,6 +458,7 @@ impl Sessions {
                 let spec: Spec = serde_json::from_value(record["spec"].clone())?;
                 let c = d.store.conversation(&spec.conversation)?;
                 let w = d.store.workspace(&c.workspace_id)?;
+                d.store.ensure_workspace_bound(&w.id)?;
                 ensure!(
                     c.runtime_run.as_deref() == Some(&spec.run)
                         && c.provider == spec.provider
@@ -533,6 +546,9 @@ impl Sessions {
     pub fn workspace(&self, id: &str) -> Result<WorkspaceRecord> {
         self.data.lock().unwrap().store.workspace(id)
     }
+    pub fn ensure_workspace_bound(&self, id: &str) -> Result<()> {
+        self.data.lock().unwrap().store.ensure_workspace_bound(id)
+    }
     pub fn terminal_reserved(&self, terminal: &str) -> Result<bool> {
         self.data.lock().unwrap().store.terminal_reserved(terminal)
     }
@@ -553,19 +569,24 @@ impl Sessions {
             .ok_or_else(|| anyhow!("Workspace path must be UTF-8"))?;
         // A Git common directory identifies one repository across its worktrees.
         // No worktree is created, moved, pruned, or removed by this operation.
-        let repo = Command::new("git")
-            .args([
-                "-C",
-                root,
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-common-dir",
-            ])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_owned());
+        let pending_rebind = self.data.lock().unwrap().store.has_pending_rebind()?;
+        let repo = if pending_rebind {
+            None
+        } else {
+            Command::new("git")
+                .args([
+                    "-C",
+                    root,
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-common-dir",
+                ])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_owned())
+        };
         let mut d = self.data.lock().unwrap();
         let w = d.store.workspace_open(root, repo.as_deref())?;
         self.catalog_changed(&mut d)?;
@@ -624,6 +645,35 @@ impl Sessions {
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("Missing {key}"))
         };
+        let op = request["op"].as_str().unwrap_or("");
+        if op.starts_with("worktree.")
+            && op != "worktree.operation"
+            && self.data.lock().unwrap().store.has_pending_rebind()?
+        {
+            return Err(ade_core::error::NeedsRebind.into());
+        }
+        if op.starts_with("review.")
+            || op.starts_with("script.")
+            || op.starts_with("service.")
+            || op == "terminal.create"
+        {
+            self.ensure_workspace_bound(string("workspace_id")?)?;
+        }
+        if op.starts_with("agent.") && op != "agent.disconnect"
+            || matches!(
+                op,
+                "attachment.import" | "draft.send.prepare" | "queue.enqueue"
+            )
+            || op == "queue.pause" && request["paused"] == false
+        {
+            let conversation = self
+                .data
+                .lock()
+                .unwrap()
+                .store
+                .conversation(string("conversation_id")?)?;
+            self.ensure_workspace_bound(&conversation.workspace_id)?;
+        }
         if request["op"]
             .as_str()
             .is_some_and(|op| op.starts_with("worktree."))
@@ -676,6 +726,15 @@ impl Sessions {
             );
         }
         match request["op"].as_str().unwrap_or("") {
+            "attachment.inspect" => {
+                let (attachment, sha256) = self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .attachment_inspect(string("conversation_id")?, string("attachment_id")?)?;
+                Ok(json!({"type":"attachment_inspection","attachment":attachment,"sha256":sha256}))
+            }
             "attachment.reclaim.preview" => {
                 let preview = self.data.lock().unwrap().store.attachment_reclaim_preview(
                     string("conversation_id")?,
@@ -1077,7 +1136,8 @@ impl Sessions {
             "draft.send.get" => {
                 let data = self.data.lock().unwrap();
                 Ok(json!({"type":"send_intent","intent":data.store.send_intent(
-                    string("conversation_id")?, string("window_id")?)?}))
+                    string("conversation_id")?, string("window_id")?)?,
+                    "restored_from_backup":data.store.restored_from_backup()?}))
             }
             "draft.send.prepare" => {
                 let draft = crate::model::Draft {
@@ -1341,6 +1401,7 @@ impl Sessions {
     }
 
     fn sample_service_health(self: &Arc<Self>, workspace: &str, name: &str) -> Result<Value> {
+        self.ensure_workspace_bound(workspace)?;
         let started_at = std::time::Instant::now();
         let service = {
             let mut d = self.data.lock().unwrap();
@@ -1417,6 +1478,12 @@ impl Sessions {
             }
             let mut selected: Option<(String, String, Option<std::time::Instant>)> = None;
             for service in d.store.all_services_for_health()? {
+                if d.store
+                    .ensure_workspace_bound(&service.workspace_id)
+                    .is_err()
+                {
+                    continue;
+                }
                 let Some(policy) = &service.config.health else {
                     continue;
                 };
@@ -2071,6 +2138,14 @@ impl Sessions {
         queued: bool,
     ) -> Result<()> {
         ensure!(text.len() <= 64 * 1024, "Prompt exceeds 64 KiB");
+        let workspace_id = self
+            .data
+            .lock()
+            .unwrap()
+            .store
+            .conversation(id)?
+            .workspace_id;
+        self.ensure_workspace_bound(&workspace_id)?;
         let (c, run, rpc, prompt) = {
             let mut d = self.data.lock().unwrap();
             ensure!(

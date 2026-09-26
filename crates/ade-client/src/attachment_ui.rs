@@ -246,6 +246,8 @@ mod picker_tests {
             repository_id: None,
             terminal_id: "terminal".into(),
             extra_terminals: vec![],
+            needs_rebind: false,
+            worktree_lifecycle_needs_rebind: false,
         };
         let (view, visual) = cx.add_window_view(|window, cx| {
             gpui_kit::init(cx);

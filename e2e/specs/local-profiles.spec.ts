@@ -5,7 +5,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { rpc } from '../fixtures/daemon'
+import { managedProfileOwner, rpc, stopManagedProfile } from '../fixtures/daemon'
 
 const execFileAsync = promisify(execFile)
 const launcher = resolve('scripts/profiles.py')
@@ -23,20 +23,18 @@ async function profile(home: string, ...words: string[]): Promise<Record<string,
 }
 
 async function stopOwned(launch: Launch): Promise<void> {
-  const hello = await rpc(launch.socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== launch.daemon.boot_id) return
-  await rpc(launch.socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id })
-  const runtimeSocket = hello.runtime_socket
-  if (typeof runtimeSocket !== 'string') return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(runtimeSocket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-      return
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50))
-    }
+  const owner = await managedProfileOwner(launch.socket)
+  if (owner.bootId !== launch.daemon.boot_id) throw new Error('Profile daemon changed ownership before test cleanup')
+  await stopManagedProfile(owner)
+}
+
+async function stopLaunches(launches: Launch[]): Promise<void> {
+  const failures: string[] = []
+  for (const launch of launches) {
+    try { await stopOwned(launch) }
+    catch (error) { failures.push(`${launch.socket}: ${String(error)}`) }
   }
+  if (failures.length) throw new Error(`Profile cleanup is unconfirmed; preserve test data:\n${failures.join('\n')}`)
 }
 
 test('two local profiles keep stable identities and separate daemon state after restart', async () => {
@@ -97,7 +95,7 @@ test('two local profiles keep stable identities and separate daemon state after 
     const current = await profile(home, 'current')
     expect((current.profile as Profile).id).toBe(second.id)
   } finally {
-    for (const launch of owned.values()) await stopOwned(launch).catch(() => undefined)
+    await stopLaunches([...owned.values()])
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -162,16 +160,15 @@ test('a current profile store can be adopted by a new runtime home without losin
 
     const futureStore = join(directory, 'future-store')
     await mkdir(futureStore)
-    await execFileAsync('python3', ['-c', 'import sqlite3, sys; db=sqlite3.connect(sys.argv[1]); db.execute("PRAGMA user_version=12"); db.close()',
+    await execFileAsync('python3', ['-c', 'import sqlite3, sys; db=sqlite3.connect(sys.argv[1]); db.execute("PRAGMA user_version=13"); db.close()',
       join(futureStore, 'sessions.sqlite')])
     const futureHome = join(directory, 'future-runtime')
     await expect(execFileAsync('python3', [runtime, 'adopt', '--home', futureHome,
       '--data-dir', futureStore, '--daemon', daemonBinary], { timeout: 30_000 }))
-      .rejects.toThrow(/Unsupported store version 12/)
+      .rejects.toThrow(/Unsupported store version 13/)
     await expect(access(join(futureHome, 'runtime.json'))).rejects.toThrow()
   } finally {
-    if (launch) await stopOwned(launch).catch(() => undefined)
-    if (adopted) await stopOwned(adopted).catch(() => undefined)
+    await stopLaunches([launch, adopted].filter((item): item is Launch => item !== null))
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -217,7 +214,7 @@ test('a registered profile captures its live backend with source identity and ex
     expect((await rpc(launch.socket, { op: 'conversation.get', conversation_id: conversationId })).conversation)
       .toMatchObject({ id: conversationId, title: 'Backed up while live' })
   } finally {
-    if (launch) await stopOwned(launch).catch(() => undefined)
+    await stopLaunches(launch ? [launch] : [])
     await rm(directory, { recursive: true, force: true })
   }
 })

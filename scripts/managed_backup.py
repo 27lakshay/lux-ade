@@ -39,7 +39,7 @@ LIMITATIONS = [
     "Running agent, terminal and service processes are not restored",
 ]
 DATABASES = {
-    "sessions.sqlite": (1, 11),
+    "sessions.sqlite": (1, 12),
     "sessions.review.sqlite3": (0, 0),
     "sessions.worktrees/lifecycle.sqlite3": (1, 1),
 }
@@ -314,6 +314,9 @@ def validate(backup):
 
 def restore(backup, target):
     manifest = validate(backup)
+    core = next(entry for entry in manifest["entries"] if entry["path"] == "sessions.sqlite")
+    if core["schema"] < 12:
+        fail("Restore requires a schema-12 backup with an execution fence; target was left unchanged")
     directory(target.parent)
     if target.exists() or target.is_symlink():
         fail("Restore target must not exist; it was left unchanged")
@@ -365,6 +368,25 @@ def restore(backup, target):
                     value["omp_identity"] = None
                     connection.execute("UPDATE accounts SET data=? WHERE id=?", (json.dumps(value, separators=(",", ":")), account_id))
                 connection.commit()
+            # The snapshot keeps absolute source paths for readable history. A
+            # restored daemon must not execute against those paths, even when
+            # the source checkout is still mounted on this machine.
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "UPDATE restore_fence SET worktree_lifecycle_needs_rebind=1,restored_from_backup=1 WHERE id=1"
+            ).rowcount != 1:
+                fail("Backup restore fence marker is missing")
+            connection.execute("UPDATE send_intents SET restore_hold=1 WHERE state IN ('pending','rejected')")
+            for table in ("repositories", "workspaces"):
+                for record_id, encoded in connection.execute(f"SELECT id,data FROM {table}").fetchall():
+                    record = strict_json(encoded)
+                    if not isinstance(record, dict):
+                        fail(f"Backup {table} record is invalid: {record_id}")
+                    record["needs_rebind"] = True
+                    record["worktree_lifecycle_needs_rebind"] = True
+                    connection.execute(f"UPDATE {table} SET data=? WHERE id=?",
+                        (json.dumps(record, separators=(",", ":")), record_id))
+            connection.commit()
         finally:
             connection.close()
         sync_file(stage / "sessions.sqlite")
@@ -375,6 +397,13 @@ def restore(backup, target):
             try:
                 connection.execute("PRAGMA journal_mode=DELETE")
                 connection.execute("BEGIN IMMEDIATE")
+                for repository_id, encoded in connection.execute("SELECT id,data FROM repositories").fetchall():
+                    record = strict_json(encoded)
+                    if not isinstance(record, dict):
+                        fail(f"Backup lifecycle repository is invalid: {repository_id}")
+                    record["needs_rebind"] = True
+                    connection.execute("UPDATE repositories SET data=? WHERE id=?",
+                        (json.dumps(record, separators=(",", ":")), repository_id))
                 connection.execute("DELETE FROM owned")
                 for operation_id, encoded in connection.execute("SELECT id,data FROM operations").fetchall():
                     record = strict_json(encoded)

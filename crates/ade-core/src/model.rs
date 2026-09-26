@@ -5,6 +5,10 @@ use serde_json::Value;
 pub struct Repository {
     pub id: String,
     pub root: String,
+    #[serde(default)]
+    pub needs_rebind: bool,
+    #[serde(default)]
+    pub worktree_lifecycle_needs_rebind: bool,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WorkspaceRecord {
@@ -15,6 +19,10 @@ pub struct WorkspaceRecord {
     pub root: String,
     pub name: String,
     pub terminal_id: String,
+    #[serde(default)]
+    pub needs_rebind: bool,
+    #[serde(default)]
+    pub worktree_lifecycle_needs_rebind: bool,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Conversation {

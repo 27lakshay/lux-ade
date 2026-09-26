@@ -408,7 +408,7 @@ mod completion_tests {
         let (view, visual) = cx.add_window_view(|window, cx| {
             gpui_kit::init(cx);
             crate::ui::install(cx);
-            let workspace = WorkspaceRecord { id: "services".into(), name: "Services".into(), root: "/tmp".into(), repository_id: None, terminal_id: "terminal".into(), extra_terminals: vec![] };
+            let workspace = WorkspaceRecord { id: "services".into(), name: "Services".into(), root: "/tmp".into(), repository_id: None, terminal_id: "terminal".into(), extra_terminals: vec![], needs_rebind: false, worktree_lifecycle_needs_rebind: false };
             let record = serde_json::from_value(json!({"id":"services-window","workspace_id":"services","conversation_id":null,"browser_url":"","x":0.,"y":0.,"width":1000.,"height":800.})).unwrap();
             let owner = cx.new(|cx| Workspace::new(record, workspace.clone(), false, true, shared.clone(), window, cx));
             Manager {

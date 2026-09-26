@@ -47,6 +47,14 @@ pub enum ClientDataError {
     InvalidJson,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Workspace needs_rebind before execution can use its saved path")]
+pub struct NeedsRebind;
+
+#[derive(Debug, thiserror::Error)]
+#[error("Restored prompt is held until its source outcome is reconciled")]
+pub struct RestoredSendHeld;
+
 /// Categories carry no raw provider payload. Recovery is advice, never an
 /// authorization to replay a mutation whose outcome might be unknown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
@@ -268,6 +276,14 @@ impl LifecycleFailure {
 
 /// Additive error envelope: unclassified local validation keeps its legacy shape.
 pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
+    if error.downcast_ref::<RestoredSendHeld>().is_some() {
+        return serde_json::json!({"type":"error","message":RestoredSendHeld.to_string(),
+            "code":"restored_send_held","recovery":"reconcile_source_send"});
+    }
+    if error.downcast_ref::<NeedsRebind>().is_some() {
+        return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),
+            "code":"needs_rebind","recovery":"rebind_workspace"});
+    }
     if let Some(failure) = error.downcast_ref::<LifecycleFailure>() {
         return serde_json::json!({"type":"error","message":failure.to_string(),"code":failure,"recovery":failure.recovery()});
     }

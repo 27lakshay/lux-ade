@@ -274,6 +274,8 @@ mod tests {
                 repository_id: None,
                 terminal_id: "terminal".into(),
                 extra_terminals: vec![],
+                needs_rebind: false,
+                worktree_lifecycle_needs_rebind: false,
             };
             let (view, visual) = cx.add_window_view(|window, cx| {
                 gpui_kit::init(cx);
@@ -333,6 +335,8 @@ mod tests {
                 repository_id: None,
                 terminal_id: "terminal".into(),
                 extra_terminals: vec![],
+                needs_rebind: false,
+                worktree_lifecycle_needs_rebind: false,
             };
             let (view, visual) = cx.add_window_view(|window, cx| {
                 gpui_kit::init(cx);
@@ -395,6 +399,8 @@ mod tests {
             repository_id: None,
             terminal_id: "terminal".into(),
             extra_terminals: vec![],
+            needs_rebind: false,
+            worktree_lifecycle_needs_rebind: false,
         };
         let message = |text: &str| json!({"id":"message", "conversation_id":"history", "role":"assistant", "kind":"text", "text":text, "status":"completed", "sequence":5});
         let (view, visual) = cx.add_window_view(|window, cx| {
@@ -505,6 +511,8 @@ mod tests {
                 repository_id: None,
                 terminal_id: "terminal".into(),
                 extra_terminals: vec![],
+                needs_rebind: false,
+                worktree_lifecycle_needs_rebind: false,
             };
             let (view, visual) = cx.add_window_view(|window, cx| {
                 gpui_kit::init(cx);
@@ -587,6 +595,8 @@ mod tests {
             repository_id: None,
             terminal_id: "terminal".into(),
             extra_terminals: vec![],
+            needs_rebind: false,
+            worktree_lifecycle_needs_rebind: false,
         };
         let record = WindowRecord {
             id: "window".into(),

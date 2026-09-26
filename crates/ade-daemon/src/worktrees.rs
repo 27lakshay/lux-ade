@@ -27,6 +27,8 @@ struct Repository {
     id: String,
     root: String,
     common_dir: String,
+    #[serde(default)]
+    needs_rebind: bool,
     config: Config,
     cache: Value,
     refreshed_at: Option<i64>,
@@ -542,6 +544,15 @@ impl Worktrees {
     }
     pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let op = field(request, "op")?;
+        if op != "worktree.operation" {
+            let pending: i64 = self.data.lock().unwrap().db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM repositories WHERE json_extract(data,'$.needs_rebind')=1)",
+                [], |row| row.get(0),
+            )?;
+            if pending != 0 {
+                return Err(ade_core::error::NeedsRebind.into());
+            }
+        }
         if op == "worktree.repository" {
             let path = std::fs::canonicalize(field(request, "path")?)?;
             let path = path.to_str().context("Path must be UTF-8")?;
@@ -585,6 +596,7 @@ impl Worktrees {
                 root,
                 common_dir: common,
                 config: Config::default(),
+                needs_rebind: false,
                 cache: json!([]),
                 refreshed_at: None,
             };

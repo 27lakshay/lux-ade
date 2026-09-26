@@ -1513,6 +1513,8 @@ mod tests {
             repository_id: None,
             terminal_id: "test-terminal".into(),
             extra_terminals: vec![],
+            needs_rebind: false,
+            worktree_lifecycle_needs_rebind: false,
         };
         let window = WindowRecord {
             id: "test-window".into(),

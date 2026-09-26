@@ -332,6 +332,26 @@ impl Store {
     ) -> Result<AttachmentReclaimPreview> {
         attachment_reclaim_preview_from(&self.connection, conversation, id)
     }
+    pub fn attachment_inspect(&self, conversation: &str, id: &str) -> Result<(Attachment, String)> {
+        use sha2::{Digest, Sha256};
+        let preview = attachment_reclaim_preview_from(&self.connection, conversation, id)?;
+        ensure!(preview.state == "live", "Attachment is unavailable");
+        let (metadata, data): (String, Vec<u8>) = self.connection.query_row(
+            "SELECT metadata,data FROM attachments WHERE id=?1 AND conversation_id=?2 AND state='live'",
+            params![id, conversation],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let attachment: Attachment = decode(metadata)?;
+        ensure!(
+            data.len() == attachment.size,
+            "Attachment payload is invalid"
+        );
+        let digest = Sha256::digest(data);
+        Ok((
+            attachment,
+            digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+        ))
+    }
     pub fn attachment_reclaim_apply(
         &self,
         conversation: &str,
@@ -417,7 +437,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=11).contains(&version),
+            (0..=12).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -547,6 +567,32 @@ impl Store {
             )?;
             tx.commit()?;
         }
+        if version < 12 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            let has_send_hold = tx
+                .prepare("PRAGMA table_info(send_intents)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .iter()
+                .any(|column| column == "restore_hold");
+            if !has_send_hold {
+                tx.execute_batch("ALTER TABLE send_intents ADD COLUMN restore_hold INTEGER NOT NULL DEFAULT 0 CHECK(restore_hold IN (0,1));")?;
+            }
+            tx.execute_batch("CREATE TABLE restore_fence(id INTEGER PRIMARY KEY CHECK(id=1), worktree_lifecycle_needs_rebind INTEGER NOT NULL CHECK(worktree_lifecycle_needs_rebind IN (0,1)), restored_from_backup INTEGER NOT NULL CHECK(restored_from_backup IN (0,1))); INSERT INTO restore_fence VALUES(1,0,0); PRAGMA user_version=12;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(12,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        ensure!(
+            connection.query_row(
+                "SELECT COUNT(*) FROM restore_fence WHERE id=1 AND restored_from_backup IN (0,1)",
+                [],
+                |row| row.get::<_, i64>(0)
+            )? == 1,
+            "Schema-12 restore fence is missing; preserve this profile and use a compatible build"
+        );
         Ok(Self {
             connection,
             data_directory,
@@ -785,6 +831,7 @@ impl Store {
             [request_id], send_intent_row,
         ).optional()?;
         if let Some(intent) = intent {
+            self.ensure_send_intent_unheld(request_id)?;
             ensure!(
                 intent.conversation_id == conversation
                     && intent.text == text
@@ -802,6 +849,20 @@ impl Store {
                     "Completed send intent has no accepted message"
                 );
             }
+        }
+        Ok(())
+    }
+    fn ensure_send_intent_unheld(&self, request_id: &str) -> Result<()> {
+        let held: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT restore_hold FROM send_intents WHERE request_id=?1",
+                [request_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if held == Some(1) {
+            return Err(ade_core::error::RestoredSendHeld.into());
         }
         Ok(())
     }
@@ -875,6 +936,7 @@ impl Store {
     ) -> Result<Draft> {
         check_id(request_id)?;
         check_id(window)?;
+        self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
             "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
@@ -938,7 +1000,7 @@ impl Store {
         let tx = self.transaction()?;
         if message_by_id(&tx, request_id)?.is_none() {
             let encoded = encode(&attachments)?;
-            tx.execute("UPDATE send_intents SET state='rejected' WHERE request_id=?1 AND conversation_id=?2 AND text=?3 AND attachments=?4 AND state='pending'",
+            tx.execute("UPDATE send_intents SET state='rejected' WHERE request_id=?1 AND conversation_id=?2 AND text=?3 AND attachments=?4 AND state='pending' AND restore_hold=0",
                 params![request_id,conversation,text,encoded])?;
         }
         tx.commit()?;
@@ -951,6 +1013,7 @@ impl Store {
         request_id: &str,
     ) -> Result<Draft> {
         check_id(request_id)?;
+        self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
             "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
@@ -1018,6 +1081,47 @@ impl Store {
     }
     pub fn workspace(&self, id: &str) -> Result<WorkspaceRecord> {
         one(&self.connection, "workspaces", id)
+    }
+    pub fn ensure_workspace_bound(&self, id: &str) -> Result<()> {
+        let workspace = self.workspace(id)?;
+        if workspace.needs_rebind {
+            return Err(ade_core::error::NeedsRebind.into());
+        }
+        if let Some(repository_id) = &workspace.repository_id {
+            let repository: Repository = one(&self.connection, "repositories", repository_id)?;
+            if repository.needs_rebind {
+                return Err(ade_core::error::NeedsRebind.into());
+            }
+        }
+        Ok(())
+    }
+    pub fn has_pending_rebind(&self) -> Result<bool> {
+        let pending: i64 = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM restore_fence WHERE id=1 AND worktree_lifecycle_needs_rebind=1 UNION ALL SELECT 1 FROM workspaces WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1 UNION ALL SELECT 1 FROM repositories WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1)",
+            [], |row| row.get(0),
+        )?;
+        Ok(pending != 0)
+    }
+    pub fn restored_from_backup(&self) -> Result<bool> {
+        let restored: i64 = self.connection.query_row(
+            "SELECT restored_from_backup FROM restore_fence WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(restored != 0)
+    }
+    pub fn inherited_binding(&self, root: &str) -> Result<(bool, bool)> {
+        let mut needs_rebind = false;
+        let mut lifecycle_needs_rebind = false;
+        let workspaces: Vec<WorkspaceRecord> =
+            all(&self.connection, "SELECT data FROM workspaces")?;
+        for workspace in workspaces {
+            if Path::new(root).starts_with(&workspace.root) {
+                needs_rebind |= workspace.needs_rebind;
+                lifecycle_needs_rebind |= workspace.worktree_lifecycle_needs_rebind;
+            }
+        }
+        Ok((needs_rebind, lifecycle_needs_rebind))
     }
     pub fn conversation(&self, id: &str) -> Result<Conversation> {
         one(&self.connection, "conversations", id)
@@ -1150,6 +1254,8 @@ impl Store {
         repository_root: Option<&str>,
     ) -> Result<WorkspaceRecord> {
         ensure!(!root.is_empty(), "Workspace root is empty");
+        let (mut needs_rebind, worktree_lifecycle_needs_rebind) = self.inherited_binding(root)?;
+        needs_rebind |= self.has_pending_rebind()?;
         let tx = self.transaction()?;
         let existing: Option<String> = tx
             .query_row("SELECT data FROM workspaces WHERE root=?1", [root], |r| {
@@ -1174,6 +1280,8 @@ impl Store {
                 let repository = Repository {
                     id: new_id("repo"),
                     root: repository_root.into(),
+                    needs_rebind: false,
+                    worktree_lifecycle_needs_rebind: false,
                 };
                 tx.execute(
                     "INSERT INTO repositories VALUES(?1,?2,?3)",
@@ -1184,11 +1292,17 @@ impl Store {
         } else {
             None
         };
+        if let Some(id) = &repository_id {
+            let repository: Repository = one(&tx, "repositories", id)?;
+            needs_rebind |= repository.needs_rebind;
+        }
         let workspace = WorkspaceRecord {
             extra_terminals: Vec::new(),
             id: new_id("workspace"),
             repository_id,
             root: root.into(),
+            needs_rebind,
+            worktree_lifecycle_needs_rebind,
             name: Path::new(root)
                 .file_name()
                 .and_then(|s| s.to_str())
