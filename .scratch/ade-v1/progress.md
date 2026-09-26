@@ -29,15 +29,14 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen; installed ambient real Codex and explicit pre-existing native Claude config retain turns through app closure; an unknown Codex item retains safe metadata and ordering across profile and desktop restart | Real Oh My Pi account; real managed two-account execution; native questions and crash/lost-reply recovery across each primary provider; complete F031 multi-provider acceptance |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; CLI attaches a real TTY, resizes, sends large input and detaches without stopping it; CLI now creates a second terminal with a durable same-ID receipt, stops exactly that shell and retires only its terminal in source and installed E2Es; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | F083 input/viewport ownership and incarnation cases; broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
-| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal lifecycle/attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged; caller-owned prompt retry IDs reconcile a lost daemon reply without a second fixture provider turn; CLI worktree create/remove and terminal create expose caller-owned IDs and durable receipt lookup with strict same-ID conflict; CLI and daemon now read the exact live Electron browser owner and tab through a profile-bound private socket, with stale owners and closed tabs refused in source and installed E2Es | Browser mutations and automation through public controls; generated headless SDK contracts; matching CLI coverage for the rest of the selected daily-use flow; broader crash phases and live-provider retry evidence |
+| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal lifecycle/attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged; caller-owned prompt retry IDs reconcile a lost daemon reply without a second fixture provider turn; CLI worktree create/remove and terminal create expose caller-owned IDs and durable receipt lookup with strict same-ID conflict; CLI and daemon read the exact live Electron browser owner and tab and now open, navigate and close explicitly targeted tabs with request IDs, durable owner receipts and structured lookup in source and installed E2Es | Full browser automation and owner-crash recovery acceptance; generated headless SDK contracts; matching CLI coverage for the rest of the selected daily-use flow; broader crash phases and live-provider retry evidence |
 
 Blockers: a real Oh My Pi account is unavailable; the user chose to keep
 real two-account verification pending rather than authenticate two ADE-managed
 Claude homes now. Fixtures are not live-account proof. Active worker ownership:
-none. Next assignment: browser open, navigate and close through the public
-command surface with durable request identity and owner fencing, then generated
-SDK contracts. The browser owner bridge is read-only so F095/F101/F102 remain
-partial.
+none. Next assignment: generated headless SDK contracts for the daily-use
+controls, then browser automation and owner-crash recovery. F095/F101/F102
+remain partial; the new mutation path is a tested subset of their acceptance.
 The remaining rows are partial evidence, not closed feature IDs. F075/06-S06
 and unrelated v1 work remain queued.
 
@@ -143,6 +142,22 @@ partial; the E2E procedure is in `scripts/test_agent_handoff_live.py`.
 | `23ee13e` | Packaged native provider discovery | Finder-style PATH resolves installed Codex/Claude from host tool locations; opt-in live installed E2E proves both turns active after last-window close and complete once after reopen |
 | `c5e341b` | Retry-safe CLI terminal lifecycle | Installed and source CLI create, inspect, stop and retire one selected terminal; caller-owned creation receipt survives a lost reply; schema-16 backup and restore gates agree |
 | `7dc1c84` | Profile-bound browser owner reads | Electron owner socket, daemon forwarder and named CLI owner/list/inspect; stale owner, closed tab and profile-switch race E2Es; source 189 passed/one host skip, packaged 9/9 |
+| `5445e35` | Retry-safe browser mutations | Public daemon/CLI open, navigate, close and receipt lookup; durable Electron owner receipts, same-ID conflict/unknown fencing, 513-action E2E, backup coordination; source 191 passed/one host skip, packaged 9/9 |
+
+Browser mutation checkpoint, 2026-09-27: no full feature ID closes.
+F095 still needs agent browser automation beyond navigation, F101/F102 need
+full daily-use control parity, and F103 needs generated headless contracts.
+The daemon keeps an in-memory in-flight/unknown journal; Electron keeps durable
+per-request receipts, and `browser.operation` can query them when the daemon
+has no local record. Source E2Es cover direct retry and unknown owner replies;
+installed E2Es cover the CLI mutation path. The reviewer found and we fixed a
+permanent 512-receipt limit and a tab-file ledger coupling; a later full run
+found backup capture rejecting an already-admitted open, which was fixed by
+joining the existing browser operation barrier. Final source acceptance passed
+191/192 with one host skip; packaged acceptance passed 9/9. Approximate time:
+implementation 50 minutes, review 10 minutes, source checks 15 minutes,
+packaging and installed checks 2 minutes. Owner and daemon restart together,
+corrupt receipt recovery and DOM automation remain unverified.
 
 Browser owner read checkpoint, 2026-09-27: the installed CLI reads the exact
 active Electron owner and tab, and refuses inactive or closed targets. A
