@@ -168,6 +168,7 @@ verified. Build output is local and unsigned.
 | F091/F092/R014/R015, partial | `3a283a7` | `pnpm check` and packaged browser E2E on macOS arm64 | Pass: conflicting legacy/destination storage refuses a profile switch while previous client, browser cookies and saved default remain usable. Managed backup, retention, multi-process ownership and interrupted migration recovery remain open in `08-browser-devices/issues/02-browser-session-lifecycle.md`. |
 | F092/R014/R015, partial | `487b907` | `pnpm check`, `pnpm package:mac`, `pnpm test:e2e:package`, and `ADE_E2E_BROWSER_APP="$PWD/dist/electron/mac-arm64/Lux ADE.app" pnpm exec playwright test e2e/specs/desktop-browser.spec.ts` on macOS arm64 | Pass: 84/84 source and 6/6 packaged E2Es, plus 2/2 browser E2Es in the packaged app. `browser-migration-recovery.spec.ts` kills Electron at six fresh/legacy storage boundaries, checks cookie/tab and retained source recovery, rejects wrong owners, requires explicit confirmation for ownerless old sessions, and refuses a moved runtime home before browser writes. Backup/restore, retention, a cross-process lease and successful runtime-home relocation remain open. |
 | F092/R015, partial | `13f3e45` | `pnpm check`, final browser/profile E2E suite, `pnpm package:mac`, `pnpm test:e2e:package`, and packaged browser E2E on macOS arm64 | Pass: 85/85 source E2Es, 13/13 final browser/profile E2Es, 6/6 packaged E2Es and 2/2 packaged browser E2Es. A profile-home advisory lease refuses a second Electron browser writer and recovers after the first process is killed. The package contains the lease helper. Managed backup/restore, retention and successful profile-home relocation remain open. |
+| F050, history-export slice | `eeda9db` | CLI typecheck/build and `pnpm exec playwright test e2e/specs/history-export.spec.ts e2e/specs/local-cli.spec.ts` on macOS arm64 | Pass: 6/6 E2Es, including 222 native-fixture messages across public history pages, no-overwrite, and rejection of a changed second page with no partial output. Managed backup/restore and live-provider proof remain open. |
 | F086, partial | `66396aa` | `pnpm check`, Rust fmt and strict Clippy on macOS arm64 | Pass: `e2e/specs/service-inspection.spec.ts` checks explicit loopback HTTP 200/503/302, timeout, invalid targets and stop race; `desktop-services.spec.ts` checks on-demand healthy/stopped states in Electron. HTTP probe timeout bounds the socket exchange, not full inspection. Continuous configured health, durable logs and full F086 acceptance remain open. |
 
 The packaged `.app` is about 2.5 GB unpacked and the local ZIP is 790 MB at
@@ -365,6 +366,13 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   final browser/profile rerun 13/13, and the macOS package passes 6/6
   packaged E2Es plus 2/2 packaged browser E2Es. F092/R014/R015 still need
   managed backup/restore, retention and successful profile-home relocation.
+- Commit `8c75551` accepts the current schema-v10 profile store during
+  runtime adoption and rejects a future schema before writing its binding.
+  The real-process E2E restores a conversation through a second runtime home.
+  Commit `eeda9db` adds complete paginated conversation history export through
+  the CLI, with no overwrite and no published partial file on a later-page
+  revision mismatch. F050/R014 still require a managed profile backup and
+  restore across all owners.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
   not establish live-account compatibility or quality.
 
