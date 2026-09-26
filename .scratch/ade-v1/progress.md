@@ -30,19 +30,24 @@ implementation, independent review, checks and packaging.
 |---|---|---|
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es | Real Oh My Pi account; managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
-| Workspace/review: F061, F074 | Folder selection and revision-anchored agent feedback E2Es | Full atomic feedback admission and large-diff flow in integrated app; remaining lifecycle acceptance |
+| Workspace/review: F061, F074 | Folder selection; daemon-validated feedback admission, 5 MiB paged diff selection/send, stale cursor refusal and same-ID crash recovery in Electron | Complete F074 multi-range/structured feedback and anchor history acceptance; F061 lifecycle acceptance |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume | Matching CLI coverage for the rest of the selected daily-use flow |
 
 These are partial observations, not closed feature IDs. Each row still needs
 integrated running-app evidence. Oh My Pi live-account acceptance currently
 needs credentials; continue the other rows without substituting a fixture.
-The one-file Discard ticket, shared cancel/resume control slice, and durable
-answer-recovery slice are closed. F075/06-S06 and real-provider F021/F038
-acceptance remain open. Active owner: coordinator; `/root/codex_cancel_review`
-finished independent review and no worker is running. Next assignment: close
-the F074 atomic review-feedback admission gap and large-diff flow through the
-running app. Real Codex/Claude negative-choice semantics now work, but their
+The one-file Discard ticket, shared cancel/resume control slice, durable
+answer-recovery slice and this F074 paging/admission slice are closed. F075/06-S06,
+full F074 and real-provider F021/F038 acceptance remain open. Active owner:
+coordinator; `/root/f074_large_diff_audit` delivered daemon paging and the
+protocol E2E, and `/root/codex_cancel_review` completed independent safety
+review. No worker is running. Next assignment: finish F074 multiple selected
+ranges/notes, structured feedback and anchor history in the daily-use flow;
+then close F061 lifecycle and shared CLI parity before other V1 work. The
+review-send linearization point is the daemon's final fresh Git status under
+the repository guard; later writes by external tools are concurrent, and the
+prompt retains the observed revision, token and line. Real Codex/Claude negative-choice semantics now work, but their
 ambient checks do not prove managed two-account execution or native answer
 crash recovery. Continue around the Oh My Pi credential blocker. Queue
 unrelated V1 slices and preserve the final full V1 audit.
@@ -118,6 +123,27 @@ unrelated V1 slices and preserve the final full V1 audit.
 | `504a6b3` | Browser E2E profile switch race | Waits for the profile control to become enabled before a second switch |
 | `1e1b36a` | Durable native answer reconciliation | Crash/lost-reply/no-delivery/conflict and CLI answer E2Es; focused 11/11, source 162 passed/one host skip, installed 6/6; independent review found no confirmed P1/P2 |
 | `8f70037` | Native negative approval choices | Real Codex cancel and Claude decline, live accept/retry/conflict; CLI/Electron fixture choices, focused 3/3, source 162 passed/one host skip, installed 6/6 |
+| `b4f1005`, `cdfdcfa` | F074 paged diff and review admission | 166 source E2Es passed/one host skip; installed 6/6; strict Clippy and rustfmt pass; 5 MiB later-page send, stale edit, crash recovery and stale cursor E2Es |
+
+F074 paging/admission checkpoint, 2026-09-26: the daily-use large-diff,
+daemon admission and crash-retry subcriteria close. `review.diff_page` serves
+bounded pages for diffs up to 16 MiB. A changed diff after local send journaling
+is rejected before provider dispatch; a crashed Electron process restores the
+anchor, note and original request ID. The independent reviewer found no
+remaining current-slice P1/P2 under the linearization contract above. Full
+F074 remains open for multi-range notes, structured anchors and history.
+Implementation occupied about 20 minutes; independent review about 2 minutes
+and overlapped implementation; focused checks about 2 minutes; three full
+source runs took 4.6, 4.9 and 4.9 minutes; packaging plus installed checks
+about 1 minute. The first two source runs failed because schema-15 backup and
+legacy fixture expectations had not been propagated; the final run passed
+166 with one existing host skip. The packaged suite passed 6/6. Five orphaned
+test-owned runtimes from failed runs were identified by their E2E data paths
+and stopped; the passing source and packaged runs left none. Their failed-run
+teardown is queued as a test-harness improvement outside the daily-use gate.
+For the next schema change, inspect every version gate in the daemon, launcher,
+backup helper and E2E fixtures before the full source run; run focused migration
+and backup E2Es first.
 
 Native-choice checkpoint `8f70037`: F021/F038's ambient Codex and Claude
 prompt, read-tool, active-turn cancel/resume and native write approval/negative
