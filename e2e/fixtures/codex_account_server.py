@@ -19,8 +19,14 @@ def send(value):
     print(json.dumps(value), flush=True)
 
 def record(method, params):
+    entry = {"method": method, "params": params}
+    if method == "turn/start" and (home / "auth.json").exists():
+        # Test-only marker: identifies which native credential file this turn read.
+        marker = json.loads((home / "auth.json").read_text()).get("fixture_credential_marker")
+        if marker is not None:
+            entry["fixture_credential_marker"] = marker
     with (home / "calls.jsonl").open("a") as output:
-        output.write(json.dumps({"method": method, "params": params}) + "\n")
+        output.write(json.dumps(entry) + "\n")
 
 thread = None
 for line in sys.stdin:

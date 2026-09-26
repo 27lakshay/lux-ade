@@ -375,6 +375,168 @@ test('packaged macOS app keeps two profile daemons, terminals and conversations 
   }
 })
 
+test('packaged macOS app keeps two Codex fixture accounts separate while closed and after reopen', async ({}, testInfo) => {
+  test.setTimeout(150_000)
+  const directory = await mkdtemp(join(tmpdir(), 'ade-package-accounts-e2e-'))
+  const folder = join(directory, 'project')
+  const cli = join(directory, 'codex-fixture')
+  await mkdir(folder)
+  await copyFile(resolve('e2e/fixtures/codex_account_server.py'), cli)
+  await chmod(cli, 0o700)
+  const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_RESOURCE_DIR: _resources,
+    ADE_DAEMON_BIN: _daemonBinary, ADE_NODE_BIN: _nodeBinary, ADE_BUN_BIN: _bunBinary,
+    ADE_PYTHON_BIN: _pythonBinary, ADE_OMP_BRIDGE: _ompBridge,
+    ADE_CLAUDE_BRIDGE: _claudeBridge, ...parentEnvironment } = process.env
+  const env = { ...parentEnvironment,
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    ADE_PROFILES_HOME: join(directory, 'profiles'),
+    ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
+    ADE_CODEX_BIN: cli,
+    ADE_CODEX_TRANSPORT: 'shared',
+    OPENAI_API_KEY: 'ambient-must-not-leak',
+    CODEX_API_KEY: 'ambient-must-not-leak',
+    CODEX_AWS_BEARER_TOKEN: 'ambient-must-not-leak',
+  }
+  type Account = { id: string; name: string; native_home: string; generation: number; state: string;
+    codex_identity?: { email: string; chatgpt_account_id: string } }
+  type Conversation = { id: string; account_id: string | null; account_context: string;
+    provider_thread_id: string | null; status: string }
+  const names = ['Personal Codex', 'Work Codex'] as const
+  const prompts = ['personal packaged turn', 'work packaged turn'] as const
+  const closedPrompts = ['personal while closed', 'work while closed'] as const
+  const credentialMarkers = ['fixture-personal-credential', 'fixture-work-credential'] as const
+  const turnMarkers = async (account: Account): Promise<Array<string | undefined>> =>
+    (await readFile(join(account.native_home, 'calls.jsonl'), 'utf8')).split('\n').filter(Boolean)
+      .map((line) => JSON.parse(line) as { method: string; fixture_credential_marker?: string })
+      .filter((call) => call.method === 'turn/start').map((call) => call.fixture_credential_marker)
+  let application = await electron.launch({ executablePath: executable, cwd: directory, env })
+  let owned: ManagedProfileOwner | null = null
+  let profileHome: string | null = null
+  try {
+    let window = await application.firstWindow()
+    await window.getByRole('textbox', { name: 'New profile' }).fill('Managed accounts')
+    await window.getByRole('button', { name: 'Create' }).click()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const profile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles[0]
+    profileHome = profile.home
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const located = await promisify(execFile)(nativeControl, ['locate', '--home', profile.home], { env })
+    const socket = (JSON.parse(located.stdout) as { socket: string }).socket
+    owned = await managedProfileOwner(socket)
+    const bootId = (await rpc(socket, { op: 'hello' })).boot_id
+
+    await window.getByRole('textbox', { name: 'Open folder' }).fill(folder)
+    await window.getByRole('button', { name: 'Open folder' }).click()
+    await expect(window.getByText(await realpath(folder), { exact: true })).toBeVisible()
+    const panel = window.getByRole('region', { name: 'Accounts' })
+    const accounts: Account[] = []
+    const conversations: Conversation[] = []
+    for (const [index, name] of names.entries()) {
+      await panel.getByLabel('New account provider').selectOption('codex')
+      await panel.getByRole('textbox', { name: 'New account name' }).fill(name)
+      await panel.getByRole('button', { name: 'Add' }).click()
+      await expect.poll(async () => ((await rpc(socket, { op: 'account.list' })).accounts as Account[])
+        .find((item) => item.name === name)?.state).toBe('unverified')
+      const account = ((await rpc(socket, { op: 'account.list' })).accounts as Account[])
+        .find((item) => item.name === name)
+      expect(account).toBeDefined()
+      accounts.push(account!)
+      expect(account!.state).toBe('unverified')
+      await expect(panel.getByLabel(`Account ${name}`)).toContainText(account!.native_home)
+      await writeFile(join(account!.native_home, 'auth.json'), JSON.stringify({
+        fixture: `synthetic-secret-${index}`, fixture_credential_marker: credentialMarkers[index],
+      }), { mode: 0o600 })
+      await writeFile(join(account!.native_home, 'identity.json'), JSON.stringify({
+        email: `${index === 0 ? 'personal' : 'work'}@example.invalid`,
+        accountId: `packaged-${index === 0 ? 'personal' : 'work'}`,
+      }))
+      await panel.getByRole('button', { name: 'Inspect' }).click()
+      await expect(panel.getByRole('status')).toContainText('ready')
+      await panel.getByRole('button', { name: 'Verify' }).click()
+      await expect(panel.getByLabel(`Account ${name}`)).toContainText(`${name} · verified`)
+      await window.getByLabel('New conversation provider').selectOption('codex')
+      await window.getByLabel('New conversation account').selectOption(account!.id)
+      await window.getByRole('button', { name: 'New conversation', exact: true }).click()
+      const conversation = window.getByRole('region', { name: 'Conversation' })
+      await expect(conversation).toContainText(`Account: ${name}`)
+      await conversation.getByRole('textbox', { name: 'Prompt' }).fill(prompts[index])
+      await conversation.getByRole('button', { name: 'Send' }).click()
+      await expect.poll(async () => ((await rpc(socket, { op: 'catalog.get' })).catalog as {
+        conversations: Conversation[] }).conversations.find((item) => item.account_id === account!.id)?.id)
+        .toBeTruthy()
+      const catalog = (await rpc(socket, { op: 'catalog.get' })).catalog as { conversations: Conversation[] }
+      const created = catalog.conversations.find((item) => item.account_id === account!.id)
+      expect(created).toMatchObject({ account_id: account!.id, account_context: 'managed' })
+      conversations.push(created!)
+      await expect.poll(async () => (await rpc(socket, { op: 'conversation.get',
+        conversation_id: created!.id })).conversation.status).toBe('ready')
+      const settled = (await rpc(socket, { op: 'conversation.get', conversation_id: created!.id }))
+        .conversation as Conversation
+      expect(settled.provider_thread_id).toBeTruthy()
+      conversations[index] = settled
+    }
+    expect(accounts[0].native_home).not.toBe(accounts[1].native_home)
+    const verified = (await rpc(socket, { op: 'account.list' })).accounts as Account[]
+    expect(verified.map((item) => item.codex_identity?.chatgpt_account_id).sort())
+      .toEqual(['packaged-personal', 'packaged-work'])
+    for (const [index, account] of accounts.entries()) {
+      expect(JSON.parse(await readFile(join(account.native_home, 'environment.json'), 'utf8'))).toMatchObject({
+        codex_home: account.native_home, openai_key: false, codex_key: false, wif: false,
+      })
+      const calls = await readFile(join(account.native_home, 'calls.jsonl'), 'utf8')
+      expect(calls).toContain(prompts[index])
+      expect(calls).not.toContain(prompts[1 - index])
+      expect(calls).not.toContain('ambient-must-not-leak')
+      expect(await turnMarkers(account)).toEqual([credentialMarkers[index]])
+    }
+
+    await application.close()
+    expect((await rpc(socket, { op: 'hello' })).boot_id).toBe(bootId)
+    for (const [index, conversation] of conversations.entries()) {
+      await rpc(socket, { op: 'agent.send', conversation_id: conversation.id,
+        request_id: `packaged-closed-${index}`, text: closedPrompts[index] })
+      await expect.poll(async () => (await rpc(socket, { op: 'conversation.get',
+        conversation_id: conversation.id })).conversation.status).toBe('ready')
+    }
+    application = await electron.launch({ executablePath: executable, cwd: directory, env })
+    window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    await expect(window.getByText('Active profile: Managed accounts')).toBeVisible()
+    expect((await rpc(socket, { op: 'hello' })).boot_id).toBe(bootId)
+    for (const [index, conversation] of conversations.entries()) {
+      const item = window.locator('.conversation-list button').filter({ hasText: `Account: ${names[index]}` })
+      await expect(item).toBeVisible()
+      await item.click()
+      const view = window.getByRole('region', { name: 'Conversation' })
+      await expect(view).toContainText(`Account: ${names[index]}`)
+      await expect(view.locator('.message-user').filter({ hasText: prompts[index] })).toHaveCount(1)
+      await expect(view.locator('.message-user').filter({ hasText: closedPrompts[index] })).toHaveCount(1)
+      await expect(view).not.toContainText(prompts[1 - index])
+      await expect(view).not.toContainText(closedPrompts[1 - index])
+      const snapshot = await rpc(socket, { op: 'conversation.get', conversation_id: conversation.id })
+      expect(snapshot.conversation).toMatchObject({ account_id: accounts[index].id,
+        provider_thread_id: conversation.provider_thread_id })
+      const calls = await readFile(join(accounts[index].native_home, 'calls.jsonl'), 'utf8')
+      expect(calls).toContain(closedPrompts[index])
+      expect(calls).not.toContain(closedPrompts[1 - index])
+      expect(calls).not.toContain('ambient-must-not-leak')
+      expect(await turnMarkers(accounts[index])).toEqual([credentialMarkers[index], credentialMarkers[index]])
+    }
+    expect(await window.locator('body').innerText()).not.toContain('synthetic-secret')
+  } catch (error) {
+    if (profileHome) {
+      const log = await readFile(join(profileHome, 'daemon.log')).catch(() => Buffer.from('No daemon log was written'))
+      await testInfo.attach('packaged-accounts-daemon.log', { body: log.subarray(-64 * 1024), contentType: 'text/plain' })
+    }
+    throw error
+  } finally {
+    await application.close().catch(() => undefined)
+    if (owned) await stopManagedProfile(owned)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('packaged provider entry points run deterministic turns through bundled Node and Bun', async ({}, testInfo) => {
   const directory = await mkdtemp(join(tmpdir(), 'ade-package-providers-e2e-'))
   const folder = join(directory, 'project')

@@ -128,12 +128,23 @@ for line in sys.stdin:
         if text.startswith("handoff-"):
             send({"id": rpc_id, "result": {"turn": active}})
             if text == "handoff-tool":
-                tool = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+                tool = subprocess.Popen([sys.executable, "-c", """
+import sys, time
+from pathlib import Path
+release, output = map(Path, sys.argv[1:3])
+while not release.exists(): time.sleep(.02)
+output.write_text('tool completed once')
+""", str(root / "release-tool"), str(root / "tool-finished")])
                 record({"method": "fixture/tool", "tool_pid": tool.pid})
                 note("item/started", {**base, "item": {"id": "tool-"+key, "type": "commandExecution", "command": "fixture", "status": "inProgress"}})
                 while not (root / "release-tool").exists(): time.sleep(.02)
-                tool.terminate(); tool.wait()
-                note("item/completed", {**base, "item": {"id": "tool-"+key, "type": "commandExecution", "command": "fixture", "status": "completed", "aggregatedOutput": "tool completed once"}})
+                tool_exit = tool.wait(timeout=5)
+                outcome = root / "tool-finished"
+                if tool_exit != 0 or not outcome.exists():
+                    note("item/completed", {**base, "item": {"id": "tool-"+key, "type": "commandExecution", "command": "fixture", "status": "failed", "aggregatedOutput": "tool did not survive"}})
+                    finish("failed")
+                    continue
+                note("item/completed", {**base, "item": {"id": "tool-"+key, "type": "commandExecution", "command": "fixture", "status": "completed", "aggregatedOutput": outcome.read_text()}})
             else:
                 for index in range(80):
                     chunk = f" [{index}]"
