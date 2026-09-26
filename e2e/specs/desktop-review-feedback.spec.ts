@@ -122,7 +122,9 @@ test('Electron sends current line feedback once, blocks stale feedback and prese
     await changes.getByRole('button', { name: 'Refresh changes' }).click()
     await expect(changes.getByText('sample.txt', { exact: true })).toBeVisible()
     await changes.getByRole('button', { name: 'Unstaged diff' }).click()
-    await expect(changes.getByRole('alert')).toBeVisible()
+    await expect(changes.getByRole('button', { name: 'Next diff page' })).toBeVisible()
+    await changes.getByRole('button', { name: 'Next diff page' }).click()
+    await expect(changes.getByRole('button', { name: 'Select line 1002' })).toBeVisible()
     await expect(prompt).toHaveValue('   ')
   } finally {
     await application.close()
@@ -287,7 +289,7 @@ test('uncertain review feedback keeps its note and request ID through selection 
       if (end < 0) return
       const line = replyText.slice(0, end + 1)
       const response = JSON.parse(line) as { type: string }
-      if (operation === 'agent.send' && response.type === 'ack' && dropReply) {
+      if (operation === 'agent.send_review' && response.type === 'ack' && dropReply) {
         dropReply = false
         blockReconciliation = true
         downstream.destroy()

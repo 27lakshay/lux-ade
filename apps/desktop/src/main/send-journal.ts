@@ -24,6 +24,8 @@ export type SendJournalRecord = SendJournalIdentity & {
   attachments: unknown[]
   dispatchStarted: boolean
   restoreHold?: true
+  reviewAnchor?: { workspace_id: string; path: string; staged: boolean; revision: string;
+    token: string; hunk: string; line: number; text: string }
 }
 
 type JournalFile = { version: 1; records: SendJournalRecord[] }
@@ -69,8 +71,19 @@ function validRecord(value: unknown): value is SendJournalRecord {
   const candidate: Record<string, unknown> = value
   const fields = ['attachments', 'conversationId', 'dispatchStarted', 'draftRevision',
     'draftText', 'endpoint', 'profileId', 'requestId', 'text', 'windowId']
-  if (!hasFields(candidate, fields) && !hasFields(candidate, [...fields, 'restoreHold'])) return false
+  const optional = ['restoreHold', 'reviewAnchor'].filter((field) => Object.hasOwn(candidate, field))
+  if (!hasFields(candidate, [...fields, ...optional])) return false
   if (candidate.restoreHold !== undefined && candidate.restoreHold !== true) return false
+  if (candidate.reviewAnchor !== undefined) {
+    const anchor = candidate.reviewAnchor
+    if (!plainObject(anchor) || !hasFields(anchor, ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text']) ||
+      typeof anchor.workspace_id !== 'string' || !idPattern.test(anchor.workspace_id) ||
+      typeof anchor.path !== 'string' || !anchor.path || anchor.path.length > 4096 ||
+      typeof anchor.staged !== 'boolean' || typeof anchor.revision !== 'string' ||
+      typeof anchor.token !== 'string' || typeof anchor.hunk !== 'string' ||
+      !Number.isSafeInteger(anchor.line) || typeof anchor.text !== 'string' ||
+      Buffer.byteLength(JSON.stringify(anchor)) > 12 * 1024) return false
+  }
   if (typeof candidate.endpoint !== 'string' || !isAbsolute(candidate.endpoint) || candidate.endpoint.includes('\0') || candidate.endpoint.length > 4096) return false
   if (typeof candidate.text !== 'string' || !candidate.text.trim() || Buffer.byteLength(candidate.text) > maxPromptBytes) return false
   if (typeof candidate.draftText !== 'string' || Buffer.byteLength(candidate.draftText) > maxPromptBytes) return false
@@ -140,9 +153,14 @@ function matchingIntent(record: SendJournalRecord, response: unknown): boolean {
   if (!plainObject(response) || response.type !== 'send_intent' ||
     response.restored_from_backup !== true || !plainObject(response.intent)) return false
   const intent = response.intent
+  const reviewAnchor = intent.review_anchor
   return intent.request_id === record.requestId && intent.conversation_id === record.conversationId &&
     intent.window_id === record.windowId && intent.draft_revision === record.draftRevision &&
     intent.draft_text === record.draftText && intent.text === record.text &&
+    (reviewAnchor == null && record.reviewAnchor == null ||
+      plainObject(reviewAnchor) && record.reviewAnchor !== undefined &&
+      ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text'].every((field) =>
+        reviewAnchor[field] === record.reviewAnchor?.[field as keyof typeof record.reviewAnchor])) &&
     Array.isArray(intent.attachments) && JSON.stringify(intent.attachments) === JSON.stringify(record.attachments) &&
     (intent.state === 'pending' || intent.state === 'rejected')
 }

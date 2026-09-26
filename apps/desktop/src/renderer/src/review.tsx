@@ -6,6 +6,10 @@ type ChangedFile = { path: string; staged: boolean; unstaged: boolean; conflict:
 type ReviewStatus = { revision: string; index_token: string; conflicts: number; files: ChangedFile[] }
 type ReviewDiff = { token: string; path: string; staged: boolean; header: string; hunks: string[];
   binary: boolean; conflict: boolean; bytes: number }
+type ReviewDiffPage = { token: string; path: string; staged: boolean; revision: string; header: string;
+  rows: Array<{ kind: string; old_line: number | null; new_line: number | null; text: string;
+    hunk: string; truncated: boolean }>;
+  next_cursor: string | null; complete: boolean; binary: boolean; conflict: boolean; bytes: number }
 type Anchor = { workspace_id: string; path: string; staged: boolean; revision: string;
   token: string; hunk: string; line: number; text: string }
 type PendingFeedback = { requestId: string; anchor: Anchor; note: string }
@@ -65,6 +69,26 @@ function ReviewDiffView({ diff, status, workspace, selected, onSelect }: {
   </div>
 }
 
+function ReviewPageView({ page, workspace, selected, onSelect }: {
+  page: ReviewDiffPage; workspace: Workspace; selected: Anchor | null; onSelect: (anchor: Anchor) => void
+}): React.JSX.Element {
+  return <div className="review-diff" role="region" aria-label={`Diff for ${page.path}`}>
+    <pre className="review-diff-header">{page.header}</pre>
+    {(page.binary || page.conflict || page.rows.length === 0) &&
+      <p className="muted">This page has no selectable text lines.</p>}
+    {page.rows.map((row, index) => row.kind === 'hunk'
+      ? <div className="review-hunk-heading" key={index}>{row.text}</div>
+      : (row.kind === 'added' || row.kind === 'context') && row.new_line !== null &&
+        !row.truncated && row.text.length <= 8192 && !page.binary && !page.conflict
+        ? <button type="button" className={`review-line ${selected?.hunk === row.hunk && selected.line === row.new_line ? 'selected' : ''}`}
+          key={index} aria-label={`Select line ${row.new_line}`} onClick={() => onSelect({
+            workspace_id: workspace.id, path: page.path, staged: page.staged, revision: page.revision,
+            token: page.token, hunk: row.hunk, line: row.new_line!, text: row.text,
+          })}><span>{row.new_line}</span><code>{row.text}</code></button>
+        : <div className="review-line" key={index}><span /> <code>{row.text}</code></div>)}
+  </div>
+}
+
 export function ReviewPane({ workspace, conversation, profileKey }: {
   workspace: Workspace; conversation: Conversation | undefined; profileKey: string
 }): React.JSX.Element {
@@ -73,6 +97,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   const [acknowledgedGit, setAcknowledgedGit] = React.useState<AcknowledgedGit[]>([])
   const [status, setStatus] = React.useState<ReviewStatus | null>(null)
   const [diff, setDiff] = React.useState<ReviewDiff | null>(null)
+  const [diffPage, setDiffPage] = React.useState<ReviewDiffPage | null>(null)
   const [discardPreview, setDiscardPreview] = React.useState<DiscardPreview | null>(null)
   const [selected, setSelected] = React.useState<Anchor | null>(restoredPending?.anchor ?? null)
   const [note, setNote] = React.useState(restoredPending?.note ?? '')
@@ -230,6 +255,25 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     return () => { disposed = true }
   }, [conversation?.id, pendingKey])
 
+  React.useEffect(() => {
+    if (restoredPending || !conversation) return
+    let disposed = false
+    void window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id }).then((draft) => {
+      if (disposed) return
+      const pending = draft.send_pending as { request_id?: unknown; review_anchor?: Anchor; review_note?: unknown } | null
+      if (!pending || typeof pending.request_id !== 'string' ||
+        pending.review_anchor?.workspace_id !== workspace.id || typeof pending.review_note !== 'string') return
+      const restored = { requestId: pending.request_id, anchor: pending.review_anchor,
+        note: pending.review_note } satisfies PendingFeedback
+      sessionStorage.setItem(pendingKey, JSON.stringify(restored))
+      setSelected(restored.anchor)
+      setNote(restored.note)
+      setPendingId(restored.requestId)
+      setMessage('Feedback delivery is unconfirmed. Retry uses the same request ID.')
+    }).catch(() => { /* Keep daemon recovery available in the ordinary conversation composer. */ })
+    return () => { disposed = true }
+  }, [restoredPending, conversation?.id, workspace.id, pendingKey])
+
   const rejectFeedback = (detail: string): void => {
     sessionStorage.removeItem(pendingKey)
     setPendingId(null)
@@ -250,6 +294,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     const sequence = ++requestSequence.current
     setStatus(null)
     setDiff(null)
+    setDiffPage(null)
     setDiscardPreview(null)
     if (!pendingId) setSelected(null)
     setStale(false)
@@ -266,14 +311,34 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   const chooseFile = async (path: string, staged: boolean): Promise<void> => {
     const sequence = ++requestSequence.current
     setDiff(null)
+    setDiffPage(null)
     setDiscardPreview(null)
     if (!pendingId) setSelected(null)
     setStale(false)
     setLoading(true)
     try {
-      const response = await window.adeHost.requestReview('review.diff', { workspace_id: workspace.id, path, staged })
-      if (sequence === requestSequence.current) { setDiff(response as ReviewDiff); setError('') }
+      const latest = await window.adeHost.requestReview('review.status', { workspace_id: workspace.id, force: true }) as ReviewStatus
+      const response = await window.adeHost.requestReview('review.diff_page', { workspace_id: workspace.id, path, staged }) as ReviewDiffPage
+      if (response.revision !== latest.revision) throw new Error('Stale diff: refresh Changes')
+      if (sequence === requestSequence.current) { setStatus(latest); setDiffPage(response); setError('') }
     } catch (reason) { if (sequence === requestSequence.current) setError(String(reason)) }
+    finally { if (sequence === requestSequence.current) setLoading(false) }
+  }
+
+  const nextDiffPage = async (): Promise<void> => {
+    if (!diffPage?.next_cursor || loading) return
+    const sequence = ++requestSequence.current
+    setLoading(true)
+    try {
+      const response = await window.adeHost.requestReview('review.diff_page', {
+        workspace_id: workspace.id, path: diffPage.path, staged: diffPage.staged,
+        cursor: diffPage.next_cursor, expected_token: diffPage.token,
+      }) as ReviewDiffPage
+      if (response.revision !== diffPage.revision || response.token !== diffPage.token) {
+        throw new Error('Stale diff: refresh Changes')
+      }
+      if (sequence === requestSequence.current) { setDiffPage(response); setError('') }
+    } catch (reason) { if (sequence === requestSequence.current) { setError(String(reason)); setStale(true) } }
     finally { if (sequence === requestSequence.current) setLoading(false) }
   }
 
@@ -281,6 +346,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     const sequence = ++requestSequence.current
     setDiscardPreview(null)
     setDiff(null)
+    setDiffPage(null)
     setLoading(true)
     try {
       const latest = await window.adeHost.requestReview('review.status', { workspace_id: workspace.id, force: true }) as ReviewStatus
@@ -415,6 +481,8 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
       {status.conflicts > 0 && <p className="muted">Resolve and stage conflicts before committing.</p>}
     </form>}
     {diff && status && <ReviewDiffView diff={diff} status={status} workspace={workspace} selected={selected} onSelect={setSelected} />}
+    {diffPage && <><ReviewPageView page={diffPage} workspace={workspace} selected={selected} onSelect={setSelected} />
+      {diffPage.next_cursor && <button type="button" disabled={loading} onClick={() => void nextDiffPage()}>Next diff page</button>}</>}
     {discardPreview && diff?.path === discardPreview.path && !diff.staged &&
       <div className="review-discard-confirm" role="group" aria-label={`Discard ${discardPreview.path}`}>
         <p>{diff.binary

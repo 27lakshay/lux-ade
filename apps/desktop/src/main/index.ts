@@ -28,7 +28,8 @@ const terminals = new Map<string, TerminalConnection>()
 type Draft = { text: string; revision: number; attachments: unknown[] }
 type SendIntent = { requestId: string; draftText: string; revision: number; text: string; attachments: unknown[];
   state: 'pending' | 'rejected'; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null;
-  reviewSelection?: { senderId: number; workspaceId: string; conversationId: string; epoch: number } }
+  reviewSelection?: { senderId: number; workspaceId: string; conversationId: string; epoch: number };
+  reviewAnchor?: ReviewAnchor }
 type DraftEntry = { senderId: number; endpoint: string; profileId: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string; send: SendIntent | null }
 const windowIds = new Map<number, string>()
 const selectedWorkspaces = new Map<number, { workspaceId: string; conversationId: string | null; generation: number; epoch: number }>()
@@ -63,7 +64,7 @@ function journalIdentity(entry: DraftEntry, intent: SendIntent): SendJournalIden
 function journalRecord(entry: DraftEntry, intent: SendIntent, dispatchStarted: boolean): SendJournalRecord {
   return { ...journalIdentity(entry, intent), endpoint: entry.endpoint, text: intent.text,
     draftText: intent.draftText, draftRevision: intent.revision, attachments: intent.attachments,
-    dispatchStarted }
+    dispatchStarted, ...(intent.reviewAnchor ? { reviewAnchor: intent.reviewAnchor } : {}) }
 }
 async function e2ePauseAfterSendJournal(): Promise<void> {
   if (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_SEND_JOURNAL_PAUSE !== '1') return
@@ -88,7 +89,8 @@ async function journaled(entry: DraftEntry): Promise<boolean> {
     record.conversationId === identity.conversationId && record.requestId === identity.requestId &&
     record.text === intent.text && record.draftText === intent.draftText &&
     record.draftRevision === intent.revision &&
-    JSON.stringify(record.attachments) === JSON.stringify(intent.attachments))
+    JSON.stringify(record.attachments) === JSON.stringify(intent.attachments) &&
+    sameReviewAnchor(record.reviewAnchor, intent.reviewAnchor))
 }
 
 async function unsafePending(entries: DraftEntry[]): Promise<boolean> {
@@ -99,9 +101,23 @@ async function unsafePending(entries: DraftEntry[]): Promise<boolean> {
 }
 type ReviewFile = { path: string; staged: boolean; unstaged: boolean }
 type ReviewStatus = { revision: string; index_token: string; files: ReviewFile[] }
-type ReviewDiff = { token: string; hunks: string[] }
+type ReviewDiff = { token: string }
 type ReviewAnchor = { workspace_id: string; path: string; staged: boolean; revision: string;
   token: string; hunk: string; line: number; text: string }
+const reviewAnchorFields = ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text'] as const
+function sameReviewAnchor(left: unknown, right: unknown): boolean {
+  if (left == null || right == null) return left == null && right == null
+  if (typeof left !== 'object' || typeof right !== 'object') return false
+  return reviewAnchorFields.every((field) =>
+    (left as Record<string, unknown>)[field] === (right as Record<string, unknown>)[field])
+}
+function reviewPromptText(anchor: ReviewAnchor, note: string): string {
+  return `Review feedback for workspace ${anchor.workspace_id}\nFile: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\nDiff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\nLine: +${anchor.line}\nSelected text: ${anchor.text}\n\nFeedback:\n${note.trim()}`
+}
+function reviewNote(text: string, anchor: ReviewAnchor): string | null {
+  const prefix = reviewPromptText(anchor, '')
+  return text.startsWith(prefix) ? text.slice(prefix.length) : null
+}
 
 function reviewPath(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 4096 &&
@@ -145,24 +161,10 @@ async function reviewStatus(context: ReviewContext, workspaceId: string): Promis
 
 async function reviewDiff(context: ReviewContext, workspaceId: string,
   path: string, staged: boolean): Promise<ReviewDiff> {
-  const response = await requestDaemon(context.endpoint, 'review.diff', { workspace_id: workspaceId, path, staged })
+  const response = await requestDaemon(context.endpoint, 'review.diff_page', { workspace_id: workspaceId, path, staged })
   assertReviewContext(context, workspaceId)
-  if (typeof response.token !== 'string' || !Array.isArray(response.hunks)) throw new Error('Invalid review diff')
+  if (typeof response.token !== 'string') throw new Error('Invalid review diff')
   return response as unknown as ReviewDiff
-}
-
-function lineInHunk(hunk: string, lineNumber: number, text: string): boolean {
-  const lines = hunk.split('\n')
-  const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(lines[0] ?? '')
-  if (!match) return false
-  let next = Number(match[1])
-  for (const line of lines.slice(1)) {
-    if (line.startsWith(' ') || (line.startsWith('+') && !line.startsWith('+++'))) {
-      if (next === lineNumber && line === text) return true
-      next += 1
-    }
-  }
-  return false
 }
 
 async function reviewPrompt(context: ReviewContext, conversationId: string,
@@ -185,11 +187,10 @@ async function reviewPrompt(context: ReviewContext, conversationId: string,
     throw new Error('Stale diff: file or side changed; refresh Changes and select the line again')
   }
   const diff = await reviewDiff(context, anchor.workspace_id, anchor.path, anchor.staged)
-  if (diff.token !== anchor.token || !diff.hunks.some((hunk) => hunk.split('\n')[0] === anchor.hunk &&
-    lineInHunk(hunk, anchor.line, anchor.text))) {
+  if (diff.token !== anchor.token) {
     throw new Error('Stale diff: selected line changed; refresh Changes and select the line again')
   }
-  return `Review feedback for workspace ${anchor.workspace_id}\nFile: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\nDiff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\nLine: +${anchor.line}\nSelected text: ${anchor.text}\n\nFeedback:\n${note.trim()}`
+  return reviewPromptText(anchor, note)
 }
 
 async function persistentWindowId(): Promise<string> {
@@ -282,7 +283,7 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   }
   const restoredFromBackup = pending.restored_from_backup === true
   const recovered = pending.intent as { request_id?: unknown; draft_text?: unknown; draft_revision?: unknown;
-    text?: unknown; attachments?: unknown; state?: unknown } | null
+    text?: unknown; attachments?: unknown; state?: unknown; review_anchor?: unknown } | null
   if (recovered && (!validId(recovered.request_id) || typeof recovered.text !== 'string'
     || typeof recovered.draft_text !== 'string' || !Number.isSafeInteger(recovered.draft_revision)
     || !Array.isArray(recovered.attachments)
@@ -291,13 +292,15 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
     item.conversationId === conversationId)
   if (recorded && recovered && (recorded.requestId !== recovered.request_id || recorded.text !== recovered.text ||
     recorded.draftText !== recovered.draft_text || recorded.draftRevision !== recovered.draft_revision ||
-    JSON.stringify(recorded.attachments) !== JSON.stringify(recovered.attachments))) {
+    JSON.stringify(recorded.attachments) !== JSON.stringify(recovered.attachments) ||
+    !sameReviewAnchor(recorded.reviewAnchor, recovered.review_anchor))) {
     throw new Error('Local prompt recovery conflicts with the profile daemon; preserve both records for review')
   }
   if (!recorded && recovered) {
     await journal().upsert({ profileId, windowId, conversationId, requestId: recovered.request_id as string,
       endpoint, text: recovered.text as string, draftText: recovered.draft_text as string,
       draftRevision: recovered.draft_revision as number, attachments: recovered.attachments as unknown[],
+      ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}),
       dispatchStarted: true, ...(restoredFromBackup ? { restoreHold: true } : {}) })
   } else if (recorded && restoredFromBackup && !recorded.restoreHold) {
     recorded = { ...recorded, restoreHold: true }
@@ -305,7 +308,8 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   }
   const restored = recorded ?? (recovered ? { requestId: recovered.request_id as string,
     text: recovered.text as string, draftText: recovered.draft_text as string,
-    draftRevision: recovered.draft_revision as number, attachments: recovered.attachments as unknown[] } : null)
+    draftRevision: recovered.draft_revision as number, attachments: recovered.attachments as unknown[],
+    ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}) } : null)
   const visibleDraft = recorded ? { text: recorded.draftText, revision: recorded.draftRevision,
     attachments: recorded.attachments } : value
   const entry: DraftEntry = { senderId, endpoint, profileId, conversationId, windowId, draft: visibleDraft, timer: null,
@@ -313,6 +317,7 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
     send: restored ? { requestId: restored.requestId, text: restored.text,
       draftText: restored.draftText, revision: restored.draftRevision,
       attachments: restored.attachments,
+      reviewAnchor: restored.reviewAnchor,
       state: recovered?.state as 'pending' | 'rejected' || 'pending', preparing: false, inFlight: null } : null }
   const concurrent = drafts.get(key)
   if (concurrent) return concurrent
@@ -321,7 +326,10 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
 }
 
 function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
-  return entry.send ? { request_id: entry.send.requestId, text: entry.send.text, state: entry.send.state } : null
+  if (!entry.send) return null
+  const anchor = entry.send.reviewAnchor
+  return { request_id: entry.send.requestId, text: entry.send.text, state: entry.send.state,
+    ...(anchor ? { review_anchor: anchor, review_note: reviewNote(entry.send.text, anchor) } : {}) }
 }
 
 async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>> {
@@ -391,10 +399,11 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<str
           conversation_id: entry.conversationId, window_id: entry.windowId,
         })
         const saved = previous.intent as { request_id?: string; text?: string; draft_text?: string;
-          draft_revision?: number; attachments?: unknown[]; state?: string } | null
+          draft_revision?: number; attachments?: unknown[]; state?: string; review_anchor?: unknown } | null
         if (!saved || saved.request_id !== intent.requestId || saved.text !== intent.text ||
           saved.draft_text !== intent.draftText || saved.draft_revision !== intent.revision ||
           JSON.stringify(saved.attachments) !== JSON.stringify(intent.attachments) ||
+          !sameReviewAnchor(saved.review_anchor, intent.reviewAnchor) ||
           !['pending', 'rejected'].includes(String(saved.state))) return uncertain()
       } catch { return uncertain() }
     } else {
@@ -424,6 +433,7 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<str
         conversation_id: entry.conversationId, window_id: entry.windowId,
         request_id: intent.requestId, draft_text: intent.draftText, text: intent.text,
         revision: intent.revision, attachments: intent.attachments,
+        ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
       })
       const persisted = prepared.intent as { request_id?: string; state?: string } | null
       if (persisted?.request_id === intent.requestId && persisted.state === 'completed') {
@@ -467,9 +477,10 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<str
     if (!activeProfile()) return uncertain()
     try {
       await journal().markDispatched(journalIdentity(entry, intent))
-      const response = await requestDaemon(entry.endpoint, 'agent.send', {
+      const response = await requestDaemon(entry.endpoint, intent.reviewAnchor ? 'agent.send_review' : 'agent.send', {
         conversation_id: entry.conversationId, request_id: intent.requestId, text: intent.text,
         attachments: intent.attachments,
+        ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
       })
       if (!activeProfile()) return uncertain()
       try { return await acceptedSend(entry, intent, response) }
@@ -958,7 +969,7 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
   return result
 })
 ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
-  if (typeof op !== 'string' || !['review.status', 'review.diff', 'review.stage', 'review.unstage',
+  if (typeof op !== 'string' || !['review.status', 'review.diff', 'review.diff_page', 'review.stage', 'review.unstage',
     'review.commit', 'review.discard', 'review.operation'].includes(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid review request')
   }
@@ -1015,7 +1026,22 @@ ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown)
     !status.files.some((file) => file.path === args.path && (args.staged ? file.staged : file.unstaged))) {
     throw new Error('File or side is unavailable in this workspace; refresh Changes')
   }
-  return reviewDiff(context, workspaceId, args.path, args.staged)
+  const request: Record<string, unknown> = { workspace_id: workspaceId, path: args.path, staged: args.staged }
+  if (op === 'review.diff_page') {
+    if (args.cursor !== undefined) {
+      if (!validId(args.cursor)) throw new Error('Invalid diff cursor')
+      request.cursor = args.cursor
+    }
+    if (args.expected_token !== undefined) {
+      if (typeof args.expected_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.expected_token)) {
+        throw new Error('Invalid expected diff token')
+      }
+      request.expected_token = args.expected_token
+    }
+  }
+  const response = await requestDaemon(context.endpoint, op, request)
+  assertReviewContext(context, workspaceId)
+  return response
 })
 ipcMain.handle('ade:git-journal-read', async (event, workspaceId: unknown) => {
   const context = activeReviewContext(event.sender.id, workspaceId)
@@ -1210,6 +1236,12 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
           selection.conversationId !== entry.send.reviewSelection.conversationId ||
           selection.generation !== clientGeneration) throw new Error('Return to the feedback workspace before retrying')
         entry.send.reviewSelection.epoch = selection.epoch
+      } else if (entry.send.reviewAnchor) {
+        const context = activeReviewContext(event.sender.id, entry.send.reviewAnchor.workspace_id)
+        assertReviewContext(context, entry.send.reviewAnchor.workspace_id, args.conversation_id)
+        entry.send.reviewSelection = { senderId: event.sender.id,
+          workspaceId: entry.send.reviewAnchor.workspace_id,
+          conversationId: args.conversation_id, epoch: context.epoch }
       }
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
       return await dispatchSend(entry, entry.send)
@@ -1224,6 +1256,9 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
       if (entry.send.requestId !== args.request_id || entry.send.text !== text) {
         throw new Error('Resolve the previous prompt before starting another')
       }
+      if (!sameReviewAnchor(entry.send.reviewAnchor, args.review_anchor)) {
+        throw new Error('Review selection changed before prompt reconciliation')
+      }
       if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
       return await dispatchSend(entry, entry.send)
     }
@@ -1235,6 +1270,7 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
     const intent: SendIntent = { requestId: args.request_id, text, draftText: entry.draft.text,
       revision: entry.draft.revision, attachments: entry.draft.attachments,
       state: 'pending', preparing: true, inFlight: null,
+      reviewAnchor: reviewContext ? args.review_anchor as ReviewAnchor : undefined,
       reviewSelection: reviewContext ? { senderId: event.sender.id,
         workspaceId: (args.review_anchor as ReviewAnchor).workspace_id,
         conversationId: args.conversation_id, epoch: reviewContext.epoch } : undefined }
