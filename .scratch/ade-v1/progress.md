@@ -25,22 +25,33 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 
 | Daily-use gate and IDs | Verified | Remaining before gate closes |
 |---|---|---|
-| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen; a source desktop E2E keeps an admitted provider tool alive after the last window closes and renders its result once on reopen; a real daemon/runtime handoff E2E keeps the fixture provider tool and native session alive without replay | Real-agent continuity and complete isolation acceptance in the installed flow |
-| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen | Real Oh My Pi account; real managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
+| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen; a source desktop E2E keeps an admitted provider tool alive after the last window closes and renders its result once on reopen; a real daemon/runtime handoff E2E keeps the fixture provider tool and native session alive without replay; ambient live Codex and Claude runs survive compatible daemon handoff | Real-agent continuity across renderer closure and complete isolation acceptance in the installed flow |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen; an unknown Codex item retains safe metadata and ordering across profile and desktop restart | Real Oh My Pi account; real managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider; complete F031 multi-provider acceptance |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; CLI can attach a real TTY to the runtime-owned shell, resize, send a large paste and detach without stopping it; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
-| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal attachment, cancel/resume, paged diffs and durable review feedback | Matching CLI coverage for the rest of the selected daily-use flow |
+| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged | Matching CLI coverage for the rest of the selected daily-use flow, especially caller-owned prompt retry IDs |
 
 Blockers: a real Oh My Pi account is unavailable; the user chose to keep
 real two-account verification pending rather than authenticate two ADE-managed
 Claude homes now. Fixtures are not live-account proof. Active worker owners:
-none; the coordinator integrated the CLI attach slice. Next assignment:
-continue the remaining daily-use CLI/provider controls using fixture-backed
-flows, while preserving the pending live-account criteria. The remaining rows
+none; the coordinator integrated the installed CLI slice. Next assignment:
+make CLI prompt sends accept a caller-owned request ID and reconcile uncertain
+delivery through the public command path, then continue other daily-use CLI
+controls. The remaining rows
 are partial evidence, not closed feature IDs. F075/06-S06 and unrelated v1
 work remain queued.
 
 ## Integrated checkpoints
+
+Live-provider R005 evidence, 2026-09-27: at revision `d583652` on macOS arm64,
+`ADE_TEST_DAEMON=$PWD/target/debug/ade-daemon python3 scripts/test_agent_handoff_live.py --run`
+passed for ambient authenticated Codex
+and Claude. The procedure restarted the compatible daemon while each provider
+was streaming, retained the same runtime instance, provider PID/run and native
+thread, and observed one user prompt plus the expected completed response.
+Provider PIDs 21322 and 24068 exited after test cleanup. This uses real
+providers but no ADE-managed account or Electron renderer, so R005 remains
+partial; the E2E procedure is in `scripts/test_agent_handoff_live.py`.
 
 | Commit | Slice | Evidence |
 |---|---|---|
@@ -122,6 +133,25 @@ work remain queued.
 | `3365033` | Account and background continuity evidence | Packaged two Codex fixture accounts keep separate native credentials and sessions through headless turns and reopen; source desktop keeps one provider tool active while closed and renders its result once |
 | `c95efa8` | Provider daemon handoff evidence | Compatible daemon replacement retains the running fixture tool, runtime and native session without a second dispatch |
 | `a979b98` | CLI terminal attachment | Real PTY resize, 70,000-byte paste, Ctrl-] detach and signal TTY restoration; same shell PID remains alive |
+| `9434098` | Safe unfamiliar native item fallback | Unknown Codex item metadata and message order survive cold profile and desktop restart; private reasoning and unknown payload fields are excluded |
+| `fbd7f39` | Managed-profile CLI targeting | Repository CLI discovers and selects two GUI-created profiles by ID, isolates their workspace/conversation state, and leaves GUI selection unchanged |
+| `1d45a52` | Structured CLI E2E errors | Playwright child Node commands no longer mix conflicting color settings into JSON stderr; affected focused 8/8 and full source 183 passed/one host skip |
+| `0b400c3` | Installed macOS CLI | App bundle includes `ade` and its client closure; stripped-PATH symlink invocation, GUI profile isolation and cold CLI daemon start; packaged 9/9 |
+
+Daily-use CLI/unknown-item checkpoint, 2026-09-27: no feature ID is fully
+closed by these slices. `pnpm check` passed 183 E2Es with one existing host
+skip, including type checking and Fallow, after a failed run exposed conflicting
+`NO_COLOR`/`FORCE_COLOR` warnings in child Node errors. Eight focused affected
+CLI E2Es passed after the harness fix. Strict ade-runtime Clippy and Rust
+formatting passed. `pnpm package:mac` and the rebuilt installed suite passed
+9/9; the focused installed CLI E2E passed again after its last cleanup edit.
+Independent reviews cleared privacy, test ownership and cold-start findings.
+Implementation and review were not separately timed; the failed full source
+run took 5.9 minutes, the passing full source run 6.0 minutes, focused CLI
+checks 20.9 seconds, and installed E2Es 28.0 seconds. The package build time
+was not separately captured. No test-owned process remains. One inactive test
+directory remains because automatic approval review rejected recursive removal;
+the test profile in it is inactive and outside the installed product.
 
 Daily-use CLI/handoff checkpoint, 2026-09-27: no feature ID is fully closed by
 these slices. Independent review found no remaining actionable issue after
