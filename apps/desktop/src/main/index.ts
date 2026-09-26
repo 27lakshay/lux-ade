@@ -959,23 +959,29 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
 })
 ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !['review.status', 'review.diff', 'review.stage', 'review.unstage',
-    'review.commit', 'review.operation'].includes(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    'review.commit', 'review.discard', 'review.operation'].includes(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid review request')
   }
   const args = fields as Record<string, unknown>
   const context = activeReviewContext(event.sender.id, args.workspace_id)
   const workspaceId = args.workspace_id as string
-  if (op === 'review.operation' || op === 'review.stage' || op === 'review.unstage' || op === 'review.commit') {
+  if (op === 'review.operation' || op === 'review.stage' || op === 'review.unstage' || op === 'review.commit' || op === 'review.discard') {
     if (typeof args.request_id !== 'string' || !/^[0-9a-f-]{36}$/.test(args.request_id)) {
       throw new Error('Invalid Git operation ID')
     }
     const request: Record<string, unknown> = { workspace_id: workspaceId, request_id: args.request_id }
-    if (op === 'review.stage' || op === 'review.unstage') {
+    if (op === 'review.stage' || op === 'review.unstage' || op === 'review.discard') {
       if (!reviewPath(args.path) || typeof args.revision !== 'string' || !/^[0-9a-f]{16}$/.test(args.revision)) {
         throw new Error('Invalid Git file revision')
       }
       request.path = args.path
       request.revision = args.revision
+      if (op === 'review.discard') {
+        if (typeof args.diff_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.diff_token)) {
+          throw new Error('Invalid Git discard preview token')
+        }
+        request.diff_token = args.diff_token
+      }
     } else if (op === 'review.commit') {
       if (typeof args.message !== 'string' || !args.message.trim() || Buffer.byteLength(args.message) > 64 * 1024 ||
         typeof args.index_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.index_token)) {
@@ -988,7 +994,8 @@ ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown)
       const intent: GitIntent = { profile_id: journalProfileId(context.endpoint), workspace_id: workspaceId,
         op, request_id: args.request_id as string,
         ...(op === 'review.commit' ? { message: request.message as string, index_token: request.index_token as string }
-          : { path: request.path as string, revision: request.revision as string }) }
+          : { path: request.path as string, revision: request.revision as string,
+              ...(op === 'review.discard' ? { diff_token: request.diff_token as string } : {}) }) }
       assertReviewContext(context, workspaceId)
       await gitRecovery().prepare(intent)
       assertReviewContext(context, workspaceId)

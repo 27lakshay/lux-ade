@@ -3,8 +3,9 @@ import { constants } from 'node:fs'
 import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
 
-export type GitIntent = { profile_id: string; workspace_id: string; op: 'review.stage' | 'review.unstage' | 'review.commit';
-  request_id: string; path?: string; revision?: string; index_token?: string; message?: string }
+export type GitIntent = { profile_id: string; workspace_id: string;
+  op: 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard';
+  request_id: string; path?: string; revision?: string; diff_token?: string; index_token?: string; message?: string }
 export type ArchivedGitIntent = { intent: GitIntent; acknowledged_at: number }
 type JournalFile = { version: 1; active: GitIntent[]; archived: ArchivedGitIntent[] }
 const id = /^[a-zA-Z0-9_-]{1,128}$/
@@ -21,11 +22,14 @@ function valid(intent: unknown): intent is GitIntent {
   if (item.op === 'review.commit') return typeof item.message === 'string' && Boolean(item.message.trim()) &&
     Buffer.byteLength(item.message) <= 64 * 1024 && typeof item.index_token === 'string' && token.test(item.index_token) &&
     Object.keys(item).sort().join(',') === 'index_token,message,op,profile_id,request_id,workspace_id'
-  if (item.op === 'review.stage' || item.op === 'review.unstage') return typeof item.path === 'string' &&
+  if (item.op === 'review.stage' || item.op === 'review.unstage' || item.op === 'review.discard') return typeof item.path === 'string' &&
     item.path.length > 0 && item.path.length <= 4096 && !item.path.includes('\0') &&
     !item.path.startsWith('/') && item.path.split('/').every((part) => part && part !== '.' && part !== '..') &&
     typeof item.revision === 'string' && token.test(item.revision) &&
-    Object.keys(item).sort().join(',') === 'op,path,profile_id,request_id,revision,workspace_id'
+    (item.op === 'review.discard'
+      ? typeof item.diff_token === 'string' && token.test(item.diff_token) &&
+        Object.keys(item).sort().join(',') === 'diff_token,op,path,profile_id,request_id,revision,workspace_id'
+      : Object.keys(item).sort().join(',') === 'op,path,profile_id,request_id,revision,workspace_id')
   return false
 }
 

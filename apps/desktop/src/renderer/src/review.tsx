@@ -1,19 +1,21 @@
 import React from 'react'
 import type { Conversation, Workspace } from '@ade/client'
 
-type ChangedFile = { path: string; staged: boolean; unstaged: boolean; conflict: boolean }
+type ChangedFile = { path: string; staged: boolean; unstaged: boolean; conflict: boolean;
+  untracked: boolean; submodule: boolean }
 type ReviewStatus = { revision: string; index_token: string; conflicts: number; files: ChangedFile[] }
 type ReviewDiff = { token: string; path: string; staged: boolean; header: string; hunks: string[];
   binary: boolean; conflict: boolean; bytes: number }
 type Anchor = { workspace_id: string; path: string; staged: boolean; revision: string;
   token: string; hunk: string; line: number; text: string }
 type PendingFeedback = { requestId: string; anchor: Anchor; note: string }
-type GitMutation = 'review.stage' | 'review.unstage' | 'review.commit'
+type GitMutation = 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
 type PendingGit = { op: GitMutation; request_id: string; workspace_id: string; path?: string;
-  revision?: string; index_token?: string; message?: string }
+  revision?: string; diff_token?: string; index_token?: string; message?: string }
+type DiscardPreview = { path: string; revision: string; diff_token: string }
 type AcknowledgedGit = { intent: PendingGit; acknowledged_at: number }
 type GitReceipt = { type: 'review_operation'; operation: { id: string; status: 'running' | 'succeeded' | 'failed' | 'interrupted';
-  error?: string; result?: { head?: string } } }
+  error?: string; backup_path?: string; result?: { head?: string } } }
 type DiffLine = { key: string; number: number; text: string; selectable: boolean }
 
 function readPending(key: string): PendingFeedback | null {
@@ -43,7 +45,7 @@ function linesInHunk(hunk: string, index: number): DiffLine[] {
 function ReviewDiffView({ diff, status, workspace, selected, onSelect }: {
   diff: ReviewDiff; status: ReviewStatus; workspace: Workspace; selected: Anchor | null; onSelect: (anchor: Anchor) => void
 }): React.JSX.Element {
-  return <div className="review-diff" aria-label={`Diff for ${diff.path}`}>
+  return <div className="review-diff" role="region" aria-label={`Diff for ${diff.path}`}>
     <pre className="review-diff-header">{diff.header}</pre>
     {(diff.binary || diff.conflict || diff.hunks.length === 0) &&
       <p className="muted">This file has no selectable text lines.</p>}
@@ -71,6 +73,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   const [acknowledgedGit, setAcknowledgedGit] = React.useState<AcknowledgedGit[]>([])
   const [status, setStatus] = React.useState<ReviewStatus | null>(null)
   const [diff, setDiff] = React.useState<ReviewDiff | null>(null)
+  const [discardPreview, setDiscardPreview] = React.useState<DiscardPreview | null>(null)
   const [selected, setSelected] = React.useState<Anchor | null>(restoredPending?.anchor ?? null)
   const [note, setNote] = React.useState(restoredPending?.note ?? '')
   const [error, setError] = React.useState('')
@@ -119,19 +122,21 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
           throw new Error('Git operation receipt did not match the request')
         }
         const operation = response.operation
+        const retained = pendingGit.op === 'review.discard' && operation.backup_path
+          ? ` · Recovery file: ${operation.backup_path}` : ''
         if (operation.status === 'running') {
           setGitMessage(`${pendingGit.op.slice(7)} is running · ${pendingGit.request_id}`)
         } else if (operation.status === 'interrupted') {
           setGitInterrupted(true)
-          setGitMessage(`Git operation ${pendingGit.request_id} was interrupted. Inspect Git history and changes before continuing. It will not be retried automatically.`)
+          setGitMessage(`Git operation ${pendingGit.request_id} was interrupted. Inspect Git history and changes before continuing. It will not be retried automatically.${retained}`)
         } else {
           await window.adeHost.acknowledgeGitJournal(workspace.id, pendingGit.request_id, 'settle')
           if (disposed) return
           setPendingGit(null)
           setGitUnknown(false)
           setGitMessage(operation.status === 'succeeded'
-            ? `${pendingGit.op.slice(7)} succeeded${operation.result?.head ? ` · ${operation.result.head}` : ''}`
-            : `${pendingGit.op.slice(7)} failed: ${operation.error ?? 'Inspect Git state before continuing'}`)
+            ? `${pendingGit.op.slice(7)} succeeded${operation.result?.head ? ` · ${operation.result.head}` : ''}${retained}`
+            : `${pendingGit.op.slice(7)} failed: ${operation.error ?? 'Inspect Git state before continuing'}${retained}`)
           if (pendingGit.op === 'review.commit' && operation.status === 'succeeded') setCommitMessage('')
           setRefresh((value) => value + 1)
         }
@@ -245,6 +250,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     const sequence = ++requestSequence.current
     setStatus(null)
     setDiff(null)
+    setDiscardPreview(null)
     if (!pendingId) setSelected(null)
     setStale(false)
     setLoading(true)
@@ -260,12 +266,36 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   const chooseFile = async (path: string, staged: boolean): Promise<void> => {
     const sequence = ++requestSequence.current
     setDiff(null)
+    setDiscardPreview(null)
     if (!pendingId) setSelected(null)
     setStale(false)
     setLoading(true)
     try {
       const response = await window.adeHost.requestReview('review.diff', { workspace_id: workspace.id, path, staged })
       if (sequence === requestSequence.current) { setDiff(response as ReviewDiff); setError('') }
+    } catch (reason) { if (sequence === requestSequence.current) setError(String(reason)) }
+    finally { if (sequence === requestSequence.current) setLoading(false) }
+  }
+
+  const previewDiscard = async (path: string): Promise<void> => {
+    const sequence = ++requestSequence.current
+    setDiscardPreview(null)
+    setDiff(null)
+    setLoading(true)
+    try {
+      const latest = await window.adeHost.requestReview('review.status', { workspace_id: workspace.id, force: true }) as ReviewStatus
+      const file = latest.files.find((item) => item.path === path)
+      if (!file?.unstaged || file.untracked || file.conflict || file.submodule) {
+        throw new Error('This file cannot be discarded; refresh changes')
+      }
+      const preview = await window.adeHost.requestReview('review.diff', {
+        workspace_id: workspace.id, path, staged: false,
+      }) as ReviewDiff
+      if (sequence !== requestSequence.current) return
+      setStatus(latest)
+      setDiff(preview)
+      setDiscardPreview({ path, revision: latest.revision, diff_token: preview.token })
+      setError('')
     } catch (reason) { if (sequence === requestSequence.current) setError(String(reason)) }
     finally { if (sequence === requestSequence.current) setLoading(false) }
   }
@@ -365,6 +395,10 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
         {file.staged && <button type="button" disabled={!gitReady || Boolean(pendingGit) || loading}
           onClick={() => void startGit({ op: 'review.unstage', path: file.path, revision: status.revision })}
           aria-label={`Unstage ${file.path}`}>Unstage</button>}
+        {file.unstaged && !file.untracked && !file.conflict && !file.submodule &&
+          <button type="button" disabled={!gitReady || Boolean(pendingGit) || loading}
+            onClick={() => void previewDiscard(file.path)} aria-label={`Preview discard ${file.path}`}>
+            Discard…</button>}
         {file.staged && <button type="button" onClick={() => void chooseFile(file.path, true)}>Staged diff</button>}
         {file.unstaged && <button type="button" onClick={() => void chooseFile(file.path, false)}>Unstaged diff</button>}
       </div>)}</div>}
@@ -381,6 +415,20 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
       {status.conflicts > 0 && <p className="muted">Resolve and stage conflicts before committing.</p>}
     </form>}
     {diff && status && <ReviewDiffView diff={diff} status={status} workspace={workspace} selected={selected} onSelect={setSelected} />}
+    {discardPreview && diff?.path === discardPreview.path && !diff.staged &&
+      <div className="review-discard-confirm" role="group" aria-label={`Discard ${discardPreview.path}`}>
+        <p>{diff.binary
+          ? `Binary contents of ${discardPreview.path} cannot be previewed. Discard replaces its working-tree bytes with the staged version.`
+          : diff.hunks.length === 0
+            ? `No text lines are available for ${discardPreview.path}; review the Git metadata above before discarding.`
+            : `Discard the working-tree changes shown above for ${discardPreview.path}?`}
+          {' '}Staged changes stay staged.</p>
+        <button type="button" disabled={Boolean(pendingGit) || !gitReady || loading}
+          onClick={() => void startGit({ op: 'review.discard', path: discardPreview.path,
+            revision: discardPreview.revision, diff_token: discardPreview.diff_token })}>
+          Confirm discard</button>
+        <button type="button" onClick={() => setDiscardPreview(null)}>Cancel</button>
+      </div>}
     <form className="review-feedback" onSubmit={(event) => void send(event)}>
       <p>{selected ? `${selected.path} · ${selected.staged ? 'staged' : 'unstaged'} · line ${selected.line} · ${selected.token}`
         : 'Select an added or context line to anchor feedback.'}</p>

@@ -8,13 +8,21 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::hash_map::DefaultHasher,
+    ffi::CString,
     fs,
     hash::{Hash, Hasher},
-    io::Read,
-    os::unix::fs::MetadataExt,
-    path::{Component, Path},
+    io::{Read, Write},
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+        },
+    },
+    path::{Component, Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -53,6 +61,273 @@ fn path_arg(path: &str) -> Result<()> {
         "Invalid repository-relative path"
     );
     Ok(())
+}
+#[derive(PartialEq, Eq)]
+struct DiscardFileState {
+    device: u64,
+    inode: u64,
+    length: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+    digest: String,
+}
+
+fn discard_file_digest(path: &Path) -> Result<Option<DiscardFileState>> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path);
+    let mut file = match file {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = file.metadata()?;
+    ensure!(metadata.is_file(), "Discard target is not an ordinary file");
+    ensure!(
+        metadata.len() <= 64 * 1024 * 1024,
+        "Discard target exceeds the 64 MiB safety limit"
+    );
+    let mut hash = Sha256::new();
+    let mut bytes = [0u8; 65536];
+    let mut total = 0u64;
+    loop {
+        let read = file.read(&mut bytes)?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        ensure!(
+            total <= 64 * 1024 * 1024,
+            "Discard target exceeds the 64 MiB safety limit"
+        );
+        hash.update(&bytes[..read]);
+    }
+    let after = file.metadata()?;
+    ensure!(
+        (
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        ) == (
+            after.dev(),
+            after.ino(),
+            after.len(),
+            after.mtime(),
+            after.mtime_nsec(),
+            after.ctime(),
+            after.ctime_nsec()
+        ),
+        "File changed while checking discard preconditions"
+    );
+    Ok(Some(DiscardFileState {
+        device: after.dev(),
+        inode: after.ino(),
+        length: after.len(),
+        modified: (after.mtime(), after.mtime_nsec()),
+        changed: (after.ctime(), after.ctime_nsec()),
+        digest: format!("{:x}", hash.finalize()),
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn discard_parent(root: &Path, relative: &Path, binding: (u64, u64)) -> Result<fs::File> {
+    let mut directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(root)?;
+    let identity = directory.metadata()?;
+    ensure!(
+        (identity.dev(), identity.ino()) == binding,
+        "Discard root changed during execution; inspect the workspace before retrying"
+    );
+    for component in relative
+        .parent()
+        .context("Missing discard parent")?
+        .components()
+    {
+        let Component::Normal(name) = component else {
+            bail!("Invalid discard path component")
+        };
+        let name = CString::new(name.as_bytes())?;
+        let descriptor = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        directory = unsafe { fs::File::from_raw_fd(descriptor) };
+    }
+    Ok(directory)
+}
+
+#[cfg(target_os = "macos")]
+fn discard_exchange(
+    root: &Path,
+    root_binding: (u64, u64),
+    stage_root: &Path,
+    stage_binding: (u64, u64),
+    relative: &Path,
+    flags: libc::c_uint,
+) -> Result<()> {
+    let target_parent = discard_parent(root, relative, root_binding)?;
+    let staged_parent = discard_parent(stage_root, relative, stage_binding)?;
+    let target = root.join(relative);
+    let staged = stage_root.join(relative);
+    let target_name = CString::new(
+        target
+            .file_name()
+            .context("Missing discard filename")?
+            .as_bytes(),
+    )?;
+    let staged_name = CString::new(
+        staged
+            .file_name()
+            .context("Missing staged filename")?
+            .as_bytes(),
+    )?;
+    let target_metadata = target_parent.metadata()?;
+    let stage_metadata = staged_parent.metadata()?;
+    ensure!(
+        target_metadata.dev() == stage_metadata.dev(),
+        "Discard backup is not on the target volume; no file was changed"
+    );
+    // ADE supports destructive exchange only on local APFS. Some filesystems
+    // report RENAME_SWAP support without honoring its no-loss semantics.
+    let mut volume: libc::statfs = unsafe { std::mem::zeroed() };
+    let checked = unsafe { libc::fstatfs(target_parent.as_raw_fd(), &raw mut volume) };
+    ensure!(checked == 0, "Could not verify discard filesystem");
+    let kind = unsafe { std::ffi::CStr::from_ptr(volume.f_fstypename.as_ptr()) };
+    ensure!(
+        kind.to_bytes() == b"apfs" && volume.f_flags & (libc::MNT_LOCAL as u32) != 0,
+        "Discard requires a verified local APFS volume"
+    );
+    if flags == libc::RENAME_SWAP {
+        let probe_id = new_id("discard-probe");
+        let probe_a = staged
+            .parent()
+            .unwrap()
+            .join(format!(".ade-swap-probe-{probe_id}-a"));
+        let probe_b = staged
+            .parent()
+            .unwrap()
+            .join(format!(".ade-swap-probe-{probe_id}-b"));
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe_a)?
+            .write_all(b"a")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe_b)?
+            .write_all(b"b")?;
+        let a = CString::new(probe_a.file_name().unwrap().as_bytes())?;
+        let b = CString::new(probe_b.file_name().unwrap().as_bytes())?;
+        let probe = unsafe {
+            libc::renameatx_np(
+                staged_parent.as_raw_fd(),
+                a.as_ptr(),
+                staged_parent.as_raw_fd(),
+                b.as_ptr(),
+                libc::RENAME_SWAP,
+            )
+        };
+        ensure!(
+            probe == 0 && fs::read(&probe_a)? == b"b" && fs::read(&probe_b)? == b"a",
+            "Discard filesystem did not exchange probe files; no user file was changed"
+        );
+        fs::remove_file(probe_a)?;
+        fs::remove_file(probe_b)?;
+    }
+    let result = unsafe {
+        libc::renameatx_np(
+            staged_parent.as_raw_fd(),
+            staged_name.as_ptr(),
+            target_parent.as_raw_fd(),
+            target_name.as_ptr(),
+            flags,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    target_parent.sync_all()?;
+    staged_parent.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn discard_exchange(
+    _root: &Path,
+    _root_binding: (u64, u64),
+    _stage_root: &Path,
+    _stage_binding: (u64, u64),
+    _relative: &Path,
+    _flags: libc::c_uint,
+) -> Result<()> {
+    bail!("Reviewed discard requires a supported macOS APFS volume")
+}
+
+fn discard_stage_path(git: &Git<'_>, request_id: &str, path: &str) -> Result<PathBuf> {
+    let private = git.text(&[
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "ade-discard-v1",
+    ])?;
+    let private = Path::new(private.trim_end());
+    match fs::create_dir(private) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let private_dir = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(private)?;
+    private_dir.set_permissions(fs::Permissions::from_mode(0o700))?;
+    let key = format!(
+        "{:x}",
+        Sha256::digest(format!("{}\0{}", git.root, request_id).as_bytes())
+    );
+    let stage = private.join(key);
+    fs::create_dir(&stage)?;
+    let stage_dir = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(&stage)?;
+    stage_dir.set_permissions(fs::Permissions::from_mode(0o700))?;
+    let prefix = format!("{}/", stage.display());
+    worktrees::successful(&git.run(
+        &["checkout-index", &format!("--prefix={prefix}"), "--", path],
+        None,
+        30,
+    )?)?;
+    let staged = stage.join(path);
+    ensure!(
+        fs::symlink_metadata(&staged)?.file_type().is_file(),
+        "Index did not materialize an ordinary file for discard"
+    );
+    fs::File::open(&staged)?.sync_all()?;
+    let mut directory = staged.parent().unwrap();
+    loop {
+        fs::File::open(directory)?.sync_all()?;
+        if directory == stage {
+            break;
+        }
+        directory = directory.parent().context("Incomplete discard stage")?;
+    }
+    private_dir.sync_all()?;
+    Ok(stage)
 }
 struct Git<'a> {
     root: &'a str,
@@ -402,7 +677,8 @@ impl Review {
                 "review.stage",
                 "review.unstage",
                 "review.hunk",
-                "review.commit"
+                "review.commit",
+                "review.discard"
             ]
             .contains(&op),
             "Unknown review operation"
@@ -433,6 +709,11 @@ impl Review {
                 common_binding,
             };
             let result = hub.mutate(&git, &request);
+            // Mutation may have persisted a recovery location before an
+            // irreversible filesystem step. Preserve it in the final receipt.
+            if let Ok(Some(saved)) = hub.job(&root, request["request_id"].as_str().unwrap(), None) {
+                completed = saved["operation"].clone();
+            }
             match result {
                 Ok(value) => {
                     completed["status"] = json!("succeeded");
@@ -509,7 +790,228 @@ impl Review {
             .iter()
             .find(|f| f["path"] == path)
             .context("File is no longer changed; refresh")?;
-        if op == "review.hunk" {
+        if op == "review.discard" {
+            ensure!(
+                file["unstaged"] == true
+                    && file["untracked"] != true
+                    && file["conflict"] != true
+                    && file["submodule"] != true,
+                "Only tracked, non-conflicted working-tree changes can be discarded"
+            );
+            ensure!(
+                request["revision"] == state["revision"],
+                "Changes moved since review; preview the file again before discarding"
+            );
+            match fs::symlink_metadata(Path::new(git.root).join(path)) {
+                Ok(metadata) => ensure!(
+                    metadata.file_type().is_file(),
+                    "Only ordinary tracked files can be discarded"
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    ensure!(
+                        file["code"]
+                            .as_str()
+                            .is_some_and(|code| code.ends_with('D')),
+                        "File changed since review; preview it again"
+                    );
+                }
+                Err(error) => return Err(error.into()),
+            }
+            let diff = git.diff(path, false)?;
+            ensure!(
+                request["diff_token"] == diff["token"],
+                "Diff changed since preview; preview the file again before discarding"
+            );
+            ensure!(
+                request["revision"] == git.status()?["revision"],
+                "Changes moved since preview; preview the file again before discarding"
+            );
+            let target = Path::new(git.root).join(path);
+            let before = discard_file_digest(&target)?;
+            let stage_root = discard_stage_path(git, string(request, "request_id")?, path)?;
+            let stage_identity = fs::metadata(&stage_root)?;
+            let stage_binding = (stage_identity.dev(), stage_identity.ino());
+            let staged = stage_root.join(path);
+            let staged_before = discard_file_digest(&staged)?
+                .context("Index file was not materialized for discard")?;
+            // An interrupted operation keeps the old file in this private Git
+            // directory. Persist its location before changing the worktree.
+            if before.is_some() {
+                self.db.lock().unwrap().execute(
+                    "UPDATE jobs SET result=json_set(result,'$.backup_path',?1) WHERE id=?2",
+                    params![
+                        staged.to_string_lossy().as_ref(),
+                        string(request, "request_id")?
+                    ],
+                )?;
+            }
+            ensure!(
+                request["revision"] == git.status()?["revision"],
+                "Changes moved since preview; preview the file again before discarding"
+            );
+            if cfg!(debug_assertions)
+                && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+                && let Ok(directory) = std::env::var("ADE_E2E_DISCARD_BEFORE_APPLY_DIR")
+            {
+                let directory = Path::new(&directory);
+                fs::write(directory.join("signal"), b"ready")?;
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !directory.join("release").exists() {
+                    ensure!(
+                        Instant::now() < deadline,
+                        "Timed out waiting for E2E discard release"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+            ensure!(
+                before == discard_file_digest(&target)?,
+                "File changed during discard; preview it again"
+            );
+            if cfg!(debug_assertions)
+                && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+                && let Ok(directory) = std::env::var("ADE_E2E_DISCARD_AFTER_CHECK_DIR")
+            {
+                let directory = Path::new(&directory);
+                fs::write(directory.join("signal"), b"ready")?;
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !directory.join("release").exists() {
+                    ensure!(
+                        Instant::now() < deadline,
+                        "Timed out waiting for E2E discard release"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+            ensure!(
+                request["revision"] == git.status()?["revision"],
+                "Changes moved during discard; preview it again"
+            );
+            if cfg!(debug_assertions)
+                && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+                && let Ok(directory) = std::env::var("ADE_E2E_DISCARD_BEFORE_SWAP_DIR")
+            {
+                let directory = Path::new(&directory);
+                fs::write(directory.join("signal"), b"ready")?;
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !directory.join("release").exists() {
+                    ensure!(
+                        Instant::now() < deadline,
+                        "Timed out waiting for E2E discard release"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+            if let Some(original) = &before {
+                fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(&target)?
+                    .sync_all()?;
+                discard_exchange(
+                    Path::new(git.root),
+                    git.binding,
+                    &stage_root,
+                    stage_binding,
+                    Path::new(path),
+                    libc::RENAME_SWAP,
+                )?;
+                if cfg!(debug_assertions)
+                    && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+                    && let Ok(directory) = std::env::var("ADE_E2E_DISCARD_AFTER_SWAP_DIR")
+                {
+                    let directory = Path::new(&directory);
+                    fs::write(
+                        directory.join("signal"),
+                        staged.to_string_lossy().as_bytes(),
+                    )?;
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while !directory.join("release").exists() {
+                        ensure!(
+                            Instant::now() < deadline,
+                            "Timed out waiting for E2E discard release"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                let displaced = discard_file_digest(&staged)?;
+                if !displaced.as_ref().is_some_and(|item| {
+                    item.device == original.device
+                        && item.inode == original.inode
+                        && item.length == original.length
+                        && item.digest == original.digest
+                }) {
+                    if let Err(error) = discard_exchange(
+                        Path::new(git.root),
+                        git.binding,
+                        &stage_root,
+                        stage_binding,
+                        Path::new(path),
+                        libc::RENAME_SWAP,
+                    ) {
+                        bail!(
+                            "Concurrent edit during discard; both versions were retained at {} and {}. Reverse exchange failed: {error}",
+                            target.display(),
+                            staged.display()
+                        );
+                    }
+                    bail!(
+                        "File changed during discard; original path was restored. Inspect it before retrying"
+                    );
+                }
+                if cfg!(debug_assertions)
+                    && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+                    && let Ok(directory) =
+                        std::env::var("ADE_E2E_DISCARD_AFTER_DISPLACED_CHECK_DIR")
+                {
+                    let directory = Path::new(&directory);
+                    fs::write(
+                        directory.join("signal"),
+                        staged.to_string_lossy().as_bytes(),
+                    )?;
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while !directory.join("release").exists() {
+                        ensure!(
+                            Instant::now() < deadline,
+                            "Timed out waiting for E2E discard release"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            } else {
+                discard_exchange(
+                    Path::new(git.root),
+                    git.binding,
+                    &stage_root,
+                    stage_binding,
+                    Path::new(path),
+                    libc::RENAME_EXCL,
+                )?;
+            }
+            let installed = discard_file_digest(&target)?;
+            ensure!(
+                installed
+                    .as_ref()
+                    .is_some_and(|item| item.device == staged_before.device
+                        && item.inode == staged_before.inode
+                        && item.length == staged_before.length
+                        && item.digest == staged_before.digest),
+                "File changed during discard; displaced content remains in the Git backup directory"
+            );
+            let remaining = git.run(&["diff", "--quiet", "--", path], None, 30)?;
+            match remaining["exit_code"].as_i64() {
+                Some(0) => {}
+                Some(1) => bail!(
+                    "File changed during discard; displaced content remains at {}",
+                    staged.display()
+                ),
+                _ => bail!(
+                    "Could not verify discard result; inspect {} and {} before continuing",
+                    target.display(),
+                    staged.display()
+                ),
+            }
+        } else if op == "review.hunk" {
             ensure!(
                 file["conflict"] != true,
                 "Resolve conflicts before staging hunks"

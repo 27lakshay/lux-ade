@@ -67,9 +67,12 @@ Commands:
   script stop WORKSPACE_ID RUN_ID        Stop a script and confirm process exit
   script retire WORKSPACE_ID RUN_ID      Release an exited script run
   git status WORKSPACE_ID                Read fresh Git status and revision tokens
+  git diff WORKSPACE_ID PATH [--staged]  Read a file diff and its preview token
   git stage WORKSPACE_ID PATH REVISION --request-id ID
   git unstage WORKSPACE_ID PATH REVISION --request-id ID
                                         Change exactly one reviewed file
+  git discard WORKSPACE_ID PATH REVISION DIFF_TOKEN --request-id ID
+                                        Discard one previewed unstaged change
   git commit WORKSPACE_ID MESSAGE INDEX_TOKEN --request-id ID
                                         Commit the reviewed staged index
   git operation WORKSPACE_ID REQUEST_ID  Inspect a Git operation receipt
@@ -170,20 +173,22 @@ function sha256(value: string | undefined): string {
   return value
 }
 
-function gitMutationArgs(rest: string[], action: 'stage' | 'unstage' | 'commit'): {
-  workspaceId: string; value: string; token: string; requestId: string
+function gitMutationArgs(rest: string[], action: 'stage' | 'unstage' | 'commit' | 'discard'): {
+  workspaceId: string; value: string; token: string; requestId: string; diffToken?: string
 } {
   const flag = rest.length - 2
   const positionals = rest.slice(0, flag)
-  if (positionals.length !== 3 || rest[flag] !== '--request-id' ||
+  if (positionals.length !== (action === 'discard' ? 4 : 3) || rest[flag] !== '--request-id' ||
     !rest[flag + 1] || rest[flag + 1].length > 256) {
-    throw new CliError('usage', `git ${action} requires WORKSPACE_ID ${action === 'commit' ? 'MESSAGE INDEX_TOKEN' : 'PATH REVISION'} --request-id ID.`)
+    throw new CliError('usage', `git ${action} requires WORKSPACE_ID ${action === 'commit'
+      ? 'MESSAGE INDEX_TOKEN' : action === 'discard' ? 'PATH REVISION DIFF_TOKEN' : 'PATH REVISION'} --request-id ID.`)
   }
   return {
     workspaceId: required(positionals[0], 'WORKSPACE_ID'),
     value: required(positionals[1], action === 'commit' ? 'MESSAGE' : 'PATH'),
     token: required(positionals[2], action === 'commit' ? 'INDEX_TOKEN' : 'REVISION'),
     requestId: rest[flag + 1],
+    ...(action === 'discard' ? { diffToken: required(positionals[3], 'DIFF_TOKEN') } : {}),
   }
 }
 
@@ -571,11 +576,20 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
       workspace_id: required(rest[0], 'WORKSPACE_ID'), request_id: required(rest[1], 'REQUEST_ID'),
     })
   }
-  if (area === 'git' && (action === 'stage' || action === 'unstage' || action === 'commit')) {
-    const { workspaceId, value, token, requestId } = gitMutationArgs(rest, action)
+  if (area === 'git' && action === 'diff') {
+    if (rest.length < 2 || rest.length > 3 || (rest.length === 3 && rest[2] !== '--staged')) {
+      throw new CliError('usage', 'git diff requires WORKSPACE_ID PATH [--staged].')
+    }
+    return requestDaemon(socketPath, 'review.diff', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
+      staged: rest[2] === '--staged',
+    })
+  }
+  if (area === 'git' && (action === 'stage' || action === 'unstage' || action === 'commit' || action === 'discard')) {
+    const { workspaceId, value, token, requestId, diffToken } = gitMutationArgs(rest, action)
     const fields = action === 'commit'
       ? { message: value, index_token: token }
-      : { path: value, revision: token }
+      : { path: value, revision: token, ...(action === 'discard' ? { diff_token: diffToken } : {}) }
     const response = await requestDaemon(socketPath, `review.${action}`, {
       workspace_id: workspaceId, request_id: requestId, ...fields,
     })
