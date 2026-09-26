@@ -180,6 +180,11 @@ pub struct Supervisor {
     handoff_path: PathBuf,
 }
 impl Supervisor {
+    pub fn data_directory(&self) -> &Path {
+        self.handoff_path
+            .parent()
+            .expect("runtime handoff path has a parent")
+    }
     pub fn connect(directory: &Path) -> Result<Self> {
         let socket = socket_path(directory);
         let hello = match UnixStream::connect(&socket) {

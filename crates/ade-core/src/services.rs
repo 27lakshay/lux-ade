@@ -128,6 +128,8 @@ pub struct Service {
     pub terminal_id: Option<String>,
     #[serde(default)]
     pub terminal_owner: Option<crate::model::TerminalOwner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_transfer_id: Option<String>,
     pub workspace_id: String,
     pub name: String,
     pub revision: i64,

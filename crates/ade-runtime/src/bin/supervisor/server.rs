@@ -130,6 +130,15 @@ impl Host {
                         data.terminals.remove(&key);
                     }
                 }
+                if request["op"] == "terminal.retire" {
+                    let workspace = request["workspace_id"]
+                        .as_str()
+                        .context("Missing workspace_id")?;
+                    let terminal = request["terminal_id"]
+                        .as_str()
+                        .context("Missing terminal_id")?;
+                    ade_runtime::service_logs::remove(&self.directory, workspace, terminal)?;
+                }
                 Ok(json!({"type":"ack"}))
             }
             "terminal.ensure" | "terminal.restart" | "terminal.launch" => {
@@ -198,7 +207,11 @@ impl Host {
                     "Workspace directory is unavailable"
                 );
                 let terminal = Terminal {
-                    runtime: Arc::new(terminal_host::spawn_runtime(&workspace, launch.as_ref())?),
+                    runtime: Arc::new(terminal_host::spawn_runtime(
+                        &workspace,
+                        launch.as_ref(),
+                        &self.directory,
+                    )?),
                     launch,
                     workspace,
                 };

@@ -30,6 +30,11 @@ type ListenerInventory = { coverage: string; listeners: Array<{ address: string;
 type ServiceInspection = { execution_state: string; execution_error?: string | null;
   readiness: { state: string; application_ready: string; observation_error?: string | null };
   logs: { available: boolean; bytes_base64?: string; truncated?: boolean; reason?: string };
+  durable_logs?: { available: boolean; bytes_base64?: string; truncated?: boolean;
+    retention_overflow?: boolean; segment_gap?: boolean; reason?: string; capture_error?: string;
+    run_transfer_id?: string; start_offset?: number; through_offset?: number; coverage?: string };
+  health_monitor?: { state: string; basis?: string; status_code?: number; sampled_at_ms?: number;
+    fresh_until_ms?: number; schedule_delay_ms?: number };
   health?: { state: string; basis: string; status_code?: number; error?: string } }
 
 function serviceOutput(logs: ServiceInspection['logs']): string {
@@ -111,7 +116,7 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
           workspace_id: workspace.id, name: detailName, tail_bytes: 4096,
         })
         if (!disposed) { setInspection(result as ServiceInspection); setError('') }
-      } catch (reason) { if (!disposed) setError(String(reason)) }
+      } catch (reason) { if (!disposed) { setInspection(null); setError(String(reason)) } }
       finally { if (!disposed) timer = setTimeout(() => { void load() }, 3000) }
     }
     setInspection(null)
@@ -189,12 +194,29 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
             {healthResult?.name === service.name && <p role="status">Last HTTP check: {healthResult.value.state.replaceAll('_', ' ')}
               {healthResult.value.status_code ? ` (${healthResult.value.status_code})` : ''}
               {healthResult.value.error ? ` · ${healthResult.value.error}` : ''}</p>}
+            {inspection.health_monitor && inspection.health_monitor.state !== 'disabled' &&
+              <p role="status">Monitored HTTP: {inspection.health_monitor.state.replaceAll('_', ' ')}
+                {inspection.health_monitor.status_code ? ` (${inspection.health_monitor.status_code})` : ''}
+                {inspection.health_monitor.basis ? ` · ${inspection.health_monitor.basis.replaceAll('_', ' ')}` : ''}
+                {inspection.health_monitor.sampled_at_ms ? ` · sampled ${new Date(inspection.health_monitor.sampled_at_ms).toLocaleTimeString()}` : ''}
+              </p>}
             {(inspection.execution_error || inspection.readiness.observation_error) &&
               <p role="alert">{inspection.execution_error || inspection.readiness.observation_error}</p>}
-            <h3>Recent output</h3>
-            {inspection.logs.available ? <><pre>{serviceOutput(inspection.logs) || 'No output yet'}</pre>
-              {inspection.logs.truncated && <p>Earlier output is outside the retained tail.</p>}</>
-              : <p>Output unavailable: {inspection.logs.reason ?? 'unknown reason'}</p>}
+            <h3>Recorded output</h3>
+            {inspection.durable_logs?.available ? <>
+              <pre>{serviceOutput(inspection.durable_logs) || 'No output yet'}</pre>
+              <p>Recorded output contains captured bytes only; it may be incomplete.</p>
+              {inspection.durable_logs.capture_error &&
+                <p role="alert">Output capture failed: {inspection.durable_logs.capture_error}</p>}
+              {(inspection.durable_logs.truncated || inspection.durable_logs.retention_overflow) &&
+                <p>Earlier output is outside the retained tail.</p>}
+              {inspection.durable_logs.segment_gap && <p role="alert">A gap was detected in the recorded output.</p>}
+            </> : <>
+              <p>Recorded output unavailable: {inspection.durable_logs?.capture_error ?? inspection.durable_logs?.reason ?? 'unknown reason'}</p>
+              {inspection.logs.available ? <><h3>Live recent output</h3><pre>{serviceOutput(inspection.logs) || 'No output yet'}</pre>
+                {inspection.logs.truncated && <p>Earlier output is outside the retained tail.</p>}</>
+                : <p>Output unavailable: {inspection.logs.reason ?? 'unknown reason'}</p>}
+            </>}
           </>}
         </div>}
       </article>

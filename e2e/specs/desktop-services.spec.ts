@@ -60,6 +60,7 @@ test('CLI and Electron share a managed workspace service across app closure', as
       program: process.execPath,
       args: ['-e', 'require("http").createServer((_,res)=>res.end("ade-service-ready")).listen(Number(process.env.PORT),"127.0.0.1",()=>console.log("__ADE_SERVICE_LOG__"))'],
       cwd: '.', env: {}, ports: ['PORT'],
+      health: { port_variable: 'PORT', path: '/', timeout_ms: 250, interval_ms: 1000 },
     }
     const configured = await runCli(daemon.socket, 'service', 'configure', workspace.id, 'web', JSON.stringify(config))
     expect(configured.type).toBe('service')
@@ -92,9 +93,12 @@ test('CLI and Electron share a managed workspace service across app closure', as
       .toContain('__ADE_SERVICE_LOG__')
     await expect(row).toContainText('TCP: tcp listening')
     await expect(row).toContainText('__ADE_SERVICE_LOG__')
+    await expect(row).toContainText('Recorded output')
+    await expect(row).toContainText('Recorded output contains captured bytes only')
+    await expect(row).toContainText('Monitored HTTP: healthy (200)')
     await expect(row).toContainText('verified managed')
     await row.getByRole('button', { name: 'Check HTTP' }).click()
-    await expect(row.getByRole('status')).toHaveText('Last HTTP check: healthy (200)')
+    await expect(row.getByText(/^Last HTTP check:/)).toHaveText('Last HTTP check: healthy (200)')
     const listeners = await runCli(daemon.socket, 'listener', 'list')
     expect(listeners).toMatchObject({ type: 'listeners', scope: 'local_host', coverage: 'partial' })
     expect(listeners.listeners).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -139,10 +143,11 @@ test('CLI and Electron share a managed workspace service across app closure', as
     expect((stopped.states as Record<string, { state: string }>).web.state).toBe('stopped')
     const stoppedInspection = await runCli(daemon.socket, 'service', 'inspect', workspace.id, 'web')
     expect(stoppedInspection).toMatchObject({ type: 'service_inspection', execution_state: 'stopped',
-      readiness: { state: 'stopped' } })
+      readiness: { state: 'stopped' }, durable_logs: { available: true } })
     await expect(window.getByRole('article', { name: 'Service web' })).toContainText('Execution: stopped · TCP: stopped')
+    await expect(window.getByRole('article', { name: 'Service web' })).toContainText('__ADE_SERVICE_LOG__')
     await window.getByRole('article', { name: 'Service web' }).getByRole('button', { name: 'Check HTTP' }).click()
-    await expect(window.getByRole('article', { name: 'Service web' }).getByRole('status')).toHaveText('Last HTTP check: not running')
+    await expect(window.getByRole('article', { name: 'Service web' }).getByText(/^Last HTTP check:/)).toHaveText('Last HTTP check: not running')
     await expect.poll(async () => {
       try { await fetch(`http://127.0.0.1:${port}`); return false }
       catch { return true }

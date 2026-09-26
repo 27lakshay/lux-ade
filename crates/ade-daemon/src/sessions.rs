@@ -1333,17 +1333,26 @@ impl Sessions {
                 "HTTP health port variable is not configured for this service"
             );
         }
-        let (state, execution_error) =
-            match self.command(&json!({"op":"service.list","workspace_id":workspace})) {
-                Ok(listed) => (
+        let (state, execution_error, durable_capture_error) = match self
+            .command(&json!({"op":"service.list","workspace_id":workspace}))
+        {
+            Ok(listed) => {
+                let metrics = &listed["states"][name]["metrics"];
+                (
                     listed["states"][name]["state"]
                         .as_str()
                         .unwrap_or("unavailable")
                         .to_owned(),
                     None,
-                ),
-                Err(error) => ("unavailable".to_owned(), Some(error.to_string())),
-            };
+                    if service.last_run_transfer_id.as_deref() == metrics["transfer_id"].as_str() {
+                        metrics["durable_log_error"].as_str().map(str::to_owned)
+                    } else {
+                        None
+                    },
+                )
+            }
+            Err(error) => ("unavailable".to_owned(), Some(error.to_string()), None),
+        };
         let observations = if state == "running" {
             Some(self.list_listeners())
         } else {
@@ -1439,6 +1448,20 @@ impl Sessions {
         } else {
             json!({"available":false,"reason":"not_started"})
         };
+        let mut durable_logs = match (&service.terminal_id, &service.last_run_transfer_id) {
+            (Some(terminal_id), Some(transfer_id)) => ade_runtime::service_logs::tail(
+                self.runtime.data_directory(),
+                workspace,
+                terminal_id,
+                transfer_id,
+                limit as usize,
+            ),
+            (None, _) => json!({"available":false,"reason":"not_started"}),
+            (_, None) => json!({"available":false,"reason":"run_identity_unrecorded"}),
+        };
+        if let Some(error) = durable_capture_error {
+            durable_logs["capture_error"] = json!(error);
+        }
         let still_running = if state == "running" && health_check.is_some() {
             self.command(&json!({"op":"service.list","workspace_id":workspace}))
                 .ok()
@@ -1475,7 +1498,8 @@ impl Sessions {
                 "execution_state":"unavailable","execution_error":"Service changed during inspection; refresh",
                 "readiness":{"state":"unknown","basis":"identity_changed",
                     "application_ready":"unverified","observation_error":"Service changed during inspection; refresh"},
-                "logs":{"available":false,"reason":"service_changed_during_inspection"}});
+                "logs":{"available":false,"reason":"service_changed_during_inspection"},
+                "durable_logs":{"available":false,"reason":"service_changed_during_inspection"}});
             if health_check.is_some() {
                 result["health"] = json!({"state":"unknown","basis":"identity_changed"});
             }
@@ -1496,7 +1520,7 @@ impl Sessions {
             "execution_error":execution_error,
             "readiness":{"state":readiness_state,"basis":if state == "running" {"direct_process_tcp_listener"} else {"execution_state"},
                 "application_ready":"unverified","observation_error":observation_error},
-            "logs":logs});
+            "logs":logs,"durable_logs":durable_logs});
         if let Some(health) = health {
             result["health"] = health;
         }

@@ -113,6 +113,7 @@ impl Store {
         let mut service = Service {
             terminal_id: before.as_ref().and_then(|s| s.terminal_id.clone()),
             terminal_owner: None,
+            last_run_transfer_id: before.as_ref().and_then(|s| s.last_run_transfer_id.clone()),
             workspace_id: workspace.id,
             name: name.into(),
             revision: revision
@@ -280,6 +281,10 @@ impl Store {
             transfer_id: crate::model::new_id("service-run"),
             runtime_instance: instance.into(),
         });
+        service.last_run_transfer_id = service
+            .terminal_owner
+            .as_ref()
+            .map(|owner| owner.transfer_id.clone());
         tx.execute(
             "UPDATE services SET data=?3 WHERE workspace_id=?1 AND name=?2",
             params![workspace, name, serde_json::to_string(&service)?],

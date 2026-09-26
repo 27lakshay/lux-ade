@@ -66,3 +66,42 @@ accepts at most 512 configured health policies, and the scheduler reads only
 active configured services; unrelated service definitions cannot disable it.
 Persistent sample history, alerting and full F086 acceptance
 remain open.
+
+Durable output slice: `service.inspect.durable_logs` exposes a bounded base64
+tail from runtime-owned service output files, separately from the existing PTY
+`logs`. Each service retains at most two 512 KiB segments for its latest run;
+each inspection returns at most 32 KiB. The response names the run transfer
+identity, byte offsets, retained start, truncation, retention overflow and any
+segment gap. `coverage: captured_bytes_only` does not promise complete output
+when a write fails or the runtime dies; a known live writer error appears as
+`capture_error`. Missing or unsafe files report unavailable. The service record
+stores the last reserved transfer identity with a serde default, so old
+records remain readable and a failed successor launch cannot show the prior
+run's output. A newly reserved run returns unavailable until its own file
+exists. Stop keeps its last output; a new run or service removal retires it.
+The data directory and files must be owned by the runtime user, the private
+log directory permits no group or other access, and file reads use no-follow
+with type, link-count and size checks. Segment writes stay outside the runtime
+terminal-state lock. The bound covers retained files per service, not every
+service in a profile; runtime loss can delay deletion until recovery or manual
+profile cleanup. Writes are visible across daemon and runtime process restart
+but are not promised durable across machine power loss.
+
+Real ADE-process E2E emits over 1 MiB, checks retained offsets and the final
+marker, verifies output after stop, and confirms a failed successor cannot
+expose the predecessor marker. A separate test confirms the same run output
+survives daemon handoff and remains readable after the isolated runtime is
+killed. Another test replaces the private log directory with a symlink and
+checks that capture reports an error without writing to its target. Structured
+logs, streaming APIs, full retention management and UI
+remain outside this F086 slice.
+
+Reader hardening: inspection opens segments without following symlinks or
+blocking on a substituted FIFO, validates the opened file descriptor, and
+limits each read to one byte beyond the maximum segment size. It checks size
+again after reading, so a file that grows after the first check cannot cause
+unbounded allocation. Real-daemon E2E replaces a stopped service's segment
+with a FIFO and an oversized regular file and verifies both return an explicit
+unavailable result. Offset arithmetic uses checked addition; the same E2E
+changes a valid segment's start offset to `u64::MAX` and verifies inspection
+returns unavailable instead of panicking or wrapping.

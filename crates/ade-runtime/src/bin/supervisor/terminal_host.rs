@@ -83,6 +83,7 @@ struct State {
     run_id: String,
     transfer_id: Option<String>,
     session_subscribers: Arc<AtomicUsize>,
+    durable_log_error: Option<String>,
 }
 
 impl State {
@@ -91,7 +92,8 @@ impl State {
             "clients":self.clients.len()+self.session_subscribers.load(Ordering::Relaxed),
             "workspace_id":self.workspace_id,"terminal_id":self.terminal_id,"run_id":self.run_id,"transfer_id":self.transfer_id,"terminal_bytes":self.bytes,"events":self.events,
             "reply_dropped_bytes":self.reply_dropped_bytes,"pixel_size":self.pixel_size,"scrollback_bytes":self.terminal.len(),"resize_owner":self.owner,
-            "shell_pid":self.shell_pid,"shell_running":self.shell_running})
+            "shell_pid":self.shell_pid,"shell_running":self.shell_running,
+            "durable_log_error":self.durable_log_error})
     }
     fn snapshot(&self) -> Value {
         self.snapshot_for(true, true)
@@ -555,6 +557,7 @@ pub struct Runtime {
 pub fn spawn_runtime(
     workspace: &WorkspaceRecord,
     launch: Option<&ade_runtime::terminal_launch::Launch>,
+    data_directory: &std::path::Path,
 ) -> anyhow::Result<Runtime> {
     let pair = native_pty_system().openpty(PtySize {
         rows: 30,
@@ -597,6 +600,19 @@ pub fn spawn_runtime(
     let mut output = pair.master.try_clone_reader()?;
     let input = Arc::new(Mutex::new(pair.master.take_writer()?));
     let master = Arc::new(Mutex::new(pair.master));
+    let (mut durable_log, durable_log_error) = if let Some(launch) = launch {
+        match ade_runtime::service_logs::Writer::open(
+            data_directory,
+            &workspace.id,
+            &workspace.terminal_id,
+            &launch.transfer_id,
+        ) {
+            Ok(writer) => (Some(writer), None),
+            Err(error) => (None, Some(error.to_string())),
+        }
+    } else {
+        (None, None)
+    };
     let (reply_tx, reply_rx) = mpsc::sync_channel::<Vec<u8>>(64);
     let reply_input = input.clone();
     std::thread::spawn(move || {
@@ -637,6 +653,7 @@ pub fn spawn_runtime(
         reply_dropped_bytes: 0,
         shell_pid: child.process_id(),
         shell_running: true,
+        durable_log_error,
     }));
     let terminal_state = state.clone();
     std::thread::spawn(move || {
@@ -644,7 +661,16 @@ pub fn spawn_runtime(
         loop {
             match output.read(&mut buffer) {
                 Ok(0) | Err(_) => break,
-                Ok(n) => terminal_state.lock().unwrap().append_terminal(&buffer[..n]),
+                Ok(n) => {
+                    if let Some(writer) = durable_log.as_mut() {
+                        if let Err(error) = writer.append(&buffer[..n]) {
+                            durable_log = None;
+                            terminal_state.lock().unwrap().durable_log_error =
+                                Some(error.to_string());
+                        }
+                    }
+                    terminal_state.lock().unwrap().append_terminal(&buffer[..n]);
+                }
             }
         }
         // A terminal-owned agent may have a private server in its process
