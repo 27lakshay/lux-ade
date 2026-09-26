@@ -5,6 +5,8 @@ use ade_core::model::AccountExecution;
 pub mod account_probe;
 #[path = "codex_probe.rs"]
 pub mod codex_probe;
+#[path = "omp_probe.rs"]
+pub mod omp_probe;
 use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 use std::sync::{Arc, mpsc};
@@ -69,14 +71,12 @@ pub fn spawn(
     }
     match provider {
         "codex" if account.is_some() => Ok(crate::codex::Adapter::spawn(cwd, account, events)?),
-        "omp" if account.is_some() => {
-            bail!("Managed Oh My Pi accounts need native credential readback before launch")
-        }
+        "omp" if account.is_some() => Ok(crate::omp::Adapter::spawn(cwd, account, events)?),
         "opencode" if account.is_some() => bail!("Managed OpenCode accounts are not supported yet"),
         "codex" => Ok(crate::codex::Adapter::spawn(cwd, None, events)?),
         "claude" => Ok(crate::claude::Adapter::spawn(cwd, account, events)?),
         "opencode" => Ok(crate::opencode::Adapter::spawn(cwd, events)?),
-        "omp" => Ok(crate::omp::Adapter::spawn(cwd, events)?),
+        "omp" => Ok(crate::omp::Adapter::spawn(cwd, None, events)?),
         _ => bail!("Unsupported provider {provider}"),
     }
 }

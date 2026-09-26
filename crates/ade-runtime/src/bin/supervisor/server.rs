@@ -388,7 +388,9 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
             let account: ade_core::model::AccountExecution =
                 serde_json::from_value(request["account"].clone())?;
             drop(data);
-            let inspection = if account.provider == "codex" {
+            let inspection = if account.provider == "omp" {
+                ade_runtime::provider::omp_probe::inspect(&account)
+            } else if account.provider == "codex" {
                 ade_runtime::provider::codex_probe::inspect(&account)
             } else {
                 ade_runtime::provider::account_probe::inspect(&account)

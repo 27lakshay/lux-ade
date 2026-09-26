@@ -846,7 +846,7 @@ impl Sessions {
                 let id = string("account_id")?;
                 let account = self.data.lock().unwrap().store.account(id)?;
                 ensure!(
-                    matches!(account.provider.as_str(), "claude" | "codex"),
+                    matches!(account.provider.as_str(), "claude" | "codex" | "omp"),
                     "Managed account inspection is unavailable for this provider"
                 );
                 let expected_generation = if request["op"] == "account.verify" {
@@ -860,10 +860,10 @@ impl Sessions {
                 };
                 let expected_identity: Option<Value> = if request["op"] == "account.verify" {
                     Some(request.get("expected_identity").cloned().with_context(|| {
-                        let provider = if account.provider == "claude" {
-                            "Claude"
-                        } else {
-                            "Codex"
+                        let provider = match account.provider.as_str() {
+                            "claude" => "Claude",
+                            "codex" => "Codex",
+                            _ => "Oh My Pi",
                         };
                         format!("Missing inspected {provider} identity")
                     })?)
@@ -877,6 +877,7 @@ impl Sessions {
                     generation: account.generation,
                     claude_identity: account.claude_identity.clone(),
                     codex_identity: account.codex_identity.clone(),
+                    omp_identity: account.omp_identity.clone(),
                 };
                 let inspection: provider::account_probe::Inspection = serde_json::from_value(
                     self.runtime
@@ -904,12 +905,19 @@ impl Sessions {
                             serde_json::from_value(identity)
                                 .context("Invalid inspected Claude identity")?,
                         )?
-                    } else {
+                    } else if account.provider == "codex" {
                         d.store.verify_codex_account(
                             id,
                             generation,
                             serde_json::from_value(identity)
                                 .context("Invalid inspected Codex identity")?,
+                        )?
+                    } else {
+                        d.store.verify_omp_account(
+                            id,
+                            generation,
+                            serde_json::from_value(identity)
+                                .context("Invalid inspected Oh My Pi identity")?,
                         )?
                     };
                     Ok(json!({"type":"ack","account":updated}))
@@ -2324,6 +2332,12 @@ impl Sessions {
                             "Codex account identity is not pinned"
                         );
                     }
+                    if c.provider == "omp" {
+                        ensure!(
+                            account.omp_identity.is_some(),
+                            "Oh My Pi account identity is not pinned"
+                        );
+                    }
                     Ok::<_, anyhow::Error>(ade_core::model::AccountExecution {
                         id: account.id,
                         provider: account.provider,
@@ -2331,6 +2345,7 @@ impl Sessions {
                         generation: account.generation,
                         claude_identity: account.claude_identity,
                         codex_identity: account.codex_identity,
+                        omp_identity: account.omp_identity,
                     })
                 })
                 .transpose()?;
@@ -2371,7 +2386,8 @@ impl Sessions {
                         && current.generation == expected.generation
                         && current.provider == expected.provider
                         && current.claude_identity == expected.claude_identity
-                        && current.codex_identity == expected.codex_identity,
+                        && current.codex_identity == expected.codex_identity
+                        && current.omp_identity == expected.omp_identity,
                     "Account changed before provider session opened"
                 );
             }

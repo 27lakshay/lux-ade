@@ -63,6 +63,8 @@ pub struct Account {
     pub claude_identity: Option<ClaudeIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_identity: Option<CodexIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omp_identity: Option<OmpIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -79,6 +81,17 @@ pub struct CodexIdentity {
     pub chatgpt_account_id: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct OmpIdentity {
+    pub provider: String,
+    pub credential_id: u64,
+    pub credential_type: String,
+    pub identity_key: String,
+    pub email: Option<String>,
+    pub account_id: Option<String>,
+    pub org_id: Option<String>,
+}
+
 /// The immutable account context pinned to one provider execution.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct AccountExecution {
@@ -90,6 +103,8 @@ pub struct AccountExecution {
     pub claude_identity: Option<ClaudeIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_identity: Option<CodexIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omp_identity: Option<OmpIdentity>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Draft {

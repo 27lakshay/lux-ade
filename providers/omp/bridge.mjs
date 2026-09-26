@@ -13,8 +13,11 @@ import { ChildTranscripts } from './child-transcripts.mjs';
 
 export class Bridge {
   constructor(emit, { cwd = process.cwd(), directory = process.env.ADE_DATA_DIR && join(process.env.ADE_DATA_DIR, 'omp'), connect = options => OmpTransport.start(options), command } = {}) {
+    if (process.env.ADE_OMP_ACCOUNT_HOME) directory = join(process.env.ADE_OMP_ACCOUNT_HOME, 'ade-sessions');
     this.emit = emit; this.cwd = cwd; this.directory = directory; this.connect = connect;
-    this.command = command ?? (process.env.ADE_OMP_BIN ? [process.env.ADE_OMP_BIN] : [process.execPath, new URL('./node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js', import.meta.url).pathname]);
+    this.command = command ?? (process.env.ADE_OMP_BIN ? [process.env.ADE_OMP_BIN] : [process.execPath,
+      ...(process.env.ADE_OMP_ACCOUNT_HOME ? ['--no-env-file'] : []),
+      new URL('./node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js', import.meta.url).pathname]);
     this.events = Promise.resolve(); this.requests = new Map(); this.visible = new Map(); this.closed = false;
     this.subagents = new Subagents();
   }
@@ -31,10 +34,15 @@ export class Bridge {
       this.ledger = new SubmissionLedger(join(this.directory, 'submissions.sqlite'));
       this.childTranscripts = new ChildTranscripts(this.ledger.db);
       this.transport = await this.connect({ command: this.command, cwd: this.cwd,
+        env: process.env.ADE_OMP_ACCOUNT_HOME ? { ...process.env, HOME: process.env.ADE_OMP_ACCOUNT_HOME,
+          PI_CODING_AGENT_DIR: process.env.ADE_OMP_ACCOUNT_HOME } : process.env,
         args: ['--session', this.identity.file, ...(config.model ? ['--model', config.model] : [])],
         onFrame: frame => { this.events = this.events.then(() => this.consume(frame)).catch(error => this.fail(error)); },
       });
       const state = await this.transport.request('get_state');
+      if (process.env.ADE_OMP_EXPECTED_PROVIDER && state.model?.provider !== process.env.ADE_OMP_EXPECTED_PROVIDER) {
+        throw new Error('Oh My Pi selected model belongs to another account provider');
+      }
       await verifySession(this.identity, state);
       if (state.isStreaming || state.isCompacting || state.queuedMessageCount) throw new Error('Oh My Pi has active work; ownership transfer is required');
       await this.transport.request('set_subagent_subscription', { level: 'progress' });
@@ -82,6 +90,12 @@ export class Bridge {
   }
   async send({ session, submission, message_id, text, attachments = [] }) {
     if (!this.ready || this.closed || session !== this.session || this.active) throw new Error('Oh My Pi is not ready for a new turn');
+    if (process.env.ADE_OMP_EXPECTED_PROVIDER) {
+      const state = await this.transport.request('get_state');
+      if (state.model?.provider !== process.env.ADE_OMP_EXPECTED_PROVIDER) {
+        throw new Error('Oh My Pi selected model belongs to another account provider');
+      }
+    }
     this.active = { turn: message_id, submission, admitting: true };
     this.text = new TextStream();
     try {

@@ -457,6 +457,7 @@ impl Store {
             state: "unverified".into(),
             claude_identity: None,
             codex_identity: None,
+            omp_identity: None,
         };
         if provider == "codex" {
             use std::io::Write;
@@ -555,6 +556,35 @@ impl Store {
         tx.commit()?;
         self.account(id)
     }
+    pub fn verify_omp_account(
+        &self,
+        id: &str,
+        generation: u64,
+        identity: ade_core::model::OmpIdentity,
+    ) -> Result<Account> {
+        let tx = self.transaction()?;
+        let mut account: Account = one(&tx, "accounts", id)?;
+        ensure!(account.provider == "omp", "Account does not use Oh My Pi");
+        ensure!(
+            account.generation == generation,
+            "Account changed during verification"
+        );
+        ensure!(
+            account
+                .omp_identity
+                .as_ref()
+                .is_none_or(|pinned| pinned == &identity),
+            "Oh My Pi account identity changed; disable the account before binding a new identity"
+        );
+        account.state = "verified".into();
+        account.omp_identity = Some(identity);
+        tx.execute(
+            "UPDATE accounts SET data=?2 WHERE id=?1",
+            params![id, encode(&account)?],
+        )?;
+        tx.commit()?;
+        self.account(id)
+    }
     pub fn disable_account(&self, id: &str) -> Result<Account> {
         let tx = self.transaction()?;
         let mut account: Account = one(&tx, "accounts", id)?;
@@ -565,6 +595,7 @@ impl Store {
         account.state = "disabled".into();
         account.claude_identity = None;
         account.codex_identity = None;
+        account.omp_identity = None;
         tx.execute(
             "UPDATE accounts SET data=?2 WHERE id=?1",
             params![id, encode(&account)?],

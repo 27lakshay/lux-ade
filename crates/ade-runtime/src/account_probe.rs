@@ -98,6 +98,16 @@ pub(crate) fn command_output(
     args: &[&str],
     environment: fn(&mut Command, &str, &str),
 ) -> Result<(bool, String)> {
+    command_output_with_timeout(executable, native_home, args, environment, STATUS_TIMEOUT)
+}
+
+pub(crate) fn command_output_with_timeout(
+    executable: &Path,
+    native_home: &str,
+    args: &[&str],
+    environment: fn(&mut Command, &str, &str),
+    timeout: Duration,
+) -> Result<(bool, String)> {
     let executable_text = executable
         .to_str()
         .context("Invalid Claude executable path")?;
@@ -112,7 +122,7 @@ pub(crate) fn command_output(
     let mut child = command
         .spawn()
         .context("Claude executable could not start")?;
-    let deadline = Instant::now() + STATUS_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let mut output = child.stdout.take().context("Claude output unavailable")?;
     let flags = unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) };
     if flags < 0

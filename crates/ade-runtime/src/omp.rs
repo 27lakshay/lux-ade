@@ -4,6 +4,7 @@ use crate::{
     provider::{self, Config, Connected, Event, Provider},
     rpc::Rpc,
 };
+use ade_core::model::AccountExecution;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
@@ -12,13 +13,26 @@ use std::{
 };
 pub struct Adapter {
     rpc: Arc<Rpc>,
+    account: Option<AccountExecution>,
+    cwd: String,
 }
 impl Adapter {
-    pub fn spawn(cwd: &str, events: mpsc::SyncSender<Event>) -> Result<Arc<Self>> {
+    pub fn spawn(
+        cwd: &str,
+        account: Option<&AccountExecution>,
+        events: mpsc::SyncSender<Event>,
+    ) -> Result<Arc<Self>> {
+        if let Some(account) = account {
+            provider::omp_probe::ensure_identity(account)?;
+            provider::omp_probe::ensure_workspace_sources(cwd, account)?;
+        }
         let mut command = if let Ok(mock) = std::env::var("ADE_OMP_BRIDGE_BIN") {
             Command::new(mock)
         } else {
             let mut c = Command::new(std::env::var("ADE_BUN_BIN").unwrap_or_else(|_| "bun".into()));
+            if account.is_some() {
+                c.arg("--no-env-file");
+            }
             c.arg(std::env::var("ADE_OMP_BRIDGE").unwrap_or_else(|_| {
                 ade_platform::resources::resource("providers/omp/bridge.mjs")
                     .to_string_lossy()
@@ -27,8 +41,21 @@ impl Adapter {
             c
         };
         command.current_dir(cwd);
+        if let Some(account) = account {
+            provider::omp_probe::managed_environment(&mut command, &account.native_home, "");
+            let identity = account
+                .omp_identity
+                .as_ref()
+                .context("Oh My Pi identity is not pinned")?;
+            command.env("ADE_OMP_EXPECTED_PROVIDER", &identity.provider);
+            if let Ok(bin) = std::env::var("ADE_OMP_BIN") {
+                command.env("ADE_OMP_BIN", bin);
+            }
+        }
         Ok(Arc::new(Self {
             rpc: Rpc::spawn(command, events, provider::bridge_event)?,
+            account: account.cloned(),
+            cwd: cwd.into(),
         }))
     }
 }
@@ -49,6 +76,10 @@ impl Provider for Adapter {
         Some(self.rpc.pid())
     }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
+        if let Some(account) = &self.account {
+            provider::omp_probe::ensure_identity(account)?;
+            provider::omp_probe::ensure_workspace_sources(&self.cwd, account)?;
+        }
         provider::response_session(&self.rpc, resume, config)
     }
     fn send(
@@ -58,6 +89,10 @@ impl Provider for Adapter {
         message_id: Option<&str>,
         prompt: &crate::prompt::Prompt,
     ) -> Result<String> {
+        if let Some(account) = &self.account {
+            provider::omp_probe::ensure_identity(account)?;
+            provider::omp_probe::ensure_workspace_sources(&self.cwd, account)?;
+        }
         self.rpc.request(
             "send",
             json!({"session":session,"submission":submission,"message_id":message_id,"text":prompt.text,"attachments":prompt.attachments}),
