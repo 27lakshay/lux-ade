@@ -32,12 +32,14 @@ Commands:
   repository rebind REPOSITORY_ID PATH  Bind a restored Git repository before its workspaces
   worktree register PATH                Register a Git repository lifecycle
   worktree list REPOSITORY_ID           Inspect linked trees and removal authority
-  worktree create REPOSITORY_ID BRANCH BASE [PATH]
+  worktree create REPOSITORY_ID BRANCH BASE [PATH] --request-id ID
                                         Create a branch and linked tree
   worktree adopt REPOSITORY_ID PATH CONFIRM_PATH
                                         Explicitly take ADE removal authority
-  worktree remove REPOSITORY_ID PATH [--delete-merged]
+  worktree remove REPOSITORY_ID PATH [--delete-merged] --request-id ID
                                         Remove a clean ADE-authorized tree
+  worktree operation REPOSITORY_ID REQUEST_ID
+                                        Inspect a lifecycle operation receipt
   worktree rebind-list                  List restored lifecycle repositories requiring a path
   worktree rebind REPOSITORY_ID PATH    Bind restored Git lifecycle history first
   conversation list [WORKSPACE_ID]      List conversations
@@ -111,8 +113,9 @@ Commands:
 
 Command results are JSON on stdout, except terminal attach streams raw terminal output.
 Errors are JSON on stderr.
-Choose and retain a unique --request-id for each Git mutation. If the reply is lost,
-use git operation with that ID; retry only with the same command and arguments.
+Choose and retain a unique --request-id for each Git or worktree mutation. If
+the reply is lost, inspect its operation with that ID; retry only with the
+same command and arguments.
 For conversation send, choose a unique --request-id before the first attempt and
 reuse it with the same conversation and text after a lost reply. Omitting it
 generates an ID, but that ID is unavailable if the reply is lost; do not retry
@@ -410,6 +413,22 @@ function gitMutationArgs(rest: string[], action: 'stage' | 'unstage' | 'commit' 
     requestId: rest[flag + 1],
     ...(action === 'discard' ? { diffToken: required(positionals[3], 'DIFF_TOKEN') } : {}),
   }
+}
+
+function worktreeMutationArgs(rest: string[], action: 'create' | 'remove'): {
+  positionals: string[]; requestId: string
+} {
+  const flag = rest.length - 2
+  const positionals = rest.slice(0, flag)
+  const valid = action === 'create'
+    ? positionals.length === 3 || positionals.length === 4
+    : positionals.length === 2 || (positionals.length === 3 && positionals[2] === '--delete-merged')
+  if (!valid || rest[flag] !== '--request-id' || !rest[flag + 1] ||
+    rest[flag + 1].startsWith('--') || rest[flag + 1].length > 256) {
+    throw new CliError('usage', `worktree ${action} requires ${action === 'create'
+      ? 'REPOSITORY_ID BRANCH BASE [PATH]' : 'REPOSITORY_ID PATH [--delete-merged]'} --request-id ID.`)
+  }
+  return { positionals, requestId: rest[flag + 1] }
 }
 
 function jsonObject(value: string | undefined, label: string): Record<string, unknown> {
@@ -750,21 +769,31 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     if (rest.length !== 1) throw new CliError('usage', 'worktree list requires REPOSITORY_ID.')
     return requestDaemon(socketPath, 'worktree.get', { repository_id: rest[0] })
   }
+  if (area === 'worktree' && action === 'operation') {
+    if (rest.length !== 2) throw new CliError('usage', 'worktree operation requires REPOSITORY_ID REQUEST_ID.')
+    return requestDaemon(socketPath, 'worktree.operation', {
+      repository_id: required(rest[0], 'REPOSITORY_ID'), request_id: required(rest[1], 'REQUEST_ID'),
+    })
+  }
   if (area === 'worktree' && action === 'create') {
-    if (rest.length < 3 || rest.length > 4) throw new CliError('usage', 'worktree create requires REPOSITORY_ID BRANCH BASE [PATH].')
-    return requestDaemon(socketPath, 'worktree.switch', { repository_id: rest[0], target: rest[1],
-      base: rest[2], ...(rest[3] ? { path: rest[3] } : {}), create: true, request_id: randomUUID() })
+    const { positionals, requestId } = worktreeMutationArgs(rest, 'create')
+    const response = await requestDaemon(socketPath, 'worktree.switch', {
+      repository_id: positionals[0], target: positionals[1], base: positionals[2],
+      ...(positionals[3] ? { path: positionals[3] } : {}), create: true, request_id: requestId,
+    })
+    return { ...response, request_id: requestId }
   }
   if (area === 'worktree' && action === 'adopt') {
     if (rest.length !== 3) throw new CliError('usage', 'worktree adopt requires REPOSITORY_ID PATH CONFIRM_PATH.')
     return requestDaemon(socketPath, 'worktree.adopt', { repository_id: rest[0], path: rest[1], confirm_path: rest[2] })
   }
   if (area === 'worktree' && action === 'remove') {
-    if (rest.length < 2 || rest.length > 3 || (rest[2] && rest[2] !== '--delete-merged')) {
-      throw new CliError('usage', 'worktree remove requires REPOSITORY_ID PATH [--delete-merged].')
-    }
-    return requestDaemon(socketPath, 'worktree.remove', { repository_id: rest[0], path: rest[1],
-      delete_branch: rest[2] ? 'merged' : 'keep', request_id: randomUUID() })
+    const { positionals, requestId } = worktreeMutationArgs(rest, 'remove')
+    const response = await requestDaemon(socketPath, 'worktree.remove', {
+      repository_id: positionals[0], path: positionals[1],
+      delete_branch: positionals[2] ? 'merged' : 'keep', request_id: requestId,
+    })
+    return { ...response, request_id: requestId }
   }
   if (area === 'conversation' && action === 'list') {
     const all = (await catalog(socketPath)).conversations
