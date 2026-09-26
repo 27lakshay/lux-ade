@@ -4,7 +4,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { AdeClient, DaemonRequestError, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
+import { AdeClient, DaemonRequestError, formatReviewFeedback, openTerminalConnection, requestDaemon,
+  type ReviewAnchor, type ReviewFeedback, type TerminalConnection } from '@ade/client'
 import { adoptUnownedBrowserStorage, captureBrowserProfile, closeBrowserWindow, flushBrowserSessions,
   registerBrowserIpc, restoreBrowserProfile, setBrowserProfile } from './browser'
 import { SendJournal, type SendJournalIdentity, type SendJournalRecord } from './send-journal'
@@ -104,10 +105,6 @@ async function unsafePending(entries: DraftEntry[]): Promise<boolean> {
 type ReviewFile = { path: string; staged: boolean; unstaged: boolean }
 type ReviewStatus = { revision: string; index_token: string; files: ReviewFile[] }
 type ReviewDiff = { token: string }
-type ReviewAnchor = { workspace_id: string; path: string; staged: boolean; revision: string;
-  token: string; hunk: string; line: number; text: string; end_line?: number; end_text?: string }
-type ReviewFeedback = { format: 'ade-review-feedback-v1'; workspace_id: string;
-  notes: { anchor: ReviewAnchor; note: string }[] }
 function sameReviewFeedback(left: unknown, right: unknown): boolean {
   const canonical = (value: unknown): string => JSON.stringify(value ?? null, (_key, item: unknown) =>
     item && typeof item === 'object' && !Array.isArray(item)
@@ -127,15 +124,6 @@ function reviewPromptText(anchor: ReviewAnchor, note: string): string {
 function reviewNote(text: string, anchor: ReviewAnchor): string | null {
   const prefix = reviewPromptText(anchor, '')
   return text.startsWith(prefix) ? text.slice(prefix.length) : null
-}
-function reviewFeedbackText(feedback: ReviewFeedback): string {
-  const notes = feedback.notes.map(({ anchor, note }, index) =>
-    `${index + 1}. File: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\n` +
-    `Diff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\n` +
-    `${anchor.end_line === undefined ? 'Line' : 'Lines'}: +${anchor.line}${anchor.end_line === undefined ? '' : ` to +${anchor.end_line}`}\n` +
-    `Selected text: ${anchor.text}${anchor.end_text === undefined ? '' : `\nEnd text: ${anchor.end_text}`}\n` +
-    `Feedback: ${note.trim()}`)
-  return `Review feedback for workspace ${feedback.workspace_id}\n\n${notes.join('\n\n')}`
 }
 
 function reviewPath(value: unknown): value is string {
@@ -252,7 +240,7 @@ async function reviewBatchPrompt(context: ReviewContext, conversationId: string,
     }
     if (token !== anchor.token) throw new Error('Stale diff: selected range changed; refresh Changes and select it again')
   }
-  return { feedback, text: reviewFeedbackText(feedback) }
+  return { feedback, text: formatReviewFeedback(feedback) }
 }
 
 async function persistentWindowId(): Promise<string> {
