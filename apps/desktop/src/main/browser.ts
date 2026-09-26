@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, WebContentsView } from 'electron'
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { isAbsolute, join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
 type Saved = { version: 1; selectedId: string | null; tabs: Array<Pick<Tab, 'id' | 'profileId' | 'requestedUrl' | 'observedUrl' | 'title'>> }
@@ -26,6 +26,43 @@ const profilePath = (id: string): string => {
   return directory
 }
 const target = (id: string): string => join(profilePath(id), 'browser-tabs-v1.json')
+const browserStoragePath = (id: string): string => {
+  if (id === 'fixed') return join(profilePath(id), 'browser-session')
+  const key = createHash('sha256').update(id).digest('hex')
+  return join(app.getPath('userData'), 'browser-sessions', key)
+}
+async function migrateBrowserStorage(id: string): Promise<void> {
+  const source = join(profilePath(id), 'browser-session')
+  const destination = browserStoragePath(id)
+  if (source === destination) return
+  const marker = join(destination, '.ade-migration-v1.json')
+  if (await stat(destination).then(() => true).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return false
+    throw error
+  })) {
+    const completed = await readFile(marker, 'utf8').then((data) => JSON.parse(data) as { profileId?: string }).catch(() => null)
+    if (completed?.profileId === id) return
+    if (await stat(source).then(() => true).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return false
+      throw error
+    })) throw new Error('Existing browser session needs migration review; original profile data remains intact')
+    return
+  }
+  if (!(await stat(source).then(() => true).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }))) return
+  await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+  const temporary = `${destination}.migrating-${randomUUID()}`
+  try {
+    await cp(source, temporary, { recursive: true, force: false, errorOnExist: true })
+    await writeFile(join(temporary, '.ade-migration-v1.json'), JSON.stringify({ profileId: id, source }), { mode: 0o600, flag: 'wx' })
+    await rename(temporary, destination)
+  } catch (error) {
+    await rm(temporary, { recursive: true, force: true })
+    throw error
+  }
+}
 const snapshot = (id: string): { profileId: string; selectedId: string | null; tabs: Tab[] } => {
   const state = profiles.get(id)
   return { profileId: id, selectedId: state?.selectedId ?? null, tabs: [...(state?.tabs.values() ?? [])].map((tab) => ({ ...tab })) }
@@ -114,7 +151,7 @@ function attach(window: BrowserWindow, profileId: string, tabId: string, bounds:
 function viewFor(id: string, state: ProfileTabs, tab: Tab, initialUrl = tab.observedUrl || tab.requestedUrl): WebContentsView {
   const existing = state.views.get(tab.id)
   if (existing && !existing.webContents.isDestroyed()) return existing
-  const storage = join(profilePath(id), 'browser-session')
+  const storage = browserStoragePath(id)
   const pageSession = session.fromPath(storage)
   if (!guardedSessions.has(storage)) {
     pageSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
@@ -180,7 +217,7 @@ function viewFor(id: string, state: ProfileTabs, tab: Tab, initialUrl = tab.obse
 }
 
 async function flushProfileSession(id: string): Promise<void> {
-  const storage = join(profilePath(id), 'browser-session')
+  const storage = browserStoragePath(id)
   if (!guardedSessions.has(storage)) return
   const pageSession = session.fromPath(storage)
   pageSession.flushStorageData()
@@ -193,11 +230,14 @@ export async function setBrowserProfile(id: string | null, directory?: string): 
   for (const window of BrowserWindow.getAllWindows()) detach(window)
   if (previous && previous !== id) {
     const prior = profiles.get(previous)
+    await flushProfileSession(previous)
     for (const view of prior?.views.values() ?? []) if (!view.webContents.isDestroyed()) view.webContents.close()
     prior?.views.clear()
-    await flushProfileSession(previous)
   }
-  if (id) profilePaths.set(id, directory as string)
+  if (id) {
+    profilePaths.set(id, directory as string)
+    await migrateBrowserStorage(id)
+  }
   activeProfile = id
   if (id) void stateFor(id).then(() => publish(id)).catch(() => undefined)
 }

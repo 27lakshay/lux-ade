@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { rpc } from '../fixtures/daemon'
 
-const app = resolve('dist/electron/mac-arm64/Lux ADE.app')
+const app = resolve(process.env.ADE_E2E_PACKAGE_APP ?? 'dist/electron/mac-arm64/Lux ADE.app')
 const executable = join(app, 'Contents/MacOS/Lux ADE')
 const resources = join(app, 'Contents/Resources')
 const bundledBun = join(resources, 'bin/bun')

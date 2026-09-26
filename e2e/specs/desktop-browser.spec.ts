@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -74,14 +74,17 @@ async function quitNormally(application: Awaited<ReturnType<typeof electron.laun
 }
 
 test('profile browser tabs isolate cookies, restore identity, and reject closed IDs', async () => {
+  const signedApp = process.env.ADE_E2E_BROWSER_APP
+  if (signedApp) test.setTimeout(90_000)
   const directory = await mkdtemp(join(tmpdir(), 'ade-browser-e2e-'))
   const profilesHome = join(directory, 'profiles')
   const web = await fixture()
-  const { ADE_SOCKET: _fixedSocket, ...environment } = process.env
+  const { ADE_SOCKET: _fixedSocket, ADE_DAEMON_BIN: _parentDaemon, ...environment } = process.env
   const env = { ...environment, ADE_PROFILES_HOME: profilesHome, ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
-    ADE_DAEMON_BIN: resolve('target/debug/ade-daemon') }
+    ...(signedApp ? {} : { ADE_DAEMON_BIN: resolve('target/debug/ade-daemon') }) }
   const owned: Array<{ socket: string; bootId: unknown }> = []
-  const launch = () => electron.launch({ executablePath: electronExecutable, args: [desktopDirectory], env })
+  const launch = () => electron.launch({ executablePath: signedApp ? join(signedApp, 'Contents/MacOS/Lux ADE') : electronExecutable,
+    args: signedApp ? [] : [desktopDirectory], env })
   let application = await launch()
   try {
     let window = await application.firstWindow()
@@ -123,7 +126,11 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
     expect((await window.evaluate(() => window.adeHost.browser.list())).tabs.map((tab) => tab.id)).toEqual([personalId])
     await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, `${url}/probe`), { id: personalId, url: web.url })
     await expect.poll(() => web.reports.filter((item) => item.page === 'probe').at(-1)?.cookie).toContain('profile=personal')
+    await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.observedUrl)
+      .toContain('/probe')
     await quitNormally(application)
+    const personalStorageKey = createHash('sha256').update(first.id).digest('hex')
+    await rename(join(env.ADE_E2E_USER_DATA_DIR, 'browser-sessions', personalStorageKey), join(first.home, 'browser-session'))
     application = await launch()
     window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
@@ -169,6 +176,9 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
     expect((await window.evaluate(() => window.adeHost.browser.list())).tabs.map((tab) => tab.id)).toEqual([workId])
     await expect(window.evaluate((id) => window.adeHost.browser.select(id), personalId)).rejects.toThrow(/unavailable/)
     expect((await window.evaluate(() => window.adeHost.browser.list())).selectedId).toBe(workId)
+    await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, `${url}/probe`), { id: workId, url: web.url })
+    await expect.poll(() => web.reports.filter((item) => item.page === 'probe').at(-1)?.cookie)
+      .toContain('profile=work')
   } finally {
     await application.close().catch(() => undefined)
     for (const item of owned) await stopOwned(item.socket, item.bootId).catch(() => undefined)

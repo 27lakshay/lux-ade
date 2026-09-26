@@ -1,6 +1,6 @@
 # Embedded browser preview in a profile
 
-Status: implemented partial slice; post-restart cookie persistence remains open
+Status: implemented partial slice; full F091/F092 acceptance remains open
 Type: implementation ticket
 Requirements: F091, F092 (daily-use slice), 08-S11, 08-S12
 Depends on: desktop profile selection, managed service preview URL, Electron main-process ownership
@@ -48,19 +48,28 @@ isolation while running, metadata across normal restart, fixed-socket
 isolation, and closed-ID rejection. This is partial F091/F092 and 08-S11/08-S12
 evidence; it does not close those requirements.
 
-**Open failure:** a persistent `Max-Age` cookie in the inactive Work browser
-profile is present through `session.cookies.get` before quit but absent after
-restart in this unsigned Electron 44.4.5 development build. The test fixture
-observed no `Cookies` database under its isolated temporary profile tree after
-`cookies.flushStore()`. The post-restart cookie assertion failed repeatedly.
-Electron's [cookie API](https://www.electronjs.org/docs/latest/api/cookies)
-documents the flush operation, while its [code-signing guidance](https://www.electronjs.org/docs/latest/tutorial/code-signing)
-warns that cookie encryption can behave inconsistently without a stable code
-signature. This may be a local signing/runtime issue; it is not evidence that
-packaged signed builds work. Verify on a consistently signed app or implement
-and E2E-test a secure profile cookie restore before closing F092. The passing
-browser E2E covers live cookie isolation and restart metadata, not cookie
-persistence.
+**Resolved cookie failure:** the original Work `/probe` after restart returned
+no cookie despite a non-session `Max-Age` cookie being present before quit.
+Electron reported its session as persistent, but no `Cookies` database appeared
+under the ADE profile runtime path. Flushing before closing the view did not
+help. A separate locally signed package passed `codesign --verify --deep
+--strict` but failed the same Work probe, so signing alone did not fix it.
+A disposable Electron 44.4.5 process reproduced the loss when `session.fromPath`
+pointed outside Electron's `userData` directory; the same process retained its
+cookie when the path was inside `userData`. ADE now stores each profile's
+browser session at a stable path inside Electron's data directory, keyed by
+ADE profile identity and home. Tab metadata remains in the ADE profile home.
+Existing preview storage is copied on first use, leaving the original intact.
+The running ADE E2E moves a Personal session to the former location, restarts,
+and verifies migration plus its cookie; it also verifies the inactive Work
+cookie after restart without revisiting `/set`. F092 is still partial until
+its full spec acceptance and browser-profile lifecycle are checked. The
+browser session is now physically separate from profile-core data, so managed
+backup and retention work must include this stable `userData` path. The legacy
+copy stays in place for rollback; R015 cleanup of verified old copies remains
+open. Interrupted migration removes its temporary copy and does not erase the
+source. A marker in the new session distinguishes a completed migration from
+an unexplained existing destination.
 
 An independent code review also identified switch-time view reattachment,
 pending tab-state writes on quit, download permission, aborted-load state,
