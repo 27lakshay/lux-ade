@@ -279,6 +279,17 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   route-retirement slices. The integrated source suite passes 66/66, the
   packaged suite 5/5, strict Clippy and Rust formatting pass, and the GPUI
   legacy build succeeds. These do not close F088 or F090.
+- Commit `8dc089d` fixes the real-process E2E fixture's detached-runtime
+  cleanup. An unexpected daemon exit first left its original runtime answering
+  after fixture teardown; the same behavioral assertion passes after the fix.
+  Startup failure after runtime launch also reaps the verified instance. Cleanup
+  confirms both PID and socket exit before deleting fixture data, with bounded
+  retries and retained diagnostics on uncertainty. On macOS 26.6.1 (Apple M4),
+  `pnpm exec playwright test e2e/specs/daemon-lifecycle.spec.ts --repeat-each=3`
+  passes 9/9 and `pnpm check` passes 68/68 with type checking, Fallow and builds.
+  An earlier full run timed out because fixture RPC left a silent socket close
+  pending; its close path now rejects, and the final integrated run passes.
+  This improves test reliability; it does not close product requirement R006.
 - Next daily-use work: Oh My Pi managed native accounts, real-agent
   account/control acceptance, proxy recovery, and browser
   ownership and backup/retention coordination. Continue
