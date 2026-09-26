@@ -19,7 +19,13 @@ async function executableWrapper(filename: string, binary: string, script: strin
 async function stopOwned(socket: string, bootId: unknown): Promise<void> {
   const hello = await rpc(socket, { op: 'hello' }).catch(() => null)
   if (!hello || hello.boot_id !== bootId) return
-  await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try { await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId }); break }
+    catch (error) {
+      if (attempt === 49 || !String(error).includes('A command is still being admitted')) throw error
+      await new Promise((done) => setTimeout(done, 100))
+    }
+  }
   if (typeof hello.runtime_socket !== 'string') return
   for (let attempt = 0; attempt < 50; attempt++) {
     try {
