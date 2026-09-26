@@ -483,7 +483,7 @@ ipcMain.handle('ade:workspace-select', async (event, workspaceId: unknown, conve
     generation: clientGeneration, epoch: (prior?.epoch ?? 0) + 1 })
   return true
 })
-const serviceOps = new Set(['service.list', 'service.configure', 'service.start', 'service.stop', 'service.remove'])
+const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'listener.list'])
 ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !serviceOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid service request')
@@ -493,6 +493,12 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
   const generation = clientGeneration
   const state = client.getState()
   if (state.status !== 'connected' || !endpoint) throw new Error('Profile daemon is unavailable')
+  if (op === 'listener.list') {
+    if (Object.keys(args).length) throw new Error('Listener inventory does not accept fields')
+    const result = await requestDaemon(endpoint, op, {})
+    if (generation !== clientGeneration || socket !== endpoint) throw new Error('Profile changed while observing listeners')
+    return result
+  }
   if (!validId(args.workspace_id) || !state.catalog?.workspaces.some((item) => item.id === args.workspace_id)) {
     throw new Error('Workspace is unavailable in this profile')
   }
@@ -508,6 +514,12 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
   if (op === 'service.configure') {
     if (!args.config || typeof args.config !== 'object' || Array.isArray(args.config)) throw new Error('Invalid service configuration')
     request.config = args.config
+  }
+  if (op === 'service.inspect') {
+    if (!Number.isSafeInteger(args.tail_bytes) || (args.tail_bytes as number) < 1 || (args.tail_bytes as number) > 32768) {
+      throw new Error('Invalid service output limit')
+    }
+    request.tail_bytes = args.tail_bytes
   }
   const result = await requestDaemon(endpoint, op, request)
   if (generation !== clientGeneration || socket !== endpoint) {

@@ -48,6 +48,12 @@ h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.0
 .service-row .service-ports { color: #c5cfcb; font-family: ui-monospace, monospace; }
 .service-state { color: #84c8aa; font-size: 12px; }
 .service-actions { margin-top: 10px; }
+.service-inspection { border-top: 1px solid #323637; margin-top: 12px; padding-top: 10px; }
+.service-inspection h3 { font-size: 12px; margin: 12px 0 6px; }
+.service-inspection pre { background: #141718; border-radius: 7px; font-size: 11px; max-height: 180px; overflow: auto; padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.service-listeners { color: #a5adae; font-size: 12px; margin-top: 12px; }
+.service-listeners summary { cursor: pointer; }
+.service-listeners ul { max-height: 150px; overflow: auto; padding-left: 18px; }
 .terminal-pane h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
 .terminal-pane [role="alert"] { color: #eeb87b; font-size: 13px; }
 .terminal-surface { background: #101213; border: 1px solid #323637; border-radius: 12px; height: 390px; overflow: hidden; padding: 10px; }

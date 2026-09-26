@@ -16,6 +16,17 @@ type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string 
 type Service = { name: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>; config: { program: string } }
 type ServiceState = { state: string; metrics: Frame | null }
 type ServiceList = { services: Service[]; states: Record<string, ServiceState> }
+type ListenerInventory = { coverage: string; listeners: Array<{ address: string; port: number; pid: number; ownership: string }>;
+  assignments: Array<{ workspace_id: string; service_name: string; variable: string; port: number; observation: string }> }
+type ServiceInspection = { execution_state: string; execution_error?: string | null;
+  readiness: { state: string; application_ready: string; observation_error?: string | null };
+  logs: { available: boolean; bytes_base64?: string; truncated?: boolean; reason?: string } }
+
+function serviceOutput(logs: ServiceInspection['logs']): string {
+  if (!logs.available || !logs.bytes_base64) return ''
+  try { return new TextDecoder().decode(Uint8Array.from(atob(logs.bytes_base64), (character) => character.charCodeAt(0))) }
+  catch { return 'Output could not be decoded' }
+}
 
 declare global {
   interface Window {
@@ -44,21 +55,54 @@ declare global {
 
 function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const [list, setList] = React.useState<ServiceList | null>(null)
+  const [inventory, setInventory] = React.useState<ListenerInventory | null>(null)
+  const [inspection, setInspection] = React.useState<ServiceInspection | null>(null)
+  const [detailName, setDetailName] = React.useState<string | null>(null)
+  const [inventoryError, setInventoryError] = React.useState('')
   const [busy, setBusy] = React.useState('')
   const [error, setError] = React.useState('')
   const [refresh, setRefresh] = React.useState(0)
   React.useEffect(() => {
     let disposed = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const load = async (): Promise<void> => {
       try {
-        const response = await window.adeHost.requestService('service.list', { workspace_id: workspace.id })
-        if (!disposed) { setList(response as ServiceList); setError('') }
-      } catch (reason) { if (!disposed) setError(String(reason)) }
+        const [services, listeners] = await Promise.allSettled([
+          window.adeHost.requestService('service.list', { workspace_id: workspace.id }),
+          window.adeHost.requestService('listener.list', {}),
+        ])
+        if (disposed) return
+        if (services.status === 'fulfilled') { setList(services.value as ServiceList); setError('') }
+        else setError(String(services.reason))
+        if (listeners.status === 'fulfilled') {
+          setInventory(listeners.value as ListenerInventory)
+          setInventoryError('')
+        } else {
+          setInventory(null)
+          setInventoryError(String(listeners.reason))
+        }
+      } finally { if (!disposed) timer = setTimeout(() => { void load() }, 3000) }
     }
     void load()
-    const timer = setInterval(() => { void load() }, 3000)
-    return () => { disposed = true; clearInterval(timer) }
+    return () => { disposed = true; clearTimeout(timer) }
   }, [workspace.id, refresh])
+  React.useEffect(() => {
+    if (!detailName) { setInspection(null); return }
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = async (): Promise<void> => {
+      try {
+        const result = await window.adeHost.requestService('service.inspect', {
+          workspace_id: workspace.id, name: detailName, tail_bytes: 4096,
+        })
+        if (!disposed) { setInspection(result as ServiceInspection); setError('') }
+      } catch (reason) { if (!disposed) setError(String(reason)) }
+      finally { if (!disposed) timer = setTimeout(() => { void load() }, 3000) }
+    }
+    setInspection(null)
+    void load()
+    return () => { disposed = true; clearTimeout(timer) }
+  }, [workspace.id, detailName, refresh])
   const change = async (name: string, action: 'start' | 'stop'): Promise<void> => {
     if (busy) return
     setBusy(name)
@@ -71,8 +115,9 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
   }
   return <section className="service-pane" aria-label="Workspace services">
     <div className="service-heading"><h2>Services</h2><button onClick={() => setRefresh((value) => value + 1)}>Refresh</button></div>
-    <p className="muted">Configured services keep running when this window closes. Assigned ports do not confirm a listener.</p>
+    <p className="muted">Configured services keep running when this window closes. TCP observation does not verify application health.</p>
     {error && <p role="alert" className="inline-error">{error}</p>}
+    {inventoryError && <p role="status" className="muted">Listener observation unavailable: {inventoryError}</p>}
     {!list && !error && <p className="muted">Loading services…</p>}
     {list?.services.length === 0 && <p className="muted">No services configured in this workspace. Use the ADE CLI to add one.</p>}
     {list?.services.map((service) => {
@@ -81,13 +126,35 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
       return <article className="service-row" key={service.name} aria-label={`Service ${service.name}`}>
         <div><strong>{service.name}</strong><span className="service-state">{state}</span></div>
         <p>{service.config.program}</p>
-        <p className="service-ports">{Object.entries(service.ports).map(([variable, port]) => `${variable}=${port}`).join(' · ') || 'No assigned ports'}</p>
+        <p className="service-ports">{Object.entries(service.ports).map(([variable, port]) => {
+          const observation = inventory?.assignments.find((item) => item.workspace_id === workspace.id &&
+            item.service_name === service.name && item.variable === variable && item.port === port)?.observation ?? (inventory ? 'unknown' : 'unavailable')
+          return `${variable}=${port} (${observation.replaceAll('_', ' ')})`
+        }).join(' · ') || 'No assigned ports'}</p>
         <div className="service-actions">
           <button disabled={Boolean(busy) || owned} onClick={() => void change(service.name, 'start')}>Start</button>
           <button disabled={Boolean(busy) || !owned} onClick={() => void change(service.name, 'stop')}>Stop</button>
+          <button type="button" aria-expanded={detailName === service.name} onClick={() => setDetailName((value) =>
+            value === service.name ? null : service.name)}>{detailName === service.name ? 'Hide details' : 'Inspect'}</button>
         </div>
+        {detailName === service.name && <div className="service-inspection">
+          {!inspection ? <p className="muted">Loading service details…</p> : <>
+            <p>Execution: {inspection.execution_state} · TCP: {inspection.readiness.state.replaceAll('_', ' ')} · Application health: {inspection.readiness.application_ready}</p>
+            {(inspection.execution_error || inspection.readiness.observation_error) &&
+              <p role="alert">{inspection.execution_error || inspection.readiness.observation_error}</p>}
+            <h3>Recent output</h3>
+            {inspection.logs.available ? <><pre>{serviceOutput(inspection.logs) || 'No output yet'}</pre>
+              {inspection.logs.truncated && <p>Earlier output is outside the retained tail.</p>}</>
+              : <p>Output unavailable: {inspection.logs.reason ?? 'unknown reason'}</p>}
+          </>}
+        </div>}
       </article>
     })}
+    {inventory && <details className="service-listeners"><summary>Other local TCP listeners ({inventory.listeners.filter((item) => item.ownership === 'unknown').length}) · {inventory.coverage} coverage</summary>
+      <p>Workspace ownership is unknown for these listeners.</p>
+      <ul>{inventory.listeners.filter((item) => item.ownership === 'unknown').map((item) =>
+        <li key={`${item.pid}:${item.address}:${item.port}`}>{item.address}:{item.port} · PID {item.pid}</li>)}</ul>
+    </details>}
   </section>
 }
 

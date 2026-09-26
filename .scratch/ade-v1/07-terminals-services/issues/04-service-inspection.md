@@ -14,3 +14,10 @@ Contract and limits: `service.inspect` accepts `workspace_id`, `name`, and optio
 Evidence (26 September 2026): A real-daemon E2E observes a configured but stopped service, a running Node HTTP service with a direct-process listener and a 50 KiB PTY output burst, a running process that never binds its assigned port, and retained output after stop. The bounded tail reports byte offsets and truncation. Invalid service identity and tail limits fail. Backend build and Rust formatting checks pass. Application-level health, persistent logs and UI remain open.
 
 Failure-path evidence: A second real-daemon E2E kills only its isolated runtime supervisor. `service.inspect` still returns the configured service with unavailable execution, unknown readiness and unavailable output. Inspection re-reads the durable service identity after listener and output observations; a concurrent stop, restart or reconfiguration yields an explicit unknown result instead of combining an old owner with a new listener.
+
+The Electron Services pane now requests `service.inspect` for an expanded
+service, displays bounded recent output, names TCP listener evidence and keeps
+application health explicitly unverified. It updates while open and after
+start/stop without overlapping polls. A real Electron/daemon E2E sees the log
+marker and TCP state through the UI before and after app closure. HTTP health
+probes and persistent logs remain outside this slice.

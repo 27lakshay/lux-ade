@@ -12,3 +12,11 @@ E2E acceptance: In an isolated real daemon and Electron process, configure a ser
 Dependencies and limits: The daemon already owns `service.configure`, `service.list`, `service.start` and `service.stop`, including durable service identities and verified stop. The configured port is an advisory assignment until the child binds. This slice does not discover arbitrary processes, attribute unknown listeners to workspaces, implement readiness checks, or meet the full F085/F086 acceptance criteria.
 
 Evidence (26 September 2026): The local CLI configures, lists, starts and stops a managed service. Electron lists its configured port and execution state and starts/stops it through the same daemon. A real-process E2E keeps an HTTP service alive across full Electron closure/relaunch, then verifies stop closes its listener. The UI deliberately states that an assigned port does not prove a listener. Arbitrary listener discovery, ownership attribution and readiness remain open, so F085/F086 retain their register status.
+
+Follow-up slice: Electron now displays the daemon's listener observation beside
+each assigned port, plus an inspection panel with execution state, TCP evidence,
+bounded output and explicit unverified application health. A real-process E2E
+checks unobserved, verified managed and stopped states through the app, as well
+as an unrelated listener with unknown workspace ownership. These are still
+partial F085/F086 results; application health checks and durable service logs
+remain open.
