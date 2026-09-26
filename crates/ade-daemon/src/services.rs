@@ -141,6 +141,16 @@ impl Store {
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
         let mut service = Service {
+            identity: before.as_ref().map_or_else(
+                || crate::model::new_id("service"),
+                |s| {
+                    if s.identity.is_empty() {
+                        crate::model::new_id("service")
+                    } else {
+                        s.identity.clone()
+                    }
+                },
+            ),
             terminal_id: before.as_ref().and_then(|s| s.terminal_id.clone()),
             terminal_owner: None,
             last_run_transfer_id: before.as_ref().and_then(|s| s.last_run_transfer_id.clone()),

@@ -272,7 +272,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=9).contains(&version),
+            (0..=10).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -353,6 +353,37 @@ impl Store {
             tx.execute_batch("CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, provider TEXT NOT NULL, data TEXT NOT NULL); PRAGMA user_version=9;")?;
             tx.execute(
                 "INSERT OR IGNORE INTO schema_migrations VALUES(9,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        if version < 10 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            let rows = {
+                let mut statement = tx.prepare("SELECT workspace_id,name,data FROM services")?;
+                statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (workspace, name, data) in rows {
+                let mut service: ade_core::services::Service = serde_json::from_str(&data)?;
+                if service.identity.is_empty() {
+                    service.identity = crate::model::new_id("service");
+                    tx.execute(
+                        "UPDATE services SET data=?3 WHERE workspace_id=?1 AND name=?2",
+                        params![workspace, name, serde_json::to_string(&service)?],
+                    )?;
+                }
+            }
+            tx.execute_batch("PRAGMA user_version=10;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(10,?1)",
                 [now_ms()],
             )?;
             tx.commit()?;

@@ -10,7 +10,7 @@ use std::{
     os::unix::{fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Condvar, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -19,16 +19,211 @@ fn error_response(error: impl Into<anyhow::Error>) -> Value {
     ade_core::error::error_envelope(error.into())
 }
 const MAX_REQUEST: u64 = 12 * 1024 * 1024;
+struct ProbeBudget {
+    active: Mutex<usize>,
+    available: Condvar,
+}
+struct ProbePermit<'a>(&'a ProbeBudget);
+impl ProbeBudget {
+    fn acquire(&self) -> ProbePermit<'_> {
+        let mut active = self.active.lock().unwrap();
+        while *active >= 4 {
+            active = self.available.wait(active).unwrap();
+        }
+        *active += 1;
+        ProbePermit(self)
+    }
+}
+impl Drop for ProbePermit<'_> {
+    fn drop(&mut self) {
+        let mut active = self.0.active.lock().unwrap();
+        *active -= 1;
+        self.0.available.notify_one();
+    }
+}
 struct Host {
     socket: PathBuf,
     sessions: Arc<Sessions>,
     runtime: Arc<Supervisor>,
     default_workspace: String,
     leases: Mutex<HashMap<String, Lease>>,
+    proxy_probe: ProbeBudget,
     admission: RwLock<()>,
     stopping: AtomicBool,
 }
 impl Host {
+    fn proxy_service(&self, request: &Value) -> anyhow::Result<(String, String, String, Value)> {
+        let workspace = request["workspace_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        let name = request["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
+        let variable = request["port_variable"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing port variable"))?;
+        let listed = self
+            .sessions
+            .command(&json!({"op":"service.list","workspace_id":workspace}))?;
+        let service = listed["services"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["name"] == name))
+            .ok_or_else(|| anyhow::anyhow!("Unknown managed service"))?;
+        anyhow::ensure!(
+            service["ports"][variable].as_u64().is_some(),
+            "Service has no configured port variable"
+        );
+        Ok((
+            workspace.to_owned(),
+            name.to_owned(),
+            variable.to_owned(),
+            listed,
+        ))
+    }
+
+    fn proxy_ensure(&self, request: &Value) -> anyhow::Result<Value> {
+        let (workspace, name, variable, listed) = self.proxy_service(request)?;
+        let service = listed["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap();
+        let identity = service["identity"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Service identity unavailable"))?;
+        let target_port = service["ports"][&variable].as_u64().unwrap();
+        let remap = request["op"] == "service.proxy.remap";
+        let expected_route_identity = if remap {
+            anyhow::ensure!(
+                request["expected_service_identity"] == identity,
+                "Service identity changed; inspect it again"
+            );
+            anyhow::ensure!(
+                request["expected_target_port"] == target_port,
+                "Service target port changed; inspect it again"
+            );
+            request["expected_route_identity"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("Missing expected route identity"))?
+        } else {
+            ""
+        };
+        let expected_route_port = if remap {
+            request["expected_route_port"]
+                .as_u64()
+                .filter(|port| (1..=65535).contains(port))
+                .ok_or_else(|| anyhow::anyhow!("Missing expected route port"))?
+        } else {
+            0
+        };
+        self.runtime
+            .command(json!({"op":"proxy.ensure","workspace_id":workspace,
+            "service_name":name,"port_variable":variable,"service_identity":identity,
+            "target_port":target_port,"remap":remap,
+            "expected_route_identity":expected_route_identity,
+            "expected_route_port":expected_route_port,
+            "daemon_socket":self.socket}))
+    }
+
+    fn proxy_inspect(&self, request: &Value) -> anyhow::Result<Value> {
+        let workspace = request["workspace_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+        let name = request["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
+        let variable = request["port_variable"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing port variable"))?;
+        self.runtime
+            .command(json!({"op":"proxy.inspect","workspace_id":workspace,
+            "service_name":name,"port_variable":variable}))
+    }
+
+    fn proxy_target(&self, request: &Value) -> anyhow::Result<Value> {
+        let (workspace, name, variable, listed) = self.proxy_service(request)?;
+        anyhow::ensure!(
+            listed["states"][&name]["state"] == "running",
+            "Managed service is unavailable"
+        );
+        let service = listed["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap();
+        let port = service["ports"][&variable].as_u64().unwrap();
+        anyhow::ensure!(
+            request["expected_port"] == port && request["service_identity"] == service["identity"],
+            "Stable service proxy target changed; explicitly remap it"
+        );
+        let transfer = listed["states"][&name]["metrics"]["transfer_id"].clone();
+        let pid = listed["states"][&name]["metrics"]["shell_pid"].clone();
+        anyhow::ensure!(
+            transfer.is_string() && pid.is_number(),
+            "Service process identity unavailable"
+        );
+        let host = request["connected_host"]
+            .as_str()
+            .filter(|host| matches!(*host, "127.0.0.1" | "::1"))
+            .ok_or_else(|| anyhow::anyhow!("Invalid connected proxy host"))?;
+        let family = if host == "127.0.0.1" { "ipv4" } else { "ipv6" };
+        // This observation happens after the proxy has connected but before it
+        // forwards any request bytes. Bound concurrent lsof probes;
+        // never reuse a positive result after the listener may have changed.
+        let _probe = self.proxy_probe.acquire();
+        let inventory = self.sessions.command(&json!({"op":"listener.list"}))?;
+        let rows = inventory["listeners"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Listener inventory is unavailable"))?;
+        let covers_loopback = |address: &str| match family {
+            "ipv4" => matches!(address, "127.0.0.1" | "0.0.0.0" | "*"),
+            _ => matches!(address, "::1" | "::" | "*"),
+        };
+        let own = rows.iter().any(|row| {
+            row["family"] == family
+                && row["port"] == port
+                && row["pid"] == pid
+                && row["workspace_id"] == workspace
+                && row["service_name"] == name
+                && row["address"].as_str().is_some_and(covers_loopback)
+        });
+        let contested = rows.iter().any(|row| {
+            row["family"] == family
+                && row["port"] == port
+                && row["pid"] != pid
+                && row["address"].as_str().is_some_and(covers_loopback)
+        });
+        anyhow::ensure!(
+            own && !contested,
+            "Service has no verified loopback listener"
+        );
+        drop(_probe);
+        let current = self
+            .sessions
+            .command(&json!({"op":"service.list","workspace_id":workspace}))?;
+        anyhow::ensure!(
+            current["states"][&name]["state"] == "running"
+                && current["states"][&name]["metrics"]["transfer_id"] == transfer
+                && current["states"][&name]["metrics"]["shell_pid"] == pid
+                && current["services"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| {
+                        item["name"] == name
+                            && item["identity"] == service["identity"]
+                            && item["ports"][&variable] == port
+                    })),
+            "Managed service changed during proxy resolution"
+        );
+        Ok(
+            json!({"type":"service_proxy_target","host":host,"port":port,
+            "transfer_id":transfer,"pid":pid}),
+        )
+    }
+
     fn refresh_leases(&self) -> anyhow::Result<()> {
         let mut leases = self.leases.lock().unwrap();
         let state = self.runtime.command(json!({"op":"terminal.list"}))?;
@@ -310,7 +505,13 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                 if op == "worktree.remove" {
                     host.refresh_leases()?;
                 }
-                match if op == "terminal.stop" || op == "terminal.retire" {
+                match if op == "service.proxy.ensure" || op == "service.proxy.remap" {
+                    host.proxy_ensure(&request)
+                } else if op == "service.proxy.inspect" {
+                    host.proxy_inspect(&request)
+                } else if op == "service.proxy.target" {
+                    host.proxy_target(&request)
+                } else if op == "terminal.stop" || op == "terminal.retire" {
                     host.terminal_lifecycle(&request)
                 } else if op == "terminal.restart" {
                     host.ensure_terminal(
@@ -432,6 +633,10 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         runtime,
         default_workspace,
         leases: Mutex::new(HashMap::new()),
+        proxy_probe: ProbeBudget {
+            active: Mutex::new(0),
+            available: Condvar::new(),
+        },
         admission: RwLock::new(()),
         stopping: AtomicBool::new(false),
     });

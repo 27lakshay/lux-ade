@@ -1,6 +1,6 @@
 //! Stable owner of PTYs, parser state and provider processes. This process never
 //! opens the application database or executes worktree lifecycle requests.
-use super::terminal_host;
+use super::{service_proxy, terminal_host};
 use ade_runtime::{
     model::{WorkspaceRecord, now_ms},
     runtime::{self, PROTOCOL, read_frame, write_frame},
@@ -41,6 +41,7 @@ struct State {
 }
 struct Host {
     data: Mutex<State>,
+    proxies: service_proxy::Manager,
     directory: PathBuf,
     instance: String,
     stop: AtomicBool,
@@ -71,6 +72,44 @@ impl Host {
             "Runtime owner changed"
         );
         match request["op"].as_str().unwrap_or("") {
+            "proxy.ensure" => self.proxies.ensure(
+                request["workspace_id"]
+                    .as_str()
+                    .context("Missing workspace ID")?,
+                request["service_name"]
+                    .as_str()
+                    .context("Missing service name")?,
+                request["port_variable"]
+                    .as_str()
+                    .context("Missing port variable")?,
+                request["service_identity"]
+                    .as_str()
+                    .context("Missing service identity")?,
+                u16::try_from(
+                    request["target_port"]
+                        .as_u64()
+                        .context("Missing target port")?,
+                )?,
+                request["remap"] == true,
+                request["expected_route_identity"].as_str().unwrap_or(""),
+                u16::try_from(request["expected_route_port"].as_u64().unwrap_or(0))?,
+                std::path::Path::new(
+                    request["daemon_socket"]
+                        .as_str()
+                        .context("Missing daemon socket")?,
+                ),
+            ),
+            "proxy.inspect" => self.proxies.inspect(
+                request["workspace_id"]
+                    .as_str()
+                    .context("Missing workspace ID")?,
+                request["service_name"]
+                    .as_str()
+                    .context("Missing service name")?,
+                request["port_variable"]
+                    .as_str()
+                    .context("Missing port variable")?,
+            ),
             "terminal.list" => Ok(
                 json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics()})).collect::<Vec<_>>()}),
             ),
@@ -510,6 +549,7 @@ pub(super) fn serve(directory: PathBuf) -> Result<()> {
             terminals: HashMap::new(),
             agents: HashMap::new(),
         }),
+        proxies: service_proxy::Manager::open(&directory)?,
         directory,
         instance: uuid::Uuid::new_v4().to_string(),
         stop: AtomicBool::new(false),
@@ -547,5 +587,6 @@ pub(super) fn serve(directory: PathBuf) -> Result<()> {
     for run in host.data.lock().unwrap().agents.values() {
         run.stop();
     }
+    host.proxies.shutdown();
     Ok(())
 }

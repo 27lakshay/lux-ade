@@ -152,6 +152,9 @@ impl Config {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Service {
+    /// Durable incarnation; a removed service with the same name gets a new ID.
+    #[serde(default)]
+    pub identity: String,
     #[serde(default)]
     pub terminal_id: Option<String>,
     #[serde(default)]
