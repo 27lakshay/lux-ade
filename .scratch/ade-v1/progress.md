@@ -29,13 +29,14 @@ queue unrelated improvements.
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es | Real Oh My Pi account; managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
-| Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
+| Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume, paged diffs and durable review feedback | Matching CLI coverage for the rest of the selected daily-use flow |
 
 Blocker: a real Oh My Pi account is unavailable; continue other gate criteria
 without treating the fixture as live-account proof. Active owner: coordinator;
-no worker is running. Next assignment: connected F086/F088/F090 service,
-script and browser daily-use flow with matching CLI controls. The remaining
+no worker is running. Next assignment: remaining primary-provider daily-use
+criteria, beginning with managed two-account execution and installed continuity
+for available Codex and Claude accounts. The remaining
 rows are partial evidence, not closed feature IDs. F075/06-S06 and unrelated
 V1 work remain queued.
 
@@ -114,6 +115,18 @@ V1 work remain queued.
 | `75fbeda` | F074 structured feedback and history | 170 source E2Es passed/one host skip; installed 6/6; multi-note/range, stale edit, history search, uncertain send and pre-dispatch crash E2Es |
 | `8aa913a` | F061 live folder/project identity | Git and ordinary folder registration, stable reopen, missing/replaced warning and unrelated-binding refusal E2Es |
 | `3279394` | CLI review parity | Named paged diff, feedback search and durable same-ID feedback send E2E |
+| `16d4ce2` | Connected daily service flow | Workspace build script feeds managed HTTP service through stable URL and browser preview across app reopen; stopped URL returns 503 |
+
+Connected service checkpoint, 2026-09-26: the selected daily-use
+script-to-service-to-preview scenario now passes through Electron, CLI and a
+real daemon/runtime. The full source check passed (Playwright last-run status:
+passed); the focused E2E passed 1/1 after correcting its success-label
+expectation. The installed suite was not repeated because only E2E coverage
+changed. No test-owned ADE process remains. F086/F088/F090 remain unverified
+for their broader feature acceptance. Approximate time: implementation 3
+minutes, local review 1 minute, focused checks and diagnosis 1 minute, full
+source checks 5.5 minutes, packaging 0 minutes. The next slice stays on the
+daily-use provider gate.
 
 F061/CLI review checkpoint, 2026-09-26: F061 is verified; F074 remains
 verified. F061 required cases pass for both Git projects and ordinary folders,
