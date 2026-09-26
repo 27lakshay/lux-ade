@@ -137,6 +137,44 @@ impl Host {
                         .context("Missing expected proxy port")?,
                 )?,
             ),
+            "proxy.recovery.inspect" => Ok(self.proxies.recovery_inspect()),
+            "proxy.recovery.retry" => self.proxies.recovery_retry(
+                request["workspace_id"]
+                    .as_str()
+                    .context("Missing workspace ID")?,
+                request["service_name"]
+                    .as_str()
+                    .context("Missing service name")?,
+                request["port_variable"]
+                    .as_str()
+                    .context("Missing port variable")?,
+                request["expected_route_id"]
+                    .as_str()
+                    .context("Missing expected route ID")?,
+                request["expected_service_identity"]
+                    .as_str()
+                    .context("Missing expected service identity")?,
+                u16::try_from(
+                    request["expected_target_port"]
+                        .as_u64()
+                        .context("Missing expected target port")?,
+                )?,
+                u16::try_from(
+                    request["expected_proxy_port"]
+                        .as_u64()
+                        .context("Missing expected proxy port")?,
+                )?,
+                std::path::Path::new(
+                    request["daemon_socket"]
+                        .as_str()
+                        .context("Missing daemon socket")?,
+                ),
+            ),
+            "proxy.recovery.reset" => self.proxies.recovery_reset(
+                request["expected_registry_sha256"]
+                    .as_str()
+                    .context("Missing expected registry SHA-256")?,
+            ),
             "terminal.list" => Ok(
                 json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics()})).collect::<Vec<_>>()}),
             ),

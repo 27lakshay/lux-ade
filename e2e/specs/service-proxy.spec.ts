@@ -384,11 +384,19 @@ test('a v9 profile backfills distinct durable service identities before assignin
   }
   const stop = async (): Promise<void> => {
     const running = child
+    const runtimePid = hello?.runtime_pid
     await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello?.boot_id })
     await expect.poll(() => running?.exitCode).not.toBeNull()
     if (typeof hello?.runtime_socket === 'string') {
       await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance,
         stop_active: true })
+    }
+    // runtime.stop acknowledges the request before its listener threads exit.
+    // Wait for the exact detached runtime to release its saved proxy ports.
+    if (typeof runtimePid === 'number') {
+      await expect.poll(() => {
+        try { process.kill(runtimePid, 0); return true } catch { return false }
+      }).toBe(false)
     }
   }
   try {
@@ -446,6 +454,196 @@ with sqlite3.connect(sys.argv[1]) as db:
       'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA user_version").fetchone()[0])', database])
     expect(stdout.trim()).toBe('10')
   } finally {
+    if (child && child.exitCode === null && hello) {
+      await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id }).catch(() => undefined)
+    }
+    if (child && child.exitCode === null) child.kill()
+    if (child && child.exitCode === null) await new Promise((done) => child?.once('exit', done))
+    if (typeof hello?.runtime_socket === 'string') {
+      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance,
+        stop_active: true }).catch(() => undefined)
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('proxy recovery preserves other routes and requires explicit fenced repair', async () => {
+  test.setTimeout(120_000)
+  const root = await mkdtemp(join(tmpdir(), 'ade-proxy-recovery-e2e-'))
+  const dataDirectory = join(root, 'data')
+  const socket = join(root, 'daemon.sock')
+  const registry = join(dataDirectory, 'service-proxies.json')
+  await mkdir(dataDirectory, { mode: 0o700 })
+  let child: ChildProcess | undefined
+  let hello: Record<string, unknown> | undefined
+  const launch = async (): Promise<void> => {
+    child = spawn(resolve('target/debug/ade-daemon'), [], { env: { ...process.env,
+      ADE_DATA_DIR: dataDirectory, ADE_SOCKET: socket, ADE_ROOT: root, SHELL: '/bin/sh' },
+    stdio: ['ignore', 'ignore', 'pipe'] })
+    for (let attempt = 0; attempt < 120; attempt++) {
+      try {
+        hello = await rpc(socket, { op: 'hello' })
+        if (hello.type === 'hello') return
+      } catch { /* Wait for daemon startup. */ }
+      if (child.exitCode !== null) throw new Error(`Daemon exited: ${child.exitCode}`)
+      await delay(50)
+    }
+    throw new Error('Daemon did not start')
+  }
+  const stop = async (): Promise<void> => {
+    const running = child
+    await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello?.boot_id })
+    await expect.poll(() => running?.exitCode).not.toBeNull()
+    if (typeof hello?.runtime_socket === 'string') {
+      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance,
+        stop_active: true })
+    }
+  }
+  const route = (name: string) => ({ workspace_id: workspace.id, name, port_variable: 'PORT' })
+  let workspace: { id: string }
+  let occupied: ReturnType<typeof createServer> | undefined
+  let occupiedRetired: ReturnType<typeof createServer> | undefined
+  try {
+    await launch()
+    workspace = (await rpc(socket, { op: 'workspace.open', path: root })).workspace as { id: string }
+    for (const name of ['one', 'two', 'three']) {
+      await rpc(socket, { op: 'service.configure', workspace_id: workspace.id, name,
+        revision: 0, config: { program: process.execPath,
+          args: ['-e', 'require("node:http").createServer((_,res)=>res.end(process.env.NAME)).listen(Number(process.env.PORT),"127.0.0.1");setInterval(()=>{},1000)'],
+          env: { NAME: name }, cwd: '.', ports: ['PORT'] } })
+    }
+    const first = await rpc(socket, { op: 'service.proxy.ensure', ...route('one') })
+    const second = await rpc(socket, { op: 'service.proxy.ensure', ...route('two') })
+    const third = await rpc(socket, { op: 'service.proxy.ensure', ...route('three') })
+    await stop()
+
+    occupied = createServer()
+    await new Promise<void>((done, fail) => {
+      occupied!.once('error', fail)
+      occupied!.listen(Number(first.port), '127.0.0.1', () => done())
+    })
+    occupiedRetired = createServer()
+    await new Promise<void>((done, fail) => {
+      occupiedRetired!.once('error', fail)
+      occupiedRetired!.listen(Number(third.port), '127.0.0.1', () => done())
+    })
+    await launch()
+    const degraded = await rpc(socket, { op: 'service.proxy.recovery.inspect' })
+    expect(degraded.status).toBe('degraded')
+    expect((degraded.routes as { route_id: string; availability: string }[])
+      .find((item) => item.route_id === first.route_id)?.availability).toBe('port_occupied')
+    expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('one') })))
+      .toMatchObject({ route_id: first.route_id, port: first.port,
+        url: null, availability: 'port_occupied' })
+    expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('two') })).url).toBe(second.url)
+    expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('three') })))
+      .toMatchObject({ route_id: third.route_id, url: null, availability: 'port_occupied' })
+    expect((await rpc(socket, { op: 'service.proxy.retire', ...route('three'),
+      expected_route_id: third.route_id, expected_service_identity: third.service_identity,
+      expected_target_port: third.target_port, expected_proxy_port: third.port })).type)
+      .toBe('service_proxy_retired')
+    await expect(rpc(socket, { op: 'service.proxy.inspect', ...route('three') }))
+      .rejects.toThrow(/does not exist/)
+    await expect(rpc(socket, { op: 'service.proxy.ensure', ...route('one') }))
+      .rejects.toThrow(/port is unavailable/)
+    await rpc(socket, { op: 'service.start', workspace_id: workspace.id, name: 'two' })
+    await expect.poll(async () => (await (await fetch(second.url as string)).text())).toBe('two')
+    const retry = { op: 'service.proxy.recovery.retry', ...route('one'),
+      expected_route_id: first.route_id, expected_service_identity: first.service_identity,
+      expected_target_port: first.target_port, expected_proxy_port: first.port }
+    await expect(rpc(socket, { ...retry, expected_route_id: 'route_stale' }))
+      .rejects.toThrow(/route changed/)
+    await expect(rpc(socket, retry)).rejects.toThrow(/port remains unavailable/)
+    await new Promise<void>((done, fail) => occupied!.close((error) => error ? fail(error) : done()))
+    occupied = undefined
+    expect((await rpc(socket, retry)).url).toBe(first.url)
+    await rpc(socket, { op: 'service.start', workspace_id: workspace.id, name: 'one' })
+    await expect.poll(async () => (await (await fetch(first.url as string)).text())).toBe('one')
+    expect((await (await fetch(second.url as string)).text())).toBe('two')
+
+    await stop()
+    const saved = await readFile(registry)
+    const broken = Buffer.from('{broken proxy registry')
+    await writeFile(registry, broken)
+    await launch()
+    const corrupt = await rpc(socket, { op: 'service.proxy.recovery.inspect' })
+    expect(corrupt).toMatchObject({ status: 'corrupt', routes: [] })
+    expect(corrupt.registry_sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(await readFile(registry)).toEqual(broken)
+    await expect(rpc(socket, { op: 'service.proxy.ensure', ...route('two') }))
+      .rejects.toThrow(/registry is corrupt/)
+    await expect(rpc(socket, { op: 'service.proxy.recovery.reset',
+      expected_registry_sha256: '0'.repeat(64) })).rejects.toThrow(/registry changed/)
+    expect(await readFile(registry)).toEqual(broken)
+
+    // An operator may restore known-good registry bytes offline. Neither route
+    // was deleted or silently assigned a replacement URL by the corrupt boot.
+    await stop()
+    await writeFile(registry, saved)
+    await launch()
+    expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('one') })))
+      .toMatchObject({ route_id: first.route_id, url: first.url })
+    expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('two') })))
+      .toMatchObject({ route_id: second.route_id, url: second.url })
+
+    await stop()
+    const duplicate = JSON.parse(saved.toString()) as { route_id: string }[]
+    duplicate[1]!.route_id = duplicate[0]!.route_id
+    await writeFile(registry, JSON.stringify(duplicate))
+    await launch()
+    expect((await rpc(socket, { op: 'service.proxy.recovery.inspect' })).status).toBe('corrupt')
+    await stop()
+    await writeFile(registry, Buffer.alloc(4 * 1024 * 1024 + 1))
+    await launch()
+    const oversized = await rpc(socket, { op: 'service.proxy.recovery.inspect' })
+    expect(oversized).toMatchObject({ status: 'corrupt', registry_sha256: '' })
+    await expect(rpc(socket, { op: 'service.proxy.recovery.reset',
+      expected_registry_sha256: '0'.repeat(64) })).rejects.toThrow(/offline recovery/)
+    await stop()
+    await rm(registry)
+    await mkdir(registry)
+    await launch()
+    const nonregular = await rpc(socket, { op: 'service.proxy.recovery.inspect' })
+    expect(nonregular).toMatchObject({ status: 'corrupt', registry_sha256: '' })
+    await expect(rpc(socket, { op: 'service.proxy.recovery.reset',
+      expected_registry_sha256: '0'.repeat(64) })).rejects.toThrow(/offline recovery/)
+    await stop()
+    await rm(registry, { recursive: true })
+    await execFileAsync('mkfifo', [registry])
+    await launch()
+    const fifo = await rpc(socket, { op: 'service.proxy.recovery.inspect' })
+    expect(fifo).toMatchObject({ status: 'corrupt', registry_sha256: '' })
+    await expect(rpc(socket, { op: 'service.proxy.recovery.reset',
+      expected_registry_sha256: '0'.repeat(64) })).rejects.toThrow(/offline recovery/)
+    await stop()
+    await rm(registry)
+    await writeFile(registry, broken)
+    await launch()
+    const current = await rpc(socket, { op: 'service.proxy.recovery.inspect' })
+    await writeFile(registry, '{new corruption')
+    await expect(rpc(socket, { op: 'service.proxy.recovery.reset',
+      expected_registry_sha256: current.registry_sha256 })).rejects.toThrow(/registry changed/)
+    await writeFile(registry, broken)
+    const reset = await rpc(socket, { op: 'service.proxy.recovery.reset',
+      expected_registry_sha256: current.registry_sha256 })
+    expect(reset).toMatchObject({ type: 'service_proxy_recovery_reset', status: 'reset' })
+    expect(await readFile(reset.archive as string)).toEqual(broken)
+    expect((await rpc(socket, { op: 'service.proxy.recovery.inspect' })).status).toBe('healthy')
+    await expect(rpc(socket, { op: 'service.proxy.inspect', ...route('two') }))
+      .rejects.toThrow(/does not exist/)
+    const afterReset = await rpc(socket, { op: 'service.proxy.ensure', ...route('two') })
+    expect(afterReset.route_id).not.toBe(second.route_id)
+    await stop()
+    await launch()
+    expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('two') })).route_id)
+      .toBe(afterReset.route_id)
+  } finally {
+    if (occupied?.listening) {
+      await new Promise<void>((done) => occupied!.close(() => done()))
+    }
+    if (occupiedRetired?.listening) {
+      await new Promise<void>((done) => occupiedRetired!.close(() => done()))
+    }
     if (child && child.exitCode === null && hello) {
       await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id }).catch(() => undefined)
     }

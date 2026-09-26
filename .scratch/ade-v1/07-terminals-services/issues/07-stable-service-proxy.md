@@ -30,6 +30,33 @@ rename also fails, the error explicitly states that persistence is uncertain.
 An admission gate rejects a TCP connection accepted before retirement if it
 only sends its HTTP headers after the retire acknowledgement.
 Older registries receive route IDs before their listeners start.
+On runtime startup, a route whose saved proxy port is occupied remains pinned
+to its original route ID and port, but has no ADE listener. Other routes bind
+normally. `service.proxy.inspect` returns `availability: port_occupied` and a
+null URL for that route so clients do not open the occupant by mistake.
+`service.proxy.recovery.inspect` returns `healthy`, `degraded`, or `corrupt`
+status and route snapshots. A blocked route can be retired through the normal
+four-field `service.proxy.retire` CAS or rebound to the same port through
+`service.proxy.recovery.retry` with those same four fields. Retry never assigns
+a replacement port.
+
+A malformed, oversized, duplicate-key, or invalid persisted registry starts
+the runtime in proxy recovery mode. Proxy mutations and ordinary inspection
+fail closed; other ADE capabilities can still start. Recovery inspection returns
+the SHA-256 of the unchanged bounded regular registry file. Non-regular files,
+files over 4 MiB, and duplicate route IDs require offline repair; reset refuses
+them without hashing or copying unbounded data. The registry reader opens with
+`O_NONBLOCK|O_NOFOLLOW` and checks the opened descriptor before reading, so a
+FIFO or symlink substituted for the path cannot hang startup or reset. An
+operator can restore known-good
+bytes offline and restart, or explicitly call `service.proxy.recovery.reset`
+with `expected_registry_sha256`. Reset verifies the current file, copies the
+corrupt bytes to a new mode-0600 archive, syncs the archive and directory,
+then atomically writes an empty registry. The result names the archive and
+reports `status: reset`. A changed digest rejects reset without replacing the
+file, including a change after the archive copy but before replacement. Reset
+explicitly discards the unknown routes from the active registry;
+it does not claim to recover data that cannot be parsed.
 Each HTTP connection connects to a loopback candidate, then asks the current
 daemon for a fresh, family-specific listener and run-identity proof before it
 forwards any request bytes. An unavailable daemon, stopped
@@ -62,6 +89,12 @@ deadline; request bodies and chunk trailers have total time and size limits.
   retired route stays absent after daemon/runtime restart; a newly ensured route
   has a new route ID. More than 256 create/retire cycles are possible. Registry
   persistence failure leaves the route reachable and inspectable.
+- Occupying one saved proxy port during runtime restart degrades that route
+  without replacing its URL or disrupting another route. A stale retry fails;
+  release of the port allows a fenced rebind to the original URL. A blocked
+  route can also be retired explicitly. A corrupt registry remains byte-for-byte
+  intact until explicit digest-fenced reset; restoring saved valid bytes brings
+  back the original route IDs and URLs.
 
 Focused evidence: `pnpm exec playwright test e2e/specs/service-proxy.spec.ts
 --reporter=list` passed 2/2 after `pnpm build:backend` on the current working
@@ -94,17 +127,36 @@ The migration E2E removes `route_id` from a stopped registry and verifies
 backfill on restart. After the admission gate and migration assertion,
 `pnpm build:backend` and the focused proxy E2E passed 2/2 in 21.0 seconds.
 
+Recovery E2E starts a real daemon/runtime with three persisted routes. It holds
+two saved proxy ports across a runtime restart, verifies `degraded` state and
+null URLs for the blocked routes, retires one blocked route, and confirms an
+unaffected route still serves HTTP. A stale route ID and an occupied port both
+reject retry; after release, retry rebinds the original URL. It then corrupts
+the registry, verifies unchanged bytes and rejected proxy mutation, rejects a
+stale reset digest after changing the file, restores saved valid bytes offline
+and observes both original route IDs and URLs, and finally explicitly resets
+the corrupt file into a retained archive. The focused command is
+`pnpm exec playwright test e2e/specs/service-proxy.spec.ts --reporter=list`.
+The final run also covered duplicate route IDs, oversized files, a directory,
+and a FIFO at the registry path, each refusing unsafe reset while the daemon
+stayed available. After descriptor-based open hardening, `pnpm build:backend`
+and the focused proxy E2E passed 3/3 in 24.3 seconds.
+
 ## Remaining F088 work
 
 This is a local/private slice. It does not provide an authenticated remote or
 public alias; D09 requires a separate exposure policy. No same-user adversary
 boundary is claimed. A runtime restart has a rebind gap; another process that
-steals the port prevents ADE startup rather than allowing a hidden remap. The
+steals the port leaves that route blocked on its original port while the rest
+of ADE starts. The
 target is currently a directly owned, observed IPv4 or IPv6 loopback TCP listener.
 An absolute guarantee against a process swapping that listener after the final
 OS proof but before the first forwarded byte requires inherited sockets or a
 stronger connected-socket owner proof and remains open. The E2E confirms the
 common close-and-rebind takeover fails closed.
-Broader URL discovery remains before closing F088. The runtime's persisted proxy registry is
-profile local; recovery from corruption and a rebind failure needs a dedicated
-recovery surface before full F088 acceptance.
+Broader URL discovery remains before closing F088. Recovery is profile local
+and protocol-only so far; a guided CLI/Electron repair surface and managed
+backup restore remain open. Reset is an explicit destructive choice when no
+known-good registry can be restored. Disk failures after an atomic rename may
+leave an uncertain outcome, which requires operator reconciliation with the
+retained archive and current recovery status.

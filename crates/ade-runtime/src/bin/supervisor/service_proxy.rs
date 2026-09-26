@@ -3,6 +3,7 @@
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
@@ -19,6 +20,7 @@ use std::{
 
 const MAX_HEADER: usize = 16 * 1024;
 const MAX_CONNECTIONS: usize = 128;
+const MAX_REGISTRY_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 struct Key {
@@ -42,14 +44,21 @@ struct Record {
 
 struct Route {
     record: Mutex<Record>,
+    blocked: Mutex<Option<String>>,
     admission: RwLock<()>,
     retired: AtomicBool,
     listener: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
+struct Corrupt {
+    sha256: String,
+    reason: String,
+}
+
 pub(super) struct Manager {
     file: PathBuf,
     records: Mutex<HashMap<Key, Arc<Route>>>,
+    corrupt: Mutex<Option<Corrupt>>,
     stop: Arc<AtomicBool>,
     connections: Arc<AtomicUsize>,
 }
@@ -57,25 +66,25 @@ pub(super) struct Manager {
 impl Manager {
     pub(super) fn open(directory: &Path) -> Result<Self> {
         let file = directory.join("service-proxies.json");
-        let mut saved: Vec<Record> = if file.exists() {
-            serde_json::from_reader(File::open(&file)?)
-                .context("Cannot read stable service proxy registry")?
-        } else {
-            Vec::new()
-        };
-        ensure!(saved.len() <= 256, "Too many stable service proxy routes");
+        let (mut saved, mut corrupt) = read_registry(&file)?;
         if saved.iter().any(|record| record.route_id.is_empty()) {
             for record in &mut saved {
                 if record.route_id.is_empty() {
                     record.route_id = format!("route_{}", uuid::Uuid::new_v4());
                 }
             }
-            persist_values(&file, &saved)
-                .context("Cannot backfill stable proxy route identities")?;
+            if let Err(error) = persist_values(&file, &saved) {
+                corrupt = Some(Corrupt {
+                    sha256: sha256_file(&file)?,
+                    reason: format!("Cannot backfill stable proxy route identities: {error}"),
+                });
+                saved.clear();
+            }
         }
         let manager = Self {
             file,
             records: Mutex::new(HashMap::new()),
+            corrupt: Mutex::new(corrupt),
             stop: Arc::new(AtomicBool::new(false)),
             connections: Arc::new(AtomicUsize::new(0)),
         };
@@ -87,16 +96,20 @@ impl Manager {
             );
             let route = Arc::new(Route {
                 record: Mutex::new(record.clone()),
+                blocked: Mutex::new(None),
                 admission: RwLock::new(()),
                 retired: AtomicBool::new(false),
                 listener: Mutex::new(None),
             });
-            // A stolen port cannot be replaced by a new URL: fail runtime startup
-            // so ADE never reports a stable address owned by another process.
-            let listener = bind(Some(record.port)).with_context(|| {
-                format!("Stable service proxy port {} is unavailable", record.port)
-            })?;
-            manager.spawn(listener, route.clone())?;
+            // Preserve the pinned URL and identity if another process owns its
+            // port. Other routes still bind; this one needs explicit recovery.
+            match bind(Some(record.port)) {
+                Ok(listener) => {
+                    listener.set_nonblocking(true)?;
+                    manager.spawn(listener, route.clone())?;
+                }
+                Err(error) => *route.blocked.lock().unwrap() = Some(error.to_string()),
+            }
             manager.records.lock().unwrap().insert(key, route);
         }
         Ok(manager)
@@ -129,7 +142,12 @@ impl Manager {
             port_variable: port_variable.to_owned(),
         };
         let mut records = self.records.lock().unwrap();
+        self.require_healthy_registry()?;
         if let Some(route) = records.get(&key) {
+            ensure!(
+                route.blocked.lock().unwrap().is_none(),
+                "Stable service proxy port is unavailable; inspect recovery state"
+            );
             let old = {
                 let mut record = route.record.lock().unwrap();
                 if remap {
@@ -162,6 +180,7 @@ impl Manager {
         ensure!(!remap, "Stable service proxy route does not exist");
         ensure!(records.len() < 256, "Too many stable service proxy routes");
         let listener = bind(None)?;
+        listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let route = Arc::new(Route {
             record: Mutex::new(Record {
@@ -172,6 +191,7 @@ impl Manager {
                 route_id: format!("route_{}", uuid::Uuid::new_v4()),
                 daemon_socket: daemon_socket.to_path_buf(),
             }),
+            blocked: Mutex::new(None),
             admission: RwLock::new(()),
             retired: AtomicBool::new(false),
             listener: Mutex::new(None),
@@ -181,7 +201,16 @@ impl Manager {
             records.remove(&key);
             return Err(error);
         }
-        self.spawn(listener, route)?;
+        if let Err(error) = self.spawn(listener, route) {
+            records.remove(&key);
+            let recovery = persist(&self.file, &records);
+            return match recovery {
+                Ok(()) => Err(error.context("Stable proxy listener could not start")),
+                Err(restore) => Err(error.context(format!(
+                    "Stable proxy listener could not start; registry recovery is uncertain: {restore}"
+                ))),
+            };
+        }
         Ok(reply(&records.get(&key).unwrap().record.lock().unwrap()))
     }
 
@@ -197,10 +226,16 @@ impl Manager {
             port_variable: port_variable.to_owned(),
         };
         let records = self.records.lock().unwrap();
+        self.require_healthy_registry()?;
         let route = records
             .get(&key)
             .context("Stable service proxy route does not exist")?;
-        Ok(reply(&route.record.lock().unwrap()))
+        let mut result = reply(&route.record.lock().unwrap());
+        if route.blocked.lock().unwrap().is_some() {
+            result["availability"] = json!("port_occupied");
+            result["url"] = Value::Null;
+        }
+        Ok(result)
     }
 
     pub(super) fn retire(
@@ -226,6 +261,7 @@ impl Manager {
             port_variable: port_variable.to_owned(),
         };
         let mut records = self.records.lock().unwrap();
+        self.require_healthy_registry()?;
         let route = records
             .get(&key)
             .context("Stable service proxy route does not exist")?
@@ -268,45 +304,198 @@ impl Manager {
         Ok(result)
     }
 
+    pub(super) fn recovery_inspect(&self) -> Value {
+        let records = self.records.lock().unwrap();
+        let corrupt = self.corrupt.lock().unwrap();
+        let mut routes = records
+            .values()
+            .map(|route| {
+                let mut item = reply(&route.record.lock().unwrap());
+                if let Some(reason) = route.blocked.lock().unwrap().as_ref() {
+                    item["availability"] = json!("port_occupied");
+                    item["url"] = Value::Null;
+                    item["reason"] = json!(reason);
+                } else {
+                    item["availability"] = json!("bound");
+                }
+                item
+            })
+            .collect::<Vec<_>>();
+        routes.sort_by(|a, b| a["route_id"].as_str().cmp(&b["route_id"].as_str()));
+        match corrupt.as_ref() {
+            Some(problem) => json!({"type":"service_proxy_recovery","status":"corrupt",
+                "registry_sha256":problem.sha256,"reason":problem.reason,"routes":routes}),
+            None => json!({"type":"service_proxy_recovery",
+                "status":if routes.iter().any(|route| route["availability"] == "port_occupied") {
+                    "degraded" } else { "healthy" },"routes":routes}),
+        }
+    }
+
+    pub(super) fn recovery_retry(
+        &self,
+        workspace_id: &str,
+        service_name: &str,
+        port_variable: &str,
+        expected_route_id: &str,
+        expected_service_identity: &str,
+        expected_target_port: u16,
+        expected_proxy_port: u16,
+        daemon_socket: &Path,
+    ) -> Result<Value> {
+        ensure!(
+            daemon_socket.is_absolute(),
+            "Daemon socket must be absolute"
+        );
+        let key = Key {
+            workspace_id: workspace_id.to_owned(),
+            service_name: service_name.to_owned(),
+            port_variable: port_variable.to_owned(),
+        };
+        let records = self.records.lock().unwrap();
+        self.require_healthy_registry()?;
+        let route = records
+            .get(&key)
+            .context("Stable service proxy route does not exist")?;
+        let old = route.record.lock().unwrap().clone();
+        ensure!(
+            old.route_id == expected_route_id
+                && old.service_identity == expected_service_identity
+                && old.target_port == expected_target_port
+                && old.port == expected_proxy_port,
+            "Stable service proxy route changed; inspect it again"
+        );
+        ensure!(
+            route.blocked.lock().unwrap().is_some(),
+            "Stable service proxy route is already bound"
+        );
+        let listener =
+            bind(Some(old.port)).context("Stable service proxy port remains unavailable")?;
+        listener.set_nonblocking(true)?;
+        route.record.lock().unwrap().daemon_socket = daemon_socket.to_path_buf();
+        if let Err(error) = persist(&self.file, &records) {
+            *route.record.lock().unwrap() = old;
+            return Err(error.context("Stable service proxy recovery retry failed"));
+        }
+        if let Err(error) = self.spawn(listener, route.clone()) {
+            *route.record.lock().unwrap() = old;
+            let recovery = persist(&self.file, &records);
+            return match recovery {
+                Ok(()) => Err(error.context("Stable proxy listener could not start")),
+                Err(restore) => Err(error.context(format!(
+                    "Stable proxy listener could not start; registry recovery is uncertain: {restore}"
+                ))),
+            };
+        }
+        *route.blocked.lock().unwrap() = None;
+        Ok(reply(&route.record.lock().unwrap()))
+    }
+
+    pub(super) fn recovery_reset(&self, expected_registry_sha256: &str) -> Result<Value> {
+        let records = self.records.lock().unwrap();
+        let mut corrupt = self.corrupt.lock().unwrap();
+        let problem = corrupt
+            .as_ref()
+            .context("Stable proxy registry is not corrupt")?;
+        ensure!(
+            !problem.sha256.is_empty(),
+            "Stable proxy registry needs offline recovery; no bounded digest is available"
+        );
+        ensure!(
+            !expected_registry_sha256.is_empty()
+                && problem.sha256 == expected_registry_sha256
+                && sha256_file(&self.file)? == expected_registry_sha256,
+            "Stable proxy registry changed; inspect recovery state again"
+        );
+        ensure!(
+            records.is_empty(),
+            "Cannot reset a registry with loaded routes"
+        );
+        let archive = self
+            .file
+            .with_extension(format!("corrupt-{}.json", uuid::Uuid::new_v4()));
+        let source = open_registry(&self.file)?;
+        let mut saved = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&archive)
+            .context("Cannot archive corrupt stable proxy registry")?;
+        let copied = io::copy(&mut source.take(MAX_REGISTRY_BYTES + 1), &mut saved)?;
+        ensure!(
+            copied <= MAX_REGISTRY_BYTES,
+            "Stable proxy registry grew while archiving; repair it offline"
+        );
+        saved.sync_all()?;
+        ensure!(
+            sha256_file(&archive)? == expected_registry_sha256,
+            "Stable proxy registry changed while archiving; inspect recovery state again"
+        );
+        File::open(self.file.parent().context("Missing proxy directory")?)?.sync_all()?;
+        ensure!(
+            sha256_file(&self.file)? == expected_registry_sha256,
+            "Stable proxy registry changed while archiving; inspect recovery state again"
+        );
+        persist_values(&self.file, &[]).with_context(|| {
+            format!(
+                "Stable proxy reset failed; corrupt registry archive remains at {}",
+                archive.display()
+            )
+        })?;
+        *corrupt = None;
+        Ok(
+            json!({"type":"service_proxy_recovery_reset","status":"reset",
+            "previous_sha256":expected_registry_sha256,"archive":archive}),
+        )
+    }
+
+    fn require_healthy_registry(&self) -> Result<()> {
+        ensure!(
+            self.corrupt.lock().unwrap().is_none(),
+            "Stable proxy registry is corrupt; inspect recovery state"
+        );
+        Ok(())
+    }
+
     pub(super) fn shutdown(&self) {
         self.stop.store(true, Ordering::Release);
     }
 
     fn spawn(&self, listener: TcpListener, route: Arc<Route>) -> Result<()> {
-        listener.set_nonblocking(true)?;
         let stop = self.stop.clone();
         let connections = self.connections.clone();
         let active = route.clone();
-        let handle = std::thread::spawn(move || {
-            while !stop.load(Ordering::Acquire) && !active.retired.load(Ordering::Acquire) {
-                match listener.accept() {
-                    Ok((mut client, _)) => {
-                        if active.retired.load(Ordering::Acquire) {
-                            let _ = client.shutdown(Shutdown::Both);
-                            break;
+        let handle = std::thread::Builder::new()
+            .name("ade-service-proxy".to_owned())
+            .spawn(move || {
+                while !stop.load(Ordering::Acquire) && !active.retired.load(Ordering::Acquire) {
+                    match listener.accept() {
+                        Ok((mut client, _)) => {
+                            if active.retired.load(Ordering::Acquire) {
+                                let _ = client.shutdown(Shutdown::Both);
+                                break;
+                            }
+                            if client.set_nonblocking(false).is_err() {
+                                continue;
+                            }
+                            if connections.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+                                connections.fetch_sub(1, Ordering::AcqRel);
+                                let _ = reject(&mut client, 503, "Service proxy is busy");
+                                continue;
+                            }
+                            let route = active.clone();
+                            let connections = connections.clone();
+                            std::thread::spawn(move || {
+                                let _ = handle(client, &route);
+                                connections.fetch_sub(1, Ordering::AcqRel);
+                            });
                         }
-                        if client.set_nonblocking(false).is_err() {
-                            continue;
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(20));
                         }
-                        if connections.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
-                            connections.fetch_sub(1, Ordering::AcqRel);
-                            let _ = reject(&mut client, 503, "Service proxy is busy");
-                            continue;
-                        }
-                        let route = active.clone();
-                        let connections = connections.clone();
-                        std::thread::spawn(move || {
-                            let _ = handle(client, &route);
-                            connections.fetch_sub(1, Ordering::AcqRel);
-                        });
+                        Err(_) => break,
                     }
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(20));
-                    }
-                    Err(_) => break,
                 }
-            }
-        });
+            })?;
         *route.listener.lock().unwrap() = Some(handle);
         Ok(())
     }
@@ -366,6 +555,111 @@ fn persist_values(file: &Path, values: &[Record]) -> Result<()> {
         let _ = std::fs::remove_file(temporary);
     }
     result
+}
+
+fn sha256_file(file: &Path) -> Result<String> {
+    let mut source = open_registry(file)?;
+    let mut hash = Sha256::new();
+    let mut chunk = [0u8; 8192];
+    let mut total = 0u64;
+    loop {
+        let count = source.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        ensure!(
+            total <= MAX_REGISTRY_BYTES,
+            "Stable proxy registry grew beyond 4 MiB; repair it offline"
+        );
+        hash.update(&chunk[..count]);
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+fn open_registry(file: &Path) -> io::Result<File> {
+    // Open the descriptor before checking its type. A path check followed by
+    // blocking File::open could be swapped for a FIFO between those operations.
+    let source = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(file)?;
+    let metadata = source.metadata()?;
+    if !metadata.is_file() || metadata.len() > MAX_REGISTRY_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Stable proxy registry is not a regular file under 4 MiB; repair it offline",
+        ));
+    }
+    Ok(source)
+}
+
+fn read_registry(file: &Path) -> Result<(Vec<Record>, Option<Corrupt>)> {
+    let source = match open_registry(file) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), None)),
+        Err(error) => {
+            return Ok((
+                Vec::new(),
+                Some(Corrupt {
+                    sha256: String::new(),
+                    reason: format!("Stable proxy registry requires offline recovery: {error}"),
+                }),
+            ));
+        }
+    };
+    let mut bytes = Vec::with_capacity(source.metadata()?.len() as usize);
+    source
+        .take(MAX_REGISTRY_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_REGISTRY_BYTES {
+        return Ok((
+            Vec::new(),
+            Some(Corrupt {
+                sha256: String::new(),
+                reason: "Stable proxy registry grew beyond 4 MiB; repair it offline".to_owned(),
+            }),
+        ));
+    }
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let parsed =
+        serde_json::from_slice::<Vec<Record>>(&bytes).context("Invalid stable proxy registry");
+    let saved = match parsed {
+        Ok(saved) => saved,
+        Err(error) => {
+            return Ok((
+                Vec::new(),
+                Some(Corrupt {
+                    sha256: digest,
+                    reason: error.to_string(),
+                }),
+            ));
+        }
+    };
+    let mut keys = std::collections::HashSet::new();
+    let mut route_ids = std::collections::HashSet::new();
+    if saved.len() > 256
+        || saved.iter().any(|record| {
+            record.port == 0
+                || record.target_port == 0
+                || record.service_identity.is_empty()
+                || !record.daemon_socket.is_absolute()
+                || record.key.workspace_id.is_empty()
+                || record.key.service_name.is_empty()
+                || record.key.port_variable.is_empty()
+                || !keys.insert(record.key.clone())
+                || (!record.route_id.is_empty() && !route_ids.insert(record.route_id.clone()))
+        })
+    {
+        return Ok((
+            Vec::new(),
+            Some(Corrupt {
+                sha256: digest,
+                reason: "Invalid or duplicate stable proxy route".to_owned(),
+            }),
+        ));
+    }
+    Ok((saved, None))
 }
 
 fn reject(client: &mut TcpStream, code: u16, message: &str) -> io::Result<()> {
