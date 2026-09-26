@@ -34,3 +34,24 @@ Remaining: draft recall/stash, explicit transfer and conflict UI across
 clients, attachments, daemon-crash acceptance and the full F036 specification.
 The currently running old ADE process must restart to load the new close guard;
 its live pending intent was not inspected or changed by these tests.
+
+## Repeated pending-prompt dialog (open)
+
+The native “ADE is staying open until the prompt is reconciled” dialog occurs
+when Electron has an unresolved send request ID and the owning daemon cannot
+confirm completion during Quit. `desktop-send-recovery.spec.ts` deliberately
+reproduces this guard through a real daemon and Electron window. On 2026-09-26,
+two old visible development Electron processes were still running; one was
+configured for a Unix socket that no longer existed. That makes reconciliation
+impossible for that process, but does not prove it owned the user's screenshot.
+Neither process nor its in-memory send intent was altered.
+
+Next acceptance for F036/R001/R002: persist the exact request ID and send intent
+before network admission, recover it after an Electron crash or Quit while the
+daemon is absent, and retry only with that ID when the original profile daemon
+returns. Through real Electron and ADE processes, lose a prepare/send/complete
+reply, close the app without a recurring native alert, reopen offline and then
+reconnect; assert the draft and request ID remain visible and exactly one
+provider turn is admitted. An explicit user action is required if the original
+daemon cannot return. Do not remove the current close guard before this durable
+recovery path passes.
