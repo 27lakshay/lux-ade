@@ -10,4 +10,5 @@ pub mod scripts;
 pub mod services;
 pub mod sessions;
 pub mod store;
+mod toolchain;
 pub mod worktrees;

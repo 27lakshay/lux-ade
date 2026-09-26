@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { chmod, mkdir, readFile, realpath, symlink, unlink, writeFile } from 'node:fs/promises'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -197,32 +197,79 @@ test('two profile daemons isolate runs in the same physical checkout', async () 
   }
 })
 
-test('a configured pnpm executable supplies its sibling node on a stripped launch PATH', async () => {
-  const toolRoot = await mkdtemp(join(tmpdir(), 'ade-script-bin-'))
-  const pnpmBin = join(toolRoot, 'pnpm')
-  const nodeBin = join(toolRoot, 'node')
-  await writeFile(pnpmBin, '#!/bin/sh\nexec node -e "console.log(\'ADE_BUNDLED_PATH_READY\')"\n')
-  await writeFile(nodeBin, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`)
-  await chmod(pnpmBin, 0o755)
-  await chmod(nodeBin, 0o755)
+test('a monorepo child inherits the real installed npm and Node versions under a Finder launch PATH', async () => {
+  const nodeVersion = process.version.slice(1)
+  const npmVersion = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim()
+  const root = await mkdtemp(join(tmpdir(), 'ade-script-monorepo-'))
+  const child = join(root, 'packages', 'app')
+  await mkdir(child, { recursive: true })
+  await writeFile(join(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['packages/*'],
+    packageManager: `npm@${npmVersion}`, engines: { node: `>=${nodeVersion}` } }))
+  await writeFile(join(root, '.node-version'), `${nodeVersion}\n`)
+  await writeFile(join(child, 'package.json'), JSON.stringify({ name: 'ade-project-app', private: true,
+    scripts: { hello: 'node -e "console.log(\'ADE_PROJECT_TOOLCHAIN\', process.version)"' } }))
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined
   try {
-    daemon = await startDaemon({ ADE_PNPM_BIN: pnpmBin, PATH: '/no-system-tools' })
-    const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory }))
+    daemon = await startDaemon({ PATH: '/no-system-tools' })
+    const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: child }))
       .workspace as { id: string }
-    await writeFile(join(daemon.rootDirectory, 'package.json'), JSON.stringify({
-      name: 'ade-path-e2e', private: true, scripts: { hello: 'node -e "console.log(1)"' },
-    }))
     const started = await rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id,
       name: 'hello' })
+    expect(started.toolchain).toMatchObject({ manager: 'npm', manager_version: npmVersion,
+      node: { version: nodeVersion } })
     await expect.poll(async () => {
       const inspected = await rpc(daemon!.socket, { op: 'script.inspect', workspace_id: workspace.id,
         run_id: started.run_id })
       return Buffer.from((inspected.output as { bytes_base64: string }).bytes_base64, 'base64').toString()
-    }).toContain('ADE_BUNDLED_PATH_READY')
+    }).toContain(`ADE_PROJECT_TOOLCHAIN ${process.version}`)
+
+    await writeFile(join(child, 'package.json'), JSON.stringify({ name: 'ade-project-app', private: true,
+      packageManager: 'pnpm@12.1.0', scripts: { hello: 'echo wrong' } }))
+    await expect(rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id, name: 'hello' }))
+      .rejects.toThrow(/Conflicting packageManager/)
   } finally {
     await daemon?.stop()
-    await rm(toolRoot, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('declared pnpm, Bun and Yarn versions run with the installed project tools', async () => {
+  const project = await mkdtemp(join(tmpdir(), 'ade-script-managers-'))
+  const shims = await mkdtemp(join(tmpdir(), 'ade-script-corepack-'))
+  execFileSync('corepack', ['enable', '--install-directory', shims])
+  const yarnVersion = execFileSync('corepack', ['yarn', '--version'], {
+    cwd: tmpdir(), encoding: 'utf8',
+  }).trim()
+  const versions = [
+    ['pnpm', execFileSync('pnpm', ['--version'], { encoding: 'utf8' }).trim()],
+    ['bun', execFileSync('bun', ['--version'], { encoding: 'utf8' }).trim()],
+    ['yarn', yarnVersion],
+  ] as const
+  let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined
+  try {
+    daemon = await startDaemon({ PATH: '/no-system-tools', ADE_PROJECT_TOOL_PATHS: shims })
+    const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: project }))
+      .workspace as { id: string }
+    for (const [manager, version] of versions) {
+      for (const name of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb']) {
+        await unlink(join(project, name)).catch(() => undefined)
+      }
+      await writeFile(join(project, 'package.json'), JSON.stringify({ name: 'ade-project-tool-test',
+        private: true, packageManager: `${manager}@${version}`,
+        scripts: { hello: `node -e "console.log('ADE_${manager.toUpperCase()}_READY')"` } }))
+      const started = await rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id,
+        name: 'hello' })
+      expect(started.toolchain).toMatchObject({ manager, manager_version: version, version })
+      await expect.poll(async () => {
+        const inspected = await rpc(daemon!.socket, { op: 'script.inspect', workspace_id: workspace.id,
+          run_id: started.run_id })
+        return Buffer.from((inspected.output as { bytes_base64: string }).bytes_base64, 'base64').toString()
+      }).toContain(`ADE_${manager.toUpperCase()}_READY`)
+    }
+  } finally {
+    await daemon?.stop()
+    await rm(project, { recursive: true, force: true })
+    await rm(shims, { recursive: true, force: true })
   }
 })
 

@@ -11,7 +11,7 @@ manifest maps names to `{ program, args?, cwd? }` recipes with explicit argv
 and workspace-relative directories. Discovery rejects duplicate names between
 the manifests, malformed recipes and directories that escape through symlinks.
 `script.list` reports the definitions. `script.start` executes a discovered
-package name with `pnpm run` or starts an ADE recipe directly under the selected workspace and
+package name with the project's declared package manager or starts an ADE recipe directly under the selected workspace and
 returns a run identity. The Rust supervisor owns its process group, PTY and
 bounded durable output. `script.inspect` reports observed runtime state and
 bounded live/durable output; `script.stop` waits for verified process exit.
@@ -46,15 +46,18 @@ public protocol.
   running run cannot be retired; an exited run can be retired and disappears.
 - Restart only the daemon. The running script keeps its process and stop control;
   the exited script keeps its retained output. The supervisor identity is stable.
-- With `ADE_PNPM_BIN` configured, launch from a stripped inherited `PATH` and
-  observe a sibling `node` executable through both a package script and a
-  direct ADE recipe's output. The ADE repository permits a checked-in root
+- With a Finder-like inherited `PATH`, resolve the applicable monorepo root's
+  exact `packageManager`, lockfile, `.node-version`/`.nvmrc`, and `engines.node`.
+  A child inheriting its root declaration succeeds; conflicting declarations
+  fail before launch. Run installed npm, pnpm, Yarn, and Bun through real
+  daemon processes. The ADE repository permits a checked-in root
   `.ade/scripts.json` while continuing to ignore its generated `.ade` files.
 - A real recipe emits more than the 1 MiB durable spool. Inspection reports
   retention overflow and incomplete output while preserving its actual exit
   status and allowing stop and retirement.
-- Discovery currently reads root `package.json` and `.ade/scripts.json` only.
-  Other package-manager manifests and nested package discovery remain open.
+- Discovery currently reads the opened workspace's `package.json` and
+  `.ade/scripts.json` only. Nested package discovery remains open; opening a
+  child package inherits its monorepo toolchain configuration.
 - A supervisor restart still loses its in-memory run catalogue; durable output
   remains bounded by the existing service spool. The `unknown` state is
   surfaced when process reaping fails, but a lost supervisor does not yet
@@ -69,14 +72,12 @@ catalogue retirement. Focused run after spool saturation: 7/7 on macOS,
 including a plain workspace, nonzero and signaled exits, relative argv,
 duplicate/escape rejection, two-profile isolation, and a successful process
 that emits 1.3 million bytes while reporting incomplete retained output. Stop
-and retirement still work after overflow. The PATH case uses a
-deterministic external pnpm/node fixture. The
-packaged macOS app separately passed `e2e/packaged/macos.spec.ts`: the app
-launched with a Finder-like `PATH`, ran a `node` package script through its
-bundled pinned pnpm and a `node` ADE recipe directly, and retained both outputs
-after app reopen. A fresh `pnpm build:backend` and focused source test passed
-6/6; `pnpm package:mac` and the focused packaged test passed 1/1 after the
-recipe PATH fix. `git check-ignore` confirms the root recipe manifest is
+and retirement still work after overflow. The old PATH case used a
+deterministic pnpm/node fixture, and the old packaged app bundled ADE's pnpm.
+The project-toolchain correction supersedes that behavior. Its focused source
+E2Es run installed npm, pnpm, Bun and Yarn, verify monorepo inheritance under
+a Finder-like PATH, and reject conflicting declarations. Packaged verification
+remains required before closing the correction. `git check-ignore` confirms the root recipe manifest is
 trackable while generated `.ade` content remains ignored. The backend slice is
 `c787274`, the CLI/Electron surface is `207ec62`, and packaging is `b365be1`.
 Named CLI and hidden Electron flows passed

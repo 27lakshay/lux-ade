@@ -594,7 +594,6 @@ async function launcher(action: string, ...args: string[]): Promise<Record<strin
     ...process.env,
     ADE_NODE_BIN: process.execPath,
     ADE_BUN_BIN: join(process.resourcesPath, 'bin/bun'),
-    ADE_PNPM_BIN: join(process.resourcesPath, 'bin/pnpm'),
     ELECTRON_RUN_AS_NODE: '1',
   } : process.env
   const python = app.isPackaged ? '/usr/bin/python3' : 'python3'

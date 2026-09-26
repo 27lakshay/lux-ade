@@ -72,31 +72,6 @@ fn output_coverage(metrics: &Value, durable: &Value) -> Value {
         "returned_start_offset":returned_start})
 }
 
-fn script_environment() -> Result<(Option<String>, std::collections::BTreeMap<String, String>)> {
-    match std::env::var("ADE_PNPM_BIN") {
-        Ok(program) => {
-            let parent = Path::new(&program)
-                .parent()
-                .context("Bundled pnpm executable has no parent directory")?;
-            ensure!(
-                parent.is_absolute(),
-                "Bundled pnpm executable must be absolute"
-            );
-            let previous = std::env::var_os("PATH").unwrap_or_default();
-            let path = std::env::join_paths(std::iter::once(parent.to_path_buf()).chain(
-                std::env::split_paths(&previous).filter(|path| !path.as_os_str().is_empty()),
-            ))?
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("Script PATH is not valid UTF-8"))?;
-            let mut env = std::collections::BTreeMap::new();
-            env.insert("PATH".to_owned(), path);
-            Ok((Some(program), env))
-        }
-        Err(std::env::VarError::NotPresent) => Ok((None, Default::default())),
-        Err(error) => Err(error.into()),
-    }
-}
-
 pub fn command(
     workspace: WorkspaceRecord,
     runtime: &Supervisor,
@@ -140,16 +115,33 @@ pub fn command(
                 new_id("run").trim_start_matches("run_")
             );
             let transfer_id = new_id("transfer");
-            let (bundled_pnpm, env) = script_environment()?;
-            let (program, args, cwd) = match configured {
-                Script::PackageJson { name, .. } => (
-                    bundled_pnpm.unwrap_or_else(|| "pnpm".into()),
-                    vec!["run".into(), name],
-                    None,
-                ),
+            let (program, args, cwd, env, toolchain) = match configured {
+                Script::PackageJson { name, .. } => {
+                    let selected = crate::toolchain::select(root, None)?;
+                    (
+                        selected.program,
+                        vec!["run".into(), name],
+                        None,
+                        selected.env,
+                        Some(selected.description),
+                    )
+                }
                 Script::AdeRecipe {
                     program, args, cwd, ..
-                } => (program, args, Some(cwd)),
+                } => {
+                    if ["node", "npm", "pnpm", "yarn", "bun"].contains(&program.as_str()) {
+                        let selected = crate::toolchain::select(&root.join(&cwd), Some(&program))?;
+                        (
+                            selected.program,
+                            args,
+                            Some(cwd),
+                            selected.env,
+                            Some(selected.description),
+                        )
+                    } else {
+                        (program, args, Some(cwd), Default::default(), None)
+                    }
+                }
             };
             let launch = Launch {
                 transfer_id: transfer_id.clone(),
@@ -192,6 +184,9 @@ pub fn command(
             let mut run = run_state(&json!({"metrics":result["metrics"]}), &run_id);
             run["type"] = json!("script_run");
             run["workspace_id"] = json!(workspace.id);
+            if let Some(toolchain) = toolchain {
+                run["toolchain"] = toolchain;
+            }
             Ok(run)
         }
         "script.inspect" => {

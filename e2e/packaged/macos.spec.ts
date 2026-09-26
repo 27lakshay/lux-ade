@@ -1,4 +1,5 @@
 import { expect, test, _electron as electron } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -104,15 +105,17 @@ test('packaged macOS app runs from its own resources and retains work across reo
   }
 })
 
-test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-like PATH', async ({}, testInfo) => {
+test('packaged macOS app runs scripts with the project npm and Node from a Finder-like PATH', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const directory = await mkdtemp(join(tmpdir(), 'ade-package-scripts-e2e-'))
   const folder = join(directory, 'project')
   await mkdir(folder)
   await writeFile(join(folder, 'package.json'), JSON.stringify({
     name: 'ade-packaged-script', private: true,
+    packageManager: `npm@${execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim()}`,
     scripts: { check: 'node -e "console.log(\'PACKAGED_SCRIPT_READY\')"' },
   }))
+  await writeFile(join(folder, '.node-version'), `${process.version.slice(1)}\n`)
   await mkdir(join(folder, '.ade'))
   await writeFile(join(folder, '.ade', 'scripts.json'), JSON.stringify({
     schema_version: 1,
@@ -121,7 +124,7 @@ test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-
     } },
   }))
   const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_DAEMON_BIN: _daemonBinary,
-    ADE_PNPM_BIN: _pnpmBinary, ...parentEnvironment } = process.env
+    ...parentEnvironment } = process.env
   const env = { ...parentEnvironment,
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     ADE_PROFILES_HOME: join(directory, 'profiles'),

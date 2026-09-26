@@ -21,6 +21,7 @@ sha2 = "=0.10.9"
 libc = "0.2"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 tracing = "0.1"
+semver = "1"
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
