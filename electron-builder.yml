@@ -13,6 +13,8 @@ mac:
   target: dir
   identity: null
 extraFiles:
+  - from: .ade/package-stage/ade
+    to: MacOS/ade
   - from: target/release/ade-daemon
     to: MacOS/ade-daemon
   - from: target/release/ade-control
@@ -20,6 +22,10 @@ extraFiles:
   - from: target/release/ade-runtime
     to: MacOS/ade-runtime
 extraResources:
+  - from: .ade/package-stage/cli
+    to: cli
+  - from: .ade/package-stage/client
+    to: cli/node_modules/@ade/client
   - from: pnpm-lock.yaml
     to: pnpm-lock.yaml
   - from: .ade/package-stage/providers

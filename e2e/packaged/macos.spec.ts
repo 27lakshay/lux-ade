@@ -1,18 +1,160 @@
 import { expect, test, _electron as electron } from '@playwright/test'
 import { execFileSync, spawn } from 'node:child_process'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { managedProfileOwner, stopManagedProfile, stopManagedProfiles, type ManagedProfileOwner, rpc } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfile, stopManagedProfiles, stopOrphanRuntime, type ManagedProfileOwner, rpc } from '../fixtures/daemon'
 
 const app = resolve(process.env.ADE_E2E_PACKAGE_APP ?? 'dist/electron/mac-arm64/Lux ADE.app')
 const executable = join(app, 'Contents/MacOS/Lux ADE')
 const resources = join(app, 'Contents/Resources')
 const nativeControl = join(app, 'Contents/MacOS/ade-control')
 const bundledBun = join(resources, 'bin/bun')
+const installedCli = join(app, 'Contents/MacOS/ade')
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+
+test('installed CLI uses bundled Node and targets GUI profiles without switching the desktop', async () => {
+  test.setTimeout(120_000)
+  const directory = await mkdtemp(join(tmpdir(), 'ade-package-cli-e2e-'))
+  const folders = [join(directory, 'first project'), join(directory, 'second project')]
+  await Promise.all(folders.map((folder) => mkdir(folder)))
+  const profilesHome = join(directory, 'profiles')
+  const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_RESOURCE_DIR: _resources,
+    ADE_CONTROL_BIN: _control, ADE_DAEMON_BIN: _daemon, ADE_NODE_BIN: _node,
+    ADE_BUN_BIN: _bun, ADE_PYTHON_BIN: _python, FORCE_COLOR: _forceColor,
+    NO_COLOR: _noColor, ...parentEnvironment } = process.env
+  const env = { ...parentEnvironment, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    ADE_PROFILES_HOME: profilesHome, ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
+    ADE_E2E_HIDE_WINDOW: '1' }
+  const cliEnv = { ...env, PATH: '/no-system-tools', ADE_PYTHON_BIN: join(directory, 'missing-python') }
+  const cliAlias = join(directory, 'ade')
+  await symlink(installedCli, cliAlias)
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const execFileAsync = promisify(execFile)
+  const cli = async (...args: string[]): Promise<Record<string, any>> => JSON.parse((await execFileAsync(
+    cliAlias, args, { env: cliEnv, cwd: directory, timeout: 35_000 })).stdout)
+  const profileHomes = new Map<string, string>()
+  const owners = new Map<string, ManagedProfileOwner>()
+  const confirmedStopped = new Set<string>()
+  const restartMayHaveLaunched = new Set<string>()
+  let application: Awaited<ReturnType<typeof electron.launch>> | null = null
+  try {
+    application = await electron.launch({ executablePath: executable, cwd: directory, env })
+    const window = await application.firstWindow()
+    const profiles: Array<{ id: string; home: string; root: string }> = []
+    for (const [index, name] of ['First', 'Second'].entries()) {
+      await window.getByRole('textbox', { name: 'New profile' }).fill(name)
+      await window.getByRole('button', { name: 'Create' }).click()
+      await expect(window.getByText(`Active profile: ${name}`)).toBeVisible()
+      await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+      const state = await window.evaluate(() => window.adeHost.getProfileState())
+      const profile = state.profiles.find((item) => item.id === state.activeId)
+      expect(profile).toBeDefined()
+      const canonicalRegistry = await realpath(profilesHome)
+      const canonicalProfile = await realpath(profile!.home)
+      if (!canonicalProfile.startsWith(`${canonicalRegistry}${sep}`)) {
+        throw new Error(`GUI profile home is outside the test registry: ${canonicalProfile}`)
+      }
+      profileHomes.set(profile!.id, canonicalProfile)
+      const located = await execFileAsync(nativeControl, ['locate', '--home', profile!.home])
+      owners.set(profile!.id, await managedProfileOwner((JSON.parse(located.stdout) as { socket: string }).socket))
+      await window.getByRole('textbox', { name: 'Open folder' }).fill(folders[index])
+      await window.getByRole('button', { name: 'Open folder' }).click()
+      const root = await realpath(folders[index])
+      await expect(window.getByText(root, { exact: true })).toBeVisible()
+      profiles.push({ id: profile!.id, home: profile!.home, root })
+    }
+
+    const listed = await cli('profile', 'list')
+    expect(listed.type).toBe('profiles')
+    expect((listed.profiles as Array<{ id: string }>).map((item) => item.id)).toEqual(profiles.map((item) => item.id))
+    expect(listed.selected_id).toBe(profiles[1].id)
+    const first = await cli('--profile', profiles[0].id, 'workspace', 'list')
+    const second = await cli('--profile', profiles[1].id, 'workspace', 'list')
+    expect((first.workspaces as Array<{ root: string }>).map((item) => item.root)).toEqual([profiles[0].root])
+    expect((second.workspaces as Array<{ root: string }>).map((item) => item.root)).toEqual([profiles[1].root])
+    const wrong = await execFileAsync(installedCli,
+      ['--profile', '00000000-0000-4000-8000-000000000000', 'workspace', 'list'],
+      { env: cliEnv, cwd: directory, timeout: 35_000 }).catch((error: Error & { stderr?: string }) => error)
+    expect(wrong).toHaveProperty('stderr')
+    expect(JSON.parse((wrong as { stderr: string }).stderr)).toMatchObject({ type: 'error', code: 'invalid_request' })
+    expect((await cli('profile', 'list')).selected_id).toBe(profiles[1].id)
+    await expect(window.getByText('Active profile: Second')).toBeVisible()
+    await expect(window.getByText(profiles[0].root, { exact: true })).toHaveCount(0)
+
+    await application.close()
+    application = null
+    const prior = owners.get(profiles[0].id)!
+    await stopManagedProfile(prior)
+    owners.delete(profiles[0].id)
+    confirmedStopped.add(profiles[0].id)
+    restartMayHaveLaunched.add(profiles[0].id)
+    let restarted: Record<string, any>
+    try { restarted = await cli('--profile', profiles[0].id, 'status') }
+    catch (error) {
+      if (error && typeof error === 'object' && 'code' in error &&
+        (error.code === 'ENOENT' || error.code === 'EACCES')) {
+        restartMayHaveLaunched.delete(profiles[0].id)
+      }
+      throw error
+    }
+    expect(restarted.type).toBe('hello')
+    const located = await execFileAsync(nativeControl, ['locate', '--home', profiles[0].home])
+    const newOwner = await managedProfileOwner((JSON.parse(located.stdout) as { socket: string }).socket)
+    owners.set(profiles[0].id, newOwner)
+    confirmedStopped.delete(profiles[0].id)
+    restartMayHaveLaunched.delete(profiles[0].id)
+    expect(newOwner.bootId).not.toBe(prior.bootId)
+    expect((await cli('profile', 'list')).selected_id).toBe(profiles[1].id)
+  } finally {
+    let cleanupError: unknown
+    try { await application?.close() }
+    catch (error) { cleanupError = error }
+    try {
+      const registry = JSON.parse((await execFileAsync(nativeControl,
+        ['profiles', '--home', profilesHome, 'list'])).stdout) as {
+        profiles: Array<{ id: string; home: string }>
+      }
+      const canonicalHome = await realpath(profilesHome)
+      for (const profile of registry.profiles) {
+        const candidate = await realpath(profile.home)
+        if (!candidate.startsWith(`${canonicalHome}${sep}`)) {
+          throw new Error(`Refusing cleanup outside test profiles home: ${candidate}`)
+        }
+        profileHomes.set(profile.id, candidate)
+      }
+    } catch (error) {
+      cleanupError ??= error
+    }
+    for (const [profileId, home] of profileHomes) {
+      try {
+        const located = await execFileAsync(nativeControl, ['locate', '--home', home])
+        const socket = (JSON.parse(located.stdout) as { socket: string }).socket
+        const live = await rpc(socket, { op: 'hello' }, 500).catch(() => null)
+        const known = owners.get(profileId)
+        if (known) {
+          if (known.socket !== socket) throw new Error(`Profile ${profileId} endpoint changed during cleanup`)
+          await stopManagedProfile(known)
+        } else if (live) {
+          const owner = await managedProfileOwner(socket)
+          const runtime = await rpc(owner.runtimeSocket, { op: 'hello' }, 500)
+          expect(await realpath(runtime.data_directory as string)).toBe(await realpath(join(home, 'data')))
+          await stopManagedProfile(owner)
+        } else if (!confirmedStopped.has(profileId) || restartMayHaveLaunched.has(profileId)) {
+          throw new Error(`Cannot confirm test profile ${profileId} daemon has exited; preserving ${home}`)
+        }
+        await stopOrphanRuntime(join(home, 'data'))
+      } catch (error) {
+        cleanupError ??= error
+      }
+    }
+    if (cleanupError) throw cleanupError
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('installed startup, browser lease, backup and interrupted restore use native control', async () => {
   test.setTimeout(90_000)

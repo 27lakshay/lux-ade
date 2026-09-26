@@ -1,11 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
 const stage = join(root, '.ade/package-stage')
 const providers = join(stage, 'providers')
 const bin = join(stage, 'bin')
+const cli = join(stage, 'cli')
+const client = join(stage, 'client')
 const bunVersion = '1.3.14'
 
 function run(command, args) {
@@ -55,6 +57,28 @@ run('node', ['scripts/cargo.mjs', 'build', '--locked', '--release', '-p', 'ade-d
 // its native optional dependencies, without following development symlinks.
 rmSync(stage, { recursive: true, force: true })
 mkdirSync(providers, { recursive: true })
+mkdirSync(cli, { recursive: true })
+mkdirSync(client, { recursive: true })
+copyFileSync(join(root, 'apps/cli/package.json'), join(cli, 'package.json'))
+copyFileSync(join(root, 'packages/client/package.json'), join(client, 'package.json'))
+cpSync(join(root, 'apps/cli/dist'), join(cli, 'dist'), { recursive: true })
+cpSync(join(root, 'packages/client/dist'), join(client, 'dist'), { recursive: true })
+writeFileSync(join(stage, 'ade'), `#!/bin/sh
+set -eu
+entry=$0
+while [ -L "$entry" ]; do
+  link=$(/usr/bin/readlink "$entry")
+  case "$link" in
+    /*) entry=$link ;;
+    *) entry=${'${entry%/*}'}/$link ;;
+  esac
+done
+macos=$(/usr/bin/dirname "$entry")
+export ADE_CONTROL_BIN="$macos/ade-control"
+export ADE_DAEMON_BIN="$macos/ade-daemon"
+export ELECTRON_RUN_AS_NODE=1
+exec "$macos/Lux ADE" "$macos/../Resources/cli/dist/index.js" "$@"
+`, { mode: 0o755 })
 for (const [packageName, folder] of [['ade-claude-adapter', 'claude'], ['ade-omp-bridge', 'omp']]) {
   run('pnpm', ['--filter', packageName, 'deploy', '--config.inject-workspace-packages=true', '--prod', '--frozen-lockfile', '--ignore-scripts', join(providers, folder)])
   copyFileSync(join(root, 'providers', folder, 'package.json'), join(providers, folder, 'package.json'))
