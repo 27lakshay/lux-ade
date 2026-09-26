@@ -1,14 +1,14 @@
 # Fence restored workspace roots until explicit rebind
 
-Status: implementation in review (restore fence only)
+Status: partial implementation; full acceptance remains open
 Type: implementation ticket
 Requirements: F061, F065, R007, R014, R017, 05-S11 (partial)
-Owner: unassigned; start after the attachment schema-v11 migration is integrated
+Owner: unassigned
 Depends on: stable workspace and repository identity, runtime lease admission, managed backend snapshot
 
 Outcome: A profile restored into a new identity can read its history without executing against the source profile's checkout. An owner must explicitly rebind each external workspace and repository to a verified path before agent, terminal, service, script, review or worktree side effects resume. The source profile's private default workspace is remapped to the new private workspace while its stable workspace ID and history remain intact.
 
-The current backend snapshot preserves absolute roots in both indexed SQLite columns and JSON records. Startup may lease saved script and service owners, and commands may run at those paths before the user sees a warning. A new profile must not inherit those execution capabilities. The current `workspace.open` deduplicates by root and cannot implicitly clear a restore fence.
+The backend snapshot preserves absolute roots in both indexed SQLite columns and JSON records. Without a restore fence, startup could lease saved script and service owners, and commands could run at those paths before the user sees a warning. A new profile must not inherit those execution capabilities. `workspace.open` deduplicates by root and cannot implicitly clear a restore fence.
 
 Implementation sequence:
 
@@ -40,9 +40,25 @@ lease saved external roots or launch the old default terminal. An exact
 attachment inspection can verify restored SQLite payloads without executing
 in a workspace.
 
-Remaining: no `workspace.rebind` or `repository.rebind` command is exposed.
-The fence intentionally stays set until physical identity, alias handling,
-shared repository claims, and inherited Worktrunk removal authority can be
-validated together. The full acceptance cases above, including crash and
-path-replacement races, remain open. This is a dependency of complete R014
-restore; the backend-only snapshot in `5455362` does not solve it.
+The public protocol and CLI now expose `worktree.rebind.list`,
+`worktree.rebind`, `repository.rebind`, and `workspace.rebind`. Core and
+Worktrunk lifecycle stores record current and immutable source device/inode
+identities. A selected directory and Git common directory must match the
+expected lineage; old restored stores without reliable source identity remain
+fenced. Linked core and lifecycle repositories must follow the same current
+binding. Rebind preserves repository, workspace and conversation IDs. Real
+process E2Es cover shared repositories, renamed sources, repeated rebinds,
+cross-store source claims and incompatible schema migrations. Independent
+review found no remaining P1/P2 in these rebind paths.
+
+## Comments
+
+- 2026-09-26: The review found and commit `6e3f0a5` closed source-checkout bypasses for a
+  repository-less workspace, renamed source directories, linked repository
+  identity, cross-store source claims in both directions, and divergent second
+  rebinds. The full acceptance cases above remain open: host-wide physical
+  claims across profiles, arbitrary absolute source paths in restored
+  service/script configuration, a crash during rebind, and a path replacement
+  race between validation and child launch need further work. Path-based child
+  launch retains a check/use window unless execution is rooted in an opened
+  directory descriptor. Do not close F061/R014 on this slice alone.

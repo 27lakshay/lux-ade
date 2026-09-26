@@ -18,14 +18,15 @@ been changed since that baseline. The local build branch is
 
 | Owner | Scope | Acceptance before integration |
 |---|---|---|
-| `/root` | Restore execution fence, backend/profile backup slices, pending-send transfer, test process cleanup | Full source and packaged checks, zero leftover test processes, independent reviews, focused commits |
+| `/root` | Complete managed backup/restore ownership, path-safe rebind admission and remaining v1 acceptance | Full source and packaged checks, zero leftover test processes, independent reviews, focused commits |
 
 The browser bundle and explicit attachment reclaim slices were integrated as
-partial R014/R015 building blocks. The current restore work adds a durable
-execution fence and pending-send hold; neither provides a complete profile
-backup or an explicit workspace rebind yet. The test harness now checks daemon
-and runtime exit after managed-profile cases. A malformed-journal Electron
-startup exits without opening a native blocking dialog in an isolated E2E.
+partial R014/R015 building blocks. Registered backend restore and explicit
+workspace/repository rebind now preserve profile history and require selected
+new roots. Pending sends remain held. A complete coordinated profile backup
+and restore is still open. The test harness checks daemon and runtime exit
+after managed-profile cases. A malformed-journal Electron startup exits
+without opening a native blocking dialog in an isolated E2E.
 
 The first daily-use gate is a connected flow, not a substitute for each feature's
 full acceptance in its owning spec:
@@ -105,6 +106,9 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `13b32c4` | E2E process ownership | Identity-checked shutdown of test-owned profile daemons and detached runtimes |
 | `22b9fd4` | Restored execution and send fence | Schema-12 workspace/repository rebind flags and durable inherited-send hold |
 | `854fff9` | Pending-send transfer and startup recovery | Verified profile-bound journal transfer; isolated startup failures exit without a native dialog |
+| `315dc8f` | Registered backend restore | Registry-last new profile, private workspace remap, explicit crash resume and validation E2E |
+| `6e3f0a5` | Restored path rebind | Core/lifecycle immutable source claims, public CLI/protocol, cross-store source and repeated-rebind E2E |
+| `504a6b3` | Browser E2E profile switch race | Waits for the profile control to become enabled before a second switch |
 
 At `854fff9`, `pnpm check` passes type checking, Fallow, builds and 103/103
 source E2Es. The macOS package passes 6/6 packaged E2Es with hidden windows;
@@ -112,6 +116,18 @@ source E2Es. The macOS package passes 6/6 packaged E2Es with hidden windows;
 post-run process audit finds no `ade-daemon` or `ade-runtime` from this checkout.
 The restored execution and send fences remain held until explicit rebind and
 source-outcome reconciliation flows are implemented. R014/R015 are still partial.
+
+At `504a6b3`, `pnpm check` passes type checking, Fallow, builds and 111/111
+source E2Es. `pnpm package:mac` and 6/6 packaged E2Es pass. The first source
+run had a pre-existing browser-test race: it asserted a second switch after
+the active-profile label appeared while the first switch was still in progress.
+The focused rerun and full source rerun pass after waiting for the profile
+control to re-enable. Rust formatting, strict Clippy, Python compilation and
+`git diff --check` pass; a post-run process audit finds no daemon or runtime
+from this checkout. Independent review found no remaining P1/P2 in the
+rebind paths. F061/R014 remain partial because cross-profile physical claims,
+absolute paths in restored script/service configuration, a rebind crash case,
+and the path check/use race are not resolved.
 
 At `b365be1` on Apple M4/macOS 26.6.1, the integrated source suite passed
 64/64 real-process E2Es, including an IPv6-only peer, script daemon handoff,
