@@ -1,5 +1,5 @@
 import { expect, test, _electron as electron } from '@playwright/test'
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -507,6 +507,60 @@ test('packaged launcher preserves an incompatible live owner and explains recove
   } finally {
     await application.close()
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('packaged macOS daemon inspects a managed Oh My Pi account with bundled resources', async () => {
+  test.setTimeout(90_000)
+  const directory = await mkdtemp(join(tmpdir(), 'ade-package-omp-account-'))
+  const fixture = join(directory, 'omp-fixture.mjs')
+  const wrapper = join(directory, 'omp')
+  await copyFile(resolve('e2e/fixtures/omp_account_cli.mjs'), fixture)
+  await executableWrapper(wrapper, bundledBun, fixture)
+  const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_RESOURCE_DIR: _resourceRoot,
+    ADE_DAEMON_BIN: _daemonBinary, ADE_BUN_BIN: _bunBinary,
+    ADE_OMP_BRIDGE: _ompBridge, ...parentEnvironment } = process.env
+  const application = await electron.launch({ executablePath: executable, cwd: directory,
+    env: { ...parentEnvironment, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+      ADE_OMP_BIN: wrapper, ADE_PROFILES_HOME: join(directory, 'profiles'),
+      ADE_E2E_USER_DATA_DIR: join(directory, 'electron'), ADE_E2E_HIDE_WINDOW: '1' } })
+  let owned: { socket: string; bootId: unknown } | null = null
+  try {
+    const window = await application.firstWindow()
+    await window.getByRole('textbox', { name: 'New profile' }).fill('OMP')
+    await window.getByRole('button', { name: 'Create' }).click()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const profile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles[0]
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
+    const socket = (JSON.parse(located.stdout) as { socket: string }).socket
+    owned = { socket, bootId: (await rpc(socket, { op: 'hello' })).boot_id }
+    const account = (await rpc(socket, { op: 'account.create', provider: 'omp', name: 'Packaged OMP' })).account as
+      { id: string; native_home: string }
+    const database = join(account.native_home, 'agent.db')
+    const seed = `import { Database } from 'bun:sqlite';
+const db = new Database(process.argv[1], { create: true });
+db.run('CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT)');
+db.query('INSERT INTO auth_credentials(id,provider,credential_type,data,disabled_cause,identity_key) VALUES(7,?,?,?,?,?)').run(
+  'anthropic', 'oauth', JSON.stringify({ email: 'packaged@example.invalid', accountId: 'packaged-account', access: 'secret' }),
+  null, 'email:packaged@example.invalid');
+db.close();`
+    await promisify(execFile)(bundledBun, ['-e', seed, database])
+    await chmod(database, 0o600)
+    const inspection = (await rpc(socket, { op: 'account.inspect', account_id: account.id })).inspection as
+      { state: string; identity: Record<string, unknown> }
+    expect(inspection.state).toBe('ready')
+    expect(inspection.identity).toMatchObject({ provider: 'anthropic', credential_id: 7,
+      email: 'packaged@example.invalid' })
+    const verified = (await rpc(socket, { op: 'account.verify', account_id: account.id,
+      expected_generation: 0, expected_identity: inspection.identity })).account as { state: string }
+    expect(verified.state).toBe('verified')
+    expect(JSON.stringify(verified)).not.toContain('secret')
+  } finally {
+    await application.close().catch(() => undefined)
+    if (owned) await stopOwned(owned.socket, owned.bootId)
     await rm(directory, { recursive: true, force: true })
   }
 })
