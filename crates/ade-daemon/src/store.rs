@@ -1949,6 +1949,18 @@ impl Store {
             .map(|row| decode(row?))
             .collect()
     }
+    pub fn interaction(&self, conversation: &str, id: &str) -> Result<Option<PendingRequest>> {
+        self.conversation(conversation)?;
+        self.connection
+            .query_row(
+                "SELECT data FROM requests WHERE id=?1 AND conversation_id=?2",
+                params![id, conversation],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(decode)
+            .transpose()
+    }
     pub fn queued(&self, conversation: &str) -> Result<Vec<QueuedPrompt>> {
         self.conversation(conversation)?;
         self.connection.prepare("SELECT id,conversation_id,text,status,attachments FROM queued_prompts WHERE conversation_id=?1 AND status='queued' ORDER BY rowid")?
@@ -2259,7 +2271,11 @@ impl Store {
                         && prior.run_id == request.run_id
                         && prior.rpc_id == request.rpc_id
                         && prior.method == request.method
-                        && prior.params == request.params,
+                        && prior.params == request.params
+                        && (prior.answer_fingerprint.is_none()
+                            || prior.answer_fingerprint == request.answer_fingerprint)
+                        && (!prior.answer_dispatched || request.answer_dispatched)
+                        && request.answer_attempt >= prior.answer_attempt,
                     "Request identity cannot change"
                 );
                 ensure!(
@@ -3068,6 +3084,9 @@ mod tests {
             method: "approval".into(),
             params: serde_json::json!({"command":"test"}),
             status: "pending".into(),
+            answer_fingerprint: None,
+            answer_dispatched: false,
+            answer_attempt: 0,
         };
         store
             .commit_conversation(&conversation, &[], std::slice::from_ref(&request))

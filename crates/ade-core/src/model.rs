@@ -162,6 +162,21 @@ pub struct PendingRequest {
     pub method: String,
     pub params: Value,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_fingerprint: Option<String>,
+    #[serde(default)]
+    pub answer_dispatched: bool,
+    #[serde(default)]
+    pub answer_attempt: u32,
+}
+impl PendingRequest {
+    pub fn answer_command_key(&self) -> String {
+        if self.answer_attempt == 0 {
+            format!("answer:{}", self.id)
+        } else {
+            format!("answer:{}:attempt-{}", self.id, self.answer_attempt)
+        }
+    }
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]

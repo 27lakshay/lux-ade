@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import subprocess
+import threading
 import time
 import uuid
 
@@ -14,9 +15,11 @@ thread = None
 active = None
 pending = {}
 deferred_reply = None
+send_lock = threading.Lock()
 
 def send(value):
-    print(json.dumps(value), flush=True)
+    with send_lock:
+        print(json.dumps(value), flush=True)
 
 def note(method, params):
     send({"method": method, "params": params})
@@ -139,7 +142,7 @@ for line in sys.stdin:
                     time.sleep(.04)
             note("item/completed", {**base, "item": answer}); finish()
             continue
-        if text in ("approval", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny"):
+        if text in ("approval", "approval-expire", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny"):
             permission = "permission-" + key
             request_method = {"questions": "item/tool/requestUserInput",
                               "rich-questions": "item/tool/requestUserInput",
@@ -165,6 +168,13 @@ for line in sys.stdin:
                 request_params.update(command=("x" * (256*1024) if text == "large-approval" else "echo fixture"), availableDecisions=["accept", "decline"])
             send({"id": permission, "method": request_method, "params": request_params})
             save()
+            if text == "approval-expire":
+                def expire():
+                    while not (root / "expire-approval").exists(): time.sleep(.01)
+                    if pending.pop(permission, None) is not None:
+                        note("serverRequest/resolved", {"threadId": thread["id"], "requestId": permission})
+                        finish()
+                threading.Thread(target=expire, daemon=True).start()
         elif text in ("hold", "hold-late"):
             save()
         else:

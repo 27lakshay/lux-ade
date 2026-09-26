@@ -12,6 +12,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     io::{Read, Write},
@@ -237,6 +238,11 @@ struct SelectedBinding {
 fn e2e_rebind_exit(point: &str) {
     if std::env::var("ADE_E2E_REBIND_FAILPOINT").as_deref() == Ok(point) {
         std::process::exit(93);
+    }
+}
+fn e2e_answer_exit(point: &str) {
+    if std::env::var("ADE_E2E_ANSWER_FAILPOINT").as_deref() == Ok(point) {
+        std::process::exit(94);
     }
 }
 fn selected_binding(path: &str, require_git: bool) -> Result<SelectedBinding> {
@@ -598,7 +604,7 @@ impl Sessions {
                             && !commands
                                 .as_array()
                                 .unwrap()
-                                .contains(&json!(format!("answer:{}", p.id)))
+                                .contains(&json!(p.answer_command_key()))
                         {
                             p.status = "pending".into();
                         }
@@ -2967,6 +2973,9 @@ impl Sessions {
                         method,
                         params,
                         status: "pending".into(),
+                        answer_fingerprint: None,
+                        answer_dispatched: false,
+                        answer_attempt: 0,
                     };
                     requests.insert(p.id.clone(), p);
                     c.status = "waiting".into();
@@ -3156,51 +3165,147 @@ impl Sessions {
         decision: &str,
         answers: Option<&Value>,
     ) -> Result<()> {
-        let d = self.data.lock().unwrap();
+        let mut payload = json!({"decision":decision,"answers":answers.unwrap_or(&Value::Null)});
+        payload.sort_all_objects();
+        let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&payload)?));
+        let (rpc, native, native_resolved) = {
+            let d = self.data.lock().unwrap();
+            let c = d.store.conversation(id)?;
+            let mut p = d
+                .store
+                .interaction(id, request_id)?
+                .ok_or_else(|| anyhow!("Request is stale or already answered"))?;
+            if let Some(prior) = &p.answer_fingerprint {
+                ensure!(
+                    prior == &fingerprint,
+                    "Answer conflicts with the recorded decision"
+                );
+            }
+            if p.answer_dispatched {
+                return Ok(());
+            }
+            ensure!(
+                matches!(p.status.as_str(), "pending" | "responding" | "resolved")
+                    && (p.status != "resolved" || p.answer_fingerprint.is_some()),
+                "Request ended before answer delivery was confirmed; its outcome is unknown"
+            );
+            ensure!(
+                Self::owns(&d, id, &p.run_id),
+                "Request belongs to a previous Agent run"
+            );
+            let native_resolved = p.status == "resolved";
+            if !native_resolved {
+                ensure!(
+                    p.params["threadId"].as_str() == c.provider_thread_id.as_deref()
+                        && p.params["turnId"].as_str() == c.active_turn_id.as_deref(),
+                    "Request no longer belongs to the active turn"
+                );
+            }
+            let rpc = d.agents[id]
+                .rpc
+                .as_ref()
+                .ok_or_else(|| anyhow!("Agent is unavailable"))?
+                .clone();
+            if !native_resolved {
+                rpc.validate_answer(&p, decision, answers)?;
+            }
+            if p.status == "pending" {
+                p.answer_fingerprint = Some(fingerprint.clone());
+                p.status = "responding".into();
+                d.store.commit_conversation(&c, &[], &[p.clone()])?;
+            }
+            // The runtime fingerprints the whole command. Preserve one exact
+            // native request across daemon retries even as local state advances.
+            p.status = "pending".into();
+            p.answer_dispatched = false;
+            (rpc, p, native_resolved)
+        };
+        if native_resolved {
+            let agents = self.runtime.agent(json!({"op":"agent.list"}))?;
+            let present = agents["agents"].as_array().is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["spec"]["run"] == native.run_id
+                        && item["commands"].as_array().is_some_and(|commands| {
+                            commands.contains(&json!(native.answer_command_key()))
+                        })
+                })
+            });
+            ensure!(
+                present,
+                "Native request ended without a recorded answer receipt; outcome is unknown"
+            );
+        }
+        e2e_answer_exit("before_delivery");
+        // An uncertain daemon/runtime reply leaves the durable intent intact.
+        // The runtime receipt admits this exact answer only once.
+        if let Err(error) = rpc.answer(&native, decision, answers) {
+            if native_resolved
+                && error
+                    .downcast_ref::<crate::agent_runtime::AnswerNotSent>()
+                    .is_some()
+            {
+                bail!(
+                    "Native request ended before ADE delivered this answer; inspect the provider turn"
+                );
+            }
+            if error
+                .downcast_ref::<crate::agent_runtime::AnswerNotSent>()
+                .is_some()
+            {
+                e2e_answer_exit("after_not_sent_receipt");
+                let mut d = self.data.lock().unwrap();
+                let mut c = d.store.conversation(id)?;
+                let mut p = d
+                    .store
+                    .interaction(id, request_id)?
+                    .ok_or_else(|| anyhow!("Answer request disappeared before native delivery"))?;
+                ensure!(
+                    p.answer_fingerprint.as_deref() == Some(fingerprint.as_str()),
+                    "Answer intent changed before retry"
+                );
+                if p.answer_attempt == native.answer_attempt
+                    && p.status == "responding"
+                    && Self::owns(&d, id, &p.run_id)
+                {
+                    ensure!(
+                        p.answer_attempt < 32,
+                        "Answer retry limit reached; inspect the provider request"
+                    );
+                    p.answer_attempt += 1;
+                    p.status = "pending".into();
+                    c.error = Some(error.to_string());
+                    c.updated_at = now_ms();
+                    d.store.commit_conversation(&c, &[], &[p])?;
+                    e2e_answer_exit("after_attempt_advance");
+                    self.changed(&mut d, &c, &[])?;
+                }
+            }
+            return Err(error);
+        }
+        e2e_answer_exit("after_delivery");
+        let mut d = self.data.lock().unwrap();
         let mut c = d.store.conversation(id)?;
         let mut p = d
             .store
-            .pending(id)?
-            .into_iter()
-            .find(|p| p.id == request_id && p.status == "pending")
-            .ok_or_else(|| anyhow!("Request is stale or already answered"))?;
+            .interaction(id, request_id)?
+            .ok_or_else(|| anyhow!("Answer request disappeared after delivery"))?;
         ensure!(
-            Self::owns(&d, id, &p.run_id),
-            "Request belongs to a previous Agent run"
+            p.answer_fingerprint.as_deref() == Some(fingerprint.as_str()),
+            "Answer intent changed after delivery"
         );
-        ensure!(
-            p.params["threadId"].as_str() == c.provider_thread_id.as_deref()
-                && p.params["turnId"].as_str() == c.active_turn_id.as_deref(),
-            "Request no longer belongs to the active turn"
-        );
-        let rpc = d.agents[id]
-            .rpc
-            .as_ref()
-            .ok_or_else(|| anyhow!("Agent is unavailable"))?
-            .clone();
-
-        rpc.validate_answer(&p, decision, answers)?;
-        p.status = "responding".into();
-        d.store.commit_conversation(&c, &[], &[p.clone()])?;
-        drop(d);
-        if let Err(error) = rpc.answer(&p, decision, answers) {
-            self.fail(id, &p.run_id, error.to_string());
-            return Err(error);
+        p.answer_dispatched = true;
+        if p.status == "responding" {
+            p.status = "resolved".into();
         }
-        let mut d = self.data.lock().unwrap();
-        ensure!(
-            Self::owns(&d, id, &p.run_id),
-            "Agent disconnected while answering"
-        );
-        c = d.store.conversation(id)?;
-        p.status = "resolved".into();
         if c.status == "waiting" && !d.store.pending(id)?.iter().any(|r| r.id != p.id) {
             c.status = "running".into();
         }
+        if c.error.as_deref() == Some(&crate::agent_runtime::AnswerNotSent.to_string()) {
+            c.error = None;
+        }
         c.updated_at = now_ms();
         d.store.commit_conversation(&c, &[], &[p])?;
-        self.changed(&mut d, &c, &[])?;
-        Ok(())
+        self.changed(&mut d, &c, &[])
     }
 }
 

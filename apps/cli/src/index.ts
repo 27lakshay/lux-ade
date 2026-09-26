@@ -31,6 +31,9 @@ Commands:
   conversation send ID TEXT             Send a prompt with a generated request ID
   conversation cancel ID                Request cancellation of the active turn
   conversation resume ID                Reconnect or resume a stopped agent
+  conversation answer ID REQUEST_ID DECISION [ANSWERS_JSON]
+                                        Answer a pending native request once; DECISION is accept, decline, or answer
+                                        For questions, pass a JSON object of question IDs to text or text arrays
   account list                           List profile accounts
   account create PROVIDER NAME           Register a native account home
   account inspect ID                     Check current Claude, Codex or Oh My Pi readiness
@@ -420,6 +423,28 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
   if (area === 'conversation' && (action === 'cancel' || action === 'resume')) {
     if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)
     return requestDaemon(socketPath, `agent.${action}`, { conversation_id: required(rest[0], 'ID') })
+  }
+  if (area === 'conversation' && action === 'answer') {
+    if (rest.length < 3 || rest.length > 4) {
+      throw new CliError('usage', 'conversation answer requires ID REQUEST_ID DECISION [ANSWERS_JSON].')
+    }
+    const [conversationId, requestId, decision, answerJson] = rest
+    if (!['accept', 'decline', 'answer'].includes(decision)) {
+      throw new CliError('usage', 'DECISION must be accept, decline, or answer.')
+    }
+    if ((decision === 'answer') !== (answerJson !== undefined)) {
+      throw new CliError('usage', 'ANSWERS_JSON is required only for the answer decision.')
+    }
+    const answers = answerJson === undefined ? undefined : jsonObject(answerJson, 'ANSWERS_JSON')
+    if (answers && Object.values(answers).some((value) =>
+      typeof value !== 'string' && (!Array.isArray(value) || value.some((item) => typeof item !== 'string')))) {
+      throw new CliError('usage', 'ANSWERS_JSON values must be text or arrays of text.')
+    }
+    return requestDaemon(socketPath, 'agent.answer', {
+      conversation_id: required(conversationId, 'ID'),
+      request_id: required(requestId, 'REQUEST_ID'), decision,
+      ...(answers === undefined ? {} : { answers }),
+    })
   }
   if (area === 'account' && action === 'list') {
     if (rest.length) throw new CliError('usage', 'account list does not accept arguments.')

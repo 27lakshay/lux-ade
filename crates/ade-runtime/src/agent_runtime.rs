@@ -290,9 +290,13 @@ impl Run {
                 "answer" => {
                     let p: PendingRequest = serde_json::from_value(request["request"].clone())?;
                     ensure!(p.run_id == self.spec.run && p.conversation_id == self.spec.conversation, "Interaction belongs to another Agent run");
-                    self.adapter.answer(&p, string("decision")?, request.get("answers").filter(|v| !v.is_null()))?;
-                    self.append(Event::Resolved { id: p.rpc_id });
-                    Ok(json!({"type":"ack"}))
+                    if p.answer_attempt == 0 && std::env::var("ADE_E2E_ANSWER_FAULT").as_deref() == Ok("before_native") {
+                        Ok(json!({"type":"answer_not_sent"}))
+                    } else {
+                        self.adapter.answer(&p, string("decision")?, request.get("answers").filter(|v| !v.is_null()))?;
+                        self.append(Event::Resolved { id: p.rpc_id });
+                        Ok(json!({"type":"ack"}))
+                    }
                 }
                 "reject" => { self.adapter.reject(request["id"].clone(), string("message")?)?; Ok(json!({"type":"ack"})) }
                 _ => bail!("Unknown Agent method"),
@@ -308,13 +312,20 @@ impl Run {
             result = json!({"type":"error","message":"Agent receipt storage limit reached; outcome retained as failed, never replay automatically"});
         }
         if result["type"] == "error" {
-            self.append(Event::OperationFailed {
-                submission: request["submission"].as_str().map(str::to_owned),
-                error: result["message"]
-                    .as_str()
-                    .unwrap_or("Provider operation failed")
-                    .into(),
-            });
+            let error = result["message"]
+                .as_str()
+                .unwrap_or("Provider operation failed")
+                .to_owned();
+            if method == "answer" {
+                // A refused or uncertain answer is not proof that the turn
+                // failed. Retain the live request and its once-only receipt.
+                self.append(Event::Error { error });
+            } else {
+                self.append(Event::OperationFailed {
+                    submission: request["submission"].as_str().map(str::to_owned),
+                    error,
+                });
+            }
         }
         *receipt.result.lock().unwrap() = Some(result.clone());
         receipt.ready.notify_all();
@@ -361,6 +372,14 @@ pub struct Remote {
     runtime: Arc<runtime::Supervisor>,
     pub spec: Spec,
 }
+#[derive(Debug)]
+pub struct AnswerNotSent;
+impl std::fmt::Display for AnswerNotSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Answer was not sent to the provider; retry the same decision and answers")
+    }
+}
+impl std::error::Error for AnswerNotSent {}
 impl Remote {
     pub fn new(runtime: Arc<runtime::Supervisor>, spec: Spec) -> Arc<Self> {
         Arc::new(Self { runtime, spec })
@@ -461,11 +480,15 @@ impl Provider for Remote {
         Ok(())
     }
     fn answer(&self, p: &PendingRequest, decision: &str, answers: Option<&Value>) -> Result<()> {
-        self.call(
+        let result = self.call(
             "answer",
-            format!("answer:{}", p.id),
+            p.answer_command_key(),
             json!({"request":p,"decision":decision,"answers":answers}),
         )?;
+        if result["type"] == "answer_not_sent" {
+            return Err(AnswerNotSent.into());
+        }
+        ensure!(result["type"] == "ack", "Invalid Agent answer receipt");
         Ok(())
     }
     fn reject(&self, id: Value, message: &str) -> Result<()> {
