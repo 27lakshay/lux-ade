@@ -40,7 +40,7 @@ test('CLI and Electron expose one stable local service URL and open its preview'
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const row = window.getByRole('article', { name: 'Service web' })
     await row.getByRole('button', { name: 'Inspect' }).click()
-    await row.getByRole('button', { name: 'Local URL for PORT' }).click()
+    await row.getByRole('button', { name: 'Local URL for PORT', exact: true }).click()
     await expect(row).toContainText(url)
     await row.getByRole('button', { name: 'Open preview' }).click()
     await expect.poll(async () => {
@@ -85,10 +85,25 @@ test('CLI and Electron expose one stable local service URL and open its preview'
     await expect.poll(async () => (await fetch(url)).status).toBe(503)
     await window.getByRole('region', { name: 'Workspace services' }).getByRole('button', { name: 'Refresh' }).click()
     const replacementRow = window.getByRole('article', { name: 'Service web' })
-    await replacementRow.getByRole('button', { name: 'Local URL for PORT' }).click()
+    await replacementRow.getByRole('button', { name: 'Local URL for PORT', exact: true }).click()
     await expect(replacementRow.getByRole('button', { name: 'Remap URL to this service' })).toBeVisible()
     await replacementRow.getByRole('button', { name: 'Remap URL to this service' }).click()
     await expect.poll(async () => (await (await fetch(url)).text())).toBe('proxy-ui-remapped-ready')
+    const beforeRetire = await execFileAsync(process.execPath, [cli, '--socket', daemon.socket,
+      'service', 'url-inspect', workspace.id, 'web', 'PORT'], { timeout: 12_000 })
+    const pinned = JSON.parse(beforeRetire.stdout) as { route_id: string; port: number; service_identity: string; target_port: number }
+    await replacementRow.getByRole('button', { name: 'Retire local URL for PORT' }).click()
+    await expect(replacementRow.getByRole('button', { name: 'Retire local URL for PORT' })).toHaveCount(0)
+    await expect(fetch(url)).rejects.toThrow()
+    const renewed = await execFileAsync(process.execPath, [cli, '--socket', daemon.socket,
+      'service', 'url', workspace.id, 'web', 'PORT'], { timeout: 12_000 })
+    const next = JSON.parse(renewed.stdout) as { route_id: string; url: string; port: number; service_identity: string; target_port: number }
+    expect(next.route_id).not.toBe(pinned.route_id)
+    const retired = await execFileAsync(process.execPath, [cli, '--socket', daemon.socket,
+      'service', 'url-retire', workspace.id, 'web', 'PORT', next.route_id, next.service_identity,
+      String(next.target_port), String(next.port)], { timeout: 12_000 })
+    expect((JSON.parse(retired.stdout) as { route_id: string }).route_id).toBe(next.route_id)
+    await expect(fetch(next.url)).rejects.toThrow()
   } finally {
     await application?.close()
     await daemon.stop()

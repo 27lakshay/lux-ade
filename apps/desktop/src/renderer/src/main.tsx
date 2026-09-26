@@ -42,6 +42,14 @@ type ServiceInspection = { execution_state: string; execution_error?: string | n
     fresh_until_ms?: number; schedule_delay_ms?: number };
   effective_peers?: Record<string, string>; peer_error?: string | null;
   health?: { state: string; basis: string; status_code?: number; error?: string } }
+type ProxyRoute = { url: string; port: number; route_id: string; service_identity: string; target_port: number }
+
+function proxyRoute(value: Frame): ProxyRoute {
+  if (typeof value.url !== 'string' || typeof value.route_id !== 'string' ||
+    typeof value.service_identity !== 'string' || !Number.isSafeInteger(value.port) ||
+    !Number.isSafeInteger(value.target_port)) throw new Error('Invalid service proxy route')
+  return value as ProxyRoute
+}
 
 function serviceOutput(logs: ServiceInspection['logs']): string {
   if (!logs.available || !logs.bytes_base64) return ''
@@ -86,6 +94,7 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
   const [healthBusy, setHealthBusy] = React.useState(false)
   const [proxyBusy, setProxyBusy] = React.useState('')
   const [proxyUrls, setProxyUrls] = React.useState<Record<string, string>>({})
+  const [proxyRouteMeta, setProxyRouteMeta] = React.useState<Record<string, ProxyRoute>>({})
   const [proxyRemap, setProxyRemap] = React.useState<Record<string, { identity: string; port: number }>>({})
   const healthRequest = React.useRef(0)
   const [inventoryError, setInventoryError] = React.useState('')
@@ -171,8 +180,9 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
       const result = await window.adeHost.requestService('service.proxy.ensure', {
         workspace_id: workspace.id, name, port_variable: variable,
       })
-      if (typeof result.url !== 'string') throw new Error('Invalid service proxy URL')
-      setProxyUrls((urls) => ({ ...urls, [key]: result.url as string }))
+      const route = proxyRoute(result)
+      setProxyUrls((urls) => ({ ...urls, [key]: route.url }))
+      setProxyRouteMeta((routes) => ({ ...routes, [key]: route }))
       setProxyRemap((routes) => { const next = { ...routes }; delete next[key]; return next })
       setError('')
     } catch (reason) {
@@ -182,12 +192,13 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
           const route = await window.adeHost.requestService('service.proxy.inspect', {
             workspace_id: workspace.id, name, port_variable: variable,
           })
-          if (typeof route.service_identity === 'string' && Number.isSafeInteger(route.target_port) &&
-              (route.service_identity !== service.identity || route.target_port !== service.ports[variable])) {
+          const pinned = proxyRoute(route)
+          if (pinned.service_identity !== service.identity || pinned.target_port !== service.ports[variable]) {
             setProxyRemap((routes) => ({ ...routes, [key]: {
-              identity: route.service_identity as string, port: route.target_port as number,
+              identity: pinned.service_identity, port: pinned.target_port,
             } }))
-            if (typeof route.url === 'string') setProxyUrls((urls) => ({ ...urls, [key]: route.url as string }))
+            setProxyUrls((urls) => ({ ...urls, [key]: pinned.url }))
+            setProxyRouteMeta((routes) => ({ ...routes, [key]: pinned }))
           }
         } catch { /* The original error remains visible. */ }
       }
@@ -204,8 +215,26 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
         expected_service_identity: service.identity, expected_target_port: service.ports[variable],
         expected_route_identity: previous.identity, expected_route_port: previous.port,
       })
-      if (typeof result.url !== 'string') throw new Error('Invalid service proxy URL')
-      setProxyUrls((urls) => ({ ...urls, [key]: result.url as string }))
+      const route = proxyRoute(result)
+      setProxyUrls((urls) => ({ ...urls, [key]: route.url }))
+      setProxyRouteMeta((routes) => ({ ...routes, [key]: route }))
+      setProxyRemap((routes) => { const next = { ...routes }; delete next[key]; return next })
+      setError('')
+    } catch (reason) { setError(String(reason)) }
+    finally { setProxyBusy('') }
+  }
+  const retireUrl = async (service: Service, variable: string, route: ProxyRoute): Promise<void> => {
+    if (proxyBusy) return
+    const key = `${service.name}:${variable}`
+    setProxyBusy(key)
+    try {
+      await window.adeHost.requestService('service.proxy.retire', {
+        workspace_id: workspace.id, name: service.name, port_variable: variable,
+        expected_route_id: route.route_id, expected_service_identity: route.service_identity,
+        expected_target_port: route.target_port, expected_proxy_port: route.port,
+      })
+      setProxyUrls((urls) => { const next = { ...urls }; delete next[key]; return next })
+      setProxyRouteMeta((routes) => { const next = { ...routes }; delete next[key]; return next })
       setProxyRemap((routes) => { const next = { ...routes }; delete next[key]; return next })
       setError('')
     } catch (reason) { setError(String(reason)) }
@@ -264,7 +293,11 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
                   Local URL for {variable}
                 </button>
                 {url && <><span className="service-ports">{url}</span>
-                  <button type="button" onClick={() => void openPreview(url)}>Open preview</button></>}
+                  <button type="button" onClick={() => void openPreview(url)}>Open preview</button>
+                  {proxyRouteMeta[key] && <button type="button" disabled={Boolean(proxyBusy)}
+                    onClick={() => void retireUrl(service, variable, proxyRouteMeta[key])}>
+                    Retire local URL for {variable}
+                  </button>}</>}
                 {proxyRemap[key] && <button type="button" disabled={Boolean(proxyBusy)}
                   onClick={() => void remapUrl(service, variable, proxyRemap[key])}>
                   Remap URL to this service

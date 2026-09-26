@@ -1,8 +1,9 @@
 import React from 'react'
 import type { Workspace } from '@ade/client'
 
-type Script = { name: string }
-type Run = { run_id: string; name: string; state: string }
+type Script = { name: string; kind?: 'package_json' | 'ade_recipe' }
+type ExitStatus = { kind: 'success' | 'failure' | 'signaled' | 'unknown'; code?: number; signal?: string; reason?: string }
+type Run = { run_id: string; name: string; state: string; exit_status?: ExitStatus }
 type Output = { available?: boolean; bytes_base64?: string; truncated?: boolean; reason?: string }
 type Inspection = Run & { output?: Output; durable_output?: Output }
 
@@ -10,6 +11,15 @@ function decode(output?: Output): string {
   if (!output?.bytes_base64) return ''
   try { return new TextDecoder().decode(Uint8Array.from(atob(output.bytes_base64), (char) => char.charCodeAt(0))) }
   catch { return 'Output could not be decoded' }
+}
+
+function outcome(run: Run): string {
+  if (run.state === 'running') return 'running'
+  const result = run.exit_status
+  if (result?.kind === 'success') return 'succeeded'
+  if (result?.kind === 'failure') return `failed (exit ${result.code ?? 'unknown'})`
+  if (result?.kind === 'signaled') return `stopped by ${result.signal ?? 'signal'}`
+  return 'outcome unknown'
 }
 
 export function ScriptPane({ workspace }: { workspace: Workspace }): React.JSX.Element {
@@ -85,23 +95,25 @@ export function ScriptPane({ workspace }: { workspace: Workspace }): React.JSX.E
     {error && <p role="alert" className="inline-error">{error}</p>}
     {scripts.length === 0 && !error && <p className="muted">No package scripts found at the workspace root.</p>}
     {scripts.map((script) => <article className="service-row" key={script.name} aria-label={`Script ${script.name}`}>
-      <div><strong>{script.name}</strong></div>
+      <div><strong>{script.name}</strong><span className="service-state">
+        {script.kind === 'ade_recipe' ? 'ADE recipe' : 'package.json'}
+      </span></div>
       <div className="service-actions"><button type="button" disabled={busy} onClick={() => void act('start', script.name)}>Run</button></div>
     </article>)}
     {runs.length > 0 && <h3>Runs</h3>}
     {runs.map((run) => <article className="service-row" key={run.run_id} aria-label={`Script run ${run.name}`}>
-      <div><strong>{run.name}</strong><span className="service-state">{run.state}</span></div>
+      <div><strong>{run.name}</strong><span className="service-state">{outcome(run)}</span></div>
       <p className="service-ports">{run.run_id}</p>
       <div className="service-actions">
         <button type="button" aria-expanded={selected === run.run_id} onClick={() => setSelected((prior) => prior === run.run_id ? null : run.run_id)}>
           {selected === run.run_id ? 'Hide output' : 'Inspect output'}
         </button>
-        <button type="button" disabled={busy || run.state !== 'running'} onClick={() => void act('stop', run.run_id)}>Stop</button>
-        <button type="button" disabled={busy || run.state === 'running'} onClick={() => void act('retire', run.run_id)}>Retire</button>
+        <button type="button" disabled={busy || run.state === 'exited'} onClick={() => void act('stop', run.run_id)}>Stop</button>
+        <button type="button" disabled={busy || run.state !== 'exited'} onClick={() => void act('retire', run.run_id)}>Retire</button>
       </div>
       {selectedRun?.run_id === run.run_id && <div className="service-inspection">
         {!inspection ? <p className="muted">Loading script output…</p> : <>
-          <p>Execution: {inspection.state}</p>
+          <p>Execution: {outcome(inspection)}</p>
           <pre>{decode(output) || (output?.available === false ? `Output unavailable: ${output.reason ?? 'unknown reason'}` : 'No output yet')}</pre>
           {output?.truncated && <p>Earlier output is outside the retained tail.</p>}
         </>}

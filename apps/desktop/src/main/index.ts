@@ -523,7 +523,7 @@ ipcMain.handle('ade:workspace-select', async (event, workspaceId: unknown, conve
     generation: clientGeneration, epoch: (prior?.epoch ?? 0) + 1 })
   return true
 })
-const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'listener.list'])
+const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'service.proxy.retire', 'listener.list'])
 const scriptOps = new Set(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
 ipcMain.handle('ade:script-request', async (_event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !scriptOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
@@ -604,23 +604,30 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
     if (!args.config || typeof args.config !== 'object' || Array.isArray(args.config)) throw new Error('Invalid service configuration')
     request.config = args.config
   }
-  if (op === 'service.proxy.ensure' || op === 'service.proxy.inspect' || op === 'service.proxy.remap') {
+  if (op === 'service.proxy.ensure' || op === 'service.proxy.inspect' || op === 'service.proxy.remap' || op === 'service.proxy.retire') {
     if (typeof args.port_variable !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(args.port_variable)) {
       throw new Error('Invalid service port variable')
     }
     request.port_variable = args.port_variable
   }
-  if (op === 'service.proxy.remap') {
+  if (op === 'service.proxy.remap' || op === 'service.proxy.retire') {
     if (typeof args.expected_service_identity !== 'string' || !validId(args.expected_service_identity) ||
-      typeof args.expected_route_identity !== 'string' || !validId(args.expected_route_identity) ||
       !Number.isSafeInteger(args.expected_target_port) || (args.expected_target_port as number) < 1 || (args.expected_target_port as number) > 65535 ||
-      !Number.isSafeInteger(args.expected_route_port) || (args.expected_route_port as number) < 1 || (args.expected_route_port as number) > 65535) {
+      (op === 'service.proxy.remap' && (typeof args.expected_route_identity !== 'string' || !validId(args.expected_route_identity) ||
+        !Number.isSafeInteger(args.expected_route_port) || (args.expected_route_port as number) < 1 || (args.expected_route_port as number) > 65535)) ||
+      (op === 'service.proxy.retire' && (typeof args.expected_route_id !== 'string' || !validId(args.expected_route_id) ||
+        !Number.isSafeInteger(args.expected_proxy_port) || (args.expected_proxy_port as number) < 1 || (args.expected_proxy_port as number) > 65535))) {
       throw new Error('Invalid expected service targets')
     }
     request.expected_service_identity = args.expected_service_identity
     request.expected_target_port = args.expected_target_port
-    request.expected_route_identity = args.expected_route_identity
-    request.expected_route_port = args.expected_route_port
+    if (op === 'service.proxy.remap') {
+      request.expected_route_identity = args.expected_route_identity
+      request.expected_route_port = args.expected_route_port
+    } else {
+      request.expected_route_id = args.expected_route_id
+      request.expected_proxy_port = args.expected_proxy_port
+    }
   }
   if (op === 'service.inspect') {
     if (!Number.isSafeInteger(args.tail_bytes) || (args.tail_bytes as number) < 1 || (args.tail_bytes as number) > 32768) {

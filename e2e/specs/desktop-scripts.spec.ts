@@ -14,7 +14,8 @@ test('Electron runs and stops a workspace package script across window closure',
   try {
     await writeFile(join(daemon.rootDirectory, 'package.json'), JSON.stringify({
       name: 'ade-script-desktop-e2e', private: true,
-      scripts: { serve: 'node -e "console.log(\'DESKTOP_SCRIPT_READY\'); setInterval(()=>{},1000)"' },
+      scripts: { serve: 'node -e "console.log(\'DESKTOP_SCRIPT_READY\'); setInterval(()=>{},1000)"',
+        fail: 'node -e "process.exit(7)"' },
     }))
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory }))
       .workspace as { id: string }
@@ -50,9 +51,14 @@ test('Electron runs and stops a workspace package script across window closure',
       run_id: id[0].run_id })).metrics as { shell_pid: number }
     expect(same.shell_pid).toBe(pid)
     await reopened.getByRole('button', { name: 'Stop' }).click()
-    await expect(reopened).toContainText('exited')
+    await expect(reopened).toContainText('stopped by')
     await reopened.getByRole('button', { name: 'Retire' }).click()
     await expect(reopened).toHaveCount(0)
+    await window.getByRole('article', { name: 'Script fail' }).getByRole('button', { name: 'Run' }).click()
+    const failed = window.getByRole('article', { name: 'Script run fail' })
+    await expect(failed).toContainText('failed (exit 7)')
+    await failed.getByRole('button', { name: 'Retire' }).click()
+    await expect(failed).toHaveCount(0)
   } finally {
     await application?.close()
     await daemon.stop()

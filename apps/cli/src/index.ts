@@ -45,6 +45,8 @@ Commands:
                                         Inspect a stable URL and its pinned service identity
   service remap WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_ROUTE_ID EXPECTED_ROUTE_PORT
                                         Remap only if both reviewed targets still match
+  service url-retire WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT
+                                        Retire exactly one reviewed stable URL
   script list WORKSPACE_ID               Discover package scripts in a workspace
   script runs WORKSPACE_ID               List retained script runs
   script start WORKSPACE_ID NAME         Run a configured workspace script
@@ -330,6 +332,18 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
       expected_target_port: port(rest[4], 'EXPECTED_TARGET_PORT'),
       expected_route_identity: required(rest[5], 'EXPECTED_ROUTE_ID'),
       expected_route_port: port(rest[6], 'EXPECTED_ROUTE_PORT'),
+    })
+  }
+  if (area === 'service' && action === 'url-retire') {
+    if (rest.length !== 7) throw new CliError('usage',
+      'service url-retire requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT.')
+    return requestDaemon(socketPath, 'service.proxy.retire', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      port_variable: required(rest[2], 'PORT_VARIABLE'),
+      expected_route_id: required(rest[3], 'EXPECTED_ROUTE_ID'),
+      expected_service_identity: required(rest[4], 'EXPECTED_SERVICE_ID'),
+      expected_target_port: port(rest[5], 'EXPECTED_TARGET_PORT'),
+      expected_proxy_port: port(rest[6], 'EXPECTED_PROXY_PORT'),
     })
   }
   if (area === 'service' && action === 'configure') {
