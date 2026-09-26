@@ -41,9 +41,13 @@ The one-file Discard ticket and the shared cancel/resume control slice are
 closed; F075/06-S06 and real-provider F021/F038 acceptance remain open.
 Active owner: coordinator on connected provider/account daily-use acceptance.
 `/root/git_discard_e2e` and `/root/discard_safety_review` have finished; no
-worker is currently running. Next assignment: select a real-provider/account
-flow for the provider/conversation row, working around the Oh My Pi credential
-blocker. Queue unrelated V1 slices. Preserve the final full V1 acceptance audit.
+worker is currently running. Next assignment: close the F038 answer-delivery
+gap before live-provider acceptance. `agent.answer` currently marks a request
+`responding` before native RPC; an RPC failure fails the run, while a later
+retry only accepts `pending`, so once-only recovery is unproved. Add durable
+reconciliation and CLI answer/decline parity through focused running-process
+E2Es, then test available real accounts. Continue around the Oh My Pi credential
+blocker. Queue unrelated V1 slices and preserve the final full V1 audit.
 
 ## Integrated checkpoints
 
