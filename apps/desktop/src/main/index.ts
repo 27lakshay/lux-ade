@@ -424,12 +424,23 @@ async function selectProfile(id: string, updateDefault: boolean): Promise<Profil
   if (!profileState.profiles.some((item) => item.id === id)) throw new Error('Unknown profile')
   switching = true
   try {
+    const previousId = profileState.activeId
+    const previousEndpoint = socket
     const result = await launcher('start', id)
     if (result.type !== 'profile_started' || typeof result.socket !== 'string' || !result.socket) {
       throw new Error('Profile launcher did not return a daemon socket')
     }
-    if (updateDefault) await launcher('select', id)
     await attachClient(result.socket, id)
+    if (updateDefault) {
+      try { await launcher('select', id) } catch (error) {
+        if (previousId && previousEndpoint) {
+          try { await attachClient(previousEndpoint, previousId) } catch (rollbackError) {
+            throw new Error(`Could not save the selected profile, and returning to the previous profile failed: ${String(rollbackError)}`, { cause: error })
+          }
+        }
+        throw error
+      }
+    }
     return await refreshProfiles()
   } finally { switching = false }
 }

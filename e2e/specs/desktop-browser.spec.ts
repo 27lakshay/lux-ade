@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -128,6 +128,20 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
     await expect.poll(() => web.reports.filter((item) => item.page === 'probe').at(-1)?.cookie).toContain('profile=personal')
     await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.observedUrl)
       .toContain('/probe')
+    const conflictingSource = join(second.home, 'browser-session')
+    await mkdir(conflictingSource)
+    await writeFile(join(conflictingSource, 'original.txt'), 'keep the legacy source')
+    await expect(window.evaluate((id) => window.adeHost.selectProfile(id), second.id))
+      .rejects.toThrow(/migration review/)
+    const afterRefusal = await window.evaluate(() => window.adeHost.getProfileState())
+    expect(afterRefusal.activeId).toBe(first.id)
+    expect(afterRefusal.selectedId).toBe(first.id)
+    expect((await window.evaluate(() => window.adeHost.getClientState())).status).toBe('connected')
+    expect((await window.evaluate(() => window.adeHost.browser.list())).tabs.map((tab) => tab.id)).toEqual([personalId])
+    expect(await readFile(join(conflictingSource, 'original.txt'), 'utf8')).toBe('keep the legacy source')
+    await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, `${url}/probe`), { id: personalId, url: web.url })
+    await expect.poll(() => web.reports.filter((item) => item.page === 'probe').at(-1)?.cookie).toContain('profile=personal')
+    await rm(conflictingSource, { recursive: true })
     await quitNormally(application)
     const personalStorageKey = createHash('sha256').update(first.id).digest('hex')
     await rename(join(env.ADE_E2E_USER_DATA_DIR, 'browser-sessions', personalStorageKey), join(first.home, 'browser-session'))

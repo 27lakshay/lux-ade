@@ -40,8 +40,8 @@ async function migrateBrowserStorage(id: string): Promise<void> {
     if (error.code === 'ENOENT') return false
     throw error
   })) {
-    const completed = await readFile(marker, 'utf8').then((data) => JSON.parse(data) as { profileId?: string }).catch(() => null)
-    if (completed?.profileId === id) return
+    const completed = await readFile(marker, 'utf8').then((data) => JSON.parse(data) as { profileId?: string; source?: string }).catch(() => null)
+    if (completed?.profileId === id && completed.source === source) return
     if (await stat(source).then(() => true).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return false
       throw error
@@ -225,6 +225,20 @@ async function flushProfileSession(id: string): Promise<void> {
 }
 export async function setBrowserProfile(id: string | null, directory?: string): Promise<void> {
   if (id && (!directory || !isAbsolute(directory))) throw new Error('Browser profile needs an absolute storage path')
+  // Migration can refuse an ambiguous destination. Validate it before detaching
+  // the previous profile's views or changing the active browser identity.
+  if (id) {
+    const originalPath = profilePaths.get(id)
+    if (originalPath && originalPath !== directory) {
+      throw new Error('Browser profile home changed while active; restart ADE to rebind this profile')
+    }
+    profilePaths.set(id, directory as string)
+    try { await migrateBrowserStorage(id) } catch (error) {
+      if (originalPath === undefined) profilePaths.delete(id)
+      else profilePaths.set(id, originalPath)
+      throw error
+    }
+  }
   const previous = activeProfile
   activeProfile = null
   for (const window of BrowserWindow.getAllWindows()) detach(window)
@@ -233,10 +247,6 @@ export async function setBrowserProfile(id: string | null, directory?: string): 
     await flushProfileSession(previous)
     for (const view of prior?.views.values() ?? []) if (!view.webContents.isDestroyed()) view.webContents.close()
     prior?.views.clear()
-  }
-  if (id) {
-    profilePaths.set(id, directory as string)
-    await migrateBrowserStorage(id)
   }
   activeProfile = id
   if (id) void stateFor(id).then(() => publish(id)).catch(() => undefined)

@@ -58,7 +58,9 @@ A disposable Electron 44.4.5 process reproduced the loss when `session.fromPath`
 pointed outside Electron's `userData` directory; the same process retained its
 cookie when the path was inside `userData`. ADE now stores each profile's
 browser session at a stable path inside Electron's data directory, keyed by
-ADE profile identity and home. Tab metadata remains in the ADE profile home.
+ADE profile identity. Tab metadata remains in the ADE profile home. Separate
+profile registries sharing one Electron data directory must not reuse an ID;
+ownership and backup across both storage roots remain to be designed.
 Existing preview storage is copied on first use, leaving the original intact.
 The running ADE E2E moves a Personal session to the former location, restarts,
 and verifies migration plus its cookie; it also verifies the inactive Work
@@ -67,9 +69,17 @@ its full spec acceptance and browser-profile lifecycle are checked. The
 browser session is now physically separate from profile-core data, so managed
 backup and retention work must include this stable `userData` path. The legacy
 copy stays in place for rollback; R015 cleanup of verified old copies remains
-open. Interrupted migration removes its temporary copy and does not erase the
+open. An in-process migration error removes its temporary copy and does not erase the
 source. A marker in the new session distinguishes a completed migration from
 an unexplained existing destination.
+
+An independent audit found that a process killed during migration can leave
+a temporary directory and that an unmarked destination without a legacy
+source still has no proven origin. Neither session storage nor the retained
+legacy copy has a managed backup, restore or retention owner yet. A migration
+refusal now leaves the previously active browser usable and preserves its
+saved default; `e2e/specs/desktop-browser.spec.ts` exercises that failure
+through Electron. R014/R015 and full browser lifecycle acceptance remain open.
 
 An independent code review also identified switch-time view reattachment,
 pending tab-state writes on quit, download permission, aborted-load state,
