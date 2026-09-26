@@ -108,13 +108,21 @@ for line in sys.stdin:
         if text == "typed-plan":
             note("turn/plan/updated", {**base, "explanation": "Verify structured persistence", "plan": [{"step": "Inspect", "status": "inProgress"}]})
             note("turn/plan/updated", {**base, "explanation": "Verify structured persistence", "plan": [{"step": "Inspect", "status": "completed"}]})
-        if text in ("typed-tool", "demo"):
+        if text in ("typed-tool", "typed-unknown", "demo"):
             command={"id":"command-"+key,"type":"commandExecution","command":"fixture command","cwd":"/fixture","aggregatedOutput":"","status":"inProgress"}
             note("item/started",{**base,"item":command})
             note("item/commandExecution/outputDelta",{**base,"itemId":command['id'],"delta":"fixture failure"})
             command.update(aggregatedOutput='fixture failure',exitCode=1,status='completed')
             active['items'].append(command)
             note("item/completed",{**base,"item":command})
+        if text == "typed-unknown":
+            private={"id":"reasoning-"+key,"type":"reasoning","text":"PRIVATE_REASONING"}
+            active['items'].append(private)
+            note("item/completed",{**base,"item":private})
+            future={"id":"future-"+key,"type":"futurePreview","status":"completed",
+                    "title":"Example preview","details":{"secret":"PRIVATE_NATIVE_PAYLOAD"}}
+            active['items'].append(future)
+            note("item/completed",{**base,"item":future})
         if text == "typed-subagents":
             children={"id":"children-"+key,"type":"collabAgentToolCall","tool":"spawnAgent","status":"completed","senderThreadId":thread['id'],"receiverThreadIds":["fixture-child-running","fixture-child-completed"],"agentsStates":{"fixture-child-running":{"status":"running"},"fixture-child-completed":{"status":"completed","message":"Child finished"}}}
             active['items'].append(children)

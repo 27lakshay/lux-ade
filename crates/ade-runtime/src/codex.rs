@@ -509,7 +509,15 @@ fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
                 value["result"]
             ),
         ),
-        _ => return None,
+        // Native reasoning is private and must never enter the shared history.
+        "reasoning" => return None,
+        _ => (
+            "tool",
+            format!(
+                "Unrecognized Codex item ({}). Its details require a newer ADE adapter.",
+                kind.chars().take(128).collect::<String>()
+            ),
+        ),
     };
     let is_error = value["status"].as_str() == Some("failed")
         || value["exitCode"].as_i64().is_some_and(|code| code != 0)
