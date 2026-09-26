@@ -8,6 +8,9 @@ tracker. The user approved the Electron application, CLI and public protocol as
 E2E test interfaces backed by real ADE processes. No implementation is authorized
 merely by publication, and no feature is marked complete by this specification.
 
+Delivery-process planning for a faster parallel build lives in the
+[parallel build map](../parallel-build/README.md); it is not a v1 feature.
+
 ## Start here
 
 1. Read the [requirements register](requirements.md): all 140 original features,
