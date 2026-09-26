@@ -4,6 +4,7 @@ import type { ClientState, Workspace, Conversation, FeedFrame } from '@ade/clien
 import { mountTerminal, type TerminalBridge } from '@ade/terminal'
 import { ReviewPane } from './review'
 import { BrowserPane, type BrowserBridge } from './browser'
+import { ScriptPane } from './scripts'
 import './style.css'
 
 type Frame = Record<string, unknown>
@@ -25,7 +26,7 @@ function shellQuote(value: string): string {
 }
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
-type Service = { name: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>;
+type Service = { name: string; identity: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>;
   config: { program: string; peers?: Record<string, { service: string; port_variable: string }> } }
 type ServiceState = { state: string; metrics: Frame | null }
 type ServiceList = { services: Service[]; states: Record<string, ServiceState> }
@@ -65,6 +66,7 @@ declare global {
       selectWorkspace(id: string, conversationId: string | null): Promise<boolean>
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestService(op: string, fields: Record<string, unknown>): Promise<Frame>
+      requestScript(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestReview(op: string, fields: Record<string, unknown>): Promise<Frame>
       onDraftError(listener: (value: { conversationId: string; message: string }) => void): () => void
       terminal: TerminalBridge
@@ -82,6 +84,9 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
   const [healthPath, setHealthPath] = React.useState('/')
   const [healthResult, setHealthResult] = React.useState<{ name: string; value: NonNullable<ServiceInspection['health']> } | null>(null)
   const [healthBusy, setHealthBusy] = React.useState(false)
+  const [proxyBusy, setProxyBusy] = React.useState('')
+  const [proxyUrls, setProxyUrls] = React.useState<Record<string, string>>({})
+  const [proxyRemap, setProxyRemap] = React.useState<Record<string, { identity: string; port: number }>>({})
   const healthRequest = React.useRef(0)
   const [inventoryError, setInventoryError] = React.useState('')
   const [busy, setBusy] = React.useState('')
@@ -157,6 +162,59 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
     } catch (reason) { if (request === healthRequest.current) setError(String(reason)) }
     finally { if (request === healthRequest.current) setHealthBusy(false) }
   }
+  const ensureUrl = async (service: Service, variable: string): Promise<void> => {
+    if (proxyBusy) return
+    const name = service.name
+    const key = `${name}:${variable}`
+    setProxyBusy(`${name}:${variable}`)
+    try {
+      const result = await window.adeHost.requestService('service.proxy.ensure', {
+        workspace_id: workspace.id, name, port_variable: variable,
+      })
+      if (typeof result.url !== 'string') throw new Error('Invalid service proxy URL')
+      setProxyUrls((urls) => ({ ...urls, [key]: result.url as string }))
+      setProxyRemap((routes) => { const next = { ...routes }; delete next[key]; return next })
+      setError('')
+    } catch (reason) {
+      setError(String(reason))
+      if (String(reason).includes('Service target changed')) {
+        try {
+          const route = await window.adeHost.requestService('service.proxy.inspect', {
+            workspace_id: workspace.id, name, port_variable: variable,
+          })
+          if (typeof route.service_identity === 'string' && Number.isSafeInteger(route.target_port) &&
+              (route.service_identity !== service.identity || route.target_port !== service.ports[variable])) {
+            setProxyRemap((routes) => ({ ...routes, [key]: {
+              identity: route.service_identity as string, port: route.target_port as number,
+            } }))
+            if (typeof route.url === 'string') setProxyUrls((urls) => ({ ...urls, [key]: route.url as string }))
+          }
+        } catch { /* The original error remains visible. */ }
+      }
+    }
+    finally { setProxyBusy('') }
+  }
+  const remapUrl = async (service: Service, variable: string, previous: { identity: string; port: number }): Promise<void> => {
+    if (proxyBusy) return
+    const key = `${service.name}:${variable}`
+    setProxyBusy(key)
+    try {
+      const result = await window.adeHost.requestService('service.proxy.remap', {
+        workspace_id: workspace.id, name: service.name, port_variable: variable,
+        expected_service_identity: service.identity, expected_target_port: service.ports[variable],
+        expected_route_identity: previous.identity, expected_route_port: previous.port,
+      })
+      if (typeof result.url !== 'string') throw new Error('Invalid service proxy URL')
+      setProxyUrls((urls) => ({ ...urls, [key]: result.url as string }))
+      setProxyRemap((routes) => { const next = { ...routes }; delete next[key]; return next })
+      setError('')
+    } catch (reason) { setError(String(reason)) }
+    finally { setProxyBusy('') }
+  }
+  const openPreview = async (url: string): Promise<void> => {
+    try { await window.adeHost.browser.open(url); setError('') }
+    catch (reason) { setError(String(reason)) }
+  }
   return <section className="service-pane" aria-label="Workspace services">
     <div className="service-heading"><h2>Services</h2><button onClick={() => setRefresh((value) => value + 1)}>Refresh</button></div>
     <p className="muted">Configured services keep running when this window closes. TCP observation does not verify application health.</p>
@@ -198,6 +256,21 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
               <label>Health path <input value={healthPath} onChange={(event) => { setHealthPath(event.target.value); setHealthResult(null) }} /></label>
               <button type="button" disabled={healthBusy || !healthPort} onClick={() => void checkHealth(service.name)}>Check HTTP</button>
             </div>}
+            {Object.keys(service.ports).map((variable) => {
+              const key = `${service.name}:${variable}`
+              const url = proxyUrls[key]
+              return <div className="service-health" key={variable}>
+                <button type="button" disabled={Boolean(proxyBusy)} onClick={() => void ensureUrl(service, variable)}>
+                  Local URL for {variable}
+                </button>
+                {url && <><span className="service-ports">{url}</span>
+                  <button type="button" onClick={() => void openPreview(url)}>Open preview</button></>}
+                {proxyRemap[key] && <button type="button" disabled={Boolean(proxyBusy)}
+                  onClick={() => void remapUrl(service, variable, proxyRemap[key])}>
+                  Remap URL to this service
+                </button>}
+              </div>
+            })}
             {healthResult?.name === service.name && <p role="status">Last HTTP check: {healthResult.value.state.replaceAll('_', ' ')}
               {healthResult.value.status_code ? ` (${healthResult.value.status_code})` : ''}
               {healthResult.value.error ? ` · ${healthResult.value.error}` : ''}</p>}
@@ -808,7 +881,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
         {workspace && <>{acknowledgedSelection === selectionKey && <ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
           workspace={workspace} conversation={conversation} profileKey={profileKey} />}
-          <ServicePane key={workspace.id} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
+          <ServicePane key={workspace.id} workspace={workspace} /><ScriptPane key={`scripts:${workspace.id}`} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
       </div>
     </div>
   )

@@ -39,6 +39,19 @@ Commands:
   service stop WORKSPACE_ID NAME        Stop and reap a managed service
   service inspect WORKSPACE_ID NAME [TAIL_BYTES]
                                         Read execution, listener evidence and bounded output
+  service url WORKSPACE_ID NAME PORT_VARIABLE
+                                        Ensure a stable local HTTP/WebSocket URL
+  service url-inspect WORKSPACE_ID NAME PORT_VARIABLE
+                                        Inspect a stable URL and its pinned service identity
+  service remap WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_ROUTE_ID EXPECTED_ROUTE_PORT
+                                        Remap only if both reviewed targets still match
+  script list WORKSPACE_ID               Discover package scripts in a workspace
+  script runs WORKSPACE_ID               List retained script runs
+  script start WORKSPACE_ID NAME         Run a configured workspace script
+  script inspect WORKSPACE_ID RUN_ID [TAIL_BYTES]
+                                        Read script state and bounded output
+  script stop WORKSPACE_ID RUN_ID        Stop a script and confirm process exit
+  script retire WORKSPACE_ID RUN_ID      Release an exited script run
   listener list                         Observe local TCP listeners and service assignments
   request OP [JSON_OBJECT]              Call another daemon command
 
@@ -113,6 +126,14 @@ function tailBytes(value: string | undefined): number | undefined {
   const number = Number(value)
   if (!Number.isSafeInteger(number) || number < 1 || number > 32768) {
     throw new CliError('usage', 'TAIL_BYTES must be an integer from 1 to 32768.')
+  }
+  return number
+}
+
+function port(value: string | undefined, label: string): number {
+  const number = Number(value)
+  if (!value || !Number.isSafeInteger(number) || number < 1 || number > 65535) {
+    throw new CliError('usage', `${label} must be a TCP port from 1 to 65535.`)
   }
   return number
 }
@@ -285,6 +306,32 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
       tail_bytes: tailBytes(rest[2]),
     })
   }
+  if (area === 'service' && action === 'url') {
+    if (rest.length !== 3) throw new CliError('usage', 'service url requires WORKSPACE_ID NAME PORT_VARIABLE.')
+    return requestDaemon(socketPath, 'service.proxy.ensure', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      port_variable: required(rest[2], 'PORT_VARIABLE'),
+    })
+  }
+  if (area === 'service' && action === 'url-inspect') {
+    if (rest.length !== 3) throw new CliError('usage', 'service url-inspect requires WORKSPACE_ID NAME PORT_VARIABLE.')
+    return requestDaemon(socketPath, 'service.proxy.inspect', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      port_variable: required(rest[2], 'PORT_VARIABLE'),
+    })
+  }
+  if (area === 'service' && action === 'remap') {
+    if (rest.length !== 7) throw new CliError('usage',
+      'service remap requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_ROUTE_ID EXPECTED_ROUTE_PORT.')
+    return requestDaemon(socketPath, 'service.proxy.remap', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      port_variable: required(rest[2], 'PORT_VARIABLE'),
+      expected_service_identity: required(rest[3], 'EXPECTED_SERVICE_ID'),
+      expected_target_port: port(rest[4], 'EXPECTED_TARGET_PORT'),
+      expected_route_identity: required(rest[5], 'EXPECTED_ROUTE_ID'),
+      expected_route_port: port(rest[6], 'EXPECTED_ROUTE_PORT'),
+    })
+  }
   if (area === 'service' && action === 'configure') {
     return requestDaemon(socketPath, 'service.configure', {
       workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
@@ -294,6 +341,31 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
   if (area === 'service' && (action === 'start' || action === 'stop')) {
     return requestDaemon(socketPath, `service.${action}`, {
       workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+    })
+  }
+  if (area === 'script' && (action === 'list' || action === 'runs')) {
+    if (rest.length !== 1) throw new CliError('usage', `script ${action} requires WORKSPACE_ID.`)
+    return requestDaemon(socketPath, `script.${action}`, { workspace_id: required(rest[0], 'WORKSPACE_ID') })
+  }
+  if (area === 'script' && action === 'start') {
+    if (rest.length !== 2) throw new CliError('usage', 'script start requires WORKSPACE_ID NAME.')
+    return requestDaemon(socketPath, 'script.start', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+    })
+  }
+  if (area === 'script' && action === 'inspect') {
+    if (rest.length < 2 || rest.length > 3) {
+      throw new CliError('usage', 'script inspect requires WORKSPACE_ID RUN_ID [TAIL_BYTES].')
+    }
+    return requestDaemon(socketPath, 'script.inspect', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
+      ...(rest[2] === undefined ? {} : { tail_bytes: tailBytes(rest[2]) }),
+    })
+  }
+  if (area === 'script' && (action === 'stop' || action === 'retire')) {
+    if (rest.length !== 2) throw new CliError('usage', `script ${action} requires WORKSPACE_ID RUN_ID.`)
+    return requestDaemon(socketPath, `script.${action}`, {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
     })
   }
   if (area === 'listener' && action === 'list') {

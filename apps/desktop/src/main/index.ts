@@ -374,6 +374,7 @@ async function launcher(action: string, ...args: string[]): Promise<Record<strin
     ...process.env,
     ADE_NODE_BIN: process.execPath,
     ADE_BUN_BIN: join(process.resourcesPath, 'bin/bun'),
+    ADE_PNPM_BIN: join(process.resourcesPath, 'bin/pnpm'),
     ELECTRON_RUN_AS_NODE: '1',
   } : process.env
   const python = app.isPackaged ? '/usr/bin/python3' : 'python3'
@@ -522,12 +523,61 @@ ipcMain.handle('ade:workspace-select', async (event, workspaceId: unknown, conve
     generation: clientGeneration, epoch: (prior?.epoch ?? 0) + 1 })
   return true
 })
-const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'listener.list'])
+const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'listener.list'])
+const scriptOps = new Set(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
+ipcMain.handle('ade:script-request', async (_event, op: unknown, fields: unknown) => {
+  if (typeof op !== 'string' || !scriptOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    throw new Error('Invalid script request')
+  }
+  const args = fields as Record<string, unknown>
+  if (switching && (op === 'script.start' || op === 'script.stop' || op === 'script.retire')) {
+    throw new Error('Profile switch is in progress; retry the script action in the selected profile')
+  }
+  const endpoint = socket
+  const generation = clientGeneration
+  const state = client.getState()
+  if (state.status !== 'connected' || !endpoint) throw new Error('Profile daemon is unavailable')
+  if (!validId(args.workspace_id) || !state.catalog?.workspaces.some((item) => item.id === args.workspace_id)) {
+    throw new Error('Workspace is unavailable in this profile')
+  }
+  const request: Record<string, unknown> = { workspace_id: args.workspace_id }
+  const keys = new Set(['workspace_id'])
+  if (op === 'script.start') {
+    if (typeof args.name !== 'string' || !/^[a-zA-Z0-9_:-][a-zA-Z0-9_.:-]{0,63}$/.test(args.name)) {
+      throw new Error('Invalid script name')
+    }
+    request.name = args.name
+    keys.add('name')
+  }
+  if (op === 'script.inspect' || op === 'script.stop' || op === 'script.retire') {
+    if (typeof args.run_id !== 'string' || !/^script_[a-zA-Z0-9_.:-]+_[a-fA-F0-9-]{36}$/.test(args.run_id)) {
+      throw new Error('Invalid script run ID')
+    }
+    request.run_id = args.run_id
+    keys.add('run_id')
+  }
+  if (op === 'script.inspect') {
+    if (!Number.isSafeInteger(args.tail_bytes) || (args.tail_bytes as number) < 1 || (args.tail_bytes as number) > 32768) {
+      throw new Error('Invalid script output limit')
+    }
+    request.tail_bytes = args.tail_bytes
+    keys.add('tail_bytes')
+  }
+  if (Object.keys(args).some((key) => !keys.has(key))) throw new Error('Unknown script request field')
+  const result = await requestDaemon(endpoint, op, request)
+  if (generation !== clientGeneration || socket !== endpoint) {
+    throw new Error('Profile changed while the script request completed; inspect the original profile before retrying')
+  }
+  return result
+})
 ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !serviceOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid service request')
   }
   const args = fields as Record<string, unknown>
+  if (switching && !['service.list', 'service.inspect', 'service.proxy.inspect', 'listener.list'].includes(op)) {
+    throw new Error('Profile switch is in progress; retry the service action in the selected profile')
+  }
   const endpoint = socket
   const generation = clientGeneration
   const state = client.getState()
@@ -553,6 +603,24 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
   if (op === 'service.configure') {
     if (!args.config || typeof args.config !== 'object' || Array.isArray(args.config)) throw new Error('Invalid service configuration')
     request.config = args.config
+  }
+  if (op === 'service.proxy.ensure' || op === 'service.proxy.inspect' || op === 'service.proxy.remap') {
+    if (typeof args.port_variable !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(args.port_variable)) {
+      throw new Error('Invalid service port variable')
+    }
+    request.port_variable = args.port_variable
+  }
+  if (op === 'service.proxy.remap') {
+    if (typeof args.expected_service_identity !== 'string' || !validId(args.expected_service_identity) ||
+      typeof args.expected_route_identity !== 'string' || !validId(args.expected_route_identity) ||
+      !Number.isSafeInteger(args.expected_target_port) || (args.expected_target_port as number) < 1 || (args.expected_target_port as number) > 65535 ||
+      !Number.isSafeInteger(args.expected_route_port) || (args.expected_route_port as number) < 1 || (args.expected_route_port as number) > 65535) {
+      throw new Error('Invalid expected service targets')
+    }
+    request.expected_service_identity = args.expected_service_identity
+    request.expected_target_port = args.expected_target_port
+    request.expected_route_identity = args.expected_route_identity
+    request.expected_route_port = args.expected_route_port
   }
   if (op === 'service.inspect') {
     if (!Number.isSafeInteger(args.tail_bytes) || (args.tail_bytes as number) < 1 || (args.tail_bytes as number) > 32768) {

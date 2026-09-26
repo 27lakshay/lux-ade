@@ -33,16 +33,19 @@ public protocol.
   package managers, nested manifests and ADE-defined recipes remain open.
 - A supervisor restart loses its in-memory run catalogue; durable output
   remains bounded by the existing service spool. The current interface does
-  not expose an exit code. Named CLI and Electron script surfaces are in
-  integration and need combined E2E evidence. The packaged app's pinned pnpm
-  executable is in integration; until its packaged E2E passes, a Finder launch
-  may lack `pnpm` in its inherited `PATH`. Descendants that deliberately leave
-  the supervised process group are not verified or stopped. These limits
-  prevent declaring all F090 complete.
+  not expose an exit code. The packaged app's pinned pnpm executable is in
+  integration; until its packaged E2E passes, a Finder launch may lack `pnpm`
+  in its inherited `PATH`. Descendants that deliberately leave the supervised
+  process group are not verified or stopped. These limits prevent declaring
+  all F090 complete.
 
 Evidence: `e2e/specs/workspace-scripts.spec.ts` exercises public commands with
 real ADE processes, including a daemon handoff and crash between runtime and
 catalogue retirement. Focused run: 4/4 on macOS after the bundled-bin PATH
 change. The PATH case uses a deterministic external pnpm/node fixture; the
 separate packaged-app E2E must prove the actual pinned binaries. Commit and
-integrated revision to be recorded by coordinator.
+integrated revision to be recorded by coordinator. The backend slice is commit
+`c787274`. Named CLI and hidden Electron flows passed
+`e2e/specs/workspace-scripts-cli.spec.ts` and
+`e2e/specs/desktop-scripts.spec.ts` in the 64/64 source suite on the current
+working tree (Apple M4, macOS 26.6.1). Their integration commit is pending.

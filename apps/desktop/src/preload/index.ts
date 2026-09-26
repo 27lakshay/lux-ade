@@ -53,6 +53,8 @@ contextBridge.exposeInMainWorld('adeHost', {
     ipcRenderer.invoke('ade:conversation-request', op, fields),
   requestService: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:service-request', op, fields),
+  requestScript: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('ade:script-request', op, fields),
   requestReview: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:review-request', op, fields),
   onDraftError: (listener: (value: { conversationId: string; message: string }) => void): (() => void) => {
