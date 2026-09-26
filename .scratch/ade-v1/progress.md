@@ -16,9 +16,12 @@ been changed since that baseline. The local build branch is
 
 ## Active assignments at this checkpoint
 
-The F071/F073 file slice is integrated. The Rust and Electron workers reviewed
-each other's changes, and the coordinator ran the full source and packaged
-suites. The coordinator owns the next v1 slice and the remaining acceptance.
+The F071/F073 large-tree continuation is integrated. `/root/file_large_e2e`
+authored the public-protocol E2E and independently reviewed the backend;
+`/root/file_cursor_review` independently reviewed cursor and security behavior.
+Both are finished. `/root/git_ops_inventory` finished a read-only F075/F078
+inventory. The coordinator owns the next local Git slice in
+`06-files-git/issues/03-ordinary-git-local.md`.
 
 The browser bundle and explicit attachment reclaim slices were integrated as
 partial R014/R015 building blocks. Registered backend restore and explicit
@@ -475,3 +478,14 @@ See each domain `issues/` ticket for slice-specific acceptance and limits.
   Scans over 10,000 directory names or 1,000 search entries report incomplete
   without further pagination; non-UTF-8 names fail the request. F071/F073 and
   R011/R016 remain open.
+- Commit `6f40428` replaces the first slice's terminating scan limits with
+  expiring, workspace-bound continuation cursors. A 10,025-entry listing and
+  1,225-match recursive search complete without duplicate or missing results;
+  a no-match search advances after 1,000 names. Real-process E2Es also cover
+  cursor replay, cross-workspace misuse, eviction, idle descriptor cleanup,
+  active and visited path changes, and hidden Electron continuation. The
+  committed revision on arm64 macOS 26.6.1 passes `pnpm check` (135/135 source
+  E2Es, one host-filesystem skip), `pnpm package:mac` and 6/6 packaged E2Es.
+  Rust formatting and all-target strict Clippy pass. No test-owned daemon or
+  runtime remains. F071/F073 stay open for broad performance, mutation and
+  preview isolation acceptance; the search depth/visited limits are explicit.

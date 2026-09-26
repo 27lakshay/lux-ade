@@ -30,11 +30,14 @@ selection, symlinks and changed paths safely.
 
 ## Acceptance remaining after this slice
 
-Listings scan at most 10,000 names and search scans at most 1,000 entries to
-bound one request. An `incomplete` response stops pagination even when the
-scanned portion has more than one result page; the UI states that limit. Full
-large-tree continuation and a stable snapshot across concurrent mutations
-remain open. Non-UTF-8 file names currently fail the whole request.
+Listings scan at most 10,000 names and search scans at most 1,000 entries in
+one request. Opaque single-use cursors now continue an unchanged tree beyond
+those budgets. Eight active scans and their directory streams expire after
+60 seconds of inactivity. Search caps depth at 32 and retained visited folders
+at 1,024; it reports `incomplete` when those or the path-length limit stop
+traversal. Arbitrary concurrent mutation is not an immutable snapshot, and
+validating many visited paths may make one search page slow. Non-UTF-8 names
+have a reversible encoded path, but this Mac rejects the E2E fixture name.
 
 F071 still needs a broad execution-host and UI stress case across large trees,
 permission failures and concurrent path changes. F073 still needs a declared
@@ -53,5 +56,18 @@ revision and exact command evidence before changing this ticket's status.
   and `pnpm test:e2e:package` passed 6/6, Rust formatting and workspace
   all-target strict Clippy passed. After the final one-line empty-state change,
   desktop typecheck/build and both focused Electron E2Es passed again. No test-
-  owned daemon/runtime remains. The 10,000/1,000 scan limits and non-UTF-8 names
-  keep F071/F073 and this ticket open.
+  owned daemon/runtime remains. The first slice left large-tree continuation
+  and non-UTF-8 names open.
+- 2026-09-26: `6f40428` continues listing beyond 10,000 entries and search
+  beyond 1,000 matches, including an empty search page after 1,000 nonmatches.
+  It uses workspace-bound, single-use cursors; detects changed active and
+  previously visited paths; evicts old scans at the count limit; and releases
+  idle directory descriptors on expiry. Encoded names reject crafted parent
+  traversal. The committed revision on arm64 macOS 26.6.1 passes `pnpm check`
+  (135 source E2Es passed, one host-filesystem skip), `pnpm package:mac`,
+  `pnpm test:e2e:package` (6/6), `node scripts/cargo.mjs fmt --check` and
+  workspace all-target Clippy with `-D warnings`. Focused file coverage passes
+  12/12 with the same one skip. An earlier full-suite attempt failed only
+  because test titles changed during discovery; the clean committed rerun
+  passed. Post-run process audit found no test-owned ADE process. F071/F073
+  remain open for adversarial preview/isolation and broad UI/performance stress.
