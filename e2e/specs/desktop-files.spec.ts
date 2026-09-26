@@ -129,3 +129,37 @@ test('a delayed file listing cannot replace the newly selected workspace', async
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('Electron can continue a sparse file search past one scan budget', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ade-desktop-files-sparse-'))
+  const workspaceRoot = join(directory, 'workspace')
+  const userData = join(directory, 'electron')
+  await mkdir(workspaceRoot)
+  for (let start = 0; start < 1_100; start += 64) {
+    await Promise.all(Array.from({ length: Math.min(64, 1_100 - start) }, (_, offset) =>
+      writeFile(join(workspaceRoot, `padding-${String(start + offset).padStart(5, '0')}.txt`), 'x')))
+  }
+  await writeFile(join(workspaceRoot, 'needle.txt'), 'Found after the scan boundary')
+  const daemon = await startDaemon()
+  let application: Awaited<ReturnType<typeof electron.launch>> | null = null
+  try {
+    await rpc(daemon.socket, { op: 'workspace.open', path: workspaceRoot })
+    application = await electron.launch({ executablePath: executable, args: [desktop],
+      env: { ...process.env, ADE_SOCKET: daemon.socket, ADE_E2E_USER_DATA_DIR: userData,
+        ADE_E2E_HIDE_WINDOW: '1' } })
+    const window = await application.firstWindow()
+    await window.getByRole('combobox', { name: 'Workspace', exact: true }).selectOption({ label: 'workspace' })
+    const files = window.getByRole('region', { name: 'Workspace files' })
+    await files.getByRole('textbox', { name: 'Search file names' }).fill('needle')
+    await files.getByRole('button', { name: 'Search', exact: true }).click()
+    await expect(files.getByRole('button', { name: 'Continue search' })).toBeVisible()
+    await files.getByRole('button', { name: 'Continue search' }).click()
+    await expect(files.getByRole('button', { name: 'file needle.txt' })).toBeVisible()
+    await files.getByRole('button', { name: 'file needle.txt' }).click()
+    await expect(files.getByLabel('File preview')).toContainText('Found after the scan boundary')
+  } finally {
+    await application?.close().catch(() => undefined)
+    await daemon.stop()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

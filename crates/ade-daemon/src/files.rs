@@ -3,9 +3,9 @@
 use ade_core::error::NeedsRebind;
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     ffi::{CStr, CString},
     fs::File,
     io::Read,
@@ -14,36 +14,92 @@ use std::{
         unix::ffi::OsStrExt,
     },
     path::{Component, Path},
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
 };
 
 const PREVIEW_LIMIT: usize = 256 * 1024;
 const PAGE_LIMIT: usize = 100;
 const SEARCH_SCAN_LIMIT: usize = 1000;
 const LIST_SCAN_LIMIT: usize = 10_000;
-const CURSOR_LIMIT: usize = 16 * 1024;
 const SEARCH_DEPTH_LIMIT: usize = 32;
+const SEARCH_VISITED_LIMIT: usize = 1024;
+const MAX_SCANS: usize = 8;
+const SCAN_LIFETIME: Duration = Duration::from_secs(60);
+const RAW_NAME_PREFIX: &str = "\u{e000}";
 
-#[derive(Clone, Serialize, Deserialize)]
+fn encode_name(raw: &[u8]) -> String {
+    if let Ok(name) = std::str::from_utf8(raw)
+        && !name.starts_with(RAW_NAME_PREFIX)
+    {
+        return name.to_owned();
+    }
+    format!("{RAW_NAME_PREFIX}{}", URL_SAFE_NO_PAD.encode(raw))
+}
+
+fn decode_name(name: &str) -> Result<Vec<u8>> {
+    let bytes = if let Some(encoded) = name.strip_prefix(RAW_NAME_PREFIX) {
+        URL_SAFE_NO_PAD
+            .decode(encoded)
+            .context("Invalid encoded file name")?
+    } else {
+        name.as_bytes().to_vec()
+    };
+    ensure!(
+        !bytes.is_empty()
+            && bytes != b"."
+            && bytes != b".."
+            && !bytes.contains(&0)
+            && !bytes.contains(&b'/'),
+        "Invalid file name"
+    );
+    Ok(bytes)
+}
+
+fn display_name(name: &str) -> Result<String> {
+    Ok(String::from_utf8_lossy(&decode_name(name)?).into_owned())
+}
+
+#[derive(Clone)]
 struct Frame {
     path: String,
     device: u64,
     inode: u64,
     mtime_seconds: i64,
     mtime_nanos: i64,
+    ctime_seconds: i64,
+    ctime_nanos: i64,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Cursor {
-    root_device: u64,
-    root_inode: u64,
-    #[serde(default)]
-    query: String,
-    #[serde(default)]
-    after: String,
-    frames: Vec<Frame>,
+pub struct Files {
+    scans: Arc<Mutex<HashMap<String, Scan>>>,
+    lifetime: Duration,
+}
+struct Scan {
+    workspace_id: String,
+    identity: (u64, u64),
+    root: Frame,
+    operation: ScanOperation,
+    touched: Instant,
+}
+enum ScanOperation {
+    List {
+        path: String,
+        current: LiveFrame,
+    },
+    Search {
+        query: String,
+        stack: Vec<LiveFrame>,
+        visited: Vec<Frame>,
+        incomplete: bool,
+    },
 }
 
 struct Directory(*mut libc::DIR);
+// A directory stream moves between request threads only while exclusively owned
+// by a Scan. No two threads ever call readdir on the same stream concurrently.
+unsafe impl Send for Directory {}
 struct LiveFrame {
     frame: Frame,
     fd: OwnedFd,
@@ -87,12 +143,11 @@ impl Directory {
                 };
             }
             let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
-            let name = std::str::from_utf8(name.to_bytes())
-                .context("Workspace contains a non-UTF-8 file name")?;
-            if name == "." || name == ".." {
+            let raw = name.to_bytes();
+            if raw == b"." || raw == b".." {
                 continue;
             }
-            return Ok(Some(name.to_owned()));
+            return Ok(Some(encode_name(raw)));
         }
     }
 }
@@ -118,7 +173,7 @@ fn stat(fd: RawFd) -> Result<libc::stat> {
     Ok(value)
 }
 fn child_stat(fd: RawFd, name: &str) -> Result<libc::stat> {
-    let name = CString::new(name)?;
+    let name = CString::new(decode_name(name)?)?;
     let mut value = unsafe { std::mem::zeroed() };
     if unsafe { libc::fstatat(fd, name.as_ptr(), &mut value, libc::AT_SYMLINK_NOFOLLOW) } != 0 {
         return Err(std::io::Error::last_os_error().into());
@@ -140,7 +195,7 @@ fn entry(parent: &str, name: &str, metadata: &libc::stat) -> Value {
         format!("{parent}/{name}")
     };
     json!({
-        "name": name,
+        "name": display_name(name).unwrap_or_else(|_| name.to_owned()),
         "path": path,
         "kind": kind(metadata),
         "size": if kind(metadata) == "file" { Some(metadata.st_size.max(0) as u64) } else { None },
@@ -153,6 +208,8 @@ fn stamp(path: String, metadata: &libc::stat) -> Frame {
         inode: metadata.st_ino,
         mtime_seconds: metadata.st_mtime,
         mtime_nanos: metadata.st_mtime_nsec,
+        ctime_seconds: metadata.st_ctime,
+        ctime_nanos: metadata.st_ctime_nsec,
     }
 }
 fn same_stamp(frame: &Frame, metadata: &libc::stat) -> bool {
@@ -160,21 +217,115 @@ fn same_stamp(frame: &Frame, metadata: &libc::stat) -> bool {
         && frame.inode == metadata.st_ino
         && frame.mtime_seconds == metadata.st_mtime
         && frame.mtime_nanos == metadata.st_mtime_nsec
+        && frame.ctime_seconds == metadata.st_ctime
+        && frame.ctime_nanos == metadata.st_ctime_nsec
 }
-fn decode_cursor(value: &str) -> Result<Cursor> {
-    ensure!(value.len() <= CURSOR_LIMIT, "File cursor is too large");
-    let bytes = URL_SAFE_NO_PAD
-        .decode(value)
-        .context("Invalid file cursor")?;
-    ensure!(bytes.len() <= CURSOR_LIMIT, "File cursor is too large");
-    serde_json::from_slice(&bytes).context("Invalid file cursor")
-}
-fn encode_cursor(cursor: &Cursor) -> Result<Option<String>> {
-    let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(cursor)?);
-    if encoded.len() > CURSOR_LIMIT {
-        return Ok(None);
+impl Files {
+    pub fn new() -> Self {
+        let lifetime = std::env::var("ADE_E2E_FILE_SCAN_TTL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| (10..=1000).contains(value))
+            .map(Duration::from_millis)
+            .unwrap_or(SCAN_LIFETIME);
+        let scans = Arc::new(Mutex::new(HashMap::<String, Scan>::new()));
+        let weak = Arc::downgrade(&scans);
+        thread::spawn(move || {
+            loop {
+                thread::sleep(lifetime.min(Duration::from_secs(5)));
+                let Some(scans) = weak.upgrade() else { break };
+                scans
+                    .lock()
+                    .unwrap()
+                    .retain(|_, scan| scan.touched.elapsed() < lifetime);
+            }
+        });
+        Self { scans, lifetime }
     }
-    Ok(Some(encoded))
+
+    fn take(
+        &self,
+        token: &str,
+        workspace_id: &str,
+        identity: (u64, u64),
+        operation: &str,
+        target: &str,
+    ) -> Result<Scan> {
+        ensure!(
+            token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "Invalid file cursor"
+        );
+        let mut scans = self.scans.lock().unwrap();
+        scans.retain(|_, scan| scan.touched.elapsed() < self.lifetime);
+        let saved = scans
+            .get(token)
+            .context("File cursor expired or was already used; refresh")?;
+        ensure!(
+            saved.workspace_id == workspace_id && saved.identity == identity,
+            "File cursor belongs to another workspace"
+        );
+        let matches = match &saved.operation {
+            ScanOperation::List { path, .. } => operation == "file.list" && path == target,
+            ScanOperation::Search { query, .. } => operation == "file.search" && query == target,
+        };
+        ensure!(
+            matches,
+            "File cursor belongs to another file operation or target"
+        );
+        scans
+            .remove(token)
+            .context("File cursor expired or was already used; refresh")
+    }
+
+    fn save(&self, mut scan: Scan) -> Result<String> {
+        scan.touched = Instant::now();
+        let mut scans = self.scans.lock().unwrap();
+        scans.retain(|_, saved| saved.touched.elapsed() < self.lifetime);
+        if scans.len() >= MAX_SCANS
+            && let Some(oldest) = scans
+                .iter()
+                .min_by_key(|(_, saved)| saved.touched)
+                .map(|(token, _)| token.clone())
+        {
+            scans.remove(&oldest);
+        }
+        loop {
+            let mut random = [0u8; 16];
+            if unsafe { libc::getentropy(random.as_mut_ptr().cast(), random.len()) } != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let token = random
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            if let std::collections::hash_map::Entry::Vacant(entry) = scans.entry(token.clone()) {
+                entry.insert(scan);
+                return Ok(token);
+            }
+        }
+    }
+}
+
+fn validate_frame(root: &OwnedFd, current: &LiveFrame) -> Result<()> {
+    ensure!(
+        same_stamp(&current.frame, &stat(current.fd.as_raw_fd())?),
+        "File tree changed; refresh"
+    );
+    let reopened = open_directory(root, &current.frame.path)?;
+    ensure!(
+        same_stamp(&current.frame, &stat(reopened.as_raw_fd())?),
+        "File path changed; refresh"
+    );
+    Ok(())
+}
+
+fn validate_visited(root: &OwnedFd, frame: &Frame) -> Result<()> {
+    let reopened = open_directory(root, &frame.path)?;
+    ensure!(
+        same_stamp(frame, &stat(reopened.as_raw_fd())?),
+        "File search changed; refresh"
+    );
+    Ok(())
 }
 fn relative(path: &str) -> Result<Vec<String>> {
     ensure!(
@@ -195,7 +346,7 @@ fn relative(path: &str) -> Result<Vec<String>> {
     Ok(parts)
 }
 fn open_child(parent: RawFd, name: &str, directory: bool) -> Result<OwnedFd> {
-    let name = CString::new(name)?;
+    let name = CString::new(decode_name(name)?)?;
     let flags = libc::O_RDONLY
         | libc::O_CLOEXEC
         | libc::O_NOFOLLOW
@@ -246,174 +397,210 @@ fn page_limit(request: &Value) -> Result<usize> {
     );
     Ok(requested as usize)
 }
-fn list(root: &OwnedFd, request: &Value) -> Result<Value> {
-    let path = request["path"].as_str().unwrap_or("");
-    let _ = relative(path)?;
-    let fd = open_directory(root, path)?;
-    let metadata = stat(fd.as_raw_fd())?;
-    let frame = stamp(path.to_owned(), &metadata);
-    let mut after = String::new();
-    if let Some(value) = request["cursor"].as_str() {
-        let cursor = decode_cursor(value)?;
-        ensure!(
-            cursor.frames.len() == 1 && cursor.query.is_empty(),
-            "Invalid file cursor"
-        );
-        let previous = &cursor.frames[0];
-        ensure!(
-            previous.path == path && same_stamp(previous, &metadata),
-            "File listing changed; refresh"
-        );
-        after = cursor.after;
+fn requested_cursor(request: &Value) -> Result<Option<&str>> {
+    match request.get("cursor") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(token)) => Ok(Some(token)),
+        _ => bail!("Invalid file cursor"),
     }
-    let mut directory = Directory::from_fd(&fd)?;
-    let mut names = Vec::new();
-    let mut scanned = 0;
-    let mut reached_end = false;
-    while scanned < LIST_SCAN_LIMIT {
-        let Some(name) = directory.next()? else {
-            reached_end = true;
-            break;
-        };
-        scanned += 1;
-        if name > after {
-            names.push(name);
-        }
-    }
-    names.sort();
-    let mut entries = Vec::new();
-    let limit = page_limit(request)?;
-    for name in names.iter().take(limit) {
-        match child_stat(fd.as_raw_fd(), name) {
-            Ok(metadata) => entries.push(entry(path, name, &metadata)),
-            Err(error)
-                if error
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
-            {
-                continue;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    ensure!(
-        same_stamp(&frame, &stat(fd.as_raw_fd())?),
-        "File listing changed; refresh"
-    );
-    let incomplete = !reached_end;
-    let next_cursor = if !incomplete && names.len() > limit {
-        encode_cursor(&Cursor {
-            root_device: metadata.st_dev as u64,
-            root_inode: metadata.st_ino,
-            query: String::new(),
-            after: names[limit - 1].clone(),
-            frames: vec![frame],
-        })?
-    } else {
-        None
-    };
-    Ok(
-        json!({"type":"file_list","path":path,"entries":entries,"next_cursor":next_cursor,"incomplete":incomplete}),
-    )
 }
-fn search(root: &OwnedFd, request: &Value, identity: (u64, u64)) -> Result<Value> {
-    let query = request["query"].as_str().context("Missing query")?;
-    ensure!(
-        !query.is_empty() && query.len() <= 256,
-        "File query must be 1 to 256 bytes"
-    );
-    let query = query.to_lowercase();
-    let root_metadata = stat(root.as_raw_fd())?;
-    let cursor = if let Some(encoded) = request["cursor"].as_str() {
-        decode_cursor(encoded)?
-    } else {
-        Cursor {
-            root_device: identity.0,
-            root_inode: identity.1,
-            query: query.clone(),
-            after: String::new(),
-            frames: vec![stamp(String::new(), &root_metadata)],
-        }
-    };
-    ensure!(
-        (cursor.root_device, cursor.root_inode) == identity
-            && cursor.query == query
-            && cursor.frames.len() == 1
-            && cursor.frames[0].path.is_empty()
-            && same_stamp(&cursor.frames[0], &root_metadata),
-        "Stale file search cursor"
-    );
-    let mut live = vec![live_frame(root, stamp(String::new(), &root_metadata))?];
-    let mut matches = std::collections::BTreeMap::new();
-    let mut scanned = 0;
-    let limit = page_limit(request)?;
-    let mut incomplete = false;
-    while !live.is_empty() && scanned < SEARCH_SCAN_LIMIT {
-        let current = live.last_mut().context("Missing search frame")?;
-        let Some(name) = current.directory.next()? else {
-            ensure!(
-                same_stamp(&current.frame, &stat(current.fd.as_raw_fd())?),
-                "File search changed; refresh"
-            );
-            live.pop();
-            continue;
+
+impl Files {
+    fn list(
+        &self,
+        root: &OwnedFd,
+        workspace_id: &str,
+        identity: (u64, u64),
+        request: &Value,
+    ) -> Result<Value> {
+        let path = request["path"].as_str().unwrap_or("");
+        let _ = relative(path)?;
+        let limit = page_limit(request)?;
+        let mut scan = if let Some(token) = requested_cursor(request)? {
+            self.take(token, workspace_id, identity, "file.list", path)?
+        } else {
+            let fd = open_directory(root, path)?;
+            let frame = stamp(path.to_owned(), &stat(fd.as_raw_fd())?);
+            let directory = Directory::from_fd(&fd)?;
+            Scan {
+                workspace_id: workspace_id.to_owned(),
+                identity,
+                root: stamp(String::new(), &stat(root.as_raw_fd())?),
+                operation: ScanOperation::List {
+                    path: path.to_owned(),
+                    current: LiveFrame {
+                        frame,
+                        fd,
+                        directory,
+                    },
+                },
+                touched: Instant::now(),
+            }
         };
-        scanned += 1;
-        let metadata = match child_stat(current.fd.as_raw_fd(), &name) {
-            Ok(metadata) => metadata,
-            Err(error)
-                if error
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
-            {
+        ensure!(
+            scan.workspace_id == workspace_id
+                && scan.identity == identity
+                && same_stamp(&scan.root, &stat(root.as_raw_fd())?),
+            "File cursor belongs to another or changed workspace"
+        );
+        let ScanOperation::List {
+            path: saved_path,
+            current,
+        } = &mut scan.operation
+        else {
+            bail!("File cursor belongs to another operation")
+        };
+        ensure!(saved_path == path, "File cursor belongs to another folder");
+        validate_frame(root, current)?;
+        let mut entries = Vec::new();
+        let mut scanned = 0;
+        let mut ended = false;
+        while entries.len() < limit && scanned < LIST_SCAN_LIMIT {
+            let Some(name) = current.directory.next()? else {
+                ended = true;
+                break;
+            };
+            scanned += 1;
+            match child_stat(current.fd.as_raw_fd(), &name) {
+                Ok(metadata) => entries.push(entry(path, &name, &metadata)),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        validate_frame(root, current)?;
+        let next_cursor = if ended { None } else { Some(self.save(scan)?) };
+        Ok(
+            json!({"type":"file_list","path":path,"entries":entries,"next_cursor":next_cursor,"incomplete":false}),
+        )
+    }
+
+    fn search(
+        &self,
+        root: &OwnedFd,
+        workspace_id: &str,
+        identity: (u64, u64),
+        request: &Value,
+    ) -> Result<Value> {
+        let query = request["query"].as_str().context("Missing query")?;
+        ensure!(
+            !query.is_empty() && query.len() <= 256,
+            "File query must be 1 to 256 bytes"
+        );
+        let query = query.to_lowercase();
+        let limit = page_limit(request)?;
+        let mut scan = if let Some(token) = requested_cursor(request)? {
+            self.take(token, workspace_id, identity, "file.search", &query)?
+        } else {
+            let root_frame = stamp(String::new(), &stat(root.as_raw_fd())?);
+            Scan {
+                workspace_id: workspace_id.to_owned(),
+                identity,
+                root: root_frame.clone(),
+                operation: ScanOperation::Search {
+                    query: query.clone(),
+                    stack: vec![live_frame(root, root_frame)?],
+                    visited: Vec::new(),
+                    incomplete: false,
+                },
+                touched: Instant::now(),
+            }
+        };
+        ensure!(
+            scan.workspace_id == workspace_id
+                && scan.identity == identity
+                && same_stamp(&scan.root, &stat(root.as_raw_fd())?),
+            "File cursor belongs to another or changed workspace"
+        );
+        let ScanOperation::Search {
+            query: saved_query,
+            stack,
+            visited,
+            incomplete,
+        } = &mut scan.operation
+        else {
+            bail!("File cursor belongs to another operation")
+        };
+        ensure!(
+            *saved_query == query,
+            "File cursor belongs to another query"
+        );
+        for current in stack.iter() {
+            validate_frame(root, current)?;
+        }
+        let mut results = Vec::new();
+        let mut scanned = 0;
+        while !stack.is_empty() && results.len() < limit && scanned < SEARCH_SCAN_LIMIT {
+            let current = stack.last_mut().context("Missing search frame")?;
+            let Some(name) = current.directory.next()? else {
+                validate_frame(root, current)?;
+                let frame = stack.pop().context("Missing search frame")?.frame;
+                if visited.len() == SEARCH_VISITED_LIMIT {
+                    *incomplete = true;
+                    stack.clear();
+                    break;
+                }
+                visited.push(frame);
+                continue;
+            };
+            scanned += 1;
+            let metadata = match child_stat(current.fd.as_raw_fd(), &name) {
+                Ok(metadata) => metadata,
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let child_path = if current.frame.path.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{name}", current.frame.path)
+            };
+            if child_path.len() > 4096 {
+                *incomplete = true;
                 continue;
             }
-            Err(error) => return Err(error),
-        };
-        let child_path = if current.frame.path.is_empty() {
-            name.clone()
-        } else {
-            format!("{}/{name}", current.frame.path)
-        };
-        if child_path > cursor.after && name.to_lowercase().contains(&query) {
-            matches.insert(
-                child_path.clone(),
-                entry(&current.frame.path, &name, &metadata),
-            );
-        }
-        if kind(&metadata) == "directory" {
-            if live.len() < SEARCH_DEPTH_LIMIT {
-                live.push(live_frame(root, stamp(child_path, &metadata))?);
-            } else {
-                incomplete = true;
+            if display_name(&name)?.to_lowercase().contains(&query) {
+                results.push(entry(&current.frame.path, &name, &metadata));
+            }
+            if kind(&metadata) == "directory" {
+                if stack.len() < SEARCH_DEPTH_LIMIT {
+                    stack.push(live_frame(root, stamp(child_path, &metadata))?);
+                } else {
+                    *incomplete = true;
+                }
             }
         }
+        for current in stack.iter() {
+            validate_frame(root, current)?;
+        }
+        for frame in visited.iter() {
+            validate_visited(root, frame)?;
+        }
+        let incomplete_result = *incomplete;
+        let next_cursor = if stack.is_empty() {
+            None
+        } else {
+            Some(self.save(scan)?)
+        };
+        Ok(
+            json!({"type":"file_search","results":results,"next_cursor":next_cursor,"incomplete":incomplete_result}),
+        )
     }
-    for current in &live {
-        ensure!(
-            same_stamp(&current.frame, &stat(current.fd.as_raw_fd())?),
-            "File search changed; refresh"
-        );
+}
+impl Default for Files {
+    fn default() -> Self {
+        Self::new()
     }
-    incomplete |= !live.is_empty();
-    let mut sorted = matches.into_iter().collect::<Vec<_>>();
-    let has_more = sorted.len() > limit;
-    sorted.truncate(limit);
-    let next_cursor = if has_more && !incomplete {
-        encode_cursor(&Cursor {
-            after: sorted.last().context("Missing file result")?.0.clone(),
-            ..cursor
-        })?
-    } else {
-        None
-    };
-    let results = sorted
-        .into_iter()
-        .map(|(_, value)| value)
-        .collect::<Vec<_>>();
-    Ok(
-        json!({"type":"file_search","results":results,"next_cursor":next_cursor,"incomplete":incomplete}),
-    )
 }
 fn preview(root: &OwnedFd, request: &Value) -> Result<Value> {
     let path = request["path"].as_str().context("Missing path")?;
@@ -425,7 +612,8 @@ fn preview(root: &OwnedFd, request: &Value) -> Result<Value> {
     let metadata = stat(fd.as_raw_fd())?;
     ensure!(kind(&metadata) == "file", "Preview requires a regular file");
     let size = metadata.st_size.max(0) as u64;
-    let extension = Path::new(name)
+    let decoded_name = decode_name(name)?;
+    let extension = Path::new(std::ffi::OsStr::from_bytes(&decoded_name))
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
@@ -482,12 +670,24 @@ fn preview(root: &OwnedFd, request: &Value) -> Result<Value> {
     }
 }
 
-pub fn command(path: &str, expected: (u64, u64), request: &Value) -> Result<Value> {
-    let root = root_fd(path, expected)?;
-    match request["op"].as_str().unwrap_or("") {
-        "file.list" => list(&root, request),
-        "file.search" => search(&root, request, expected),
-        "file.preview" => preview(&root, request),
-        _ => bail!("Unknown file operation"),
+impl Files {
+    pub fn command(
+        &self,
+        workspace_id: &str,
+        path: &str,
+        expected: (u64, u64),
+        request: &Value,
+    ) -> Result<Value> {
+        let root = root_fd(path, expected)?;
+        let result = match request["op"].as_str().unwrap_or("") {
+            "file.list" => self.list(&root, workspace_id, expected, request),
+            "file.search" => self.search(&root, workspace_id, expected, request),
+            "file.preview" => preview(&root, request),
+            _ => bail!("Unknown file operation"),
+        }?;
+        // A path swap after the initial open must not make a result appear to
+        // describe the newly installed checkout.
+        root_fd(path, expected)?;
+        Ok(result)
     }
 }

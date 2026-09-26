@@ -110,7 +110,7 @@ export function FilesPane({ workspace }: { workspace: Workspace }): React.JSX.El
     </div>
     {error && <p role="alert" className="inline-error">{error}</p>}
     {incomplete && <p role="status" className="inline-error">{search
-      ? 'Search stopped at its scan or depth limit. Narrow the query or inspect folders directly.'
+      ? 'Search reached its directory or depth limit. Inspect a smaller folder directly.'
       : 'This folder exceeds the listing limit. Search by name or inspect a smaller folder.'}</p>}
     <div className="files-layout">
       <div className="files-list" aria-label={search ? 'Matching files' : 'Folder contents'}>
@@ -120,8 +120,10 @@ export function FilesPane({ workspace }: { workspace: Workspace }): React.JSX.El
           <span className="files-name">{search ? entry.path : entry.name}</span><span className="files-size">{sizeLabel(entry.size)}</span>
         </button>)}
         {busy && <p role="status">Loading files…</p>}
-        {!busy && rows.length === 0 && !error && !incomplete && <p>No files here.</p>}
-        {cursor && <button type="button" className="files-more" disabled={busy} onClick={() => void more()}>Load more</button>}
+        {!busy && rows.length === 0 && !error && !incomplete && <p>{cursor && search
+          ? 'No matches in this portion yet. Continue searching.' : search ? 'No matching files.' : 'No files here.'}</p>}
+        {cursor && <button type="button" className="files-more" disabled={busy} onClick={() => void more()}>
+          {search ? 'Continue search' : 'Load more'}</button>}
       </div>
       <div className="files-preview" aria-label="File preview">
         {previewBusy && <p role="status">Loading preview…</p>}

@@ -14,6 +14,7 @@ test('workspace file commands browse, search and preview without following outsi
   await writeFile(join(workspaceRoot, 'nested', 'notes.txt'), 'Alpha from the workspace\n')
   await writeFile(join(workspaceRoot, 'pixel.png'), png)
   await writeFile(join(workspaceRoot, 'page.html'), '<script>window.adeHost</script>')
+  await writeFile(join(workspaceRoot, '\uE000Li4.txt'), 'literal private-use name')
   await writeFile(join(workspaceRoot, 'huge.txt'), 'x'.repeat(300 * 1024))
   await writeFile(secret, 'private outside workspace\n')
   await symlink(secret, join(workspaceRoot, 'nested', 'outside-link'))
@@ -64,6 +65,11 @@ test('workspace file commands browse, search and preview without following outsi
       path: 'page.html' })
     expect(html.kind).toBe('unsupported')
     expect(JSON.stringify(html)).not.toContain('window.adeHost')
+    const encoded = await rpc(daemon.socket, { op: 'file.search', workspace_id: workspace.id, query: 'Li4' })
+    const encodedPath = (encoded.results as Array<{ path: string }>).find((item) => item.path.includes('\uE000'))?.path
+    expect(encodedPath).toEqual(expect.any(String))
+    expect(await rpc(daemon.socket, { op: 'file.preview', workspace_id: workspace.id,
+      path: encodedPath })).toMatchObject({ kind: 'text', text: 'literal private-use name' })
     const huge = await rpc(daemon.socket, { op: 'file.preview', workspace_id: workspace.id,
       path: 'huge.txt' })
     expect(huge.kind === 'unsupported' || huge.truncated === true).toBe(true)
@@ -77,6 +83,8 @@ test('workspace file commands browse, search and preview without following outsi
       path: 'nested/outside-link' })).rejects.toThrow()
     await expect(rpc(daemon.socket, { op: 'file.preview', workspace_id: workspace.id,
       path: '../outside-secret.txt' })).rejects.toThrow()
+    await expect(rpc(daemon.socket, { op: 'file.preview', workspace_id: workspace.id,
+      path: '\uE000Li4/outside-secret.txt' })).rejects.toThrow()
     expect(await readFile(secret, 'utf8')).toBe('private outside workspace\n')
 
     await mkdir(join(workspaceRoot, 'locked'))

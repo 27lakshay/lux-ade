@@ -220,6 +220,7 @@ impl Drop for HealthSampleGuard<'_> {
 pub struct Sessions {
     pub review: Arc<crate::review::Review>,
     pub worktrees: Arc<crate::worktrees::Worktrees>,
+    files: crate::files::Files,
     data: Mutex<Data>,
     pub subscribers: Arc<AtomicUsize>,
     pub boot_id: String,
@@ -312,6 +313,7 @@ impl Sessions {
             queue_wake,
             worktrees,
             review,
+            files: crate::files::Files::new(),
             data: Mutex::new(Data {
                 draining: false,
                 store,
@@ -807,16 +809,16 @@ impl Sessions {
                 .command(&workspace.root, binding, common_binding, request);
         }
         if op.starts_with("file.") {
+            let id = string("workspace_id")?;
             let (workspace, binding) = {
                 let data = self.data.lock().unwrap();
-                let id = string("workspace_id")?;
                 data.store.ensure_workspace_bound(id)?;
                 (
                     data.store.workspace(id)?,
                     data.store.workspace_binding_identity(id)?,
                 )
             };
-            return crate::files::command(&workspace.root, binding, request);
+            return self.files.command(id, &workspace.root, binding, request);
         }
         if request["op"]
             .as_str()
