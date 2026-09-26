@@ -169,6 +169,7 @@ verified. Build output is local and unsigned.
 | F092/R014/R015, partial | `487b907` | `pnpm check`, `pnpm package:mac`, `pnpm test:e2e:package`, and `ADE_E2E_BROWSER_APP="$PWD/dist/electron/mac-arm64/Lux ADE.app" pnpm exec playwright test e2e/specs/desktop-browser.spec.ts` on macOS arm64 | Pass: 84/84 source and 6/6 packaged E2Es, plus 2/2 browser E2Es in the packaged app. `browser-migration-recovery.spec.ts` kills Electron at six fresh/legacy storage boundaries, checks cookie/tab and retained source recovery, rejects wrong owners, requires explicit confirmation for ownerless old sessions, and refuses a moved runtime home before browser writes. Backup/restore, retention, a cross-process lease and successful runtime-home relocation remain open. |
 | F092/R015, partial | `13f3e45` | `pnpm check`, final browser/profile E2E suite, `pnpm package:mac`, `pnpm test:e2e:package`, and packaged browser E2E on macOS arm64 | Pass: 85/85 source E2Es, 13/13 final browser/profile E2Es, 6/6 packaged E2Es and 2/2 packaged browser E2Es. A profile-home advisory lease refuses a second Electron browser writer and recovers after the first process is killed. The package contains the lease helper. Managed backup/restore, retention and successful profile-home relocation remain open. |
 | F050, history-export slice | `eeda9db` | CLI typecheck/build and `pnpm exec playwright test e2e/specs/history-export.spec.ts e2e/specs/local-cli.spec.ts` on macOS arm64 | Pass: 6/6 E2Es, including 222 native-fixture messages across public history pages, no-overwrite, and rejection of a changed second page with no partial output. Managed backup/restore and live-provider proof remain open. |
+| F050/R014, backend snapshot slice | `5455362`, `a0a377a` | `python3 -m py_compile scripts/managed_backup.py`, focused backup E2E and final `pnpm check` on macOS arm64 | Pass: 89/89 real-process E2Es, typecheck, Fallow and builds. Backup E2E restores public state, rejects corrupt/future schemas, resets account verification, and prevents stable routes or Worktrunk ownership from crossing profiles. Browser, pending sends, registry and runtime binding are excluded; this is not a complete profile backup. |
 | F086, partial | `66396aa` | `pnpm check`, Rust fmt and strict Clippy on macOS arm64 | Pass: `e2e/specs/service-inspection.spec.ts` checks explicit loopback HTTP 200/503/302, timeout, invalid targets and stop race; `desktop-services.spec.ts` checks on-demand healthy/stopped states in Electron. HTTP probe timeout bounds the socket exchange, not full inspection. Continuous configured health, durable logs and full F086 acceptance remain open. |
 
 The packaged `.app` is about 2.5 GB unpacked and the local ZIP is 790 MB at
@@ -373,6 +374,16 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   the CLI, with no overwrite and no published partial file on a later-page
   revision mismatch. F050/R014 still require a managed profile backup and
   restore across all owners.
+- Commit `5455362` adds an independently consistent backend snapshot with
+  verified checksums and schema versions. Restore requires a new target,
+  resets accounts to unverified, excludes live service routes, and drops
+  source Worktrunk removal authority. The focused real-process E2E passes.
+  An initial integrated `pnpm check` had 88/89 source E2Es pass; an existing
+  browser recovery E2E raced its first profile form reset. Commit `a0a377a`
+  waits for that reset. Its focused rerun passes 5/5, and final `pnpm check`
+  passes 89/89 with type checking, Fallow and builds. F050/R014 still require
+  coordinated browser, pending-send, registry and runtime data; R015/F138 need durable attachment upload
+  leases before unreferenced-blob cleanup is safe.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
   not establish live-account compatibility or quality.
 
