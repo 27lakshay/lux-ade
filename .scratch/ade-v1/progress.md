@@ -14,6 +14,19 @@ in the shared reliability spec also apply. No V1 disposition or acceptance has
 been changed since that baseline. The local build branch is
 `codex/architecture-proposal` in this checkout.
 
+## Active assignments at this checkpoint
+
+| Owner | Scope | Acceptance before integration |
+|---|---|---|
+| `/root` | Restore execution fence, backend/profile backup slices, pending-send transfer, test process cleanup | Full source and packaged checks, zero leftover test processes, independent reviews, focused commits |
+
+The browser bundle and explicit attachment reclaim slices were integrated as
+partial R014/R015 building blocks. The current restore work adds a durable
+execution fence and pending-send hold; neither provides a complete profile
+backup or an explicit workspace rebind yet. The test harness now checks daemon
+and runtime exit after managed-profile cases. A malformed-journal Electron
+startup exits without opening a native blocking dialog in an isolated E2E.
+
 The first daily-use gate is a connected flow, not a substitute for each feature's
 full acceptance in its owning spec:
 
@@ -83,6 +96,22 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `78ac24b` | Script session formatting | Rustfmt correction for the script backend |
 | `207ec62` | Script and proxy CLI/Electron surfaces | Named script and URL/remap commands, hidden Electron run and preview E2E |
 | `b365be1` | Packaged workspace scripts | Bundled pinned pnpm and Node launcher; Finder-like PATH and reopen E2E |
+| `5455362` | Backend-only SQLite snapshot | Live draft-write capture, integrity and schema checks, offline restore E2E |
+| `a0a377a` | Browser recovery E2E race | First profile form reset is awaited before the next action |
+| `ddb8536` | Backup limits and evidence | Explicit independently consistent backend scope and exclusions |
+| `21b931b` | Explicit attachment reclaim | Durable tombstones, reference/race and backup-overlap E2E |
+| `ced2af0` | Partial browser backup | Tabs and persistent cookies in a versioned, profile-bound Electron bundle; failure/retry E2E |
+| `5afc3eb` | Registered backend bundle | Live profile capture with source identity, exclusions and packaged Python helper |
+| `13b32c4` | E2E process ownership | Identity-checked shutdown of test-owned profile daemons and detached runtimes |
+| `22b9fd4` | Restored execution and send fence | Schema-12 workspace/repository rebind flags and durable inherited-send hold |
+| `854fff9` | Pending-send transfer and startup recovery | Verified profile-bound journal transfer; isolated startup failures exit without a native dialog |
+
+At `854fff9`, `pnpm check` passes type checking, Fallow, builds and 103/103
+source E2Es. The macOS package passes 6/6 packaged E2Es with hidden windows;
+`cargo fmt --check` and strict Clippy pass through `scripts/cargo.mjs`. A
+post-run process audit finds no `ade-daemon` or `ade-runtime` from this checkout.
+The restored execution and send fences remain held until explicit rebind and
+source-outcome reconciliation flows are implemented. R014/R015 are still partial.
 
 At `b365be1` on Apple M4/macOS 26.6.1, the integrated source suite passed
 64/64 real-process E2Es, including an IPv6-only peer, script daemon handoff,
