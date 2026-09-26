@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld('adeHost', {
     ipcRenderer.invoke('ade:script-request', op, fields),
   requestReview: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:review-request', op, fields),
+  requestFile: (op: 'file.list' | 'file.search' | 'file.preview', fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('ade:file-request', op, fields),
   onDraftError: (listener: (value: { conversationId: string; message: string }) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, value: { conversationId: string; message: string }): void => listener(value)
     ipcRenderer.on('ade:draft-error', receive)

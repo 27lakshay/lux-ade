@@ -16,7 +16,9 @@ export async function rpc(socket: string, request: Record<string, unknown>, time
     peer.once('connect', () => peer.write(`${JSON.stringify(request)}\n`))
     peer.on('data', (chunk: string) => {
       frame += chunk
-      if (frame.length > 128 * 1024) peer.destroy(new Error('Daemon reply is too large'))
+      // Match the public SDK response limit; file previews and paginated
+      // history may legitimately exceed the request-size budget.
+      if (Buffer.byteLength(frame) > 32 * 1024 * 1024) peer.destroy(new Error('Daemon reply is too large'))
       const end = frame.indexOf('\n')
       if (end < 0) return
       clearTimeout(timer)

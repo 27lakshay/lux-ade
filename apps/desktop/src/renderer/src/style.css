@@ -142,6 +142,29 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .empty-conversation { min-height: 340px; padding: 48px 12px; }
 .inline-error { color: #eeb87b; font-size: 12px; overflow-wrap: anywhere; }
 .review-pane { border-top: 1px solid #323637; margin-top: 28px; padding-top: 18px; }
+.files-pane { border-top: 1px solid #323637; margin-top: 28px; padding-top: 18px; }
+.files-heading, .files-location, .files-search { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.files-heading { justify-content: space-between; }
+.files-heading h2 { font-size: 15px; margin: 0; }
+.files-pane button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
+.files-search { margin: 12px 0; }
+.files-search label { font-size: 12px; }
+.files-search input { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: inherit; flex: 1; min-width: 150px; padding: 7px 9px; }
+.files-location { color: #a5adae; font-size: 12px; min-height: 32px; overflow-wrap: anywhere; }
+.files-layout { display: grid; gap: 12px; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); margin-top: 8px; }
+.files-list, .files-preview { background: #1b1e1f; border: 1px solid #323637; border-radius: 8px; min-height: 180px; max-height: 360px; overflow: auto; }
+.files-list > p, .files-preview > p { color: #a5adae; font-size: 12px; padding: 8px 12px; }
+.files-list > button { align-items: baseline; border: 0; border-bottom: 1px solid #323637; border-radius: 0; display: flex; gap: 8px; text-align: left; width: 100%; }
+.files-list > button:hover, .files-list > button.selected { background: #263d34; }
+.files-kind { color: #84c8aa; flex: 0 0 12px; }
+.files-name { flex: 1; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.files-size { color: #a5adae; white-space: nowrap; }
+.files-preview { padding: 10px 12px; }
+.files-preview h3 { font-family: ui-monospace, monospace; font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.files-preview p { color: #a5adae; font-size: 12px; }
+.files-preview pre { font-size: 12px; line-height: 1.5; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.files-preview img { display: block; max-height: 270px; max-width: 100%; object-fit: contain; }
+@media (max-width: 680px) { .files-layout { grid-template-columns: 1fr; } }
 .review-heading { align-items: center; display: flex; justify-content: space-between; }
 .review-heading h2 { font-size: 15px; margin: 0; }
 .review-heading button, .review-file button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }

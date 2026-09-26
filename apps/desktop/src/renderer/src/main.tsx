@@ -5,6 +5,7 @@ import { mountTerminal, type TerminalBridge } from '@ade/terminal'
 import { ReviewPane } from './review'
 import { BrowserPane, type BrowserBridge } from './browser'
 import { ScriptPane } from './scripts'
+import { FilesPane } from './files'
 import './style.css'
 
 type Frame = Record<string, unknown>
@@ -103,6 +104,7 @@ declare global {
       requestService(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestScript(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestReview(op: string, fields: Record<string, unknown>): Promise<Frame>
+      requestFile(op: 'file.list' | 'file.search' | 'file.preview', fields: Record<string, unknown>): Promise<Frame>
       onDraftError(listener: (value: { conversationId: string; message: string }) => void): () => void
       terminal: TerminalBridge
       browser: BrowserBridge
@@ -1116,8 +1118,8 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
           : conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId}
             accountLabel={accountLabel(conversation)} fenced={workspaceFenced} />
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
-        {workspace && !workspaceFenced && <>{acknowledgedSelection === selectionKey && <ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
-          workspace={workspace} conversation={conversation} profileKey={profileKey} />}
+        {workspace && !workspaceFenced && <>{acknowledgedSelection === selectionKey && <><FilesPane key={`files:${profileKey}:${workspace.id}`} workspace={workspace} /><ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
+          workspace={workspace} conversation={conversation} profileKey={profileKey} /></>}
           <ServicePane key={`${state.bootId}:${workspace.id}`} workspace={workspace} /><ScriptPane key={`scripts:${workspace.id}`} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
       </div>
     </div>

@@ -739,6 +739,7 @@ impl Sessions {
             return Err(ade_core::error::NeedsRebind.into());
         }
         if op.starts_with("review.")
+            || op.starts_with("file.")
             || op.starts_with("script.")
             || op.starts_with("service.")
             || op == "terminal.create"
@@ -804,6 +805,18 @@ impl Sessions {
             return self
                 .review
                 .command(&workspace.root, binding, common_binding, request);
+        }
+        if op.starts_with("file.") {
+            let (workspace, binding) = {
+                let data = self.data.lock().unwrap();
+                let id = string("workspace_id")?;
+                data.store.ensure_workspace_bound(id)?;
+                (
+                    data.store.workspace(id)?,
+                    data.store.workspace_binding_identity(id)?,
+                )
+            };
+            return crate::files::command(&workspace.root, binding, request);
         }
         if request["op"]
             .as_str()
