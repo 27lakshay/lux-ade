@@ -29,7 +29,7 @@ implementation, independent review, checks and packaging.
 | Daily-use gate and IDs | Verified so far | Remaining before gate closes |
 |---|---|---|
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
-| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts; deterministic managed-identity, prompt and answer recovery, approvals/questions, CLI answer/decline and cancel/resume E2Es | Real Oh My Pi account; two-account hosted execution; tools, answer/decline, cancel/resume and recovery across each primary provider |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts and file-reading tools; deterministic managed-identity, prompt and answer recovery, approvals/questions, CLI answer/decline and cancel/resume E2Es | Real Oh My Pi account; two-account hosted execution; real approval/answer/decline, cancel/resume and recovery across each primary provider |
 | Workspace/review: F061, F074 | Folder selection and revision-anchored agent feedback E2Es | Full atomic feedback admission and large-diff flow in integrated app; remaining lifecycle acceptance |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume | Matching CLI coverage for the rest of the selected daily-use flow |
@@ -42,9 +42,10 @@ answer-recovery slice are closed. F075/06-S06 and real-provider F021/F038
 acceptance remain open. Active owner: coordinator on connected provider/account
 daily-use acceptance; `/root/answer_cli_e2e` and
 `/root/answer_recovery_audit` have finished, and no worker is running. Next
-assignment: exercise available real Codex and Claude accounts through the
-running app/CLI, record which approval, tool, cancel/resume, and recovery cases
-are observable, then implement the first demonstrated daily-use failure.
+assignment: exercise available real Codex and Claude approval and cancel/resume
+flows through the running app/CLI, then implement the first demonstrated
+daily-use failure. Ambient prompt and file-reading tool checks passed on both;
+they do not prove managed two-account execution or native answer recovery.
 Continue around the Oh My Pi credential blocker. Queue unrelated V1 slices and
 preserve the final full V1 audit.
 
@@ -118,6 +119,20 @@ preserve the final full V1 audit.
 | `6e3f0a5` | Restored path rebind | Core/lifecycle immutable source claims, public CLI/protocol, cross-store source and repeated-rebind E2E |
 | `504a6b3` | Browser E2E profile switch race | Waits for the profile control to become enabled before a second switch |
 | `1e1b36a` | Durable native answer reconciliation | Crash/lost-reply/no-delivery/conflict and CLI answer E2Es; focused 11/11, source 162 passed/one host skip, installed 6/6; independent review found no confirmed P1/P2 |
+
+Live-provider checkpoint, 2026-09-26: an opt-in `--tool-probe` in
+`scripts/live_provider_check.py` asks each native provider to read a unique
+file from a disposable workspace. Ambient Codex and Claude returned the exact
+file token and each exposed a tool message in ADE's transcript (10.65 and
+4.85 seconds). Their ordinary no-tool prompts also passed (6.31 and 2.95
+seconds). This closes the observed single-account prompt/tool criteria for
+those two providers only; real approval, answer recovery, cancel/resume,
+managed two-account execution and Oh My Pi remain. Implementation and local
+review were not metered separately; the observed interval from the baseline
+run to the tool run was 2 minutes 22 seconds, including coding and inspection.
+Checks took about 25 seconds across both live runs plus Python compilation and
+diff validation; packaging took 0 seconds because no packaging input changed.
+The full source suite was not repeated for this opt-in script-only change.
 
 Answer-recovery checkpoint `1e1b36a`: the deterministic once-only answer and
 CLI parity criteria in the implementation ticket close. Live provider

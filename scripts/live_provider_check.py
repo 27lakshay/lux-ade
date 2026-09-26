@@ -31,7 +31,7 @@ def wait_for(check, seconds):
     raise TimeoutError("Timed out waiting for provider result")
 
 
-def run(providers, seconds):
+def run(providers, seconds, tool_probe=False):
     results = []
     with tempfile.TemporaryDirectory(prefix="ade-live-provider-") as directory:
         root = Path(directory)
@@ -58,12 +58,20 @@ def run(providers, seconds):
                 for provider in providers:
                     started = time.monotonic()
                     try:
+                        marker = None
+                        prompt = "Reply with exactly ADE_LIVE_OK. Do not use tools."
+                        if tool_probe:
+                            marker = f"ADE_TOOL_{uuid.uuid4().hex}"
+                            target = root / "ade-live-tool-marker.txt"
+                            target.write_text(marker + "\n")
+                            prompt = (f"Read {target} with a file-reading tool. Reply with exactly "
+                                      "the token in that file. Do not infer its contents or edit files.")
                         created = rpc(socket, {"op": "conversation.create", "workspace_id": workspace,
                                                "provider": provider, "title": f"Live {provider}"})["conversation"]
                         conversation_id = created["id"]
                         rpc(socket, {"op": "agent.send", "conversation_id": conversation_id,
                                      "request_id": str(uuid.uuid4()),
-                                     "text": "Reply with exactly ADE_LIVE_OK. Do not use tools."})
+                                     "text": prompt})
                         def completed():
                             snapshot = rpc(socket, {"op": "conversation.get", "conversation_id": conversation_id,
                                                     "limit": 100})
@@ -73,10 +81,17 @@ def run(providers, seconds):
                         answer = "\n".join(message["text"] for message in snapshot["messages"]
                                            if message["role"] == "assistant")
                         status = snapshot["conversation"]["status"]
-                        results.append({"provider": provider, "status": "pass" if status == "ready" and
-                                        "ADE_LIVE_OK" in answer else "fail", "conversation_status": status,
+                        expected = marker or "ADE_LIVE_OK"
+                        tool_visible = any("tool" in str(message.get("kind", "")).lower() or
+                                           "tool" in str(message.get("role", "")).lower()
+                                           for message in snapshot["messages"])
+                        passed = status == "ready" and expected in answer and (not tool_probe or tool_visible)
+                        results.append({"provider": provider, "status": "pass" if passed else "fail",
+                                        "conversation_status": status, "tool_probe": tool_probe,
+                                        "tool_visible": tool_visible if tool_probe else None,
+                                        "message_kinds": sorted({str(message.get("kind", "")) for message in snapshot["messages"]}),
                                         "elapsed_seconds": round(time.monotonic() - started, 2),
-                                        "assistant_marker_seen": "ADE_LIVE_OK" in answer,
+                                        "assistant_marker_seen": expected in answer,
                                         "error": snapshot["conversation"].get("error")})
                     except Exception as error:
                         results.append({"provider": provider, "status": "fail",
@@ -98,8 +113,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("providers", nargs="+", choices=("codex", "claude", "omp"))
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--tool-probe", action="store_true",
+                        help="Require a real file read and visible tool activity")
     args = parser.parse_args()
-    results = run(args.providers, args.timeout)
+    results = run(args.providers, args.timeout, args.tool_probe)
     print(json.dumps({"type": "live_provider_check", "results": results}, indent=2))
     if any(item["status"] != "pass" for item in results):
         raise SystemExit(1)
