@@ -18,8 +18,9 @@
   [the initialization plan](docs/monorepo-initialization-plan.md). Before changing
   process ownership, protocols, providers, or plugins, read
   [the proposed architecture](docs/proposed-architecture.md). These describe the
-  planned successor; [the current architecture](docs/architecture.md) describes
-  the GPUI implementation.
+  planned successor. [The current architecture](docs/architecture.md) describes
+  the GPUI prototype. Its client crate was removed on 2026-09-27, and the Python
+  scripts that drive it are unmaintained; do not write code for them.
 - React, xterm.js, and Fallow are selected. Keep terminal output outside React
   state. Keep the client SDK independent of React and Electron. Use Fallow for
   JavaScript/TypeScript dead-code analysis.

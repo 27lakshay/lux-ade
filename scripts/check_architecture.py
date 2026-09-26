@@ -13,10 +13,9 @@ def verify(metadata):
     nodes = {node['id']: node for node in metadata['resolve']['nodes']}
     members = {packages[key]['name']: key for key in metadata['workspace_members']}
     forbidden = {
-        'ade-core': {'ade-client', 'ade-daemon', 'ade-runtime', 'ade-platform', 'rusqlite', 'portable-pty'},
-        'ade-client': {'ade-daemon', 'ade-runtime', 'rusqlite', 'portable-pty'},
-        'ade-runtime': {'ade-client', 'ade-daemon', 'rusqlite'},
-        'ade-daemon': {'ade-client'},
+        'ade-core': {'ade-daemon', 'ade-runtime', 'ade-platform', 'rusqlite', 'portable-pty'},
+        'ade-runtime': {'ade-daemon', 'rusqlite'},
+        'ade-daemon': set(),
     }
     failures = []
     for owner, banned in forbidden.items():
@@ -33,7 +32,7 @@ def verify(metadata):
                     continue
                 dep_id = dependency['pkg']
                 name = packages[dep_id]['name']
-                if name in banned or (owner != 'ade-client' and ('gpui' in name or name in {'wry', 'lb-wry'})):
+                if name in banned or 'gpui' in name or name in {'wry', 'lb-wry'}:
                     failures.append(f'{owner} depends on forbidden implementation {name}')
                 pending.append(dep_id)
     return sorted(set(failures))
@@ -47,4 +46,4 @@ if __name__ == '__main__':
     failures = verify(metadata)
     if failures:
         raise SystemExit('\n'.join(failures))
-    print('Architecture checks passed: core/runtime/daemon contain no UI dependencies; client contains no server implementation.')
+    print('Architecture checks passed: core/runtime/daemon contain no UI dependencies.')
