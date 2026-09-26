@@ -1,6 +1,6 @@
 # Browser session ownership, backup and retention
 
-Status: ownership and interrupted-migration slice implemented; backup and retention remain open
+Status: ownership, interrupted-migration recovery and cross-process lease implemented; backup and retention remain open
 Type: implementation ticket
 Requirements: F092, R014, R015 (partial)
 Depends on: 01-embedded-browser-preview, profile lifecycle, managed backup and retention contracts
@@ -9,7 +9,9 @@ Outcome: ADE knows which profile owns each Electron browser session, tab metadat
 
 The Electron session lives under `userData/browser-sessions/<hash(profile ID)>`, while tab metadata and any retained legacy session copy live in the profile home. Fresh sessions now publish a durable profile-ID owner manifest before the session opens. Legacy migrations copy into a claimed stage, fsync the copy and owner, then rename into place. On restart ADE removes only empty or claimed stages whose creating process is gone; it leaves the original legacy source intact. A destination with an owner for another profile refuses selection. An ownerless old destination also refuses automatic selection: the app names the affected profile, warns that ADE cannot prove the session's original owner, and offers an explicit, confirmed adoption action. Cancelling leaves the data untouched. A moved runtime home currently cannot reconnect because its launcher binds the old absolute path; selection fails before browser writes.
 
-No backup or retention operation yet coordinates the two browser roots. Two Electron processes can still write the same profile metadata without a cross-process lease, and PID reuse can conservatively leave a stale stage needing review. This ticket does not claim complete R014/R015 or full F092 acceptance.
+Electron now holds an advisory lock in the profile home while it owns the browser session. The lock helper exits when Electron's pipe closes, so a second process refuses the same profile while the first lives and can take over after a crash. Selection acquires the next profile's lock before migration and releases the previous one after its browser views close. An unexpected lock-helper exit closes those views and tells the browser pane to stop using the profile. Explicit adoption also holds the lock while it writes the owner manifest.
+
+No backup or retention operation yet coordinates the two browser roots. PID reuse can conservatively leave a stale migration stage needing review. This ticket does not claim complete R014/R015 or full F092 acceptance.
 
 E2E acceptance through real ADE processes:
 
@@ -21,3 +23,5 @@ E2E acceptance through real ADE processes:
 Do not clean the retained legacy source merely because a migration marker exists. A restore-tested backup/retention owner must first account for both storage roots and active session leases. Preserve the F092 isolation and cookie-restart E2E while implementing this lifecycle.
 
 Ownership-slice evidence at implementation revision `487b907` on macOS arm64: `pnpm check` passed type checking, Fallow, backend/frontend builds and 84/84 source E2Es. `pnpm package:mac` and `pnpm test:e2e:package` passed 6/6 packaged E2Es. Running `ADE_E2E_BROWSER_APP="$PWD/dist/electron/mac-arm64/Lux ADE.app" pnpm exec playwright test e2e/specs/desktop-browser.spec.ts` passed 2/2 in the packaged app. `e2e/specs/browser-migration-recovery.spec.ts` uses running Electron and ADE daemons. It kills Electron after fresh stage creation and owner fsync, and during legacy stage, copy, marker and rename; relaunch checks the original tab/cookie, source retention and stage cleanup. It also covers mismatched and ownerless destination refusal, explicit adoption of a pre-manifest session, and moved-home refusal before browser writes. `desktop-browser.spec.ts` retains cookie isolation, ordinary migration and restart coverage. These tests use local HTTP fixtures, not hosted account verification. The full ticket remains open for acceptance items 3 and 4.
+
+Cross-process lease evidence at revision `13f3e45`: `pnpm check` passed 85/85 source E2Es; the final browser/profile suite passed 13/13. The new E2E launches two Electron processes against one profile home, verifies that the second cannot attach while the first owns browser data, kills the first, and verifies the second can attach. `pnpm package:mac` passed, followed by 6/6 packaged E2Es and 2/2 packaged browser E2Es. The lease helper is included in the macOS package. Backup/restore and retention remain unimplemented, so acceptance items 3 and 4 remain partial.
