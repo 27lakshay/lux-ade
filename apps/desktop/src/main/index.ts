@@ -58,6 +58,19 @@ function journalRecord(entry: DraftEntry, intent: SendIntent, dispatchStarted: b
     draftText: intent.draftText, draftRevision: intent.revision, attachments: intent.attachments,
     dispatchStarted }
 }
+async function e2ePauseAfterSendJournal(): Promise<void> {
+  if (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_SEND_JOURNAL_PAUSE !== '1') return
+  const signal = process.env.ADE_E2E_SEND_JOURNAL_SIGNAL
+  const release = process.env.ADE_E2E_SEND_JOURNAL_RELEASE
+  if (!signal || !release || !isAbsolute(signal) || !isAbsolute(release)) throw new Error('Invalid send journal E2E pause paths')
+  await writeFile(signal, 'paused', { flag: 'wx' })
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (await stat(release).then(() => true, () => false)) return
+    await new Promise((done) => setTimeout(done, 10))
+  }
+  throw new Error('Send journal E2E pause timed out')
+}
 
 async function journaled(entry: DraftEntry): Promise<boolean> {
   const intent = entry.send
@@ -256,13 +269,17 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
   const value = response.draft as Draft
   if (!value || typeof value.text !== 'string' || !Number.isSafeInteger(value.revision)) throw new Error('Invalid draft response')
   value.attachments ??= []
+  if (pending.restored_from_backup !== undefined && typeof pending.restored_from_backup !== 'boolean') {
+    throw new Error('Invalid restored-profile provenance; prompt recovery is unavailable')
+  }
+  const restoredFromBackup = pending.restored_from_backup === true
   const recovered = pending.intent as { request_id?: unknown; draft_text?: unknown; draft_revision?: unknown;
     text?: unknown; attachments?: unknown; state?: unknown } | null
   if (recovered && (!validId(recovered.request_id) || typeof recovered.text !== 'string'
     || typeof recovered.draft_text !== 'string' || !Number.isSafeInteger(recovered.draft_revision)
     || !Array.isArray(recovered.attachments)
     || !['pending', 'rejected'].includes(String(recovered.state)))) throw new Error('Invalid send intent response')
-  const recorded = journalRecords.find((item) => item.profileId === profileId && item.windowId === windowId &&
+  let recorded = journalRecords.find((item) => item.profileId === profileId && item.windowId === windowId &&
     item.conversationId === conversationId)
   if (recorded && recovered && (recorded.requestId !== recovered.request_id || recorded.text !== recovered.text ||
     recorded.draftText !== recovered.draft_text || recorded.draftRevision !== recovered.draft_revision ||
@@ -273,7 +290,10 @@ async function loadDraft(senderId: number, endpoint: string, conversationId: str
     await journal().upsert({ profileId, windowId, conversationId, requestId: recovered.request_id as string,
       endpoint, text: recovered.text as string, draftText: recovered.draft_text as string,
       draftRevision: recovered.draft_revision as number, attachments: recovered.attachments as unknown[],
-      dispatchStarted: true })
+      dispatchStarted: true, ...(restoredFromBackup ? { restoreHold: true } : {}) })
+  } else if (recorded && restoredFromBackup && !recorded.restoreHold) {
+    recorded = { ...recorded, restoreHold: true }
+    await journal().upsert(recorded)
   }
   const restored = recorded ?? (recovered ? { requestId: recovered.request_id as string,
     text: recovered.text as string, draftText: recovered.draft_text as string,
@@ -297,6 +317,11 @@ function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
 }
 
 async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>> {
+  const recorded = (await journal().list()).find((item) => item.profileId === entry.profileId &&
+    item.windowId === entry.windowId && item.conversationId === entry.conversationId)
+  if (recorded?.restoreHold) {
+    throw new Error('Restored prompt is held until its source outcome is reconciled')
+  }
   const result = await requestDaemon(entry.endpoint, 'draft.send.complete', {
     conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
   }, { timeoutMs })
@@ -348,6 +373,8 @@ function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<str
     const recorded = (await journal().list()).find((item) => item.profileId === entry.profileId &&
       item.windowId === entry.windowId && item.conversationId === entry.conversationId)
     if (!recorded || recorded.requestId !== intent.requestId || recorded.text !== intent.text) return uncertain()
+    if (recorded.restoreHold) return { ...uncertain(),
+      message: 'Restored prompt is held until the source outcome is reconciled. It will not be dispatched automatically.' }
     if (recorded.dispatchStarted) {
       try { return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true }) }
       catch { /* The original provider turn may still be running or its outcome may be unavailable. */ }
@@ -637,6 +664,44 @@ ipcMain.handle('ade:browser-backup-restore', async (event, bundle: unknown, id: 
   switching = true
   try { return await restoreBrowserProfile(request.location, request.profile.id, request.profile.home) }
   finally { switching = false }
+})
+function sendTransferRequest(event: Electron.IpcMainInvokeEvent, id: unknown, location: unknown,
+  active: boolean): { profile: Profile; location: string } {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed() || event.senderFrame !== window.webContents.mainFrame ||
+    !managedProfiles || switching || typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id) ||
+    typeof location !== 'string' || !isAbsolute(location) || location.includes('\0') || location.length > 4096) {
+    throw new Error('Invalid pending-send transfer request')
+  }
+  const profile = profileState.profiles.find((item) => item.id === id)
+  if (!profile || (active ? profileState.activeId !== id : profileState.activeId === id)) {
+    throw new Error('Pending-send profile does not match the transfer request')
+  }
+  return { profile, location }
+}
+ipcMain.handle('ade:send-journal-export', async (event, id: unknown, destination: unknown) => {
+  if (startupProfileSelection) await startupProfileSelection
+  const request = sendTransferRequest(event, id, destination, true)
+  switching = true
+  try { return await journal().exportProfile(request.profile.id, request.location) }
+  finally { switching = false }
+})
+ipcMain.handle('ade:send-journal-import', async (event, bundle: unknown, sourceId: unknown, targetId: unknown) => {
+  if (startupProfileSelection) await startupProfileSelection
+  const request = sendTransferRequest(event, targetId, bundle, false)
+  if (typeof sourceId !== 'string' || !/^[0-9a-f-]{36}$/.test(sourceId)) {
+    throw new Error('Invalid pending-send source identity')
+  }
+  switching = true
+  try {
+    await SendJournal.inspectTransfer(request.location, sourceId)
+    const started = await launcher('start', request.profile.id)
+    if (started.type !== 'profile_started' || typeof started.socket !== 'string' ||
+      !isAbsolute(started.socket)) throw new Error('Restored profile daemon is unavailable')
+    return await journal().importProfile(request.location, sourceId, request.profile.id, started.socket,
+      (record) => requestDaemon(started.socket as string, 'draft.send.get', {
+        conversation_id: record.conversationId, window_id: record.windowId }))
+  } finally { switching = false }
 })
 async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> {
   if (typeof folder !== 'string' || !isAbsolute(folder) || folder.length > 4096) throw new Error('Choose an absolute folder path')
@@ -992,6 +1057,7 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
         conversationId: args.conversation_id, epoch: reviewContext.epoch } : undefined }
     await journal().upsert(journalRecord(entry, intent, false))
     entry.send = intent
+    await e2ePauseAfterSendJournal()
     try { await flushDraft(entry) }
     catch {
       try { await journal().remove(journalIdentity(entry, intent)); entry.send = null }
@@ -1187,7 +1253,11 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
   })
 }).catch((error: unknown) => {
-  dialog.showErrorBox('ADE could not open its window', String(error))
+  if (process.env.ADE_E2E_USER_DATA_DIR) {
+    console.error('ADE could not open its window:', error)
+  } else {
+    dialog.showErrorBox('ADE could not open its window', String(error))
+  }
   app.quit()
 })
 

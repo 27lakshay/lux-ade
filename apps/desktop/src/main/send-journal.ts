@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto'
-import { open, mkdir, readFile, rename, lstat, unlink } from 'node:fs/promises'
-import { dirname, isAbsolute } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { open, mkdir, readFile, rename, lstat, unlink, link } from 'node:fs/promises'
+import { dirname, isAbsolute, join, basename } from 'node:path'
 
 const version = 1
 const maxFileBytes = 16 * 1024 * 1024
@@ -23,9 +23,14 @@ export type SendJournalRecord = SendJournalIdentity & {
   draftRevision: number
   attachments: unknown[]
   dispatchStarted: boolean
+  restoreHold?: true
 }
 
 type JournalFile = { version: 1; records: SendJournalRecord[] }
+type TransferBundle = { format: 'ade-send-journal-bundle-v1'; scope: 'profile-pending-sends-only';
+  sourceProfileId: string; capturedAt: string; records: { bytes: number; sha256: string; value: SendJournalRecord[] };
+  excluded: string[] }
+const bundleExcluded = ['daemon durable send intents', 'provider dispatch outcomes', 'cross-owner replay authority']
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) &&
@@ -34,7 +39,8 @@ function plainObject(value: unknown): value is Record<string, unknown> {
 
 function hasFields(value: Record<string, unknown>, fields: string[]): boolean {
   const actual = Object.keys(value).sort()
-  return actual.length === fields.length && actual.every((field, index) => field === fields[index])
+  const expected = [...fields].sort()
+  return actual.length === expected.length && actual.every((field, index) => field === expected[index])
 }
 
 function jsonValue(value: unknown, depth = 0): boolean {
@@ -61,8 +67,10 @@ function validIdentity(value: unknown): value is SendJournalIdentity {
 function validRecord(value: unknown): value is SendJournalRecord {
   if (!validIdentity(value) || !plainObject(value)) return false
   const candidate: Record<string, unknown> = value
-  if (!hasFields(candidate, ['attachments', 'conversationId', 'dispatchStarted', 'draftRevision',
-    'draftText', 'endpoint', 'profileId', 'requestId', 'text', 'windowId'])) return false
+  const fields = ['attachments', 'conversationId', 'dispatchStarted', 'draftRevision',
+    'draftText', 'endpoint', 'profileId', 'requestId', 'text', 'windowId']
+  if (!hasFields(candidate, fields) && !hasFields(candidate, [...fields, 'restoreHold'])) return false
+  if (candidate.restoreHold !== undefined && candidate.restoreHold !== true) return false
   if (typeof candidate.endpoint !== 'string' || !isAbsolute(candidate.endpoint) || candidate.endpoint.includes('\0') || candidate.endpoint.length > 4096) return false
   if (typeof candidate.text !== 'string' || !candidate.text.trim() || Buffer.byteLength(candidate.text) > maxPromptBytes) return false
   if (typeof candidate.draftText !== 'string' || Buffer.byteLength(candidate.draftText) > maxPromptBytes) return false
@@ -97,6 +105,47 @@ function decodeJournal(contents: string): Map<string, SendJournalRecord> {
   }
   return records
 }
+function decodeTransfer(contents: string): TransferBundle {
+  let value: unknown
+  try { value = JSON.parse(contents) as unknown }
+  catch { throw new Error('Pending-send transfer bundle is invalid') }
+  if (!plainObject(value) || !hasFields(value, ['capturedAt', 'excluded', 'format', 'records', 'scope', 'sourceProfileId']) ||
+    value.format !== 'ade-send-journal-bundle-v1' || value.scope !== 'profile-pending-sends-only' ||
+    !idPattern.test(String(value.sourceProfileId)) || typeof value.capturedAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.capturedAt)) || JSON.stringify(value.excluded) !== JSON.stringify(bundleExcluded) ||
+    !plainObject(value.records) || !hasFields(value.records, ['bytes', 'sha256', 'value'])) {
+    throw new Error('Unsupported pending-send transfer bundle')
+  }
+  const component = value.records
+  if (!Array.isArray(component.value) || component.value.length > maxRecords ||
+    !Number.isSafeInteger(component.bytes) || (component.bytes as number) < 0 ||
+    typeof component.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(component.sha256)) {
+    throw new Error('Invalid pending-send transfer records')
+  }
+  const data = JSON.stringify(component.value)
+  if (Buffer.byteLength(data) !== component.bytes ||
+    createHash('sha256').update(data).digest('hex') !== component.sha256) {
+    throw new Error('Pending-send transfer records failed verification')
+  }
+  const records = new Set<string>()
+  for (const record of component.value) {
+    if (!validRecord(record) || record.profileId !== value.sourceProfileId || record.restoreHold ||
+      records.has(recordKey(record))) throw new Error('Invalid or duplicate pending-send transfer record')
+    records.add(recordKey(record))
+  }
+  return value as TransferBundle
+}
+
+function matchingIntent(record: SendJournalRecord, response: unknown): boolean {
+  if (!plainObject(response) || response.type !== 'send_intent' ||
+    response.restored_from_backup !== true || !plainObject(response.intent)) return false
+  const intent = response.intent
+  return intent.request_id === record.requestId && intent.conversation_id === record.conversationId &&
+    intent.window_id === record.windowId && intent.draft_revision === record.draftRevision &&
+    intent.draft_text === record.draftText && intent.text === record.text &&
+    Array.isArray(intent.attachments) && JSON.stringify(intent.attachments) === JSON.stringify(record.attachments) &&
+    (intent.state === 'pending' || intent.state === 'rejected')
+}
 
 export class SendJournal {
   private records: Map<string, SendJournalRecord>
@@ -122,10 +171,103 @@ export class SendJournal {
     return new SendJournal(filePath, decodeJournal(contents))
   }
 
+  static async inspectTransfer(source: string, expectedSourceProfileId: string): Promise<{ recordCount: number }> {
+    const bundle = await this.readTransfer(source, expectedSourceProfileId)
+    if (bundle.records.value.some((record) => record.dispatchStarted)) {
+      throw new Error('A dispatched prompt has an unknown external outcome; preserve the bundle for reconciliation')
+    }
+    return { recordCount: bundle.records.value.length }
+  }
+
+  private static async readTransfer(source: string, expectedSourceProfileId: string): Promise<TransferBundle> {
+    if (!isAbsolute(source) || source.includes('\0') || source.length > 4096 ||
+      !idPattern.test(expectedSourceProfileId)) throw new Error('Invalid pending-send transfer source')
+    const info = await lstat(source)
+    if (!info.isFile() || info.size > maxFileBytes) throw new Error('Pending-send transfer must be a bounded regular file')
+    const contents = await readFile(source, 'utf8')
+    if (Buffer.byteLength(contents) > maxFileBytes) throw new Error('Pending-send transfer is too large')
+    const bundle = decodeTransfer(contents)
+    if (bundle.sourceProfileId !== expectedSourceProfileId) throw new Error('Pending-send source profile identity differs from the backup')
+    return bundle
+  }
+
   async list(): Promise<SendJournalRecord[]> {
     await this.tail
     if (this.unsafe) throw new Error('Send recovery journal persistence is uncertain; preserve the file for recovery')
     return [...this.records.values()].map(copyRecord)
+  }
+
+  /** A bounded file snapshot only. The profile backup coordinator must still stop source-side sends. */
+  async exportProfile(profileId: string, destination: string): Promise<Record<string, unknown>> {
+    if (!idPattern.test(profileId) || !isAbsolute(destination) || destination.includes('\0') || destination.length > 4096) {
+      throw new Error('Invalid pending-send export target')
+    }
+    const records = (await this.list()).filter((record) => record.profileId === profileId)
+    if (records.some((record) => record.restoreHold)) throw new Error('A previously restored prompt is still held')
+    const payload = JSON.stringify(records)
+    const bundle: TransferBundle = { format: 'ade-send-journal-bundle-v1', scope: 'profile-pending-sends-only',
+      sourceProfileId: profileId, capturedAt: new Date().toISOString(),
+      records: { bytes: Buffer.byteLength(payload), sha256: createHash('sha256').update(payload).digest('hex'), value: records },
+      excluded: bundleExcluded }
+    const contents = `${JSON.stringify(bundle)}\n`
+    if (Buffer.byteLength(contents) > maxFileBytes) throw new Error('Pending-send transfer exceeds the supported size')
+    const directory = dirname(destination)
+    const temporary = join(directory, `.${basename(destination)}.${randomUUID()}.tmp`)
+    try {
+      const file = await open(temporary, 'wx', 0o600)
+      try { await file.writeFile(contents); await file.sync() }
+      finally { await file.close() }
+      await link(temporary, destination)
+      try {
+        const parent = await open(directory, 'r')
+        try { await parent.sync() } finally { await parent.close() }
+      } catch { throw new Error(`Pending-send bundle was published at ${destination}, but durability is unconfirmed`) }
+    } finally { await unlink(temporary).catch(() => undefined) }
+    return { type: 'pending_sends_exported', file: destination, format: bundle.format,
+      source_profile_id: profileId, record_count: records.length, scope: bundle.scope, excluded: bundle.excluded }
+  }
+
+  /** Imported records remain held: a copied daemon intent cannot prove the source never dispatched. */
+  async importProfile(source: string, expectedSourceProfileId: string, targetProfileId: string,
+    targetEndpoint: string, verifyIntent: (record: SendJournalRecord) => Promise<unknown>): Promise<Record<string, unknown>> {
+    if (!idPattern.test(targetProfileId) ||
+      expectedSourceProfileId === targetProfileId || !isAbsolute(targetEndpoint) ||
+      targetEndpoint.includes('\0') || targetEndpoint.length > 4096) throw new Error('Invalid pending-send import target')
+    const bundle = await SendJournal.readTransfer(source, expectedSourceProfileId)
+    if (bundle.records.value.some((record) => record.dispatchStarted)) {
+      throw new Error('A dispatched prompt has an unknown external outcome; preserve the bundle for reconciliation')
+    }
+    const mapped = bundle.records.value.map((record): SendJournalRecord => ({ ...copyRecord(record),
+      profileId: targetProfileId, endpoint: targetEndpoint, restoreHold: true }))
+    let reconciled = 0
+    await this.mutate(async (records) => {
+      const target = [...records.values()].filter((record) => record.profileId === targetProfileId)
+      const incoming = new Map(mapped.map((record) => [recordKey(record), record]))
+      if (target.some((record) => {
+        const candidate = incoming.get(recordKey(record))
+        return !candidate || !record.restoreHold || record.requestId !== candidate.requestId ||
+          record.endpoint !== candidate.endpoint || record.text !== candidate.text ||
+          record.draftText !== candidate.draftText || record.draftRevision !== candidate.draftRevision ||
+          JSON.stringify(record.attachments) !== JSON.stringify(candidate.attachments)
+      })) {
+        throw new Error('Target profile has a different or unheld pending prompt; preserve both records')
+      }
+      for (const record of mapped) {
+        let observed: unknown
+        try { observed = await verifyIntent(copyRecord(record)) }
+        catch { throw new Error('Restored daemon send intent is unavailable; import left the journal unchanged') }
+        if (!matchingIntent(record, observed)) {
+          throw new Error('Restored daemon send intent differs from the journal; import left it unchanged')
+        }
+      }
+      reconciled = target.length
+      for (const record of mapped) {
+        if (!records.has(recordKey(record))) records.set(recordKey(record), record)
+      }
+    })
+    return { type: 'pending_sends_imported_held', source_profile_id: expectedSourceProfileId,
+      profile_id: targetProfileId, record_count: mapped.length, reconciled_count: reconciled,
+      replay: 'held-until-cross-owner-reconciliation' }
   }
 
   async upsert(record: SendJournalRecord): Promise<void> {
@@ -138,7 +280,7 @@ export class SendJournal {
         previous.text !== next.text || previous.draftText !== next.draftText ||
         previous.draftRevision !== next.draftRevision ||
         JSON.stringify(previous.attachments) !== JSON.stringify(next.attachments) ||
-        (previous.dispatchStarted && !next.dispatchStarted))) {
+        (previous.dispatchStarted && !next.dispatchStarted) || (previous.restoreHold && !next.restoreHold))) {
         throw new Error('Another prompt or payload owns this send recovery record')
       }
       records.set(key, next)
@@ -151,6 +293,7 @@ export class SendJournal {
       const key = recordKey(identity)
       const record = records.get(key)
       if (!record || record.requestId !== identity.requestId) throw new Error('Send recovery record changed before dispatch')
+      if (record.restoreHold) throw new Error('Restored prompt is held until its source outcome is reconciled')
       records.set(key, { ...record, dispatchStarted: true })
     })
   }
