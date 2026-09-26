@@ -267,6 +267,14 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
         if request["token"] != owner.token || owner.draining {
             return Err(runtime::OwnerFenced.into());
         }
+        if op == "agent.account_inspect" {
+            let account: ade_core::model::AccountExecution =
+                serde_json::from_value(request["account"].clone())?;
+            drop(data);
+            return Ok(serde_json::to_value(
+                ade_runtime::provider::account_probe::inspect(&account),
+            )?);
+        }
         if op == "agent.list" {
             let agents: Vec<_> = data.agents.values().cloned().collect();
             drop(data);

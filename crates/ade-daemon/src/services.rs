@@ -42,6 +42,17 @@ fn available(port: u16) -> Option<Vec<TcpListener>> {
     }
 }
 impl Store {
+    pub fn all_services_for_health(&self) -> Result<Vec<Service>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT data FROM services WHERE json_extract(data,'$.config.health') IS NOT NULL AND json_extract(data,'$.terminal_owner') IS NOT NULL ORDER BY workspace_id,name LIMIT 513")?;
+        let services = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .map(|row| Ok(serde_json::from_str(&row?)?))
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(services.len() <= 512, "Too many services to monitor");
+        Ok(services)
+    }
     pub fn services(&self, workspace: &str) -> Result<Vec<Service>> {
         self.workspace(workspace)?;
         let mut statement = self
@@ -89,6 +100,10 @@ impl Store {
                 |r| r.get(0),
             )?;
             ensure!(count < 16, "Workspace service limit reached");
+        }
+        if config.health.is_some() && before.as_ref().is_none_or(|s| s.config.health.is_none()) {
+            let count: i64 = tx.query_row("SELECT count(*) FROM services WHERE json_extract(data,'$.config.health') IS NOT NULL", [], |row| row.get(0))?;
+            ensure!(count < 512, "Profile health policy limit reached");
         }
         let digest = Sha256::digest(workspace.id.as_bytes());
         let suffix = digest[..6]

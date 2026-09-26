@@ -34,3 +34,35 @@ checks 200, 503, 302, timeout, invalid targets and a held request overlapping
 service stop. The desktop E2E checks healthy and stopped results through the
 running app. A persistent health policy, continuous monitoring, IPv6/remote
 targets, durable structured logs and full F086 acceptance remain open.
+
+Configured monitoring slice: Service recipes may opt in with
+`config.health: {port_variable,path,timeout_ms,interval_ms}`. The port variable
+must be one of that service's assigned ports. The HTTP deadline is 50–2000 ms;
+the sampling interval is 250–60000 ms and must exceed the deadline. The daemon
+serializes recurring samples in one worker and samples at most one due service
+per 250 ms pass. Concurrent recurring/on-demand samples are capped at four.
+The interval is a best-effort target; inspection and HTTP time can delay later
+services. `health_monitor.schedule_delay_ms` reports delay past the configured
+interval, and an overdue sample becomes `stale` with basis `sampling_delayed`
+after two intervals. Attempts are timed even when a service has exited or a
+probe fails, so one broken service cannot monopolize the worker.
+`service.health.sample` requests an immediate sample without
+changing the policy. The existing `service.inspect.health_check` remains a
+separate one-shot check. `service.inspect.health_monitor` reports the most recent
+sample with `sampled_at_ms` and `fresh_until_ms`, or explicit disabled, unknown,
+stale or not-running state. Samples are memory-only: a daemon restart begins
+unknown until new evidence arrives. Stop, service edits and replacement runs
+invalidate old samples through service revision and runtime transfer identity.
+The monitor also requires current running execution evidence before showing a
+fresh sample. The check still uses only the assigned IPv4 loopback port and
+verified direct-process listener; HTTP redirects are not followed.
+
+Real-daemon E2E configures a policy, observes recurring 503 evidence, forces a
+200 sample through the public command, stops and restarts the service, and
+observes 503 from the successor without carrying forward its predecessor's
+healthy result. A separate minimum-interval E2E leaves the first service exited
+and verifies the second service receives successive healthy samples. The profile
+accepts at most 512 configured health policies, and the scheduler reads only
+active configured services; unrelated service definitions cannot disable it.
+Persistent sample history, alerting and full F086 acceptance
+remain open.

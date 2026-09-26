@@ -1,6 +1,8 @@
 //! Provider interface: lux-ade owns identity/durability; each adapter owns its native protocol.
 use crate::{model::PendingRequest, rpc::Rpc};
 use ade_core::model::AccountExecution;
+#[path = "account_probe.rs"]
+pub mod account_probe;
 use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 use std::sync::{Arc, mpsc};
@@ -64,9 +66,6 @@ pub fn spawn(
         );
     }
     match provider {
-        "claude" if account.is_some() => {
-            bail!("Managed Claude accounts need native identity readback before launch")
-        }
         "codex" if account.is_some() => {
             bail!("Managed Codex accounts need native credential readback before launch")
         }
@@ -75,7 +74,7 @@ pub fn spawn(
         }
         "opencode" if account.is_some() => bail!("Managed OpenCode accounts are not supported yet"),
         "codex" => Ok(crate::codex::Adapter::spawn(cwd, events)?),
-        "claude" => Ok(crate::claude::Adapter::spawn(cwd, events)?),
+        "claude" => Ok(crate::claude::Adapter::spawn(cwd, account, events)?),
         "opencode" => Ok(crate::opencode::Adapter::spawn(cwd, events)?),
         "omp" => Ok(crate::omp::Adapter::spawn(cwd, events)?),
         _ => bail!("Unsupported provider {provider}"),

@@ -363,6 +363,7 @@ impl Store {
         })
     }
     fn account_home(&self, id: &str) -> Result<PathBuf> {
+        use std::os::unix::fs::MetadataExt;
         let suffix = id.strip_prefix("account_").context("Invalid account ID")?;
         ensure!(
             suffix.len() == 36
@@ -374,10 +375,14 @@ impl Store {
         );
         let homes = self.data_directory.join("provider-accounts");
         let home = homes.join(id);
+        let profile_owner = std::fs::metadata(&self.data_directory)?.uid();
         for directory in [&homes, &home] {
             let metadata = std::fs::symlink_metadata(directory)?;
             ensure!(
-                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                metadata.is_dir()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.uid() == profile_owner
+                    && metadata.mode() & 0o077 == 0,
                 "Account native home is unavailable or redirected"
             );
         }
@@ -402,7 +407,11 @@ impl Store {
             homes_metadata.is_dir() && !homes_metadata.file_type().is_symlink(),
             "Account native home root is redirected"
         );
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        ensure!(
+            homes_metadata.uid() == std::fs::metadata(&self.data_directory)?.uid(),
+            "Account native home root has another owner"
+        );
         std::fs::set_permissions(&homes, std::fs::Permissions::from_mode(0o700))?;
         let home = homes.join(&id);
         std::fs::create_dir(&home)?;
@@ -415,6 +424,7 @@ impl Store {
             native_home: home.to_string_lossy().into_owned(),
             generation: 0,
             state: "unverified".into(),
+            claude_identity: None,
         };
         self.connection.execute(
             "INSERT INTO accounts(id,provider,data) VALUES(?1,?2,?3)",
@@ -441,6 +451,54 @@ impl Store {
             .to_string_lossy()
             .into_owned();
         Ok(account)
+    }
+    pub fn verify_claude_account(
+        &self,
+        id: &str,
+        generation: u64,
+        identity: ClaudeIdentity,
+    ) -> Result<Account> {
+        let tx = self.transaction()?;
+        let mut account: Account = one(&tx, "accounts", id)?;
+        ensure!(
+            account.provider == "claude",
+            "Account does not use Claude Code"
+        );
+        ensure!(
+            account.generation == generation,
+            "Account changed during verification"
+        );
+        ensure!(
+            account
+                .claude_identity
+                .as_ref()
+                .is_none_or(|pinned| pinned == &identity),
+            "Claude account identity changed; disable the account before binding a new identity"
+        );
+        account.state = "verified".into();
+        account.claude_identity = Some(identity);
+        tx.execute(
+            "UPDATE accounts SET data=?2 WHERE id=?1",
+            params![id, encode(&account)?],
+        )?;
+        tx.commit()?;
+        self.account(id)
+    }
+    pub fn disable_account(&self, id: &str) -> Result<Account> {
+        let tx = self.transaction()?;
+        let mut account: Account = one(&tx, "accounts", id)?;
+        account.generation = account
+            .generation
+            .checked_add(1)
+            .context("Account generation exhausted")?;
+        account.state = "disabled".into();
+        account.claude_identity = None;
+        tx.execute(
+            "UPDATE accounts SET data=?2 WHERE id=?1",
+            params![id, encode(&account)?],
+        )?;
+        tx.commit()?;
+        self.account(id)
     }
     pub fn send_intent(&self, conversation: &str, window: &str) -> Result<Option<SendIntent>> {
         self.conversation(conversation)?;

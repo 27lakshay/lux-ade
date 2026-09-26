@@ -18,6 +18,16 @@ pub struct Config {
     /// Environment variables that receive stable, host-local TCP ports.
     #[serde(default)]
     pub ports: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<HealthPolicy>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HealthPolicy {
+    pub port_variable: String,
+    pub path: String,
+    pub timeout_ms: u64,
+    pub interval_ms: u64,
 }
 fn default_cwd() -> String {
     ".".into()
@@ -63,6 +73,30 @@ impl Config {
             self.ports.iter().collect::<HashSet<_>>().len() == self.ports.len(),
             "Duplicate service port variable"
         );
+        if let Some(health) = &self.health {
+            ensure!(
+                self.ports.contains(&health.port_variable),
+                "HTTP health port variable must be a configured service port"
+            );
+            ensure!(
+                health.path.starts_with('/')
+                    && health.path.len() <= 1024
+                    && health
+                        .path
+                        .bytes()
+                        .all(|byte| (0x21..=0x7e).contains(&byte) && byte != b'#'),
+                "HTTP health path must be a visible ASCII path of at most 1024 bytes"
+            );
+            ensure!(
+                (50..=2000).contains(&health.timeout_ms),
+                "HTTP health timeout must be 50 to 2000 ms"
+            );
+            ensure!(
+                (250..=60000).contains(&health.interval_ms)
+                    && health.interval_ms > health.timeout_ms,
+                "HTTP health interval must be 250 to 60000 ms and exceed timeout"
+            );
+        }
         ensure!(
             text(&self.cwd, 4096)
                 && !self.cwd.is_empty()

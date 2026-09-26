@@ -59,6 +59,16 @@ pub struct Account {
     pub native_home: String,
     pub generation: u64,
     pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_identity: Option<ClaudeIdentity>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ClaudeIdentity {
+    pub auth_method: String,
+    pub api_provider: String,
+    pub email: String,
+    pub org_id: String,
 }
 
 /// The immutable account context pinned to one provider execution.
@@ -68,6 +78,8 @@ pub struct AccountExecution {
     pub provider: String,
     pub native_home: String,
     pub generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_identity: Option<ClaudeIdentity>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Draft {

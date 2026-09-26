@@ -4,6 +4,7 @@ use crate::{
     provider::{self, Config, Connected, Event, Provider},
     rpc::Rpc,
 };
+use ade_core::model::AccountExecution;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
@@ -14,7 +15,14 @@ pub struct Adapter {
     rpc: Arc<Rpc>,
 }
 impl Adapter {
-    pub fn spawn(cwd: &str, events: mpsc::SyncSender<Event>) -> Result<Arc<Self>> {
+    pub fn spawn(
+        cwd: &str,
+        account: Option<&AccountExecution>,
+        events: mpsc::SyncSender<Event>,
+    ) -> Result<Arc<Self>> {
+        let executable = account
+            .map(provider::account_probe::verify_launch)
+            .transpose()?;
         let mut command = if let Ok(mock) = std::env::var("ADE_CLAUDE_BRIDGE_BIN") {
             Command::new(mock)
         } else {
@@ -28,6 +36,13 @@ impl Adapter {
             c
         };
         command.current_dir(cwd);
+        if let (Some(account), Some(executable)) = (account, executable.as_deref()) {
+            provider::account_probe::managed_environment(
+                &mut command,
+                &account.native_home,
+                executable,
+            );
+        }
         Ok(Arc::new(Self {
             rpc: Rpc::spawn(command, events, provider::bridge_event)?,
         }))

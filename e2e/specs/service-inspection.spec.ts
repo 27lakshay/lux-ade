@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { createServer } from 'node:net'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { rpc, startDaemon } from '../fixtures/daemon'
 
 type Inspection = {
@@ -8,6 +10,7 @@ type Inspection = {
   readiness: { state: string; basis: string; application_ready: string }
   logs: { available: boolean; bytes_base64?: string; start_offset?: number; through_offset?: number; truncated?: boolean }
   health?: { state: string; basis: string; status_code?: number; port_variable?: string; path?: string }
+  health_monitor?: { state: string; basis?: string; status_code?: number; sampled_at_ms?: number }
 }
 
 test('service inspection reports listener evidence and a bounded PTY output tail', async () => {
@@ -58,6 +61,90 @@ test('service inspection reports listener evidence and a bounded PTY output tail
     await expect(rpc(daemon.socket, { op: 'service.inspect', workspace_id: workspace.id, name: 'missing' })).rejects.toThrow('Unknown workspace service')
     await expect(rpc(daemon.socket, { op: 'service.inspect', workspace_id: workspace.id, name: 'web', tail_bytes: 0 })).rejects.toThrow('Tail limit')
     await expect(rpc(daemon.socket, { op: 'service.inspect', workspace_id: workspace.id, name: 'web', tail_bytes: 32769 })).rejects.toThrow('Tail limit')
+  } finally {
+    await daemon.stop()
+  }
+})
+
+test('configured HTTP health samples recur and never carry a stopped run into its successor', async () => {
+  const daemon = await startDaemon()
+  try {
+    const catalog = await rpc(daemon.socket, { op: 'catalog.get' })
+    const workspace = (catalog.catalog as { workspaces: Array<{ id: string }> }).workspaces[0]
+    const statusFile = join(daemon.rootDirectory, 'health-status.txt')
+    await writeFile(statusFile, '503')
+    const script = `require('http').createServer((_,res)=>{
+      res.statusCode=Number(require('fs').readFileSync('health-status.txt','utf8'))
+      res.end('status')
+    }).listen(Number(process.env.PORT),'127.0.0.1')`
+    await expect(rpc(daemon.socket, { op: 'service.configure', workspace_id: workspace.id,
+      name: 'invalid-health', revision: 0, config: { program: process.execPath,
+        args: ['-e', script], cwd: '.', env: {}, ports: ['PORT'],
+        health: { port_variable: 'PORT', path: '/health', timeout_ms: 2000, interval_ms: 1000 } },
+    })).rejects.toThrow('HTTP health interval')
+    await rpc(daemon.socket, { op: 'service.configure', workspace_id: workspace.id, name: 'monitored', revision: 0,
+      config: { program: process.execPath, args: ['-e', script], cwd: '.', env: {}, ports: ['PORT'],
+        health: { port_variable: 'PORT', path: '/health', timeout_ms: 250, interval_ms: 1000 } },
+    })
+    const inspect = (): Promise<Inspection> => rpc(daemon.socket, { op: 'service.inspect',
+      workspace_id: workspace.id, name: 'monitored' }) as Promise<Inspection>
+    expect((await inspect()).health_monitor?.state).toBe('not_running')
+    await rpc(daemon.socket, { op: 'service.start', workspace_id: workspace.id, name: 'monitored' })
+    await expect.poll(async () => (await inspect()).health_monitor?.state).toBe('unhealthy')
+    expect((await inspect()).health_monitor).toMatchObject({ basis: 'http_status', status_code: 503 })
+
+    await writeFile(statusFile, '200')
+    const forced = await rpc(daemon.socket, { op: 'service.health.sample', workspace_id: workspace.id,
+      name: 'monitored' }) as { health_monitor: Inspection['health_monitor'] }
+    expect(forced.health_monitor).toMatchObject({ state: 'healthy', status_code: 200 })
+    await writeFile(statusFile, '503')
+    await expect.poll(async () => (await inspect()).health_monitor?.status_code).toBe(503)
+    await writeFile(statusFile, '200')
+    const beforeStop = await rpc(daemon.socket, { op: 'service.health.sample', workspace_id: workspace.id,
+      name: 'monitored' }) as { health_monitor: Inspection['health_monitor'] }
+    expect(beforeStop.health_monitor?.state).toBe('healthy')
+    const firstSample = beforeStop.health_monitor?.sampled_at_ms ?? 0
+    expect(firstSample).toBeGreaterThan(0)
+
+    await rpc(daemon.socket, { op: 'service.stop', workspace_id: workspace.id, name: 'monitored' })
+    expect((await inspect()).health_monitor?.state).toBe('not_running')
+    await writeFile(statusFile, '503')
+    await rpc(daemon.socket, { op: 'service.start', workspace_id: workspace.id, name: 'monitored' })
+    const afterRestart = await inspect()
+    expect(afterRestart.health_monitor?.state).not.toBe('healthy')
+    await expect.poll(async () => (await inspect()).health_monitor?.state).toBe('unhealthy')
+    expect((await inspect()).health_monitor?.sampled_at_ms).toBeGreaterThan(firstSample)
+    await rpc(daemon.socket, { op: 'service.stop', workspace_id: workspace.id, name: 'monitored' })
+  } finally {
+    await daemon.stop()
+  }
+})
+
+test('an exited first service cannot starve a second service at the minimum interval', async () => {
+  const daemon = await startDaemon()
+  try {
+    const catalog = await rpc(daemon.socket, { op: 'catalog.get' })
+    const workspace = (catalog.catalog as { workspaces: Array<{ id: string }> }).workspaces[0]
+    const health = { port_variable: 'PORT', path: '/health', timeout_ms: 100, interval_ms: 250 }
+    for (const [name, script] of [
+      ['a-exited', 'process.exit(1)'],
+      ['z-healthy', 'require("http").createServer((_,res)=>res.end("ok")).listen(Number(process.env.PORT),"127.0.0.1")'],
+    ]) {
+      await rpc(daemon.socket, { op: 'service.configure', workspace_id: workspace.id, name, revision: 0,
+        config: { program: process.execPath, args: ['-e', script], cwd: '.', env: {}, ports: ['PORT'], health },
+      })
+    }
+    await rpc(daemon.socket, { op: 'service.start', workspace_id: workspace.id, name: 'a-exited' })
+    await expect.poll(async () => (await rpc(daemon.socket, { op: 'service.inspect',
+      workspace_id: workspace.id, name: 'a-exited' }) as Inspection).execution_state).toBe('exited')
+    await rpc(daemon.socket, { op: 'service.start', workspace_id: workspace.id, name: 'z-healthy' })
+    const inspectHealthy = (): Promise<Inspection> => rpc(daemon.socket, { op: 'service.inspect',
+      workspace_id: workspace.id, name: 'z-healthy' }) as Promise<Inspection>
+    await expect.poll(async () => (await inspectHealthy()).health_monitor?.state).toBe('healthy')
+    const first = (await inspectHealthy()).health_monitor?.sampled_at_ms ?? 0
+    await expect.poll(async () => (await inspectHealthy()).health_monitor?.sampled_at_ms ?? 0).toBeGreaterThan(first)
+    await rpc(daemon.socket, { op: 'service.stop', workspace_id: workspace.id, name: 'a-exited' })
+    await rpc(daemon.socket, { op: 'service.stop', workspace_id: workspace.id, name: 'z-healthy' })
   } finally {
     await daemon.stop()
   }

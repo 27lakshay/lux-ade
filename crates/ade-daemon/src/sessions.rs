@@ -30,6 +30,15 @@ struct HealthCheck {
     path: String,
     timeout: std::time::Duration,
 }
+impl From<&ade_core::services::HealthPolicy> for HealthCheck {
+    fn from(policy: &ade_core::services::HealthPolicy) -> Self {
+        Self {
+            port_variable: policy.port_variable.clone(),
+            path: policy.path.clone(),
+            timeout: std::time::Duration::from_millis(policy.timeout_ms),
+        }
+    }
+}
 
 impl HealthCheck {
     fn parse(value: &Value) -> Result<Option<Self>> {
@@ -155,12 +164,28 @@ struct Agent {
     submission: Option<String>,
     _lease: crate::worktrees::Lease,
 }
+struct HealthSample {
+    result: Value,
+    revision: i64,
+    transfer_id: String,
+    sampled_at_ms: i64,
+    sampled_at: std::time::Instant,
+    started_at: std::time::Instant,
+}
+struct HealthAttempt {
+    revision: i64,
+    transfer_id: String,
+    attempted_at: std::time::Instant,
+}
 struct Data {
     draining: bool,
     store: Store,
     agents: HashMap<String, Agent>,
     terminal_leases: HashMap<String, crate::worktrees::Lease>,
     stopping_services: HashSet<(String, String)>,
+    health_samples: HashMap<(String, String), HealthSample>,
+    health_attempts: HashMap<(String, String), HealthAttempt>,
+    active_health_samples: usize,
     subscribers: HashMap<String, mpsc::SyncSender<Value>>,
     revision: u64,
 }
@@ -176,6 +201,12 @@ impl Drop for ServiceStopGuard<'_> {
             .unwrap()
             .stopping_services
             .remove(&self.key);
+    }
+}
+struct HealthSampleGuard<'a>(&'a Sessions);
+impl Drop for HealthSampleGuard<'_> {
+    fn drop(&mut self) {
+        self.0.data.lock().unwrap().active_health_samples -= 1;
     }
 }
 pub struct Sessions {
@@ -212,6 +243,9 @@ impl Sessions {
                 agents: HashMap::new(),
                 terminal_leases: HashMap::new(),
                 stopping_services: HashSet::new(),
+                health_samples: HashMap::new(),
+                health_attempts: HashMap::new(),
+                active_health_samples: 0,
                 subscribers: HashMap::new(),
                 revision: 0,
             }),
@@ -232,6 +266,18 @@ impl Sessions {
                 };
                 if let Err(error) = hub.dispatch_queued() {
                     eprintln!("Prompt queue: {error}");
+                }
+            }
+        });
+        let weak = Arc::downgrade(&sessions);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                let Some(hub) = weak.upgrade() else {
+                    break;
+                };
+                if let Err(error) = hub.sample_due_service_health() {
+                    eprintln!("Service health monitor: {error}");
                 }
             }
         });
@@ -566,6 +612,9 @@ impl Sessions {
             }
             "service.start" => self.start_service(string("workspace_id")?, string("name")?),
             "service.stop" => self.stop_service(string("workspace_id")?, string("name")?),
+            "service.health.sample" => {
+                self.sample_service_health(string("workspace_id")?, string("name")?)
+            }
             "service.inspect" => {
                 let health_check = HealthCheck::parse(&request["health_check"])?;
                 let limit = if request["tail_bytes"].is_null() {
@@ -632,7 +681,7 @@ impl Sessions {
             }
             "service.configure" => {
                 let config = serde_json::from_value(request["config"].clone())?;
-                let d = self.data.lock().unwrap();
+                let mut d = self.data.lock().unwrap();
                 ensure!(!d.draining, "Application daemon is restarting");
                 let service = d.store.configure_service(
                     string("workspace_id")?,
@@ -642,6 +691,10 @@ impl Sessions {
                         .context("Missing service revision")?,
                     config,
                 )?;
+                d.health_samples
+                    .remove(&(service.workspace_id.clone(), service.name.clone()));
+                d.health_attempts
+                    .remove(&(service.workspace_id.clone(), service.name.clone()));
                 Ok(json!({"type":"service", "service":service}))
             }
             "service.remove" => {
@@ -671,6 +724,10 @@ impl Sessions {
                     }
                 }
                 d.store.remove_service(workspace, name, revision)?;
+                d.health_samples
+                    .remove(&(workspace.to_owned(), name.to_owned()));
+                d.health_attempts
+                    .remove(&(workspace.to_owned(), name.to_owned()));
                 self.catalog_changed(&mut d)?;
                 Ok(json!({"type":"ack"}))
             }
@@ -684,6 +741,69 @@ impl Sessions {
                     .store
                     .create_account(string("provider")?, string("name")?)?;
                 Ok(json!({"type":"ack","account":account}))
+            }
+            "account.inspect" | "account.verify" => {
+                let id = string("account_id")?;
+                let account = self.data.lock().unwrap().store.account(id)?;
+                ensure!(
+                    account.provider == "claude",
+                    "Managed account inspection is unavailable for this provider"
+                );
+                let expected_generation = if request["op"] == "account.verify" {
+                    Some(
+                        request["expected_generation"]
+                            .as_u64()
+                            .context("Missing expected account generation")?,
+                    )
+                } else {
+                    None
+                };
+                let context = ade_core::model::AccountExecution {
+                    id: account.id.clone(),
+                    provider: account.provider.clone(),
+                    native_home: account.native_home.clone(),
+                    generation: account.generation,
+                    claude_identity: account.claude_identity.clone(),
+                };
+                let inspection: provider::account_probe::Inspection = serde_json::from_value(
+                    self.runtime
+                        .agent(json!({"op":"agent.account_inspect","account":context}))?,
+                )?;
+                if let Some(generation) = expected_generation {
+                    ensure!(
+                        inspection.state == "ready",
+                        "Claude account is not ready: {}",
+                        inspection.reason
+                    );
+                    let identity = inspection
+                        .identity
+                        .context("Claude identity is unavailable")?;
+                    let updated = self
+                        .data
+                        .lock()
+                        .unwrap()
+                        .store
+                        .verify_claude_account(id, generation, identity)?;
+                    Ok(json!({"type":"ack","account":updated}))
+                } else {
+                    let current = self.data.lock().unwrap().store.account(id)?;
+                    ensure!(
+                        current.generation == account.generation,
+                        "Account changed during inspection; retry"
+                    );
+                    Ok(
+                        json!({"type":"account_inspection","account_id":id,"generation":account.generation,"inspection":inspection}),
+                    )
+                }
+            }
+            "account.disable" => {
+                let account = self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .disable_account(string("account_id")?)?;
+                Ok(json!({"type":"ack","account":account,"native_logout":false}))
             }
             "catalog.get" => Ok(
                 json!({"type":"catalog","catalog":self.data.lock().unwrap().store.catalog()?,"providers":provider::descriptors(),"boot_id":self.boot_id}),
@@ -1018,6 +1138,167 @@ impl Sessions {
         self.changed(&mut d, &current, &[])?;
         Ok(())
     }
+    fn monitored_health(
+        d: &Data,
+        service: &ade_core::services::Service,
+        execution_state: &str,
+    ) -> Value {
+        let Some(policy) = &service.config.health else {
+            return json!({"state":"disabled"});
+        };
+        let Some(owner) = &service.terminal_owner else {
+            return json!({"state":"not_running"});
+        };
+        if execution_state != "running" {
+            return json!({"state":"unknown","basis":"execution_unavailable"});
+        }
+        if d.stopping_services
+            .contains(&(service.workspace_id.clone(), service.name.clone()))
+        {
+            return json!({"state":"unknown","basis":"service_stopping"});
+        }
+        let Some(sample) = d
+            .health_samples
+            .get(&(service.workspace_id.clone(), service.name.clone()))
+        else {
+            return json!({"state":"unknown","basis":"no_sample"});
+        };
+        if sample.revision != service.revision || sample.transfer_id != owner.transfer_id {
+            return json!({"state":"unknown","basis":"run_changed"});
+        }
+        let age = sample.sampled_at.elapsed();
+        let interval = std::time::Duration::from_millis(policy.interval_ms);
+        let schedule_delay_ms = age.saturating_sub(interval).as_millis() as u64;
+        let freshness = std::time::Duration::from_millis(policy.interval_ms.saturating_mul(2));
+        if age > freshness {
+            return json!({"state":"stale","basis":"sampling_delayed",
+                "last_result":sample.result,"sampled_at_ms":sample.sampled_at_ms,
+                "schedule_delay_ms":schedule_delay_ms});
+        }
+        let mut result = sample.result.clone();
+        result["sampled_at_ms"] = json!(sample.sampled_at_ms);
+        result["fresh_until_ms"] = json!(sample.sampled_at_ms + freshness.as_millis() as i64);
+        result["schedule_delay_ms"] = json!(schedule_delay_ms);
+        result
+    }
+
+    fn sample_service_health(self: &Arc<Self>, workspace: &str, name: &str) -> Result<Value> {
+        let started_at = std::time::Instant::now();
+        let service = {
+            let mut d = self.data.lock().unwrap();
+            let service = d.store.service(workspace, name)?;
+            ensure!(
+                service.config.health.is_some(),
+                "Service has no configured HTTP health policy"
+            );
+            ensure!(
+                d.active_health_samples < 4,
+                "Too many HTTP health samples in progress"
+            );
+            d.active_health_samples += 1;
+            if let Some(owner) = &service.terminal_owner {
+                d.health_attempts.insert(
+                    (workspace.to_owned(), name.to_owned()),
+                    HealthAttempt {
+                        revision: service.revision,
+                        transfer_id: owner.transfer_id.clone(),
+                        attempted_at: std::time::Instant::now(),
+                    },
+                );
+            }
+            service
+        };
+        let _sample_guard = HealthSampleGuard(self);
+        let policy = service.config.health.as_ref().unwrap();
+        let inspection =
+            self.inspect_service(workspace, name, 1, Some(&HealthCheck::from(policy)))?;
+        let result = inspection["health"].clone();
+        let mut d = self.data.lock().unwrap();
+        let current = d.store.service(workspace, name)?;
+        if current != service
+            || d.stopping_services
+                .contains(&(workspace.to_owned(), name.to_owned()))
+        {
+            return Ok(json!({"type":"service_health_sample",
+                "health_monitor":{"state":"unknown","basis":"identity_changed"}}));
+        }
+        if let Some(owner) = &service.terminal_owner
+            && inspection["execution_state"] == "running"
+        {
+            let key = (workspace.to_owned(), name.to_owned());
+            let superseded = d.health_samples.get(&key).is_some_and(|prior| {
+                prior.revision == service.revision
+                    && prior.transfer_id == owner.transfer_id
+                    && prior.started_at > started_at
+            });
+            if !superseded {
+                d.health_samples.insert(
+                    key,
+                    HealthSample {
+                        result,
+                        revision: service.revision,
+                        transfer_id: owner.transfer_id.clone(),
+                        sampled_at_ms: now_ms(),
+                        sampled_at: std::time::Instant::now(),
+                        started_at,
+                    },
+                );
+            }
+        }
+        Ok(
+            json!({"type":"service_health_sample","health_monitor":Self::monitored_health(
+            &d, &current, inspection["execution_state"].as_str().unwrap_or("unavailable"))}),
+        )
+    }
+
+    fn sample_due_service_health(self: &Arc<Self>) -> Result<()> {
+        let due = {
+            let d = self.data.lock().unwrap();
+            if d.draining {
+                return Ok(());
+            }
+            let mut selected: Option<(String, String, Option<std::time::Instant>)> = None;
+            for service in d.store.all_services_for_health()? {
+                let Some(policy) = &service.config.health else {
+                    continue;
+                };
+                let Some(owner) = &service.terminal_owner else {
+                    continue;
+                };
+                if d.stopping_services
+                    .contains(&(service.workspace_id.clone(), service.name.clone()))
+                {
+                    continue;
+                }
+                let last = d
+                    .health_attempts
+                    .get(&(service.workspace_id.clone(), service.name.clone()))
+                    .filter(|attempt| {
+                        attempt.revision == service.revision
+                            && attempt.transfer_id == owner.transfer_id
+                    })
+                    .map(|attempt| attempt.attempted_at);
+                if last.is_some_and(|at| {
+                    at.elapsed() < std::time::Duration::from_millis(policy.interval_ms)
+                }) {
+                    continue;
+                }
+                if selected
+                    .as_ref()
+                    .is_none_or(|(_, _, previous)| last < *previous)
+                {
+                    selected = Some((service.workspace_id, service.name, last));
+                }
+            }
+            selected.map(|(workspace, name, _)| (workspace, name))
+        };
+        if let Some((workspace, name)) = due {
+            // A concurrent stop or edit can invalidate this candidate; sampling fences it again.
+            let _ = self.sample_service_health(&workspace, &name);
+        }
+        Ok(())
+    }
+
     fn inspect_service(
         self: &Arc<Self>,
         workspace: &str,
@@ -1183,6 +1464,7 @@ impl Sessions {
             if health_check.is_some() {
                 result["health"] = json!({"state":"unknown","basis":"identity_changed"});
             }
+            result["health_monitor"] = json!({"state":"unknown","basis":"identity_changed"});
             return Ok(result);
         }
         if state == "running" && health_check.is_some() {
@@ -1203,6 +1485,7 @@ impl Sessions {
         if let Some(health) = health {
             result["health"] = health;
         }
+        result["health_monitor"] = Self::monitored_health(&d, &service, &state);
         Ok(result)
     }
 
@@ -1324,6 +1607,10 @@ impl Sessions {
         let service = d
             .store
             .reserve_service(workspace, name, &self.runtime.instance)?;
+        d.health_samples
+            .remove(&(workspace.to_owned(), name.to_owned()));
+        d.health_attempts
+            .remove(&(workspace.to_owned(), name.to_owned()));
         let owner = service.terminal_owner.as_ref().unwrap();
         ensure!(
             owner.runtime_instance == self.runtime.instance,
@@ -1403,6 +1690,10 @@ impl Sessions {
             return Ok(json!({"type":"service","service":current}));
         }
         let service = d.store.release_service(workspace, name, &owner)?;
+        d.health_samples
+            .remove(&(workspace.to_owned(), name.to_owned()));
+        d.health_attempts
+            .remove(&(workspace.to_owned(), name.to_owned()));
         d.terminal_leases.remove(&owner.terminal_id);
         self.publish(&mut d, json!({"type":"service_changed","service":service}));
         Ok(json!({"type":"service","service":service}))
@@ -1639,11 +1930,26 @@ impl Sessions {
                         account.provider == c.provider,
                         "Conversation account belongs to another provider"
                     );
+                    ensure!(
+                        account.state == "verified",
+                        "Conversation account is not verified"
+                    );
+                    if c.provider == "claude" {
+                        ensure!(
+                            c.provider_config.setting_sources.is_empty(),
+                            "Managed Claude conversations cannot load settings sources"
+                        );
+                        ensure!(
+                            account.claude_identity.is_some(),
+                            "Claude account identity is not pinned"
+                        );
+                    }
                     Ok::<_, anyhow::Error>(ade_core::model::AccountExecution {
                         id: account.id,
                         provider: account.provider,
                         native_home: account.native_home,
                         generation: account.generation,
+                        claude_identity: account.claude_identity,
                     })
                 })
                 .transpose()?;
@@ -1667,13 +1973,25 @@ impl Sessions {
         if !restore {
             rpc.create()?;
         }
-        {
+        let pre_open = (|| -> Result<()> {
             let mut d = self.data.lock().unwrap();
-            if !Self::owns(&d, id, run) {
-                rpc.stop();
-                bail!("Agent was cancelled");
+            ensure!(Self::owns(&d, id, run), "Agent was cancelled");
+            if let Some(expected) = &rpc.spec.account {
+                let current = d.store.account(&expected.id)?;
+                ensure!(
+                    current.state == "verified"
+                        && current.generation == expected.generation
+                        && current.provider == expected.provider
+                        && current.claude_identity == expected.claude_identity,
+                    "Account changed before provider session opened"
+                );
             }
             d.agents.get_mut(id).unwrap().rpc = Some(rpc.clone());
+            Ok(())
+        })();
+        if let Err(error) = pre_open {
+            rpc.stop();
+            return Err(error);
         }
         let connected = if restore {
             rpc.connected()?

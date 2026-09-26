@@ -22,7 +22,7 @@ test('an unverified managed account cannot fall back to ambient Claude credentia
     await expect.poll(async () => {
       const result = await rpc(daemon.socket, { op: 'conversation.get', conversation_id: conversation.id })
       return (result.conversation as { error: string | null }).error
-    }).toMatch(/native identity readback/)
+    }).toMatch(/account is not verified/)
     await expect(access(launched)).rejects.toThrow()
     const snapshot = await rpc(daemon.socket, { op: 'conversation.get', conversation_id: conversation.id })
     expect(snapshot.conversation).toMatchObject({ account_id: account.id })
