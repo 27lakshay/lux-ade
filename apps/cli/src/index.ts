@@ -66,10 +66,19 @@ Commands:
                                         Read script state and bounded output
   script stop WORKSPACE_ID RUN_ID        Stop a script and confirm process exit
   script retire WORKSPACE_ID RUN_ID      Release an exited script run
+  git status WORKSPACE_ID                Read fresh Git status and revision tokens
+  git stage WORKSPACE_ID PATH REVISION --request-id ID
+  git unstage WORKSPACE_ID PATH REVISION --request-id ID
+                                        Change exactly one reviewed file
+  git commit WORKSPACE_ID MESSAGE INDEX_TOKEN --request-id ID
+                                        Commit the reviewed staged index
+  git operation WORKSPACE_ID REQUEST_ID  Inspect a Git operation receipt
   listener list                         Observe local TCP listeners and service assignments
   request OP [JSON_OBJECT]              Call another daemon command
 
 All command results are JSON on stdout. Errors are JSON on stderr.
+Choose and retain a unique --request-id for each Git mutation. If the reply is lost,
+use git operation with that ID; retry only with the same command and arguments.
 Terminal send appends Enter; use terminal attach in a later CLI slice for raw I/O.
 The profile socket is always explicit. This CLI does not start a daemon. Plans for
 profile discovery, remote hosts and stable public command schemas remain open.
@@ -159,6 +168,23 @@ function sha256(value: string | undefined): string {
     throw new CliError('usage', 'EXPECTED_REGISTRY_SHA256 must be 64 lowercase hexadecimal characters from service url-recovery.')
   }
   return value
+}
+
+function gitMutationArgs(rest: string[], action: 'stage' | 'unstage' | 'commit'): {
+  workspaceId: string; value: string; token: string; requestId: string
+} {
+  const flag = rest.length - 2
+  const positionals = rest.slice(0, flag)
+  if (positionals.length !== 3 || rest[flag] !== '--request-id' ||
+    !rest[flag + 1] || rest[flag + 1].length > 256) {
+    throw new CliError('usage', `git ${action} requires WORKSPACE_ID ${action === 'commit' ? 'MESSAGE INDEX_TOKEN' : 'PATH REVISION'} --request-id ID.`)
+  }
+  return {
+    workspaceId: required(positionals[0], 'WORKSPACE_ID'),
+    value: required(positionals[1], action === 'commit' ? 'MESSAGE' : 'PATH'),
+    token: required(positionals[2], action === 'commit' ? 'INDEX_TOKEN' : 'REVISION'),
+    requestId: rest[flag + 1],
+  }
 }
 
 function jsonObject(value: string | undefined, label: string): Record<string, unknown> {
@@ -534,6 +560,26 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     return requestDaemon(socketPath, `script.${action}`, {
       workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
     })
+  }
+  if (area === 'git' && action === 'status') {
+    if (rest.length !== 1) throw new CliError('usage', 'git status requires WORKSPACE_ID.')
+    return requestDaemon(socketPath, 'review.status', { workspace_id: required(rest[0], 'WORKSPACE_ID'), force: true })
+  }
+  if (area === 'git' && action === 'operation') {
+    if (rest.length !== 2) throw new CliError('usage', 'git operation requires WORKSPACE_ID REQUEST_ID.')
+    return requestDaemon(socketPath, 'review.operation', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), request_id: required(rest[1], 'REQUEST_ID'),
+    })
+  }
+  if (area === 'git' && (action === 'stage' || action === 'unstage' || action === 'commit')) {
+    const { workspaceId, value, token, requestId } = gitMutationArgs(rest, action)
+    const fields = action === 'commit'
+      ? { message: value, index_token: token }
+      : { path: value, revision: token }
+    const response = await requestDaemon(socketPath, `review.${action}`, {
+      workspace_id: workspaceId, request_id: requestId, ...fields,
+    })
+    return { ...response, workspace_id: workspaceId, request_id: requestId }
   }
   if (area === 'listener' && action === 'list') {
     if (rest.length) throw new CliError('usage', 'listener list does not accept arguments.')

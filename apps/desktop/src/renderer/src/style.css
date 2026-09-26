@@ -168,6 +168,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .review-heading { align-items: center; display: flex; justify-content: space-between; }
 .review-heading h2 { font-size: 15px; margin: 0; }
 .review-heading button, .review-file button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
+.review-operation { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.review-operation span { color: #a5adae; font-family: ui-monospace, monospace; font-size: 11px; overflow-wrap: anywhere; }
+.review-operation button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
 .review-files { border: 1px solid #323637; border-radius: 8px; margin-top: 12px; max-height: 180px; overflow: auto; }
 .review-file { align-items: center; border-bottom: 1px solid #323637; display: flex; gap: 8px; min-width: 0; padding: 8px 10px; }
 .review-file:last-child { border-bottom: 0; }
@@ -180,6 +183,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .review-line code { font: inherit; }
 button.review-line:hover, button.review-line.selected { background: #263d34; }
 .review-feedback { display: grid; gap: 8px; margin-top: 12px; }
+.review-commit { display: grid; gap: 8px; margin-top: 12px; }
+.review-commit label { font-size: 12px; }
+.review-commit textarea { background: #222627; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 9px; resize: vertical; width: 100%; }
+.review-commit button { background: #84c8aa; border: 0; border-radius: 7px; color: #132019; font-size: 13px; font-weight: 600; justify-self: end; padding: 9px 12px; }
 .review-feedback p { color: #a5adae; font-size: 12px; margin: 0; overflow-wrap: anywhere; }
 .review-feedback label { font-size: 12px; }
 .review-feedback textarea { background: #222627; border: 1px solid #454b4c; border-radius: 7px; color: inherit; padding: 9px; resize: vertical; width: 100%; }

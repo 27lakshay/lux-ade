@@ -71,6 +71,9 @@ contextBridge.exposeInMainWorld('adeHost', {
     ipcRenderer.invoke('ade:script-request', op, fields),
   requestReview: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:review-request', op, fields),
+  readGitJournal: (workspaceId: string): Promise<Record<string, unknown>> => ipcRenderer.invoke('ade:git-journal-read', workspaceId),
+  acknowledgeGitJournal: (workspaceId: string, requestId: string, kind: 'settle' | 'interrupted'): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('ade:git-journal-ack', workspaceId, requestId, kind),
   requestFile: (op: 'file.list' | 'file.search' | 'file.preview', fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:file-request', op, fields),
   onDraftError: (listener: (value: { conversationId: string; message: string }) => void): (() => void) => {

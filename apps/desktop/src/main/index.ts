@@ -8,6 +8,7 @@ import { AdeClient, DaemonRequestError, openTerminalConnection, requestDaemon, t
 import { adoptUnownedBrowserStorage, captureBrowserProfile, closeBrowserWindow, flushBrowserSessions,
   registerBrowserIpc, restoreBrowserProfile, setBrowserProfile } from './browser'
 import { SendJournal, type SendJournalIdentity, type SendJournalRecord } from './send-journal'
+import { GitJournal, type GitIntent } from './git-journal'
 
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
@@ -34,9 +35,14 @@ const selectedWorkspaces = new Map<number, { workspaceId: string; conversationId
 const selectionRequests = new Map<number, number>()
 let singleWindowId = ''
 let sendJournal: SendJournal | null = null
+let gitJournal: GitJournal | null = null
 function journal(): SendJournal {
   if (!sendJournal) throw new Error('Send recovery journal is unavailable')
   return sendJournal
+}
+function gitRecovery(): GitJournal {
+  if (!gitJournal) throw new Error('Git recovery journal is unavailable')
+  return gitJournal
 }
 const drafts = new Map<string, DraftEntry>()
 const draftKey = (senderId: number, endpoint: string, conversationId: string): string => `${senderId}:${endpoint}:${conversationId}`
@@ -92,7 +98,7 @@ async function unsafePending(entries: DraftEntry[]): Promise<boolean> {
   return false
 }
 type ReviewFile = { path: string; staged: boolean; unstaged: boolean }
-type ReviewStatus = { revision: string; files: ReviewFile[] }
+type ReviewStatus = { revision: string; index_token: string; files: ReviewFile[] }
 type ReviewDiff = { token: string; hunks: string[] }
 type ReviewAnchor = { workspace_id: string; path: string; staged: boolean; revision: string;
   token: string; hunk: string; line: number; text: string }
@@ -132,7 +138,8 @@ function assertReviewContext(context: ReviewContext, workspaceId: string, conver
 async function reviewStatus(context: ReviewContext, workspaceId: string): Promise<ReviewStatus> {
   const response = await requestDaemon(context.endpoint, 'review.status', { workspace_id: workspaceId, force: true })
   assertReviewContext(context, workspaceId)
-  if (typeof response.revision !== 'string' || !Array.isArray(response.files)) throw new Error('Invalid review status')
+  if (typeof response.revision !== 'string' || typeof response.index_token !== 'string' ||
+    !Array.isArray(response.files)) throw new Error('Invalid review status')
   return response as unknown as ReviewStatus
 }
 
@@ -951,12 +958,50 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
   return result
 })
 ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
-  if ((op !== 'review.status' && op !== 'review.diff') || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+  if (typeof op !== 'string' || !['review.status', 'review.diff', 'review.stage', 'review.unstage',
+    'review.commit', 'review.operation'].includes(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid review request')
   }
   const args = fields as Record<string, unknown>
   const context = activeReviewContext(event.sender.id, args.workspace_id)
   const workspaceId = args.workspace_id as string
+  if (op === 'review.operation' || op === 'review.stage' || op === 'review.unstage' || op === 'review.commit') {
+    if (typeof args.request_id !== 'string' || !/^[0-9a-f-]{36}$/.test(args.request_id)) {
+      throw new Error('Invalid Git operation ID')
+    }
+    const request: Record<string, unknown> = { workspace_id: workspaceId, request_id: args.request_id }
+    if (op === 'review.stage' || op === 'review.unstage') {
+      if (!reviewPath(args.path) || typeof args.revision !== 'string' || !/^[0-9a-f]{16}$/.test(args.revision)) {
+        throw new Error('Invalid Git file revision')
+      }
+      request.path = args.path
+      request.revision = args.revision
+    } else if (op === 'review.commit') {
+      if (typeof args.message !== 'string' || !args.message.trim() || Buffer.byteLength(args.message) > 64 * 1024 ||
+        typeof args.index_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.index_token)) {
+        throw new Error('Invalid Git commit request')
+      }
+      request.message = args.message
+      request.index_token = args.index_token
+    }
+    if (op !== 'review.operation') {
+      const intent: GitIntent = { profile_id: journalProfileId(context.endpoint), workspace_id: workspaceId,
+        op, request_id: args.request_id as string,
+        ...(op === 'review.commit' ? { message: request.message as string, index_token: request.index_token as string }
+          : { path: request.path as string, revision: request.revision as string }) }
+      assertReviewContext(context, workspaceId)
+      await gitRecovery().prepare(intent)
+      assertReviewContext(context, workspaceId)
+    }
+    const response = await requestDaemon(context.endpoint, op, request)
+    assertReviewContext(context, workspaceId)
+    const receipt = response.operation as Record<string, unknown> | undefined
+    if (response.type !== 'review_operation' || !receipt || typeof receipt !== 'object' ||
+      receipt.id !== args.request_id || !['running', 'succeeded', 'failed', 'interrupted'].includes(String(receipt.status))) {
+      throw new Error('Invalid Git operation receipt')
+    }
+    return response
+  }
   const status = await reviewStatus(context, workspaceId)
   if (op === 'review.status') return status
   if (!reviewPath(args.path) || typeof args.staged !== 'boolean' ||
@@ -964,6 +1009,34 @@ ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown)
     throw new Error('File or side is unavailable in this workspace; refresh Changes')
   }
   return reviewDiff(context, workspaceId, args.path, args.staged)
+})
+ipcMain.handle('ade:git-journal-read', async (event, workspaceId: unknown) => {
+  const context = activeReviewContext(event.sender.id, workspaceId)
+  const result = await gitRecovery().list(journalProfileId(context.endpoint), workspaceId as string)
+  assertReviewContext(context, workspaceId as string)
+  return result
+})
+ipcMain.handle('ade:git-journal-ack', async (event, workspaceId: unknown, requestId: unknown, kind: unknown) => {
+  const context = activeReviewContext(event.sender.id, workspaceId)
+  if (typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId) ||
+    (kind !== 'settle' && kind !== 'interrupted')) throw new Error('Invalid Git acknowledgment')
+  const profileId = journalProfileId(context.endpoint)
+  const pending = (await gitRecovery().list(profileId, workspaceId as string)).pending
+  if (!pending || pending.request_id !== requestId) throw new Error('Git operation changed before acknowledgment')
+  const response = await requestDaemon(context.endpoint, 'review.operation', {
+    workspace_id: workspaceId, request_id: requestId,
+  })
+  assertReviewContext(context, workspaceId as string)
+  const operation = response.operation as Record<string, unknown> | undefined
+  if (!operation || operation.id !== requestId ||
+    (kind === 'settle' && operation.status !== 'succeeded' && operation.status !== 'failed') ||
+    (kind === 'interrupted' && operation.status !== 'interrupted')) {
+    throw new Error('Git operation is not ready for acknowledgment')
+  }
+  if (kind === 'settle') await gitRecovery().settle(profileId, workspaceId as string, requestId)
+  else await gitRecovery().acknowledgeInterrupted(profileId, workspaceId as string, requestId)
+  assertReviewContext(context, workspaceId as string)
+  return { type: 'git_journal_acknowledged', request_id: requestId, status: operation.status }
 })
 const fileOps = new Set(['file.list', 'file.search', 'file.preview'])
 ipcMain.handle('ade:file-request', async (event, op: unknown, fields: unknown) => {
@@ -1337,6 +1410,7 @@ app.whenReady().then(async () => {
   }
   singleWindowId = await persistentWindowId()
   sendJournal = await SendJournal.open(join(app.getPath('userData'), 'pending-sends-v1.json'))
+  gitJournal = await GitJournal.open(join(app.getPath('userData'), 'git-intents-v1.json'))
   if (!managedProfiles && fixedSocket) {
     const fixedIdentity = createHash('sha256').update(resolve(fixedSocket)).digest('hex').slice(0, 32)
     await setBrowserProfile('fixed', join(app.getPath('userData'), 'browser-fixed', fixedIdentity))

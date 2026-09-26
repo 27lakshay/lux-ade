@@ -104,6 +104,8 @@ declare global {
       requestService(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestScript(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestReview(op: string, fields: Record<string, unknown>): Promise<Frame>
+      readGitJournal(workspaceId: string): Promise<Frame>
+      acknowledgeGitJournal(workspaceId: string, requestId: string, kind: 'settle' | 'interrupted'): Promise<Frame>
       requestFile(op: 'file.list' | 'file.search' | 'file.preview', fields: Record<string, unknown>): Promise<Frame>
       onDraftError(listener: (value: { conversationId: string; message: string }) => void): () => void
       terminal: TerminalBridge

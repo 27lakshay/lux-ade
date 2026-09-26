@@ -2,12 +2,18 @@ import React from 'react'
 import type { Conversation, Workspace } from '@ade/client'
 
 type ChangedFile = { path: string; staged: boolean; unstaged: boolean; conflict: boolean }
-type ReviewStatus = { revision: string; files: ChangedFile[] }
+type ReviewStatus = { revision: string; index_token: string; conflicts: number; files: ChangedFile[] }
 type ReviewDiff = { token: string; path: string; staged: boolean; header: string; hunks: string[];
   binary: boolean; conflict: boolean; bytes: number }
 type Anchor = { workspace_id: string; path: string; staged: boolean; revision: string;
   token: string; hunk: string; line: number; text: string }
 type PendingFeedback = { requestId: string; anchor: Anchor; note: string }
+type GitMutation = 'review.stage' | 'review.unstage' | 'review.commit'
+type PendingGit = { op: GitMutation; request_id: string; workspace_id: string; path?: string;
+  revision?: string; index_token?: string; message?: string }
+type AcknowledgedGit = { intent: PendingGit; acknowledged_at: number }
+type GitReceipt = { type: 'review_operation'; operation: { id: string; status: 'running' | 'succeeded' | 'failed' | 'interrupted';
+  error?: string; result?: { head?: string } } }
 type DiffLine = { key: string; number: number; text: string; selectable: boolean }
 
 function readPending(key: string): PendingFeedback | null {
@@ -62,6 +68,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
 }): React.JSX.Element {
   const pendingKey = `ade.reviewPending.${profileKey}.${workspace.id}.${conversation?.id ?? ''}`
   const [restoredPending] = React.useState(() => readPending(pendingKey))
+  const [acknowledgedGit, setAcknowledgedGit] = React.useState<AcknowledgedGit[]>([])
   const [status, setStatus] = React.useState<ReviewStatus | null>(null)
   const [diff, setDiff] = React.useState<ReviewDiff | null>(null)
   const [selected, setSelected] = React.useState<Anchor | null>(restoredPending?.anchor ?? null)
@@ -72,8 +79,125 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   const [busy, setBusy] = React.useState(false)
   const [stale, setStale] = React.useState(false)
   const [pendingId, setPendingId] = React.useState<string | null>(restoredPending?.requestId ?? null)
+  const [pendingGit, setPendingGit] = React.useState<PendingGit | null>(null)
+  const [gitReady, setGitReady] = React.useState(false)
+  const [gitUnknown, setGitUnknown] = React.useState(false)
+  const [gitInterrupted, setGitInterrupted] = React.useState(false)
+  const [gitMessage, setGitMessage] = React.useState('')
+  const [gitBusy, setGitBusy] = React.useState(false)
+  const [commitMessage, setCommitMessage] = React.useState('')
   const [refresh, setRefresh] = React.useState(0)
   const requestSequence = React.useRef(0)
+  const gitStarting = React.useRef(false)
+
+  React.useEffect(() => {
+    let disposed = false
+    void window.adeHost.readGitJournal(workspace.id).then((result) => {
+      if (disposed) return
+      const pending = result.pending as PendingGit | null
+      setPendingGit(pending)
+      setAcknowledgedGit(result.archived as AcknowledgedGit[])
+      setGitMessage(pending ? `Checking prior Git operation ${pending.request_id}` : '')
+      setGitReady(true)
+    }).catch((reason) => { if (!disposed) setGitMessage(`Git recovery unavailable: ${String(reason)}`) })
+    return () => { disposed = true }
+  }, [workspace.id])
+
+  React.useEffect(() => {
+    if (!pendingGit || gitUnknown || gitInterrupted || gitBusy) return
+    let disposed = false
+    let polling = false
+    const check = async (): Promise<void> => {
+      if (polling) return
+      polling = true
+      try {
+        const response = await window.adeHost.requestReview('review.operation', {
+          workspace_id: workspace.id, request_id: pendingGit.request_id,
+        }) as GitReceipt
+        if (disposed) return
+        if (response.type !== 'review_operation' || response.operation?.id !== pendingGit.request_id) {
+          throw new Error('Git operation receipt did not match the request')
+        }
+        const operation = response.operation
+        if (operation.status === 'running') {
+          setGitMessage(`${pendingGit.op.slice(7)} is running · ${pendingGit.request_id}`)
+        } else if (operation.status === 'interrupted') {
+          setGitInterrupted(true)
+          setGitMessage(`Git operation ${pendingGit.request_id} was interrupted. Inspect Git history and changes before continuing. It will not be retried automatically.`)
+        } else {
+          await window.adeHost.acknowledgeGitJournal(workspace.id, pendingGit.request_id, 'settle')
+          if (disposed) return
+          setPendingGit(null)
+          setGitUnknown(false)
+          setGitMessage(operation.status === 'succeeded'
+            ? `${pendingGit.op.slice(7)} succeeded${operation.result?.head ? ` · ${operation.result.head}` : ''}`
+            : `${pendingGit.op.slice(7)} failed: ${operation.error ?? 'Inspect Git state before continuing'}`)
+          if (pendingGit.op === 'review.commit' && operation.status === 'succeeded') setCommitMessage('')
+          setRefresh((value) => value + 1)
+        }
+      } catch (reason) {
+        if (disposed) return
+        const detail = String(reason)
+        if (detail.includes('Unknown review operation')) {
+          setGitUnknown(true)
+          setGitMessage(`Git operation ${pendingGit.request_id} was not found. You can retry the original request ID and parameters.`)
+        } else setGitMessage(`Git operation ${pendingGit.request_id} is unconfirmed: ${detail}`)
+      } finally { polling = false }
+    }
+    void check()
+    const timer = window.setInterval(() => void check(), 750)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [pendingGit, gitUnknown, gitInterrupted, gitBusy, workspace.id])
+
+  const startGit = async (request: Omit<PendingGit, 'request_id' | 'workspace_id'>): Promise<void> => {
+    if (gitStarting.current || pendingGit || !status || !gitReady) return
+    gitStarting.current = true
+    const pending: PendingGit = { ...request, workspace_id: workspace.id, request_id: globalThis.crypto.randomUUID() }
+    try {
+      setPendingGit(pending)
+      setGitUnknown(false)
+      setGitInterrupted(false)
+      setGitMessage(`Submitting ${pending.op.slice(7)} · ${pending.request_id}`)
+      setGitBusy(true)
+      await window.adeHost.requestReview(pending.op, pending)
+    } catch (reason) {
+      setGitMessage(`Git operation ${pending.request_id} is unconfirmed: ${String(reason)}. Check its receipt before another action.`)
+      try {
+        const recorded = await window.adeHost.readGitJournal(workspace.id)
+        const active = recorded.pending as PendingGit | null
+        if (!active) { setPendingGit(null); setGitMessage(`Git operation was rejected before admission: ${String(reason)}`) }
+        else if (active.request_id !== pending.request_id) {
+          setPendingGit(active)
+          setGitMessage(`A prior Git operation ${active.request_id} owns this workspace. Its receipt is being checked.`)
+        }
+      } catch { /* Preserve the ID until recovery storage can be read. */ }
+    } finally { setGitBusy(false); gitStarting.current = false }
+  }
+
+  const retryGit = async (): Promise<void> => {
+    if (!pendingGit || !gitUnknown || gitBusy) return
+    setGitBusy(true)
+    setGitUnknown(false)
+    setGitMessage(`Retrying original Git operation ${pendingGit.request_id}`)
+    try { await window.adeHost.requestReview(pendingGit.op, pendingGit) }
+    catch (reason) { setGitMessage(`Git operation ${pendingGit.request_id} remains unconfirmed: ${String(reason)}`) }
+    finally { setGitBusy(false) }
+  }
+
+  const checkGit = (): void => { setGitUnknown(false); setGitInterrupted(false) }
+
+  const acknowledgeInterruptedGit = async (): Promise<void> => {
+    if (!pendingGit || !gitInterrupted) return
+    try {
+      await window.adeHost.acknowledgeGitJournal(workspace.id, pendingGit.request_id, 'interrupted')
+      const recorded = await window.adeHost.readGitJournal(workspace.id)
+      setAcknowledgedGit(recorded.archived as AcknowledgedGit[])
+    } catch (reason) { setGitMessage(`Could not retain Git operation ${pendingGit.request_id}: ${String(reason)}`); return }
+    setPendingGit(null)
+    setGitInterrupted(false)
+    setGitMessage('Interrupted Git operation retained below. Refresh changes before the next action.')
+    setRefresh((value) => value + 1)
+  }
 
   React.useEffect(() => {
     if (!restoredPending || !conversation) return
@@ -217,13 +341,45 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
       onClick={() => setRefresh((value) => value + 1)}>Refresh changes</button></div>
     {error && <p role="alert" className="inline-error">{error}</p>}
     {message && <p role="status" className="muted">{message}</p>}
+    {gitMessage && <p role={gitInterrupted ? 'alert' : 'status'} className={gitInterrupted ? 'inline-error' : 'muted'}>{gitMessage}</p>}
+    {pendingGit && <div className="review-operation">
+      <span>Git operation: {pendingGit.op.slice(7)} · {pendingGit.request_id}</span>
+      {(gitUnknown || gitInterrupted) && <button type="button" disabled={gitBusy} onClick={checkGit}>Check Git operation</button>}
+      {gitUnknown && <button type="button" disabled={gitBusy} onClick={() => void retryGit()}>Retry Git operation</button>}
+      {gitInterrupted && <button type="button" onClick={() => void acknowledgeInterruptedGit()}>Acknowledge after inspecting Git</button>}
+    </div>}
+    {acknowledgedGit.length > 0 && <div className="review-operation-history" aria-label="Interrupted Git operations">
+      <strong>Interrupted Git operations</strong>
+      {acknowledgedGit.map(({ intent }) => <p key={intent.request_id}>
+        {intent.op.slice(7)} · {intent.request_id}{intent.path ? ` · ${intent.path}` : ''}
+      </p>)}
+    </div>}
     {loading && <p className="muted">Loading changes…</p>}
     {status?.files.length === 0 && <p className="muted">No changed files in this workspace.</p>}
     {status && <div className="review-files" aria-label="Changed files">{status.files.map((file) =>
       <div className="review-file" key={file.path}><span>{file.path}</span>
+        {file.conflict && <strong>Conflict</strong>}
+        {file.unstaged && !file.conflict && <button type="button" disabled={!gitReady || Boolean(pendingGit) || loading}
+          onClick={() => void startGit({ op: 'review.stage', path: file.path, revision: status.revision })}
+          aria-label={`Stage ${file.path}`}>Stage</button>}
+        {file.staged && <button type="button" disabled={!gitReady || Boolean(pendingGit) || loading}
+          onClick={() => void startGit({ op: 'review.unstage', path: file.path, revision: status.revision })}
+          aria-label={`Unstage ${file.path}`}>Unstage</button>}
         {file.staged && <button type="button" onClick={() => void chooseFile(file.path, true)}>Staged diff</button>}
         {file.unstaged && <button type="button" onClick={() => void chooseFile(file.path, false)}>Unstaged diff</button>}
       </div>)}</div>}
+    {status && <form className="review-commit" onSubmit={(event) => {
+      event.preventDefault()
+      if (!commitMessage.trim() || !status.files.some((file) => file.staged) || status.conflicts || pendingGit) return
+      void startGit({ op: 'review.commit', index_token: status.index_token, message: commitMessage })
+    }}>
+      <label htmlFor="review-commit-message">Commit message</label>
+      <textarea id="review-commit-message" value={commitMessage} rows={3} maxLength={65_536}
+        disabled={Boolean(pendingGit)} onChange={(event) => setCommitMessage(event.target.value)} />
+      <button type="submit" disabled={!commitMessage.trim() || !status.files.some((file) => file.staged) ||
+        status.conflicts > 0 || Boolean(pendingGit) || !gitReady || loading}>Commit staged changes</button>
+      {status.conflicts > 0 && <p className="muted">Resolve and stage conflicts before committing.</p>}
+    </form>}
     {diff && status && <ReviewDiffView diff={diff} status={status} workspace={workspace} selected={selected} onSelect={setSelected} />}
     <form className="review-feedback" onSubmit={(event) => void send(event)}>
       <p>{selected ? `${selected.path} · ${selected.staged ? 'staged' : 'unstaged'} · line ${selected.line} · ${selected.token}`
