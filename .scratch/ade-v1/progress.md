@@ -1,9 +1,9 @@
 # ADE v1 delivery record
 
-Status: broader v1 build paused; requirements remain unverified until their full acceptance passes.
+Status: active on the daily-use gate; requirements remain unverified until their full acceptance passes.
 Type: delivery record
 
-Updated: 2026-09-26. Branch: `codex/architecture-proposal`. No Git remote is
+Updated: 2026-09-27. Branch: `codex/architecture-proposal`. No Git remote is
 configured. This is a checkpoint, not a claim that the v1 register is complete.
 
 ## Scope baseline and daily-use gate
@@ -16,26 +16,29 @@ been changed since that baseline. The local build branch is
 
 ## Current state and next assignment
 
-The daily-use gate is still open. The three bounded product dependency
-corrections are implemented and verified; broader v1 implementation and both
-heartbeats remain paused until the user explicitly resumes them. The existing
-gate and final full v1 acceptance audit remain unchanged.
+The user explicitly resumed the broader build on 2026-09-27. The daily-use
+gate is still open; other v1 work stays queued until it passes. The three
+bounded product dependency corrections are committed and verified. The final
+full v1 acceptance audit remains required. Use focused E2Es and affected
+static checks during implementation, one full source suite per integrated
+checkpoint, and packaged checks for changed packaging or installed behavior.
 
 | Daily-use gate and IDs | Verified | Remaining before gate closes |
 |---|---|---|
-| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
-| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es | Real Oh My Pi account; managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
+| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen; a source desktop E2E keeps an admitted provider tool alive after the last window closes and renders its result once on reopen | Real-agent continuity, compatible-daemon handoff during active provider work, and complete isolation acceptance in the installed flow |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen | Real Oh My Pi account; real managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume, paged diffs and durable review feedback | Matching CLI coverage for the rest of the selected daily-use flow |
 
-Blocker for the future daily-use gate: a real Oh My Pi account is unavailable;
-fixtures are not live-account proof. Active owner: none; no worker is running.
-Next assignment after explicit user resumption: remaining primary-provider
-daily-use criteria, beginning with managed two-account execution and installed
-continuity for available Codex and Claude accounts. The remaining rows are
-partial evidence, not closed feature IDs. F075/06-S06 and unrelated v1 work
-remain queued.
+Blockers: a real Oh My Pi account is unavailable; the user chose to keep
+real two-account verification pending rather than authenticate two ADE-managed
+Claude homes now. Fixtures are not live-account proof. Active owner: coordinator;
+no worker is running. Next assignment: complete the missing interactive CLI
+terminal control in the daily-use flow, then compatible-daemon handoff during
+active provider work. The remaining
+rows are partial evidence, not closed feature IDs. F075/06-S06 and unrelated
+v1 work remain queued.
 
 ## Integrated checkpoints
 
@@ -116,6 +119,17 @@ remain queued.
 | `b41d78c` | Direct Git worktree lifecycle | No product wt dependency; create/list/adopt/remove E2E protects external, dirty, locked and active trees; F063/F065/F069 wording corrected |
 | `eb96b56` | Project toolchain resolution | Monorepo-root declarations, exact installed tool versions and Finder-style discovery; real npm/pnpm/Yarn/Bun E2Es |
 | `ccb0bad` | Native Rust control | Installed profile startup/restart, browser lease and backend-only backup/restore without Python; packaged interrupted-restore recovery E2E |
+| `3365033` | Account and background continuity evidence | Packaged two Codex fixture accounts keep separate native credentials and sessions through headless turns and reopen; source desktop keeps one provider tool active while closed and renders its result once |
+
+Daily-use continuity checkpoint, 2026-09-27: no feature ID is fully closed by
+fixture-only evidence. The new E2Es passed independent review after fixing
+async account-capture races, a missing credential-isolation assertion, and
+false-pass risks in tool survival. `pnpm check` passed 179 E2Es with one existing
+host skip, including type checking and Fallow. The unchanged installed app
+passed 8/8 packaged E2Es. Implementation and review were not separately timed;
+the full source run took 6.0 minutes, and the installed run took 27.5 seconds.
+No packaged rebuild was needed because product packaging inputs were unchanged.
+The next slice stays on the daily-use gate.
 
 Bounded dependency correction checkpoint, 2026-09-26: all three correction
 acceptance slices pass. Direct Git worktree operations require explicit adoption
