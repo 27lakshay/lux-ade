@@ -61,6 +61,8 @@ pub struct Account {
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_identity: Option<ClaudeIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_identity: Option<CodexIdentity>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -69,6 +71,12 @@ pub struct ClaudeIdentity {
     pub api_provider: String,
     pub email: String,
     pub org_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct CodexIdentity {
+    pub email: String,
+    pub chatgpt_account_id: String,
 }
 
 /// The immutable account context pinned to one provider execution.
@@ -80,6 +88,8 @@ pub struct AccountExecution {
     pub generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_identity: Option<ClaudeIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_identity: Option<CodexIdentity>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Draft {

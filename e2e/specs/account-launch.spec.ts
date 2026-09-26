@@ -17,15 +17,12 @@ test('an unverified managed account cannot fall back to ambient Claude credentia
     expect(account.state).toBe('unverified')
     const conversation = (await rpc(daemon.socket, { op: 'conversation.create', workspace_id: workspace.id,
       provider: 'claude', account_id: account.id })).conversation as { id: string }
-    await rpc(daemon.socket, { op: 'agent.send', conversation_id: conversation.id,
-      request_id: 'managed-attempt', text: 'Use the selected account' })
-    await expect.poll(async () => {
-      const result = await rpc(daemon.socket, { op: 'conversation.get', conversation_id: conversation.id })
-      return (result.conversation as { error: string | null }).error
-    }).toMatch(/account is not verified/)
+    await expect(rpc(daemon.socket, { op: 'agent.send', conversation_id: conversation.id,
+      request_id: 'managed-attempt', text: 'Use the selected account' })).rejects.toThrow(/account is not verified/)
     await expect(access(launched)).rejects.toThrow()
     const snapshot = await rpc(daemon.socket, { op: 'conversation.get', conversation_id: conversation.id })
     expect(snapshot.conversation).toMatchObject({ account_id: account.id })
+    expect(snapshot.messages).toEqual([])
   } finally {
     await daemon.stop().catch(() => undefined)
     await rm(directory, { recursive: true, force: true })

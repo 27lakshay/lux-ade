@@ -3,6 +3,8 @@ use crate::{model::PendingRequest, rpc::Rpc};
 use ade_core::model::AccountExecution;
 #[path = "account_probe.rs"]
 pub mod account_probe;
+#[path = "codex_probe.rs"]
+pub mod codex_probe;
 use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 use std::sync::{Arc, mpsc};
@@ -66,14 +68,12 @@ pub fn spawn(
         );
     }
     match provider {
-        "codex" if account.is_some() => {
-            bail!("Managed Codex accounts need native credential readback before launch")
-        }
+        "codex" if account.is_some() => Ok(crate::codex::Adapter::spawn(cwd, account, events)?),
         "omp" if account.is_some() => {
             bail!("Managed Oh My Pi accounts need native credential readback before launch")
         }
         "opencode" if account.is_some() => bail!("Managed OpenCode accounts are not supported yet"),
-        "codex" => Ok(crate::codex::Adapter::spawn(cwd, events)?),
+        "codex" => Ok(crate::codex::Adapter::spawn(cwd, None, events)?),
         "claude" => Ok(crate::claude::Adapter::spawn(cwd, account, events)?),
         "opencode" => Ok(crate::opencode::Adapter::spawn(cwd, events)?),
         "omp" => Ok(crate::omp::Adapter::spawn(cwd, events)?),

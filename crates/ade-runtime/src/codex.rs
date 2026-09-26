@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
 /// Only UI-reviewed choices are translated into provider replies. No global
 /// policy edits or account changes are made by this adapter.
@@ -80,6 +80,7 @@ use crate::{
     provider::{Config, Connected, Event, Item, Provider},
     rpc::{Rpc, WireEvent},
 };
+use ade_core::model::{AccountExecution, CodexIdentity};
 use std::{
     process::Command,
     sync::{Arc, Mutex, mpsc},
@@ -89,10 +90,19 @@ pub struct Adapter {
     cwd: String,
     socket_directory: Option<std::path::PathBuf>,
     session: Mutex<Option<String>>,
+    identity: Option<CodexIdentity>,
 }
 impl Adapter {
-    pub fn spawn(cwd: &str, events: mpsc::SyncSender<Event>) -> Result<Arc<Self>> {
-        let shared = std::env::var("ADE_CODEX_TRANSPORT").as_deref() != Ok("stdio");
+    pub fn spawn(
+        cwd: &str,
+        account: Option<&AccountExecution>,
+        events: mpsc::SyncSender<Event>,
+    ) -> Result<Arc<Self>> {
+        let managed_executable = account
+            .map(crate::provider::codex_probe::verify_launch)
+            .transpose()?;
+        let shared = managed_executable.is_none()
+            && std::env::var("ADE_CODEX_TRANSPORT").as_deref() != Ok("stdio");
         let socket_directory = shared.then(|| {
             std::path::PathBuf::from(format!("/tmp/ade-codex-{}", uuid::Uuid::new_v4().simple()))
         });
@@ -108,9 +118,24 @@ impl Adapter {
             ));
             command
         } else {
-            let mut command =
-                Command::new(std::env::var("ADE_CODEX_BIN").unwrap_or_else(|_| "codex".into()));
+            let mut command = Command::new(
+                managed_executable
+                    .as_deref()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        std::env::var("ADE_CODEX_BIN").unwrap_or_else(|_| "codex".into())
+                    }),
+            );
             command.args(["app-server", "--listen", "stdio://"]);
+            if let Some(account) = account {
+                crate::provider::codex_probe::managed_environment(
+                    &mut command,
+                    &account.native_home,
+                    managed_executable
+                        .as_deref()
+                        .context("Managed Codex executable missing")?,
+                );
+            }
             command
         };
         command.current_dir(cwd);
@@ -131,6 +156,7 @@ impl Adapter {
             cwd: cwd.into(),
             socket_directory,
             session: Mutex::new(None),
+            identity: account.and_then(|value| value.codex_identity.clone()),
         }))
     }
 }
@@ -157,9 +183,26 @@ impl Provider for Adapter {
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
         self.rpc.request(
             "initialize",
-            json!({"clientInfo":{"name":"ade","title":"lux-ade","version":"0.3.0"}}),
+            json!({"clientInfo":{"name":"ade","title":"lux-ade","version":"0.3.0"},
+                "capabilities": if self.identity.is_some() { json!({"experimentalApi":true}) } else { json!({}) }}),
         )?;
         self.rpc.notify("initialized", json!({}))?;
+        if let Some(expected) = &self.identity {
+            let config = self
+                .rpc
+                .request("config/read", json!({"includeLayers":false}))?;
+            ensure!(
+                crate::provider::codex_probe::effective_config_supported(&config),
+                "Codex effective configuration may override file credentials"
+            );
+            let account = self
+                .rpc
+                .request("account/read", json!({"refreshToken":false}))?;
+            ensure!(
+                crate::provider::codex_probe::readback_identity(&account)? == *expected,
+                "Codex account identity changed before opening the session"
+            );
+        }
         let mut params = json!({"cwd":self.cwd,"approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":if config.permission_mode=="read-only" {"read-only"}else{"workspace-write"}});
         if let Some(model) = &config.model {
             params["model"] = json!(model);
@@ -202,6 +245,22 @@ impl Provider for Adapter {
         _message_id: Option<&str>,
         prompt: &crate::prompt::Prompt,
     ) -> Result<String> {
+        if let Some(expected) = &self.identity {
+            let config = self
+                .rpc
+                .request("config/read", json!({"includeLayers":false}))?;
+            ensure!(
+                crate::provider::codex_probe::effective_config_supported(&config),
+                "Codex effective configuration may override file credentials"
+            );
+            let account = self
+                .rpc
+                .request("account/read", json!({"refreshToken":false}))?;
+            ensure!(
+                crate::provider::codex_probe::readback_identity(&account)? == *expected,
+                "Codex account identity changed before starting a turn"
+            );
+        }
         let mut input = vec![json!({"type":"text","text":prompt.text})];
         for content in &prompt.attachments {
             if content.attachment.media_type.starts_with("image/") {
@@ -604,6 +663,7 @@ mod tests {
             cwd: "/tmp".into(),
             socket_directory: Some(directory.clone()),
             session: Mutex::new(None),
+            identity: None,
         };
         adapter.stop_confirmed().unwrap();
         assert!(!directory.exists());

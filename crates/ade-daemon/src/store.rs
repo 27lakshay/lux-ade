@@ -407,7 +407,7 @@ impl Store {
             homes_metadata.is_dir() && !homes_metadata.file_type().is_symlink(),
             "Account native home root is redirected"
         );
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
         ensure!(
             homes_metadata.uid() == std::fs::metadata(&self.data_directory)?.uid(),
             "Account native home root has another owner"
@@ -425,7 +425,18 @@ impl Store {
             generation: 0,
             state: "unverified".into(),
             claude_identity: None,
+            codex_identity: None,
         };
+        if provider == "codex" {
+            use std::io::Write;
+            let mut config = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(home.join("config.toml"))?;
+            config.write_all(b"cli_auth_credentials_store = \"file\"\n")?;
+            config.sync_all()?;
+        }
         self.connection.execute(
             "INSERT INTO accounts(id,provider,data) VALUES(?1,?2,?3)",
             params![account.id, account.provider, encode(&account)?],
@@ -484,6 +495,35 @@ impl Store {
         tx.commit()?;
         self.account(id)
     }
+    pub fn verify_codex_account(
+        &self,
+        id: &str,
+        generation: u64,
+        identity: ade_core::model::CodexIdentity,
+    ) -> Result<Account> {
+        let tx = self.transaction()?;
+        let mut account: Account = one(&tx, "accounts", id)?;
+        ensure!(account.provider == "codex", "Account does not use Codex");
+        ensure!(
+            account.generation == generation,
+            "Account changed during verification"
+        );
+        ensure!(
+            account
+                .codex_identity
+                .as_ref()
+                .is_none_or(|pinned| pinned == &identity),
+            "Codex account identity changed; disable the account before binding a new identity"
+        );
+        account.state = "verified".into();
+        account.codex_identity = Some(identity);
+        tx.execute(
+            "UPDATE accounts SET data=?2 WHERE id=?1",
+            params![id, encode(&account)?],
+        )?;
+        tx.commit()?;
+        self.account(id)
+    }
     pub fn disable_account(&self, id: &str) -> Result<Account> {
         let tx = self.transaction()?;
         let mut account: Account = one(&tx, "accounts", id)?;
@@ -493,6 +533,7 @@ impl Store {
             .context("Account generation exhausted")?;
         account.state = "disabled".into();
         account.claude_identity = None;
+        account.codex_identity = None;
         tx.execute(
             "UPDATE accounts SET data=?2 WHERE id=?1",
             params![id, encode(&account)?],

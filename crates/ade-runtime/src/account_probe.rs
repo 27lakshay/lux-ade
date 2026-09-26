@@ -22,7 +22,7 @@ pub struct Inspection {
     pub state: String,
     pub reason: String,
     pub version: Option<String>,
-    pub identity: Option<ClaudeIdentity>,
+    pub identity: Option<Value>,
 }
 
 fn result(state: &str, reason: &str, version: Option<String>) -> Inspection {
@@ -49,8 +49,8 @@ pub fn managed_environment(command: &mut Command, native_home: &str, executable:
     command.env("ADE_CLAUDE_BIN", executable);
 }
 
-fn resolve_executable() -> Option<PathBuf> {
-    let configured = std::env::var_os("ADE_CLAUDE_BIN").unwrap_or_else(|| "claude".into());
+fn resolve_executable(bin_env: &str, default: &str) -> Option<PathBuf> {
+    let configured = std::env::var_os(bin_env).unwrap_or_else(|| default.into());
     let candidate = PathBuf::from(&configured);
     if candidate.components().count() > 1 || candidate.is_absolute() {
         return candidate.canonicalize().ok().filter(|path| path.is_file());
@@ -61,8 +61,8 @@ fn resolve_executable() -> Option<PathBuf> {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct ExecutableStamp {
-    path: PathBuf,
+pub(crate) struct ExecutableStamp {
+    pub(crate) path: PathBuf,
     device: u64,
     inode: u64,
     bytes: u64,
@@ -70,8 +70,8 @@ struct ExecutableStamp {
     modified_nanos: i64,
 }
 
-fn executable_stamp() -> Option<ExecutableStamp> {
-    let path = resolve_executable()?;
+pub(crate) fn executable_stamp_for(bin_env: &str, default: &str) -> Option<ExecutableStamp> {
+    let path = resolve_executable(bin_env, default)?;
     let metadata = std::fs::metadata(&path).ok()?;
     Some(ExecutableStamp {
         path,
@@ -83,12 +83,21 @@ fn executable_stamp() -> Option<ExecutableStamp> {
     })
 }
 
-fn stop_probe(child: &mut Child) {
+fn executable_stamp() -> Option<ExecutableStamp> {
+    executable_stamp_for("ADE_CLAUDE_BIN", "claude")
+}
+
+pub(crate) fn stop_probe(child: &mut Child) {
     unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
     let _ = child.wait();
 }
 
-fn command_output(executable: &Path, native_home: &str, args: &[&str]) -> Result<(bool, String)> {
+pub(crate) fn command_output(
+    executable: &Path,
+    native_home: &str,
+    args: &[&str],
+    environment: fn(&mut Command, &str, &str),
+) -> Result<(bool, String)> {
     let executable_text = executable
         .to_str()
         .context("Invalid Claude executable path")?;
@@ -99,7 +108,7 @@ fn command_output(executable: &Path, native_home: &str, args: &[&str]) -> Result
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    managed_environment(&mut command, native_home, executable_text);
+    environment(&mut command, native_home, executable_text);
     let mut child = command
         .spawn()
         .context("Claude executable could not start")?;
@@ -161,17 +170,21 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
             None,
         );
     };
-    let (version_ok, version_text) =
-        match command_output(&executable.path, &account.native_home, &["--version"]) {
-            Ok(output) => output,
-            Err(_) => {
-                return result(
-                    "incompatible",
-                    "Claude Code version check failed or timed out",
-                    None,
-                );
-            }
-        };
+    let (version_ok, version_text) = match command_output(
+        &executable.path,
+        &account.native_home,
+        &["--version"],
+        managed_environment,
+    ) {
+        Ok(output) => output,
+        Err(_) => {
+            return result(
+                "incompatible",
+                "Claude Code version check failed or timed out",
+                None,
+            );
+        }
+    };
     let version = version_text
         .split_whitespace()
         .next()
@@ -194,6 +207,7 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         &executable.path,
         &account.native_home,
         &["--setting-sources", "", "auth", "status"],
+        managed_environment,
     ) {
         Ok(output) => output,
         Err(_) => {
@@ -276,12 +290,12 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         state: "ready".into(),
         reason: "Claude Code account is ready".into(),
         version: Some(version),
-        identity: Some(ClaudeIdentity {
+        identity: Some(serde_json::json!(ClaudeIdentity {
             auth_method: auth_method.into(),
             api_provider: api_provider.into(),
             email: email.into(),
             org_id: org_id.into(),
-        }),
+        })),
     }
 }
 
@@ -298,7 +312,7 @@ pub fn verify_launch(account: &AccountExecution) -> Result<String> {
         inspection.reason
     );
     ensure!(
-        inspection.identity.as_ref() == Some(pinned),
+        inspection.identity.as_ref() == Some(&serde_json::json!(pinned)),
         "Claude account identity changed; verify it before launching again"
     );
     ensure!(

@@ -162,6 +162,7 @@ struct Agent {
     run_id: String,
     rpc: Option<Arc<dyn Provider>>,
     submission: Option<String>,
+    account_generation: Option<u64>,
     _lease: crate::worktrees::Lease,
 }
 struct HealthSample {
@@ -390,6 +391,8 @@ impl Sessions {
                 ensure!(
                     c.runtime_run.as_deref() == Some(&spec.run)
                         && c.provider == spec.provider
+                        && c.account_id.as_deref()
+                            == spec.account.as_ref().map(|account| account.id.as_str())
                         && w.root == spec.root,
                     "Runtime Agent does not match its durable Conversation; preserve the runtime for recovery"
                 );
@@ -404,6 +407,7 @@ impl Sessions {
                         run_id: spec.run.clone(),
                         rpc: None,
                         submission: c.runtime_submission.clone(),
+                        account_generation: spec.account.as_ref().map(|account| account.generation),
                         _lease: lease,
                     },
                 );
@@ -746,7 +750,7 @@ impl Sessions {
                 let id = string("account_id")?;
                 let account = self.data.lock().unwrap().store.account(id)?;
                 ensure!(
-                    account.provider == "claude",
+                    matches!(account.provider.as_str(), "claude" | "codex"),
                     "Managed account inspection is unavailable for this provider"
                 );
                 let expected_generation = if request["op"] == "account.verify" {
@@ -758,23 +762,25 @@ impl Sessions {
                 } else {
                     None
                 };
-                let expected_identity: Option<ade_core::model::ClaudeIdentity> =
-                    if request["op"] == "account.verify" {
-                        Some(serde_json::from_value(
-                            request
-                                .get("expected_identity")
-                                .cloned()
-                                .context("Missing inspected Claude identity")?,
-                        )?)
-                    } else {
-                        None
-                    };
+                let expected_identity: Option<Value> = if request["op"] == "account.verify" {
+                    Some(request.get("expected_identity").cloned().with_context(|| {
+                        let provider = if account.provider == "claude" {
+                            "Claude"
+                        } else {
+                            "Codex"
+                        };
+                        format!("Missing inspected {provider} identity")
+                    })?)
+                } else {
+                    None
+                };
                 let context = ade_core::model::AccountExecution {
                     id: account.id.clone(),
                     provider: account.provider.clone(),
                     native_home: account.native_home.clone(),
                     generation: account.generation,
                     claude_identity: account.claude_identity.clone(),
+                    codex_identity: account.codex_identity.clone(),
                 };
                 let inspection: provider::account_probe::Inspection = serde_json::from_value(
                     self.runtime
@@ -783,22 +789,33 @@ impl Sessions {
                 if let Some(generation) = expected_generation {
                     ensure!(
                         inspection.state == "ready",
-                        "Claude account is not ready: {}",
+                        "{} account is not ready: {}",
+                        account.provider,
                         inspection.reason
                     );
                     let identity = inspection
                         .identity
-                        .context("Claude identity is unavailable")?;
+                        .context("Account identity is unavailable")?;
                     ensure!(
                         expected_identity.as_ref() == Some(&identity),
-                        "Claude identity changed since inspection; inspect again"
+                        "Account identity changed since inspection; inspect again"
                     );
-                    let updated = self
-                        .data
-                        .lock()
-                        .unwrap()
-                        .store
-                        .verify_claude_account(id, generation, identity)?;
+                    let d = self.data.lock().unwrap();
+                    let updated = if account.provider == "claude" {
+                        d.store.verify_claude_account(
+                            id,
+                            generation,
+                            serde_json::from_value(identity)
+                                .context("Invalid inspected Claude identity")?,
+                        )?
+                    } else {
+                        d.store.verify_codex_account(
+                            id,
+                            generation,
+                            serde_json::from_value(identity)
+                                .context("Invalid inspected Codex identity")?,
+                        )?
+                    };
                     Ok(json!({"type":"ack","account":updated}))
                 } else {
                     let current = self.data.lock().unwrap().store.account(id)?;
@@ -1753,6 +1770,12 @@ impl Sessions {
                 "Application daemon is restarting; prompt remains queued"
             );
             d.store.guard_send_intent(id, key, text, attachments)?;
+            let current = d.store.conversation(id)?;
+            Self::ensure_account_current(
+                &d,
+                &current,
+                d.agents.get(id).and_then(|agent| agent.account_generation),
+            )?;
             ensure!(
                 d.agents.contains_key(id) || d.agents.len() < 16,
                 "Limit of 16 connected Agents reached"
@@ -1783,6 +1806,7 @@ impl Sessions {
                 run_id: new_id("run"),
                 rpc: None,
                 submission: None,
+                account_generation: None,
                 _lease: lease,
             });
             run.submission = Some(key.into());
@@ -1828,6 +1852,8 @@ impl Sessions {
                             && d.agents[&c.id].submission.as_deref() == Some(&key),
                         "Agent submission was cancelled"
                     );
+                    let current = d.store.conversation(&c.id)?;
+                    Self::ensure_account_current(&d, &current, d.agents[&c.id].account_generation)?;
                     let mut message = d
                         .store
                         .message(&key)?
@@ -1867,7 +1893,13 @@ impl Sessions {
     fn resume(self: &Arc<Self>, id: &str) -> Result<()> {
         let clear_view = {
             let d = self.data.lock().unwrap();
-            !d.agents.contains_key(id) && d.store.conversation(id)?.view_terminal.is_some()
+            let c = d.store.conversation(id)?;
+            Self::ensure_account_current(
+                &d,
+                &c,
+                d.agents.get(id).and_then(|agent| agent.account_generation),
+            )?;
+            !d.agents.contains_key(id) && c.view_terminal.is_some()
         };
         if clear_view {
             self.clear_view_terminal(id)?;
@@ -1875,6 +1907,11 @@ impl Sessions {
         let run = {
             let mut d = self.data.lock().unwrap();
             let mut c = d.store.conversation(id)?;
+            Self::ensure_account_current(
+                &d,
+                &c,
+                d.agents.get(id).and_then(|agent| agent.account_generation),
+            )?;
             ensure!(
                 c.terminal_owner.is_none(),
                 "Return this Conversation from its terminal before resuming"
@@ -1912,6 +1949,7 @@ impl Sessions {
                     run_id: run.clone(),
                     rpc: None,
                     submission: None,
+                    account_generation: None,
                     _lease: lease,
                 },
             );
@@ -1945,6 +1983,25 @@ impl Sessions {
     }
     fn owns(d: &Data, id: &str, run: &str) -> bool {
         d.agents.get(id).is_some_and(|a| a.run_id == run)
+    }
+    fn ensure_account_current(
+        d: &Data,
+        conversation: &Conversation,
+        expected_generation: Option<u64>,
+    ) -> Result<()> {
+        let Some(id) = conversation.account_id.as_deref() else {
+            return Ok(());
+        };
+        let account = d.store.account(id)?;
+        ensure!(
+            account.provider == conversation.provider && account.state == "verified",
+            "Conversation account is not verified"
+        );
+        ensure!(
+            expected_generation.is_none_or(|generation| generation == account.generation),
+            "Conversation account changed since the Agent connected"
+        );
+        Ok(())
     }
     fn connect_agent(self: &Arc<Self>, id: &str, run: &str) -> Result<Arc<dyn Provider>> {
         self.attach_agent(id, run, false)
@@ -1983,12 +2040,19 @@ impl Sessions {
                             "Claude account identity is not pinned"
                         );
                     }
+                    if c.provider == "codex" {
+                        ensure!(
+                            account.codex_identity.is_some(),
+                            "Codex account identity is not pinned"
+                        );
+                    }
                     Ok::<_, anyhow::Error>(ade_core::model::AccountExecution {
                         id: account.id,
                         provider: account.provider,
                         native_home: account.native_home,
                         generation: account.generation,
                         claude_identity: account.claude_identity,
+                        codex_identity: account.codex_identity,
                     })
                 })
                 .transpose()?;
@@ -2015,17 +2079,27 @@ impl Sessions {
         let pre_open = (|| -> Result<()> {
             let mut d = self.data.lock().unwrap();
             ensure!(Self::owns(&d, id, run), "Agent was cancelled");
+            if restore {
+                ensure!(
+                    d.agents[id].account_generation
+                        == rpc.spec.account.as_ref().map(|account| account.generation),
+                    "Account changed before runtime Agent recovery"
+                );
+            }
             if let Some(expected) = &rpc.spec.account {
                 let current = d.store.account(&expected.id)?;
                 ensure!(
                     current.state == "verified"
                         && current.generation == expected.generation
                         && current.provider == expected.provider
-                        && current.claude_identity == expected.claude_identity,
+                        && current.claude_identity == expected.claude_identity
+                        && current.codex_identity == expected.codex_identity,
                     "Account changed before provider session opened"
                 );
             }
-            d.agents.get_mut(id).unwrap().rpc = Some(rpc.clone());
+            let agent = d.agents.get_mut(id).unwrap();
+            agent.account_generation = rpc.spec.account.as_ref().map(|account| account.generation);
+            agent.rpc = Some(rpc.clone());
             Ok(())
         })();
         if let Err(error) = pre_open {

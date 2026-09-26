@@ -284,9 +284,12 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
             let account: ade_core::model::AccountExecution =
                 serde_json::from_value(request["account"].clone())?;
             drop(data);
-            return Ok(serde_json::to_value(
-                ade_runtime::provider::account_probe::inspect(&account),
-            )?);
+            let inspection = if account.provider == "codex" {
+                ade_runtime::provider::codex_probe::inspect(&account)
+            } else {
+                ade_runtime::provider::account_probe::inspect(&account)
+            };
+            return Ok(serde_json::to_value(inspection)?);
         }
         if op == "agent.list" {
             let agents: Vec<_> = data.agents.values().cloned().collect();
