@@ -175,3 +175,49 @@ test('a current profile store can be adopted by a new runtime home without losin
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('a registered profile captures its live backend with source identity and explicit exclusions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ade-profile-backup-e2e-'))
+  const home = join(directory, 'registry')
+  const bundle = join(directory, 'backend-bundle')
+  let launch: Launch | null = null
+  try {
+    const source = (await profile(home, 'create', 'Source')).profile as Profile
+    const other = (await profile(home, 'create', 'Other')).profile as Profile
+    await expect(profile(home, 'backup-backend', '--out', bundle, other.id))
+      .rejects.toThrow(/no durable runtime binding/)
+    await expect(access(bundle)).rejects.toThrow()
+    launch = await profile(home, 'start', source.id) as Launch
+    const catalog = await rpc(launch.socket, { op: 'catalog.get' })
+    const workspace = (catalog.catalog as { workspaces: Array<{ id: string }> }).workspaces[0]
+    const created = await rpc(launch.socket, { op: 'conversation.create',
+      workspace_id: workspace.id, provider: 'codex', title: 'Backed up while live' })
+    const conversationId = (created.conversation as { id: string }).id
+    const nestedBundle = join(home, 'profiles', source.id, 'nested-bundle')
+    await expect(profile(home, 'backup-backend', '--out', nestedBundle, source.id))
+      .rejects.toThrow(/outside the source profile/)
+    await expect(access(nestedBundle)).rejects.toThrow()
+    const captured = await profile(home, 'backup-backend', '--out', bundle, source.id)
+    expect(captured).toMatchObject({ type: 'profile_backend_backup', path: bundle,
+      manifest: { format_version: 1, scope: 'profile-backend-only', source_profile_id: source.id,
+        source_profile_name: 'Source', backend_scope: 'backend-snapshot-only' } })
+    const manifest = JSON.parse(await readFile(join(bundle, 'manifest.json'), 'utf8')) as
+      { excluded: string[]; source_private_workspace: string }
+    expect(manifest.source_private_workspace).toContain(source.id)
+    expect(manifest.excluded.join(' ')).toContain('Electron pending-send journal')
+    expect(manifest.excluded.join(' ')).toContain('browser session')
+    const inspected = await execFileAsync('python3', [resolve('scripts/managed_backup.py'), 'inspect',
+      '--backup', join(bundle, 'backend')], { timeout: 30_000 })
+    expect(JSON.parse(inspected.stdout)).toMatchObject({ type: 'managed_backup', operation: 'inspect' })
+    await expect(profile(home, 'backup-backend', '--out', bundle, source.id))
+      .rejects.toThrow(/already exists/)
+    expect((await profile(home, 'list')).profiles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: source.id }), expect.objectContaining({ id: other.id }),
+    ]))
+    expect((await rpc(launch.socket, { op: 'conversation.get', conversation_id: conversationId })).conversation)
+      .toMatchObject({ id: conversationId, title: 'Backed up while live' })
+  } finally {
+    if (launch) await stopOwned(launch).catch(() => undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
+})

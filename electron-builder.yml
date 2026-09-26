@@ -22,6 +22,8 @@ extraResources:
     to: browser_lease.py
   - from: scripts/profiles.py
     to: profiles.py
+  - from: scripts/managed_backup.py
+    to: managed_backup.py
   - from: scripts/runtime.py
     to: runtime.py
   - from: pnpm-lock.yaml
