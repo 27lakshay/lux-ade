@@ -109,6 +109,7 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
     await expect.poll(() => web.reports.filter((item) => item.page === 'probe').at(-1)?.cookie).toContain('profile=work')
     await window.getByRole('combobox', { name: 'Profile' }).selectOption(first.id)
     await expect(window.getByText('Active profile: Personal')).toBeVisible()
+    await expect(window.getByRole('combobox', { name: 'Profile' })).toBeEnabled()
     expect((await window.evaluate(() => window.adeHost.browser.list())).tabs.map((tab) => tab.id)).toEqual([personalId])
     await window.evaluate(({ id, url }) => window.adeHost.browser.navigate(id, `${url}/probe`), { id: personalId, url: web.url })
     await expect.poll(() => web.reports.filter((item) => item.page === 'probe').at(-1)?.cookie).toContain('profile=personal')
