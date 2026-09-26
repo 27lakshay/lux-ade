@@ -267,14 +267,22 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   Identity-fenced route retirement now persists removal before closing its
   listener, rejects preaccepted idle requests and frees route quota. CLI and
   Electron expose retirement; E2E covers stale retirement, failed persistence,
-  handoff and repeated create/retire cycles. Rebind and corrupt-registry recovery,
-  wider URL discovery and the D09 public exposure policy remain.
+  handoff and repeated create/retire cycles. Rebind recovery now retains a
+  blocked route's original URL and route ID when its port is occupied, while
+  unrelated routes remain available. A corrupt registry starts in explicit
+  recovery mode; the CLI can inspect, retry a fenced bind, or archive and reset
+  after digest confirmation. Real-process E2E covers restore, stale retries,
+  duplicate IDs, oversized and nonregular files, and FIFO refusal. Wider URL
+  discovery, Electron recovery UI, backup restore and the D09 public exposure
+  policy remain.
 - F090 root package scripts and checked-in `.ade/scripts.json` recipes now run
   under supervised processes with retained output, stop/retire controls, exit
   outcomes and daemon handoff. CLI, Electron and packaged Finder-like launch
   pass E2E, including non-JavaScript recipes and two profile daemons. Nested
-  manifests, other package managers, supervisor-loss recovery, output saturation
-  and escaped descendants remain outside this slice.
+  manifests, other package managers, supervisor-loss recovery and escaped
+  descendants remain outside this slice. Spool saturation now reports
+  incomplete output independently of a verified successful exit; real-process
+  E2E overflows the 1 MiB spool and confirms the result stays successful.
 - Commits `0156d39`, `be11f21` and `03ef208` add the recipe/outcome and
   route-retirement slices. The integrated source suite passes 66/66, the
   packaged suite 5/5, strict Clippy and Rust formatting pass, and the GPUI
@@ -290,8 +298,18 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   An earlier full run timed out because fixture RPC left a silent socket close
   pending; its close path now rejects, and the final integrated run passes.
   This improves test reliability; it does not close product requirement R006.
+- Commits `6d8f573`, `0b4810a`, and `9ea80aa` add F090 output-coverage
+  reporting and F088 fail-closed proxy recovery with CLI repair commands.
+  The recovery E2E initially raced the asynchronous runtime-stop acknowledgement
+  under the integrated suite; it now waits for the exact detached runtime PID
+  before taking the saved ports. On macOS 26.6.1 (Apple M4), `pnpm check`
+  passes type checking, Fallow, builds, and 70/70 real-process source E2Es.
+  `pnpm package:mac` and the packaged suite pass 5/5 with the app hidden from
+  the active Space. Rust formatting, strict workspace Clippy, and the GPUI
+  prototype build-only package pass. F088, F090 and R006 remain open for the
+  limitations above.
 - Next daily-use work: Oh My Pi managed native accounts, real-agent
-  account/control acceptance, proxy recovery, and browser
+  account/control acceptance, proxy recovery UI, and browser
   ownership and backup/retention coordination. Continue
   through the full V1 register afterward.
 - Deterministic provider fixtures are evidence for protocol behavior. They do

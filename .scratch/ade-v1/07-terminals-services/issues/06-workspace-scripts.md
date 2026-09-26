@@ -1,6 +1,6 @@
 # Workspace scripts (F090)
 
-Status: first package-script execution slice in review; full F090 remains open
+Status: supervised execution and output-coverage slices implemented; full F090 remains open
 Type: implementation ticket
 
 ## Contract
