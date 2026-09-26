@@ -1,13 +1,17 @@
 import { expect, test, _electron as electron } from '@playwright/test'
 import { createRequire } from 'node:module'
+import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { rpc, startDaemon } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
 const electronExecutable = requireDesktop('electron') as string
+const execFileAsync = promisify(execFile)
+const cli = resolve('apps/cli/dist/index.js')
 
 test('conversation restores transcript and answers native approvals and questions', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'ade-conversation-e2e-'))
@@ -71,6 +75,52 @@ test('conversation restores transcript and answers native approvals and question
       const replies = lines.map((line) => JSON.parse(line)).filter((call) => call.method === 'approval/reply')
       return replies[1]?.result?.answers
     }).toEqual({ choice: { answers: ['Thorough'] }, multiple: { answers: ['Read, write'] }, secret: { answers: ['fixture answer'] } })
+  } finally {
+    await application.close()
+    await daemon.stop()
+    await rm(userData, { recursive: true, force: true })
+  }
+})
+
+test('Electron and CLI share turn cancellation and resume', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'ade-conversation-control-e2e-'))
+  const daemon = await startDaemon({
+    ADE_CODEX_BIN: resolve('scripts/fixtures/codex_mock.py'),
+    ADE_CODEX_TRANSPORT: 'stdio',
+    ADE_MOCK_DIR: join(userData, 'codex'),
+  })
+  const application = await electron.launch({
+    executablePath: electronExecutable,
+    args: [desktopDirectory],
+    env: { ...process.env, ADE_SOCKET: daemon.socket, ADE_E2E_USER_DATA_DIR: userData },
+  })
+  try {
+    const window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    await window.getByRole('button', { name: 'New conversation' }).click()
+    const conversation = window.getByRole('region', { name: 'Conversation' })
+    const catalog = await rpc(daemon.socket, { op: 'catalog.get' })
+    const id = (catalog.catalog as { conversations: Array<{ id: string }> }).conversations[0].id
+    const runCli = async (action: string): Promise<Record<string, unknown>> => {
+      const result = await execFileAsync(process.execPath, [cli, '--socket', daemon.socket, 'conversation', action, id])
+      return JSON.parse(result.stdout) as Record<string, unknown>
+    }
+
+    await conversation.getByRole('textbox', { name: 'Prompt' }).fill('hold')
+    await conversation.getByRole('button', { name: 'Send' }).click()
+    await expect(conversation.getByRole('button', { name: 'Cancel turn' })).toBeVisible()
+    await conversation.getByRole('button', { name: 'Cancel turn' }).click()
+    await expect(conversation.getByRole('button', { name: 'Resume agent' })).toBeVisible()
+    expect(await runCli('resume')).toMatchObject({ type: 'ack' })
+    await expect(conversation).toContainText('ready')
+
+    await conversation.getByRole('textbox', { name: 'Prompt' }).fill('hold')
+    await conversation.getByRole('button', { name: 'Send' }).click()
+    await expect(conversation.getByRole('button', { name: 'Cancel turn' })).toBeVisible()
+    expect(await runCli('cancel')).toMatchObject({ type: 'ack' })
+    await expect(conversation.getByRole('button', { name: 'Resume agent' })).toBeVisible()
+    await conversation.getByRole('button', { name: 'Resume agent' }).click()
+    await expect(conversation).toContainText('ready')
   } finally {
     await application.close()
     await daemon.stop()

@@ -1082,7 +1082,7 @@ ipcMain.handle('ade:file-request', async (event, op: unknown, fields: unknown) =
   if (response.type !== expectedType) throw new Error('Invalid file response')
   return response
 })
-const conversationOps = new Set(['provider.list', 'account.list', 'account.create', 'account.inspect', 'account.verify', 'account.disable', 'conversation.create', 'conversation.get', 'agent.send', 'agent.retry_send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
+const conversationOps = new Set(['provider.list', 'account.list', 'account.create', 'account.inspect', 'account.verify', 'account.disable', 'conversation.create', 'conversation.get', 'agent.send', 'agent.retry_send', 'agent.answer', 'agent.cancel', 'agent.resume', 'draft.get', 'draft.save', 'draft.flush'])
 ipcMain.handle('ade:pending-sends', async () => (await journal().list()).map((record) => ({
   profileId: record.profileId, conversationId: record.conversationId,
   requestId: record.requestId, text: record.text,
@@ -1182,6 +1182,13 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
       send_pending: pendingSend(entry) }
   }
   if (op === 'conversation.get') return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
+  if (op === 'agent.cancel' || op === 'agent.resume') {
+    const result = await requestDaemon(endpoint, op, { conversation_id: args.conversation_id })
+    if (clientGeneration !== generation || socket !== endpoint) {
+      throw new Error('Profile changed during agent request; inspect the original profile before retrying')
+    }
+    return result
+  }
   if (op === 'agent.send' || op === 'agent.retry_send') {
     try {
     const reviewContext = args.review_anchor === undefined ? null : activeReviewContext(event.sender.id,

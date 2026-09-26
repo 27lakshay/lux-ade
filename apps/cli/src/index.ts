@@ -29,6 +29,8 @@ Commands:
   conversation export ID FILE            Write complete readable JSON history to a new file
   conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID]
   conversation send ID TEXT             Send a prompt with a generated request ID
+  conversation cancel ID                Request cancellation of the active turn
+  conversation resume ID                Reconnect or resume a stopped agent
   account list                           List profile accounts
   account create PROVIDER NAME           Register a native account home
   account inspect ID                     Check current Claude, Codex or Oh My Pi readiness
@@ -414,6 +416,10 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     const requestId = randomUUID()
     const response = await requestDaemon(socketPath, 'agent.send', { conversation_id: conversationId, request_id: requestId, text })
     return { ...response, request_id: requestId }
+  }
+  if (area === 'conversation' && (action === 'cancel' || action === 'resume')) {
+    if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)
+    return requestDaemon(socketPath, `agent.${action}`, { conversation_id: required(rest[0], 'ID') })
   }
   if (area === 'account' && action === 'list') {
     if (rest.length) throw new CliError('usage', 'account list does not accept arguments.')

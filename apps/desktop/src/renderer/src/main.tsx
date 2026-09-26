@@ -732,11 +732,26 @@ function ConversationView({ conversation, bootId, accountLabel, fenced }: { conv
     finally { setBusy(false) }
   }
 
+  const control = async (action: 'cancel' | 'resume'): Promise<void> => {
+    if (fenced || busy) return
+    setBusy(true)
+    try {
+      await window.adeHost.requestConversation(`agent.${action}`, { conversation_id: conversation.id })
+      setError('')
+      setRefresh((value) => value + 1)
+    } catch (reason) { setError(String(reason)) }
+    finally { setBusy(false) }
+  }
+
   const status = snapshot?.conversation.status ?? conversation.status
   return (
     <section className="conversation-pane" aria-label="Conversation">
       <div className="conversation-heading">
         <div><h2>{conversation.title}</h2><p>{conversation.provider} · {accountLabel} · {status}</p></div>
+        {['starting', 'running', 'waiting'].includes(status) &&
+          <button type="button" disabled={fenced || busy} onClick={() => void control('cancel')}>Cancel turn</button>}
+        {['disconnected', 'error', 'interrupted'].includes(status) &&
+          <button type="button" disabled={fenced || busy} onClick={() => void control('resume')}>Resume agent</button>}
       </div>
       {error && <p role="alert" className="inline-error">{error}</p>}
       {draftError && <p role="alert" className="inline-error">{draftError}</p>}
