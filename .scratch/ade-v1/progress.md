@@ -29,15 +29,15 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen; an unknown Codex item retains safe metadata and ordering across profile and desktop restart | Real Oh My Pi account; real managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider; complete F031 multi-provider acceptance |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; CLI can attach a real TTY to the runtime-owned shell, resize, send a large paste and detach without stopping it; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
-| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged | Matching CLI coverage for the rest of the selected daily-use flow, especially caller-owned prompt retry IDs |
+| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged; caller-owned prompt retry IDs reconcile a lost daemon reply without a second fixture provider turn | Matching CLI coverage for the rest of the selected daily-use flow; broader crash phases and live-provider retry evidence |
 
 Blockers: a real Oh My Pi account is unavailable; the user chose to keep
 real two-account verification pending rather than authenticate two ADE-managed
 Claude homes now. Fixtures are not live-account proof. Active worker owners:
-none; the coordinator integrated the installed CLI slice. Next assignment:
-make CLI prompt sends accept a caller-owned request ID and reconcile uncertain
-delivery through the public command path, then continue other daily-use CLI
-controls. The remaining rows
+none; the coordinator integrated and verified the reviewed caller-owned CLI
+prompt retry slice as `dfc82fe`. Next assignment: enumerate and close the
+remaining daily-use CLI/API parity gaps while preserving the pending real
+provider criteria. The remaining rows
 are partial evidence, not closed feature IDs. F075/06-S06 and unrelated v1
 work remain queued.
 
@@ -137,6 +137,18 @@ partial; the E2E procedure is in `scripts/test_agent_handoff_live.py`.
 | `fbd7f39` | Managed-profile CLI targeting | Repository CLI discovers and selects two GUI-created profiles by ID, isolates their workspace/conversation state, and leaves GUI selection unchanged |
 | `1d45a52` | Structured CLI E2E errors | Playwright child Node commands no longer mix conflicting color settings into JSON stderr; affected focused 8/8 and full source 183 passed/one host skip |
 | `0b400c3` | Installed macOS CLI | App bundle includes `ade` and its client closure; stripped-PATH symlink invocation, GUI profile isolation and cold CLI daemon start; packaged 9/9 |
+| `dfc82fe` | Caller-owned CLI prompt retry | Dropped accepted daemon reply, same-ID retry across compatible handoff, one Codex fixture dispatch, payload and target conflicts |
+
+Daily-use CLI retry checkpoint, 2026-09-27: no feature ID is fully closed by
+this fixture-backed boundary. On macOS arm64, `pnpm check` passed 184 E2Es with
+one existing host skip, including type checking and Fallow, on `dfc82fe`. The app was
+rebuilt with `pnpm package:mac`, then the installed suite passed 9/9. The
+CLI lost-reply E2E is `e2e/specs/cli-send-retry.spec.ts`; an independent review
+found no P1/P2 in request-ID parsing, one-dispatch proof or ownership cleanup.
+No test-owned retry or packaged CLI process remains. Implementation and review
+were not separately timed; the full source check took 6.1 minutes, package
+rebuild about 21 seconds, and installed E2Es 37.2 seconds. Broader R001 crash
+phases and real-provider retries remain open.
 
 Daily-use CLI/unknown-item checkpoint, 2026-09-27: no feature ID is fully
 closed by these slices. `pnpm check` passed 183 E2Es with one existing host
@@ -148,8 +160,9 @@ formatting passed. `pnpm package:mac` and the rebuilt installed suite passed
 Independent reviews cleared privacy, test ownership and cold-start findings.
 Implementation and review were not separately timed; the failed full source
 run took 5.9 minutes, the passing full source run 6.0 minutes, focused CLI
-checks 20.9 seconds, and installed E2Es 28.0 seconds. The package build time
-was not separately captured. No test-owned process remains. One inactive test
+checks 20.9 seconds, and installed E2Es 28.0 seconds. Two package builds took
+about 53 seconds combined after the first build exposed a missing staged client
+module. No test-owned process remains. One inactive test
 directory remains because automatic approval review rejected recursive removal;
 the test profile in it is inactive and outside the installed product.
 
