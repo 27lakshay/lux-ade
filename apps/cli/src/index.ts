@@ -44,7 +44,8 @@ Commands:
   conversation inspect ID               Read conversation and recent messages
   conversation export ID FILE            Write complete readable JSON history to a new file
   conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID]
-  conversation send ID TEXT             Send a prompt with a generated request ID
+  conversation send ID TEXT [--request-id ID]
+                                        Send a prompt; retain ID for safe lost-reply retries
   conversation cancel ID                Request cancellation of the active turn
   conversation resume ID                Reconnect or resume a stopped agent
   conversation answer ID REQUEST_ID DECISION [ANSWERS_JSON]
@@ -112,6 +113,10 @@ Command results are JSON on stdout, except terminal attach streams raw terminal 
 Errors are JSON on stderr.
 Choose and retain a unique --request-id for each Git mutation. If the reply is lost,
 use git operation with that ID; retry only with the same command and arguments.
+For conversation send, choose a unique --request-id before the first attempt and
+reuse it with the same conversation and text after a lost reply. Omitting it
+generates an ID, but that ID is unavailable if the reply is lost; do not retry
+an uncertain send with a new ID.
 Terminal send appends Enter. Terminal attach needs a TTY and relays raw input and output.
 Use --profile ID to start or attach to that exact managed profile. It does not
 change the desktop's selected profile. --profile conflicts with --socket and
@@ -790,9 +795,19 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     })
   }
   if (area === 'conversation' && action === 'send') {
+    if (rest.length !== 2 && (rest.length !== 4 || rest[2] !== '--request-id')) {
+      throw new CliError('usage', 'conversation send requires ID TEXT [--request-id ID].')
+    }
     const conversationId = required(rest[0], 'ID')
     const text = required(rest[1], 'TEXT')
-    const requestId = randomUUID()
+    if (conversationId.startsWith('--')) {
+      throw new CliError('usage', 'conversation send requires ID TEXT [--request-id ID].')
+    }
+    const suppliedId = rest[3]
+    if (suppliedId !== undefined && (!suppliedId || suppliedId.startsWith('--') || suppliedId.length > 256)) {
+      throw new CliError('usage', '--request-id requires an ID of 1 to 256 characters.')
+    }
+    const requestId = suppliedId ?? randomUUID()
     const response = await requestDaemon(socketPath, 'agent.send', { conversation_id: conversationId, request_id: requestId, text })
     return { ...response, request_id: requestId }
   }
