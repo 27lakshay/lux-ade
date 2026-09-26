@@ -25,8 +25,8 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 
 | Daily-use gate and IDs | Verified | Remaining before gate closes |
 |---|---|---|
-| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen; a source desktop E2E keeps an admitted provider tool alive after the last window closes and renders its result once on reopen; ambient real Codex and Claude turns each survive source desktop closure and reopen with the same daemon/runtime/native thread and one prompt; ambient real Codex and Claude runs also survive compatible daemon handoff | Installed real-agent continuity and complete isolation acceptance in the installed flow |
-| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen; an unknown Codex item retains safe metadata and ordering across profile and desktop restart | Real Oh My Pi account; real managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider; complete F031 multi-provider acceptance |
+| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen; source and packaged desktop E2Es each keep ambient real Codex and Claude turns alive after the last window closes, then show one completed prompt on reopen with the same daemon/runtime/native thread; ambient real Codex and Claude runs also survive compatible daemon handoff | Complete managed-account isolation and runtime-claim acceptance in the installed flow |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es; packaged two-account Codex fixture turns retain distinct homes, credentials, and conversations across reopen; installed ambient real Codex and explicit pre-existing native Claude config retain turns through app closure; an unknown Codex item retains safe metadata and ordering across profile and desktop restart | Real Oh My Pi account; real managed two-account execution; native questions and crash/lost-reply recovery across each primary provider; complete F031 multi-provider acceptance |
 | Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; CLI can attach a real TTY to the runtime-owned shell, resize, send a large paste and detach without stopping it; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including terminal attachment, cancel/resume, paged diffs and durable review feedback; the installed CLI discovers and targets two GUI-created managed profiles, survives GUI close, cold-starts the chosen daemon without developer tools, and leaves the GUI default unchanged; caller-owned prompt retry IDs reconcile a lost daemon reply without a second fixture provider turn; CLI worktree create/remove now expose caller-owned IDs and durable receipt lookup with strict same-ID conflict | Matching CLI coverage for the rest of the selected daily-use flow; broader crash phases and live-provider retry evidence |
@@ -34,9 +34,9 @@ checkpoint, and packaged checks for changed packaging or installed behavior.
 Blockers: a real Oh My Pi account is unavailable; the user chose to keep
 real two-account verification pending rather than authenticate two ADE-managed
 Claude homes now. Fixtures are not live-account proof. Active worker owners:
-none; the coordinator integrated safe CLI worktree retries as `630ba33`.
-Next assignment: enumerate and close the remaining daily-use CLI/API parity
-gaps while preserving the pending managed real
+none; the coordinator integrated installed real-provider tool discovery and
+continuity as `23ee13e`. Next assignment: enumerate and close the remaining
+daily-use CLI/API parity gaps while preserving the pending managed real
 provider criteria. The remaining rows
 are partial evidence, not closed feature IDs. F075/06-S06 and unrelated v1
 work remain queued.
@@ -140,6 +140,26 @@ partial; the E2E procedure is in `scripts/test_agent_handoff_live.py`.
 | `dfc82fe` | Caller-owned CLI prompt retry | Dropped accepted daemon reply, same-ID retry across compatible handoff, one Codex fixture dispatch, payload and target conflicts |
 | `95a58c0` | Real desktop provider continuity | Ambient authenticated Codex and Claude turns keep one prompt, native thread and daemon/runtime identity after the last window closes and reopens; opt-in live E2E 2/2 |
 | `630ba33` | CLI worktree retry and receipt | Caller-owned IDs for create/remove, named operation lookup, same-ID retry and changed-target conflict E2E |
+| `23ee13e` | Packaged native provider discovery | Finder-style PATH resolves installed Codex/Claude from host tool locations; opt-in live installed E2E proves both turns active after last-window close and complete once after reopen |
+
+Installed real-provider continuity checkpoint, 2026-09-27: no feature ID is
+fully closed by this ambient-account evidence. On macOS arm64, the initial
+opt-in installed live E2E failed because Finder-style PATH could not find the
+host's Codex and Claude executables; a later strict Claude run failed auth
+until the test explicitly used its pre-existing `CLAUDE_CONFIG_DIR`. These
+were distinct tool discovery and test-auth conditions. At `23ee13e`,
+`ADE_RUN_LIVE_PROVIDERS=1 pnpm exec playwright test --config
+playwright.live.config.ts e2e/live/packaged-provider-continuity.spec.ts`
+passed 2/2 with the turn confirmed running after window close, the same
+daemon/runtime/native thread, one prompt and a completed answer after reopen.
+The final `pnpm check` passed type checking, Fallow and 185 source E2Es with
+one host skip; strict Rust Clippy and rustfmt passed; the rebuilt installed
+suite passed 9/9. An independent review found no remaining P1/P2 after
+the live test was tightened to exclude inherited provider overrides and to
+retain data when cleanup ownership is uncertain. No test-owned live process
+remained. Estimated time: implementation 10 minutes, review 5 minutes,
+checks and diagnostic runs 17 minutes, packaging 0.5 minutes. Managed-account
+real execution and real Oh My Pi remain pending.
 
 Daily-use CLI worktree checkpoint, 2026-09-27: no feature ID is fully closed
 by this retry slice. `pnpm check` passed type checking, Fallow and 185 source
