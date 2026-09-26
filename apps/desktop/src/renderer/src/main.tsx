@@ -511,7 +511,7 @@ type Question = { id: string; question: string; options?: Array<{ label: string 
 function RequestForm({ request, busy, onAnswer }: {
   request: PendingRequest
   busy: boolean
-  onAnswer: (decision: 'accept' | 'decline' | 'answer', answers?: Record<string, string | string[]>) => Promise<void>
+  onAnswer: (decision: 'accept' | 'decline' | 'cancel' | 'answer', answers?: Record<string, string | string[]>) => Promise<void>
 }): React.JSX.Element {
   const [answers, setAnswers] = React.useState<Record<string, string | string[]>>({})
   const questions = Array.isArray(request.params.questions)
@@ -519,6 +519,13 @@ function RequestForm({ request, busy, onAnswer }: {
       typeof item === 'object' && item !== null && typeof item.id === 'string' && typeof item.question === 'string')
     : []
   const isQuestion = questions.length > 0
+  const offered = Array.isArray(request.params.availableDecisions)
+    ? request.params.availableDecisions.filter((choice): choice is string => typeof choice === 'string')
+    : null
+  const mayApprove = !offered || offered.includes('accept')
+  const negativeChoices: Array<'decline' | 'cancel'> = offered
+    ? (['decline', 'cancel'] as const).filter((choice) => offered.includes(choice))
+    : ['decline']
   const complete = questions.every((question) => {
     const value = answers[question.id]
     return Array.isArray(value) ? value.length > 0 : typeof value === 'string' && value.trim().length > 0
@@ -543,10 +550,12 @@ function RequestForm({ request, busy, onAnswer }: {
       </>}
     </fieldset>)}
     <div className="approval-actions">
-      {request.method !== 'item/tool/requestUserInput' && <button disabled={busy} onClick={() => void onAnswer('decline')}>Decline</button>}
-      <button disabled={busy || (isQuestion && !complete)} onClick={() => void onAnswer(isQuestion ? 'answer' : 'accept', isQuestion ? answers : undefined)}>
+      {request.method !== 'item/tool/requestUserInput' && negativeChoices.map((choice) =>
+        <button key={choice} disabled={busy} onClick={() => void onAnswer(choice)}>
+          {choice === 'cancel' ? 'Cancel turn' : 'Decline'}</button>)}
+      {(isQuestion || mayApprove) && <button disabled={busy || (isQuestion && !complete)} onClick={() => void onAnswer(isQuestion ? 'answer' : 'accept', isQuestion ? answers : undefined)}>
         {isQuestion ? 'Submit answer' : 'Approve'}
-      </button>
+      </button>}
     </div>
   </section>
 }
@@ -719,7 +728,7 @@ function ConversationView({ conversation, bootId, accountLabel, fenced }: { conv
     } catch (reason) { setDraftError(`Sent prompt draft could not be cleared: ${String(reason)}`) }
     finally { setBusy(false) }
   }
-  const answer = async (request: PendingRequest, decision: 'accept' | 'decline' | 'answer', answers?: Record<string, string | string[]>): Promise<void> => {
+  const answer = async (request: PendingRequest, decision: 'accept' | 'decline' | 'cancel' | 'answer', answers?: Record<string, string | string[]>): Promise<void> => {
     if (fenced) return
     setBusy(true)
     try {

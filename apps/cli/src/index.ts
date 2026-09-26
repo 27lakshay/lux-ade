@@ -32,7 +32,7 @@ Commands:
   conversation cancel ID                Request cancellation of the active turn
   conversation resume ID                Reconnect or resume a stopped agent
   conversation answer ID REQUEST_ID DECISION [ANSWERS_JSON]
-                                        Answer a pending native request once; DECISION is accept, decline, or answer
+                                        Answer a pending native request once; DECISION is accept, decline, cancel, or answer
                                         For questions, pass a JSON object of question IDs to text or text arrays
   account list                           List profile accounts
   account create PROVIDER NAME           Register a native account home
@@ -429,8 +429,8 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
       throw new CliError('usage', 'conversation answer requires ID REQUEST_ID DECISION [ANSWERS_JSON].')
     }
     const [conversationId, requestId, decision, answerJson] = rest
-    if (!['accept', 'decline', 'answer'].includes(decision)) {
-      throw new CliError('usage', 'DECISION must be accept, decline, or answer.')
+    if (!['accept', 'decline', 'cancel', 'answer'].includes(decision)) {
+      throw new CliError('usage', 'DECISION must be accept, decline, cancel, or answer.')
     }
     if ((decision === 'answer') !== (answerJson !== undefined)) {
       throw new CliError('usage', 'ANSWERS_JSON is required only for the answer decision.')

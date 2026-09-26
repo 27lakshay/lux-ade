@@ -75,6 +75,30 @@ test('conversation restores transcript and answers native approvals and question
       const replies = lines.map((line) => JSON.parse(line)).filter((call) => call.method === 'approval/reply')
       return replies[1]?.result?.answers
     }).toEqual({ choice: { answers: ['Thorough'] }, multiple: { answers: ['Read, write'] }, secret: { answers: ['fixture answer'] } })
+
+    await conversation.getByRole('textbox', { name: 'Prompt' }).fill('approval-cancel')
+    await conversation.getByRole('button', { name: 'Send' }).click()
+    await expect(approval.getByRole('button', { name: 'Cancel turn' })).toBeVisible()
+    await expect(approval.getByRole('button', { name: 'Decline' })).toHaveCount(0)
+    await approval.getByRole('button', { name: 'Cancel turn' }).click()
+    await expect(approval).toHaveCount(0)
+    await expect.poll(async () => {
+      const lines = (await readFile(join(mockDirectory, 'calls.jsonl'), 'utf8')).split('\n').filter(Boolean)
+      const replies = lines.map((line) => JSON.parse(line)).filter((call) => call.method === 'approval/reply')
+      return replies[2]?.result
+    }).toEqual({ decision: 'cancel' })
+
+    await conversation.getByRole('textbox', { name: 'Prompt' }).fill('approval-both')
+    await conversation.getByRole('button', { name: 'Send' }).click()
+    await expect(approval.getByRole('button', { name: 'Decline' })).toBeVisible()
+    await expect(approval.getByRole('button', { name: 'Cancel turn' })).toBeVisible()
+    await approval.getByRole('button', { name: 'Decline' }).click()
+    await expect(approval).toHaveCount(0)
+    await expect.poll(async () => {
+      const lines = (await readFile(join(mockDirectory, 'calls.jsonl'), 'utf8')).split('\n').filter(Boolean)
+      const replies = lines.map((line) => JSON.parse(line)).filter((call) => call.method === 'approval/reply')
+      return replies[3]?.result
+    }).toEqual({ decision: 'decline' })
   } finally {
     await application.close()
     await daemon.stop()

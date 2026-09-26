@@ -142,7 +142,7 @@ for line in sys.stdin:
                     time.sleep(.04)
             note("item/completed", {**base, "item": answer}); finish()
             continue
-        if text in ("approval", "approval-expire", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny"):
+        if text in ("approval", "approval-cancel", "approval-both", "approval-expire", "large-approval", "questions", "rich-questions", "permissions", "permissions-deny"):
             permission = "permission-" + key
             request_method = {"questions": "item/tool/requestUserInput",
                               "rich-questions": "item/tool/requestUserInput",
@@ -165,7 +165,10 @@ for line in sys.stdin:
             elif text.startswith("permissions"):
                 request_params["permissions"] = {"network": {"enabled": True}, "fileSystem": {"write": ["/fixture-only"]}}
             else:
-                request_params.update(command=("x" * (256*1024) if text == "large-approval" else "echo fixture"), availableDecisions=["accept", "decline"])
+                choices = (["accept", "cancel"] if text == "approval-cancel" else
+                           ["accept", "decline", "cancel"] if text == "approval-both" else ["accept", "decline"])
+                request_params.update(command=("x" * (256*1024) if text == "large-approval" else "echo fixture"),
+                                      availableDecisions=choices)
             send({"id": permission, "method": request_method, "params": request_params})
             save()
             if text == "approval-expire":

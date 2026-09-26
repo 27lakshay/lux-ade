@@ -1261,7 +1261,7 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
       return { type: 'review_rejected', message: String(error) }
     }
   }
-  if (!validId(args.request_id) || !['accept', 'decline', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
+  if (!validId(args.request_id) || !['accept', 'decline', 'cancel', 'answer'].includes(String(args.decision))) throw new Error('Invalid answer')
   if (args.decision === 'answer') {
     if (!args.answers || typeof args.answers !== 'object' || Array.isArray(args.answers)
       || Buffer.byteLength(JSON.stringify(args.answers)) > 64 * 1024) throw new Error('Invalid question answers')

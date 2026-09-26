@@ -11,8 +11,8 @@ pub fn approval_result(
     match method {
         "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
             ensure!(
-                matches!(decision, "accept" | "decline"),
-                "Choose accept or decline"
+                matches!(decision, "accept" | "decline" | "cancel"),
+                "Choose accept, decline, or cancel"
             );
             if let Some(available) = params["availableDecisions"].as_array() {
                 ensure!(

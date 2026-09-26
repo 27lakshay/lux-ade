@@ -27,6 +27,10 @@ test('CLI answers native approvals and questions once through the running daemon
     }
     let sendNumber = 0
     const requestFor = async (prompt: string): Promise<{ id: string; method: string; params: Record<string, unknown> }> => {
+      await expect.poll(async () => {
+        const snapshot = await rpc(daemon.socket, { op: 'conversation.get', conversation_id: conversation.id })
+        return ['idle', 'ready'].includes((snapshot.conversation as { status: string }).status)
+      }).toBe(true)
       await rpc(daemon.socket, { op: 'agent.send', conversation_id: conversation.id,
         request_id: `send-${prompt}-${++sendNumber}`, text: prompt })
       let pending: { id: string; method: string; params: Record<string, unknown> } | undefined
@@ -73,10 +77,19 @@ test('CLI answers native approvals and questions once through the running daemon
     await expect.poll(async () => (await replies()).length).toBe(3)
     expect((await replies())[2].result).toEqual({ decision: 'accept' })
 
+    const cancelOnly = await requestFor('approval-cancel')
+    expect(cancelOnly.params.availableDecisions).toEqual(['accept', 'cancel'])
+    await expect(command(cancelOnly.id, 'decline')).rejects.toThrow(/Decision is not offered by Codex/)
+    expect(await command(cancelOnly.id, 'cancel')).toMatchObject({ type: 'ack' })
+    await expect.poll(async () => (await replies()).length).toBe(4)
+    expect((await replies())[3].result).toEqual({ decision: 'cancel' })
+    expect(await command(cancelOnly.id, 'cancel')).toMatchObject({ type: 'ack' })
+    await expect(command(cancelOnly.id, 'accept')).rejects.toThrow(/conflicts with the recorded decision/)
+
     await expect(command(questions.id, 'answer', '{"choice":4}')).rejects.toThrow(/values must be text/)
     await expect(command(questions.id, 'accept', '{}')).rejects.toThrow(/required only for/)
-    await expect(command(questions.id, 'maybe')).rejects.toThrow(/must be accept, decline, or answer/)
-    expect(await replies()).toHaveLength(3)
+    await expect(command(questions.id, 'maybe')).rejects.toThrow(/must be accept, decline, cancel, or answer/)
+    expect(await replies()).toHaveLength(4)
   } finally {
     await daemon.stop()
     await rm(mockDirectory, { recursive: true, force: true })
