@@ -22,6 +22,7 @@ type Account = { id: string; provider: string; name: string; native_home: string
 type AccountInspection = { state: string; reason: string; version: string | null;
   identity: AccountIdentity | null }
 type AccountConversation = Conversation & { account_id?: string | null; account_context?: string }
+type PendingSend = { profileId: string; conversationId: string; requestId: string; text: string }
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
@@ -86,6 +87,7 @@ declare global {
       chooseWorkspace(): Promise<Frame | null>
       selectWorkspace(id: string, conversationId: string | null): Promise<boolean>
       requestConversation(op: string, fields: Record<string, unknown>): Promise<Frame>
+      listPendingSends(): Promise<PendingSend[]>
       requestService(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestScript(op: string, fields: Record<string, unknown>): Promise<Frame>
       requestReview(op: string, fields: Record<string, unknown>): Promise<Frame>
@@ -1031,6 +1033,8 @@ function App(): React.JSX.Element {
   const [newProfile, setNewProfile] = React.useState('')
   const [profileBusy, setProfileBusy] = React.useState(false)
   const [profileError, setProfileError] = React.useState('')
+  const [pendingSends, setPendingSends] = React.useState<PendingSend[]>([])
+  const [pendingSendError, setPendingSendError] = React.useState('')
   const activeProfileId = React.useRef<string | null>(null)
   React.useEffect(() => {
     const unsubscribeClient = window.adeHost.onClientState(setState)
@@ -1053,6 +1057,13 @@ function App(): React.JSX.Element {
     })
     return () => { unsubscribeClient(); unsubscribeProfile() }
   }, [])
+  React.useEffect(() => {
+    let active = true
+    void window.adeHost.listPendingSends().then((records) => {
+      if (active) { setPendingSends(records); setPendingSendError('') }
+    }).catch((error) => { if (active) setPendingSendError(String(error)) })
+    return () => { active = false }
+  }, [state?.status, profile?.activeId])
   const switchProfile = async (id: string): Promise<void> => {
     if (!id || profileBusy || id === profile?.activeId) return
     setProfileBusy(true)
@@ -1091,6 +1102,16 @@ function App(): React.JSX.Element {
         <button type="submit" disabled={profileBusy || !newProfile.trim()}>Create</button></form>
       {(profileError || profile.error) && <span role="alert" className="inline-error">{profileError || profile.error}</span>}
     </div>}
+    {state?.status !== 'connected' && (pendingSends.length > 0 || pendingSendError) &&
+      <section aria-label="Pending prompts" className="account-panel">
+        <h2>Pending prompts</h2>
+        <p>These prompts are saved for recovery. Reconnect their original profile before retrying delivery.</p>
+        {pendingSendError && <p role="alert">{pendingSendError}</p>}
+        {pendingSends.map((item) => <article key={`${item.profileId}:${item.conversationId}:${item.requestId}`}>
+          <p>Profile {item.profileId} · Conversation {item.conversationId}</p>
+          <p>Request {item.requestId}</p><pre>{item.text}</pre>
+        </article>)}
+      </section>}
     {state?.status === 'connected' ? <ConnectedContent key={profile?.activeId ?? 'fixed'} profileKey={profile?.activeId ?? 'fixed'} state={state} /> : <section className="welcome">
       <h1>Work across agents, in one place.</h1><p role="status">{state?.detail ?? 'Checking profile daemon…'}</p>
     </section>}

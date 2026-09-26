@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('adeHost', {
   },
   requestConversation: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:conversation-request', op, fields),
+  listPendingSends: () => ipcRenderer.invoke('ade:pending-sends'),
   requestService: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('ade:service-request', op, fields),
   requestScript: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>

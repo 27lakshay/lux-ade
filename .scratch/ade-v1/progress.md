@@ -328,6 +328,22 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 - Next daily-use work: real-agent account/control acceptance, browser
   ownership and backup/retention coordination. Continue
   through the full V1 register afterward.
+- The recurring pending-prompt Quit alert now has a durable local recovery
+  path. Electron fsyncs the exact send intent and dispatch state before each
+  network handoff, reopens offline with the original profile and request ID
+  visible, and retries without a second provider turn. Quit finishes once
+  that record is safe, even when the daemon cannot reconcile immediately;
+  missing or unsafe records still block it. Real-process E2Es cover crashes
+  before draft save, prepare and dispatch, plus a lost completion reply,
+  offline reopen and reconnect. A separate review-feedback E2E exposed a
+  daemon response that omits empty attachments; desktop now normalizes it
+  before journaling a later send. `pnpm check` passes type checking, Fallow,
+  builds and 75/75 source E2Es. `pnpm package:mac` and 6/6 packaged E2Es
+  pass with hidden windows. A deliberate one-line reversion of the close
+  decision reproduced the Quit failure; restoring it passed. The older
+  visible ADE processes have not been inspected for pending prompts or
+  restarted, so they may still show the alert until they load this build.
+  F036 and the wider V1 register remain open.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
   not establish live-account compatibility or quality.
 

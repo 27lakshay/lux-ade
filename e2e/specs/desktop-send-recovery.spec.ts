@@ -1,5 +1,6 @@
 import { expect, test, _electron as electron } from '@playwright/test'
 import { createRequire } from 'node:module'
+import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { createConnection, createServer, type Socket } from 'node:net'
 import { mkdtemp, readFile, rename, rm, unlink } from 'node:fs/promises'
@@ -379,7 +380,105 @@ test('a delayed prepare commit after a lost reply keeps its ID in the live windo
   }
 })
 
-test('Quit reconciles an accepted prompt without redispatch and stays open while reconciliation is unavailable', async () => {
+for (const blockedOp of ['draft.save', 'draft.send.prepare', 'agent.send'] as const) {
+  test(`a crash before ${blockedOp} reaches the daemon retries the journaled request once`, async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'ade-journal-crash-'))
+    const mockDirectory = join(userData, 'codex')
+    const daemon = await startDaemon({ ADE_CODEX_BIN: resolve('scripts/fixtures/codex_mock.py'),
+      ADE_CODEX_TRANSPORT: 'stdio', ADE_MOCK_DIR: mockDirectory })
+    const proxySocket = join(userData, 'proxy.sock')
+    let intercepted = false
+    let interceptedId = ''
+    const peers = new Set<Socket>()
+    const proxy = createServer((downstream) => {
+      const upstream = createConnection(daemon.socket)
+      peers.add(downstream); peers.add(upstream)
+      let requests = ''
+      downstream.on('data', (chunk: Buffer) => {
+        requests += chunk.toString('utf8')
+        for (;;) {
+          const end = requests.indexOf('\n')
+          if (end < 0) break
+          const line = requests.slice(0, end + 1)
+          requests = requests.slice(end + 1)
+          const request = JSON.parse(line) as { op: string; request_id?: string }
+          if (request.op === blockedOp && !intercepted) {
+            intercepted = true
+            interceptedId = request.request_id ?? ''
+            // Hold this request before the daemon sees it, then kill Electron at the crash point.
+            break
+          }
+          upstream.write(line)
+        }
+      })
+      upstream.on('data', (chunk: Buffer) => downstream.write(chunk))
+      downstream.on('error', () => undefined); upstream.on('error', () => undefined)
+      downstream.on('close', () => { peers.delete(downstream); upstream.destroy() })
+      upstream.on('close', () => { peers.delete(upstream); downstream.destroy() })
+    })
+    await new Promise<void>((resolveListen) => proxy.listen(proxySocket, resolveListen))
+    const launch = () => electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+      env: { ...process.env, ADE_SOCKET: proxySocket, ADE_E2E_USER_DATA_DIR: userData } })
+    let application = await launch()
+    try {
+      let window = await application.firstWindow()
+      await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+      await window.getByRole('button', { name: 'New conversation' }).click()
+      const conversation = window.getByRole('region', { name: 'Conversation' })
+      let requestId = ''
+      if (blockedOp === 'draft.save') {
+        let conversationId = ''
+        await expect.poll(async () => {
+          const catalog = await rpc(daemon.socket, { op: 'catalog.get' })
+          conversationId = (catalog.catalog as { conversations: Array<{ id: string }> }).conversations[0]?.id ?? ''
+          return conversationId
+        }).not.toBe('')
+        requestId = randomUUID()
+        await window.evaluate((id) => window.adeHost.requestConversation('draft.save', {
+          conversation_id: id, text: 'journal draft.save',
+        }), conversationId)
+        await window.evaluate(({ id, key }) => {
+          void window.adeHost.requestConversation('agent.send', {
+            conversation_id: id, request_id: key, text: 'journal draft.save',
+          }).catch(() => undefined)
+        }, { id: conversationId, key: requestId })
+      } else {
+        await conversation.getByRole('textbox', { name: 'Prompt' }).fill(`journal ${blockedOp}`)
+        await conversation.getByRole('button', { name: 'Send' }).click()
+      }
+      await expect.poll(() => intercepted).toBe(true)
+      const journal = JSON.parse(await readFile(join(userData, 'pending-sends-v1.json'), 'utf8')) as
+        { records: Array<{ requestId: string; dispatchStarted: boolean }> }
+      expect(journal.records).toHaveLength(1)
+      expect(journal.records[0]).toMatchObject({ requestId: requestId || interceptedId,
+        dispatchStarted: blockedOp === 'agent.send' })
+      const process = application.process()
+      process.kill('SIGKILL')
+      await expect.poll(() => process.signalCode).toBe('SIGKILL')
+      application = await launch()
+      window = await application.firstWindow()
+      await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+      const restored = window.getByRole('region', { name: 'Conversation' })
+      await expect(restored.getByRole('textbox', { name: 'Prompt' })).toHaveValue(`journal ${blockedOp}`)
+      await expect(restored.getByText('Prompt delivery is unconfirmed.', { exact: false })).toBeVisible()
+      await restored.getByRole('button', { name: 'Retry prompt delivery' }).click()
+      await expect(restored.getByRole('textbox', { name: 'Prompt' })).toHaveValue('')
+      await expect(restored.locator('.message-assistant')).toContainText('Hello world')
+      const calls = (await readFile(join(mockDirectory, 'calls.jsonl'), 'utf8')).split('\n').filter(Boolean)
+      expect(calls.filter((line) => JSON.parse(line).method === 'turn/start')).toHaveLength(1)
+      expect((JSON.parse(await readFile(join(userData, 'pending-sends-v1.json'), 'utf8')) as
+        { records: unknown[] }).records).toHaveLength(0)
+    } finally {
+      await application.close().catch(() => undefined)
+      for (const peer of peers) peer.destroy()
+      await new Promise<void>((resolveClose) => proxy.close(() => resolveClose()))
+      await daemon.stop()
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+}
+
+test('Quit preserves an accepted prompt without a recurring native alert while reconciliation is unavailable', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'ade-complete-recovery-'))
   const mockDirectory = join(userData, 'codex')
   const daemon = await startDaemon({ ADE_CODEX_BIN: resolve('scripts/fixtures/codex_mock.py'),
@@ -387,8 +486,10 @@ test('Quit reconciles an accepted prompt without redispatch and stays open while
   const proxySocket = join(userData, 'proxy.sock')
   let dropCompleteReply = true
   let blockComplete = false
+  let offline = false
   const peers = new Set<Socket>()
   const proxy = createServer((downstream) => {
+    if (offline) { downstream.destroy(); return }
     const upstream = createConnection(daemon.socket)
     peers.add(downstream)
     peers.add(upstream)
@@ -433,11 +534,11 @@ test('Quit reconciles an accepted prompt without redispatch and stays open while
     upstream.on('close', () => { peers.delete(upstream); downstream.destroy() })
   })
   await new Promise<void>((resolveListen) => proxy.listen(proxySocket, resolveListen))
-  const application = await electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+  let application = await electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
     env: { ...process.env, ADE_SOCKET: proxySocket, ADE_E2E_USER_DATA_DIR: userData,
       ADE_E2E_TEST_CLOSE_GUARD: '1' } })
   try {
-    const window = await application.firstWindow()
+    let window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     await window.getByRole('button', { name: 'New conversation' }).click()
     const conversation = window.getByRole('region', { name: 'Conversation' })
@@ -447,34 +548,45 @@ test('Quit reconciles an accepted prompt without redispatch and stays open while
     await expect(conversation.getByText('Prompt delivery is unconfirmed.', { exact: false })).toBeVisible()
     expect(dropCompleteReply).toBe(false)
     blockComplete = true
-    await application.evaluate(({ app, dialog }) => {
-      const marker = globalThis as typeof globalThis & { __adeQuitWarnings?: string[] }
-      marker.__adeQuitWarnings = []
+    const savedJournal = JSON.parse(await readFile(join(userData, 'pending-sends-v1.json'), 'utf8')) as
+      { records: Array<{ requestId: string }> }
+    expect(savedJournal.records).toHaveLength(1)
+    const electronProcess = application.process()
+    const warningLog = join(userData, 'quit-warnings.jsonl')
+    await application.evaluate(({ app, dialog }, logPath) => {
       const dialogs = dialog as unknown as { showMessageBox: (...args: unknown[]) => Promise<{ response: number; checkboxChecked: boolean }> }
       dialogs.showMessageBox = async (...args) => {
         const options = args.at(-1) as { message?: string }
-        marker.__adeQuitWarnings?.push(options.message ?? '')
+        const fs = await import('node:fs/promises')
+        await fs.appendFile(logPath, JSON.stringify({ message: options.message }) + '\n')
         return { response: 0, checkboxChecked: false }
       }
       app.quit()
-    })
-    await expect.poll(() => application.evaluate(() =>
-      (globalThis as typeof globalThis & { __adeQuitWarnings?: string[] }).__adeQuitWarnings ?? []))
-      .toEqual(['ADE is staying open until the prompt is reconciled.'])
-    expect(application.process().exitCode).toBeNull()
-    await new Promise((done) => setTimeout(done, 100))
-    await application.evaluate(({ app }) => app.quit())
-    await new Promise((done) => setTimeout(done, 400))
-    expect(await application.evaluate(() =>
-      (globalThis as typeof globalThis & { __adeQuitWarnings?: string[] }).__adeQuitWarnings ?? []))
-      .toEqual(['ADE is staying open until the prompt is reconciled.'])
+    }, warningLog)
+    await expect.poll(() => electronProcess.exitCode).not.toBeNull()
+    expect(await readFile(warningLog, 'utf8').catch(() => '')).toBe('')
+    offline = true
+    application = await electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+      env: { ...process.env, ADE_SOCKET: proxySocket, ADE_E2E_USER_DATA_DIR: userData,
+        ADE_E2E_TEST_CLOSE_GUARD: '1' } })
+    window = await application.firstWindow()
+    const recovery = window.getByRole('region', { name: 'Pending prompts' })
+    await expect(recovery).toContainText('typed-tool')
+    await expect(recovery).toContainText(savedJournal.records[0].requestId)
+    offline = false
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    await expect(window.getByRole('region', { name: 'Conversation' })
+      .getByText('Prompt delivery is unconfirmed.', { exact: false })).toBeVisible()
     blockComplete = false
-    await application.close()
+    await window.getByRole('region', { name: 'Conversation' }).getByRole('button', { name: 'Retry prompt delivery' }).click()
+    await expect(window.getByRole('region', { name: 'Conversation' }).getByRole('textbox', { name: 'Prompt' })).toHaveValue('')
     const owner = JSON.parse(await readFile(join(userData, 'window-owner-v1.json'), 'utf8')) as { id: string }
     const catalog = await rpc(daemon.socket, { op: 'catalog.get' })
     const conversationId = (catalog.catalog as { conversations: Array<{ id: string }> }).conversations[0].id
     const settled = await rpc(daemon.socket, { op: 'draft.send.get', conversation_id: conversationId, window_id: owner.id })
     expect(settled.intent).toBeNull()
+    expect((JSON.parse(await readFile(join(userData, 'pending-sends-v1.json'), 'utf8')) as
+      { records: unknown[] }).records).toHaveLength(0)
     const calls = (await readFile(join(mockDirectory, 'calls.jsonl'), 'utf8')).split('\n').filter(Boolean)
     expect(calls.filter((line) => JSON.parse(line).method === 'turn/start')).toHaveLength(1)
   } finally {

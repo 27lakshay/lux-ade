@@ -1,6 +1,6 @@
 # Recover per-window conversation drafts
 
-Status: partial recovery and close-guard slices implemented; full F036 remains open
+Status: partial durable send recovery and close-guard slices implemented; full F036 remains open
 Type: implementation ticket
 Owner: desktop draft worker, integrated by coordinator
 Requirements: F036 (initial slice)
@@ -24,7 +24,7 @@ process restart. Retry reconciles the original ID instead of creating a new
 provider turn. The normal Quit and window-close guards now first ask each
 pending intent's original profile daemon to complete an already accepted
 message. They do not dispatch a new prompt merely to close. If the daemon
-cannot confirm acceptance, ADE retains the intent and stays open. Running
+cannot confirm acceptance, ADE retains the intent in its send journal. Running
 Electron/real-daemon E2Es cover a dropped completion reply, an unavailable
 reconciliation endpoint, a prompt from an inactive managed profile, manual
 Retry and exactly one provider turn. Hidden test windows intercept native
@@ -37,21 +37,34 @@ its live pending intent was not inspected or changed by these tests.
 
 ## Repeated pending-prompt dialog (open)
 
-The native “ADE is staying open until the prompt is reconciled” dialog occurs
-when Electron has an unresolved send request ID and the owning daemon cannot
-confirm completion during Quit. `desktop-send-recovery.spec.ts` deliberately
-reproduces this guard through a real daemon and Electron window. On 2026-09-26,
-two old visible development Electron processes were still running; one was
-configured for a Unix socket that no longer existed. That makes reconciliation
-impossible for that process, but does not prove it owned the user's screenshot.
-Neither process nor its in-memory send intent was altered.
+The native “ADE is staying open until the prompt is reconciled” dialog occurred
+when Electron had an unresolved send request ID and the owning daemon could not
+confirm completion during Quit. Electron now writes an exact, private, fsynced
+send journal before saving the draft, preparing the send, or dispatching to a
+provider. It records dispatch before `agent.send`, preserves the original
+profile, conversation, prompt and request ID across process death, and removes
+the record only after confirmed completion or rejection. Retry restores a
+journaled draft if the daemon lacks it; it refuses a conflicting revision or
+payload. An offline reopen shows pending prompts and their original profile and
+request ID. Quit can complete without a native warning once the local record
+is durable, even if the profile daemon cannot respond. A missing or unsafe
+journal still blocks Quit. The macOS last-window path now finishes a previously
+requested Quit instead of leaving Electron headless.
 
-Next acceptance for F036/R001/R002: persist the exact request ID and send intent
-before network admission, recover it after an Electron crash or Quit while the
-daemon is absent, and retry only with that ID when the original profile daemon
-returns. Through real Electron and ADE processes, lose a prepare/send/complete
-reply, close the app without a recurring native alert, reopen offline and then
-reconnect; assert the draft and request ID remain visible and exactly one
-provider turn is admitted. An explicit user action is required if the original
-daemon cannot return. Do not remove the current close guard before this durable
-recovery path passes.
+Running Electron/real-daemon E2Es kill Electron before `draft.save`,
+`draft.send.prepare`, and `agent.send` reach the daemon. Each restart retries
+the original request once and admits one provider turn. Another E2E loses the
+completion reply, Quits with reconciliation blocked, reopens offline and
+recovers on reconnect without a native alert or duplicate provider turn. The
+focused suite passes 10/10. A deliberate temporary reversion of the close
+decision makes the Quit E2E fail at process exit; restoring the change makes it
+pass. Independent review found no confirmed P1/P2 issue in this slice.
+
+On 2026-09-26, two old visible development Electron processes were still
+running; one pointed at a missing Unix socket. That does not prove which
+process owned the user's screenshot. Neither process nor any live pending
+intent was altered. The fix takes effect when ADE starts from the new build.
+If the original profile daemon cannot return, the pending prompt remains
+visible for explicit user resolution; ADE does not silently resubmit it to
+another profile. Full F036 still needs draft recall/stash, cross-client
+transfer and conflict UI, attachments and broader daemon-crash acceptance.
