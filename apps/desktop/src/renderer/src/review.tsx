@@ -176,6 +176,20 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     if (!conversation || !pendingId || busy) return
     setBusy(true)
     try {
+      const current = await window.adeHost.requestConversation('conversation.get', { conversation_id: conversation.id })
+      const currentMessages = Array.isArray(current.messages) ? current.messages as Array<{ id?: string }> : []
+      if (currentMessages.some((item) => item.id === pendingId)) {
+        try {
+          const confirmed = await window.adeHost.requestConversation('agent.retry_send', {
+            conversation_id: conversation.id, request_id: pendingId,
+          })
+          if (confirmed.type === 'send_pending') return
+        } catch (reason) {
+          if (!String(reason).includes('No prompt is awaiting confirmation')) throw reason
+        }
+        acceptFeedback()
+        return
+      }
       let response: Record<string, unknown>
       try { response = await window.adeHost.requestConversation('agent.retry_send', {
         conversation_id: conversation.id, request_id: pendingId,
