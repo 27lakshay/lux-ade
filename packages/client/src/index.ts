@@ -1,8 +1,28 @@
 import { createConnection, type Socket } from 'node:net'
+import { DaemonRequestError, requestDaemon } from './request.js'
+import { decodeDailyUseFeedFrame, decodeDailyUseRequest, decodeDailyUseResponse,
+  type DailyUseFeedFrame, type DailyUseOperation, type DailyUseRequest,
+  type DailyUseResponse } from './generated.js'
 
 export { openTerminalConnection, type TerminalConnection, type TerminalFrame } from './terminal.js'
-export { requestDaemon, DaemonRequestError, type DaemonErrorCode, type DaemonResponse, type RequestOptions } from './request.js'
+export { requestDaemon, DaemonRequestError, type DaemonErrorCode, type DaemonResponse,
+  type RequestDelivery, type RequestOptions } from './request.js'
 export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'
+export { decodeDailyUseFeedFrame, decodeDailyUseRequest, decodeDailyUseResponse,
+  type DailyUseFeedFrame, type DailyUseOperation, type DailyUseRequest,
+  type DailyUseResponse } from './generated.js'
+
+/** A typed command against the same profile daemon used by Electron and the CLI. */
+export async function dailyUseCommand<O extends DailyUseOperation>(endpoint: string,
+  request: DailyUseRequest<O>): Promise<DailyUseResponse<O>> {
+  decodeDailyUseRequest(request)
+  const { op, ...fields } = request
+  const response = await requestDaemon(endpoint, op, fields)
+  try { return decodeDailyUseResponse(op, response) as DailyUseResponse<O> }
+  catch (error) {
+    throw new DaemonRequestError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`, 'unknown')
+  }
+}
 
 const APPLICATION_PROTOCOL = 'ade-application-v1'
 const SESSION_PROTOCOL = 'ade-sessions-v1'
@@ -150,6 +170,46 @@ export class AdeClient {
   subscribeFeed(listener: FeedListener): () => void {
     this.feedListeners.add(listener)
     return () => { this.feedListeners.delete(listener) }
+  }
+
+  /** Selected generated frames. Reconnect starts with a new catalog snapshot. */
+  subscribeDailyUseFeed(listener: (frame: DailyUseFeedFrame) => void): () => void {
+    return this.subscribeFeed((frame) => {
+      if (frame.type === 'catalog' || frame.type === 'conversation_changed') {
+        let selected: DailyUseFeedFrame
+        try { selected = decodeDailyUseFeedFrame(frame) }
+        catch (error) {
+          this.publish({ status: 'incompatible', detail: `Daemon daily-use contract is invalid: ${String(error)}` })
+          this.stop()
+          return
+        }
+        listener(selected)
+      }
+    })
+  }
+
+  command<O extends DailyUseOperation>(request: DailyUseRequest<O>): Promise<DailyUseResponse<O>> {
+    if (!this.endpoint) return Promise.reject(new Error('Profile daemon endpoint is unavailable'))
+    return dailyUseCommand(this.endpoint, request)
+  }
+
+  getCatalog(): Promise<DailyUseResponse<'catalog.get'>> {
+    return this.command<'catalog.get'>({ op: 'catalog.get' })
+  }
+
+  getConversation(conversationId: string, before?: number, limit?: number): Promise<DailyUseResponse<'conversation.get'>> {
+    return this.command<'conversation.get'>({ op: 'conversation.get', conversation_id: conversationId,
+      ...(before !== undefined ? { before } : {}), ...(limit !== undefined ? { limit } : {}) })
+  }
+
+  sendPrompt(conversationId: string, requestId: string, text: string): Promise<DailyUseResponse<'agent.send'>> {
+    return this.command<'agent.send'>({ op: 'agent.send', conversation_id: conversationId, request_id: requestId, text })
+  }
+
+  answerRequest(conversationId: string, requestId: string, decision: string,
+    answers?: unknown): Promise<DailyUseResponse<'agent.answer'>> {
+    return this.command<'agent.answer'>({ op: 'agent.answer', conversation_id: conversationId,
+      request_id: requestId, decision, ...(answers !== undefined ? { answers } : {}) })
   }
 
   start(): void {

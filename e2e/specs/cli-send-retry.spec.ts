@@ -101,7 +101,7 @@ test('CLI caller-owned send ID survives lost reply and daemon handoff without re
     const text = 'hello once'
     const lost = await send(proxySocket, first.id, text, requestId)
     expect(dropped).toBe(true)
-    expect(lost).toMatchObject({ code: 3, output: { type: 'error', code: 'unavailable' } })
+    expect(lost).toMatchObject({ code: 3, output: { type: 'error', code: 'unavailable', delivery: 'unknown' } })
     await expect.poll(async () => (await rpc(socket, { op: 'conversation.get',
       conversation_id: first.id })).messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: requestId, role: 'user', text }),

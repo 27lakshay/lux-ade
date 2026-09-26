@@ -5,10 +5,13 @@ const SESSION_PROTOCOL = 'ade-sessions-v1'
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 const MAX_REQUEST_BYTES = 128 * 1024
 
-export type DaemonErrorCode = 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' | 'invalid_request'
+export type DaemonErrorCode = 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' |
+  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded'
+export type RequestDelivery = 'not_sent' | 'unknown' | 'rejected'
 
 export class DaemonRequestError extends Error {
-  constructor(public readonly code: DaemonErrorCode, message: string) {
+  constructor(public readonly code: DaemonErrorCode, message: string,
+    public readonly delivery: RequestDelivery = 'not_sent') {
     super(message)
     this.name = 'DaemonRequestError'
   }
@@ -42,6 +45,7 @@ export function requestDaemon(
   return new Promise((resolve, reject) => {
     const socket = createConnection({ path: socketPath })
     let settled = false
+    let requestSent = false
     let phase: 'hello' | 'response' = 'hello'
     let buffer = Buffer.alloc(0)
     const timer = setTimeout(() => fail('timeout', 'The profile daemon did not respond before the deadline.'), timeoutMs)
@@ -54,12 +58,13 @@ export function requestDaemon(
       resolve(response)
     }
 
-    function fail(code: DaemonErrorCode, message: string): void {
+    function fail(code: DaemonErrorCode, message: string,
+      delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent'): void {
       if (settled) return
       settled = true
       clearTimeout(timer)
       socket.destroy()
-      reject(new DaemonRequestError(code, message))
+      reject(new DaemonRequestError(code, message, delivery))
     }
 
     socket.on('connect', () => socket.write('{"op":"hello"}\n'))
@@ -80,8 +85,12 @@ export function requestDaemon(
         const response = frame as Record<string, unknown>
         if (typeof response.type !== 'string') return fail('protocol', 'Daemon response has no type.')
         if (response.type === 'error') {
-          return fail(response.code === 'unavailable' ? 'unavailable' : 'daemon',
-            typeof response.message === 'string' ? response.message : 'Daemon rejected the request.')
+          const knownCodes: DaemonErrorCode[] = ['unavailable', 'invalid_request', 'conflict',
+            'outcome_unknown', 'in_progress', 'overloaded']
+          const code = typeof response.code === 'string' && knownCodes.includes(response.code as DaemonErrorCode)
+            ? response.code as DaemonErrorCode : 'daemon'
+          return fail(code, typeof response.message === 'string' ? response.message : 'Daemon rejected the request.',
+            phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown')
         }
         if (phase === 'hello') {
           if (response.type !== 'hello') return fail('protocol', 'Daemon did not provide a hello response.')
@@ -90,6 +99,7 @@ export function requestDaemon(
           }
           if (op === 'hello') return finish(response as DaemonResponse)
           phase = 'response'
+          requestSent = true
           socket.write(`${request}\n`)
         } else {
           return finish(response as DaemonResponse)

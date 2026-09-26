@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "generate:contract": "node ../../scripts/generate-client-contract.mjs",
+    "check:contract": "node ../../scripts/generate-client-contract.mjs --check",
+    "build": "pnpm check:contract && tsc",
+    "typecheck": "pnpm check:contract && tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "24.6.0",

@@ -151,7 +151,8 @@ Then run account inspect and account verify with the inspected identity JSON.
 ADE never receives the login token.
 `
 
-type ErrorCode = 'usage' | 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' | 'invalid_request'
+type ErrorCode = 'usage' | 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' |
+  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded'
 
 class CliError extends Error {
   constructor(public readonly code: ErrorCode, message: string) {
@@ -1196,9 +1197,11 @@ async function main(): Promise<void> {
     const code = error instanceof DaemonRequestError || error instanceof CliError ? error.code : 'protocol'
     const message = error instanceof Error ? error.message : String(error)
     const exitCodes: Record<ErrorCode, number> = {
-      usage: 2, invalid_request: 2, unavailable: 3, incompatible: 4, timeout: 5, protocol: 6, daemon: 7,
+      usage: 2, invalid_request: 2, unavailable: 3, incompatible: 4, timeout: 5, protocol: 6,
+      daemon: 7, conflict: 8, outcome_unknown: 9, in_progress: 10, overloaded: 11,
     }
-    process.stderr.write(`${JSON.stringify({ type: 'error', code, message })}\n`)
+    process.stderr.write(`${JSON.stringify({ type: 'error', code, message,
+      ...(error instanceof DaemonRequestError ? { delivery: error.delivery } : {}) })}\n`)
     process.exitCode = exitCodes[code as ErrorCode] ?? 6
   }
 }

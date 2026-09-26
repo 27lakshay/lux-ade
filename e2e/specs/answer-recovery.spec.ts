@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { pathToFileURL } from 'node:url'
 import { rpc, startDaemon, stopManagedProfile, stopOrphanRuntime } from '../fixtures/daemon'
 
 const crashScenarios: Array<{ failpoint: string; expire: boolean; fault?: boolean }> = [
@@ -61,7 +62,12 @@ for (const scenario of crashScenarios) {
 
       const answer = { op: 'agent.answer', conversation_id: conversation.id,
         request_id: requestId, decision: 'decline' }
-      await expect(rpc(socket, answer)).rejects.toThrow()
+      if (scenario.failpoint === 'after_delivery' && !scenario.expire) {
+        const client = await import(pathToFileURL(resolve('packages/client/dist/index.js')).href)
+        await expect(client.dailyUseCommand(socket, answer)).rejects.toMatchObject({ delivery: 'unknown' })
+      } else {
+        await expect(rpc(socket, answer)).rejects.toThrow()
+      }
       await expect.poll(() => child?.exitCode).toBe(94)
       if (scenario.expire) await writeFile(join(mock, 'expire-approval'), '')
       await launch()
