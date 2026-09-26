@@ -785,8 +785,25 @@ impl Sessions {
             .as_str()
             .is_some_and(|op| op.starts_with("review."))
         {
-            let workspace = self.workspace(string("workspace_id")?)?;
-            return self.review.command(&workspace.root, request);
+            let (workspace, binding, common_binding) = {
+                let data = self.data.lock().unwrap();
+                let id = string("workspace_id")?;
+                data.store.ensure_workspace_bound(id)?;
+                let workspace = data.store.workspace(id)?;
+                let common_binding = workspace
+                    .repository_id
+                    .as_deref()
+                    .map(|repository_id| data.store.repository_binding_identity(repository_id))
+                    .transpose()?;
+                (
+                    workspace,
+                    data.store.workspace_binding_identity(id)?,
+                    common_binding,
+                )
+            };
+            return self
+                .review
+                .command(&workspace.root, binding, common_binding, request);
         }
         if request["op"]
             .as_str()

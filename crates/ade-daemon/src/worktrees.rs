@@ -220,6 +220,23 @@ pub(crate) fn neutral(command: &mut Command) {
 fn run(command: Command, timeout: u64, lock: Option<&File>) -> Result<Value> {
     run_input(command, timeout, lock, None)
 }
+fn e2e_pause_enabled() -> bool {
+    cfg!(debug_assertions) && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+}
+fn e2e_pause(directory: &Path) -> Result<()> {
+    if directory.join("armed").exists() {
+        std::fs::write(directory.join("signal"), b"ready")?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !directory.join("release").exists() {
+            ensure!(
+                Instant::now() < deadline,
+                "Timed out waiting for E2E worker release"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    Ok(())
+}
 pub(crate) fn run_input(
     mut command: Command,
     timeout: u64,
@@ -244,6 +261,19 @@ pub(crate) fn run_input(
                 Ok(())
             });
         }
+    }
+    if e2e_pause_enabled()
+        && lock.is_some()
+        && let Ok(directory) = std::env::var("ADE_E2E_WORKTREE_SPAWN_PAUSE_DIR")
+    {
+        e2e_pause(Path::new(&directory))?;
+    }
+    if e2e_pause_enabled()
+        && lock.is_some()
+        && command.get_args().any(|arg| arg == "remove")
+        && let Ok(directory) = std::env::var("ADE_E2E_WORKTREE_REMOVE_PAUSE_DIR")
+    {
+        e2e_pause(Path::new(&directory))?;
     }
     let mut child = command
         .spawn()
@@ -319,6 +349,9 @@ pub(crate) fn run_input(
 pub(crate) fn successful(output: &Value) -> Result<&str> {
     match output["exit_code"].as_i64() {
         Some(0) => {}
+        Some(86) if output["stderr"].as_str() == Some("ADE_WORKER_NEEDS_REBIND_V1\n") => {
+            return Err(ade_core::error::NeedsRebind.into());
+        }
         Some(_) => return Err(LifecycleFailure::LifecycleCommandFailed.into()),
         None => return Err(LifecycleFailure::LifecycleOutcomeUnknown.into()),
     }
@@ -548,11 +581,25 @@ impl Worktrees {
             _lease: lease,
         })
     }
-    fn command_for(&self, repo: &Repository, args: &[String]) -> Command {
+    fn command_for(&self, repo: &Repository, args: &[String]) -> Result<Command> {
+        let (device, inode) = repo
+            .root_device
+            .as_deref()
+            .zip(repo.root_inode.as_deref())
+            .ok_or(ade_core::error::NeedsRebind)?;
+        let (common_device, common_inode) = repo
+            .common_device
+            .as_deref()
+            .zip(repo.common_inode.as_deref())
+            .ok_or(ade_core::error::NeedsRebind)?;
         let mut c = Command::new(&self.worker);
         c.arg("--worktree-worker").arg(&self.binary);
         neutral(&mut c);
-        c.current_dir(&repo.root);
+        c.current_dir(&repo.root)
+            .env("ADE_EXPECT_CWD_DEV", device)
+            .env("ADE_EXPECT_CWD_INO", inode)
+            .env("ADE_EXPECT_GIT_COMMON_DEV", common_device)
+            .env("ADE_EXPECT_GIT_COMMON_INO", common_inode);
         let empty = self.directory.join("empty.toml");
         c.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &empty);
         c.arg("--config").arg(
@@ -583,11 +630,11 @@ impl Worktrees {
             ));
         }
         c.args(args);
-        c
+        Ok(c)
     }
     fn list(&self, repo: &Repository, lock: &File) -> Result<Value> {
         let result = run(
-            self.command_for(repo, &["list".into(), "--format=json".into()]),
+            self.command_for(repo, &["list".into(), "--format=json".into()])?,
             repo.config.timeout_seconds,
             Some(lock),
         )?;
@@ -1054,6 +1101,7 @@ impl Worktrees {
         );
         ensure!(d.busy.len() < 8, "Too many lifecycle operations");
         let mut remove_path = None;
+        let mut remove_identity = None;
         if op == "worktree.switch" {
             let target = field(request, "target")?;
             ensure!(!target.starts_with('-'), "Target cannot begin with '-'");
@@ -1097,6 +1145,7 @@ impl Worktrees {
                 ["keep", "merged"].contains(&policy),
                 "Branch policy must be keep or merged"
             );
+            remove_identity = Some(identity(text)?);
             remove_path = Some(path);
         }
         // A supervisor retains the lock if this daemon dies. Its wt child does not
@@ -1141,7 +1190,7 @@ impl Worktrees {
         drop(d);
         let hub = self.clone();
         std::thread::spawn(move || {
-            hub.execute(repo, job, lock, remove_path);
+            hub.execute(repo, job, lock, remove_path, remove_identity);
         });
         self.snapshot(id)
     }
@@ -1151,6 +1200,7 @@ impl Worktrees {
         mut job: Operation,
         lock: File,
         remove_path: Option<PathBuf>,
+        remove_identity: Option<(String, String)>,
     ) {
         let result = (|| -> Result<()> {
             // Recheck after admission and immediately before Worktrunk receives
@@ -1173,7 +1223,7 @@ impl Worktrees {
                 self.command_for(
                     &repo,
                     &["config".into(), "show".into(), "--format=json".into()],
-                ),
+                )?,
                 repo.config.timeout_seconds,
                 Some(&lock),
             )?;
@@ -1219,8 +1269,20 @@ impl Worktrees {
                 if failed_before {
                     let mut target = repo.clone();
                     target.root = path.into();
+                    let (device, inode) = identity(path)?;
+                    let target_common = std::fs::canonicalize(git(
+                        path,
+                        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                    )?)?;
+                    ensure!(
+                        target_common == Path::new(&repo.common_dir)
+                            && identity(path)? == (device.clone(), inode.clone()),
+                        ade_core::error::NeedsRebind
+                    );
+                    target.root_device = Some(device);
+                    target.root_inode = Some(inode);
                     job.result = run(
-                        self.command_for(&target, &["hook".into(), "pre-start".into()]),
+                        self.command_for(&target, &["hook".into(), "pre-start".into()])?,
                         repo.config.timeout_seconds,
                         Some(&lock),
                     )?;
@@ -1294,11 +1356,23 @@ impl Worktrees {
             } else {
                 field(&job.request, "target")?.into()
             });
-            let output = run(
-                self.command_for(&repo, &args),
-                repo.config.timeout_seconds,
-                Some(&lock),
-            );
+            let mut command = self.command_for(&repo, &args)?;
+            if let (Some(path), Some((device, inode))) = (&remove_path, &remove_identity) {
+                ensure!(
+                    std::fs::canonicalize(path)? == *path,
+                    ade_core::error::NeedsRebind
+                );
+                ensure!(
+                    identity(path.to_str().context("Path must be UTF-8")?)?
+                        == (device.clone(), inode.clone()),
+                    ade_core::error::NeedsRebind
+                );
+                command
+                    .env("ADE_EXPECT_REMOVE_PATH", path)
+                    .env("ADE_EXPECT_REMOVE_DEV", device)
+                    .env("ADE_EXPECT_REMOVE_INO", inode);
+            }
+            let output = run(command, repo.config.timeout_seconds, Some(&lock));
             // A failing hook/timeout is not a rollback. Always inspect actual state.
             let after = self.list(&repo, &lock);
             if let Ok(after) = &after {
@@ -1350,13 +1424,12 @@ impl Worktrees {
                 job.result["value"] = value;
             }
             if let Err(error) = after {
-                bail!(
-                    "{}; reconciliation failed: {error}",
-                    command_result
-                        .err()
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "Command completed".into())
-                );
+                if let Err(command_error) = command_result {
+                    return Err(command_error.context(format!(
+                        "Post-command worktree reconciliation also failed: {error}"
+                    )));
+                }
+                bail!("Command completed; reconciliation failed: {error}");
             }
             command_result?;
             ensure!(
@@ -1417,11 +1490,82 @@ pub fn worker_main() -> Result<()> {
         unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } >= 0,
         "Could not isolate lifecycle lock"
     );
+    if e2e_pause_enabled()
+        && let Ok(directory) = std::env::var("ADE_E2E_WORKER_PAUSE_DIR")
+    {
+        e2e_pause(Path::new(&directory))?;
+    }
+    match (
+        std::env::var("ADE_EXPECT_CWD_DEV").ok(),
+        std::env::var("ADE_EXPECT_CWD_INO").ok(),
+    ) {
+        (Some(device), Some(inode)) => {
+            let current = std::fs::metadata(".").context("Supervised directory is unavailable")?;
+            ensure!(
+                current.dev().to_string() == device && current.ino().to_string() == inode,
+                ade_core::error::NeedsRebind
+            );
+        }
+        (None, None) => {}
+        _ => bail!("Incomplete supervised directory identity"),
+    }
+    match (
+        std::env::var("ADE_EXPECT_GIT_COMMON_DEV").ok(),
+        std::env::var("ADE_EXPECT_GIT_COMMON_INO").ok(),
+    ) {
+        (Some(device), Some(inode)) => {
+            let output = Command::new("git")
+                .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+                .env("GIT_OPTIONAL_LOCKS", "0")
+                .output()
+                .context("Could not resolve supervised Git common directory")?;
+            ensure!(output.status.success(), ade_core::error::NeedsRebind);
+            let common = std::str::from_utf8(&output.stdout)?.trim_end();
+            let common = std::fs::canonicalize(common)
+                .context("Supervised Git common directory is unavailable")?;
+            let current = std::fs::metadata(common)?;
+            ensure!(
+                current.dev().to_string() == device && current.ino().to_string() == inode,
+                ade_core::error::NeedsRebind
+            );
+        }
+        (None, None) => {}
+        _ => bail!("Incomplete supervised Git common directory identity"),
+    }
+    match (
+        std::env::var("ADE_EXPECT_REMOVE_PATH").ok(),
+        std::env::var("ADE_EXPECT_REMOVE_DEV").ok(),
+        std::env::var("ADE_EXPECT_REMOVE_INO").ok(),
+    ) {
+        (Some(path), Some(device), Some(inode)) => {
+            ensure!(
+                std::fs::canonicalize(&path)? == Path::new(&path),
+                ade_core::error::NeedsRebind
+            );
+            ensure!(
+                identity(&path)? == (device, inode),
+                ade_core::error::NeedsRebind
+            );
+        }
+        (None, None, None) => {}
+        _ => bail!("Incomplete supervised removal target identity"),
+    }
     let mut args = std::env::args_os().skip(2);
     let binary = args.next().context("Missing supervised command")?;
     let status = Command::new(binary)
         .args(args)
         .env_remove("ADE_LIFECYCLE_LOCK_FD")
+        .env_remove("ADE_EXPECT_CWD_DEV")
+        .env_remove("ADE_EXPECT_CWD_INO")
+        .env_remove("ADE_EXPECT_GIT_COMMON_DEV")
+        .env_remove("ADE_EXPECT_GIT_COMMON_INO")
+        .env_remove("ADE_EXPECT_REMOVE_PATH")
+        .env_remove("ADE_EXPECT_REMOVE_DEV")
+        .env_remove("ADE_EXPECT_REMOVE_INO")
+        .env_remove("ADE_E2E_WORKER_PAUSE_DIR")
+        .env_remove("ADE_E2E_WORKER_PAUSE_ENABLED")
+        .env_remove("ADE_E2E_WORKTREE_SPAWN_PAUSE_DIR")
+        .env_remove("ADE_E2E_WORKTREE_REMOVE_PAUSE_DIR")
         .status()
         .context("Could not start supervised command; check Git or Worktrunk installation")?;
     std::process::exit(status.code().unwrap_or(1));

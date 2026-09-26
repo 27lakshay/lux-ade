@@ -73,3 +73,13 @@ review found no remaining P1/P2 in the initial rebind paths.
   crash after the last binding commit, and fences a linked workspace when its
   Git common directory diverges from its repository. The admission-to-child
   path replacement race still blocks full F061/R014 acceptance.
+- 2026-09-26: Worktrunk and review Git workers now compare their inherited
+  working directory and Git common directory against the admitted physical
+  binding before executing. Worktree removal also checks the target at
+  admission and in the worker. Real-process E2Es replace the checkout,
+  Git metadata, or removal target during a paused launch and expect a
+  `needs_rebind` failure without mutating the replacement. This narrows the
+  admission-to-child race. Worktrunk still receives a path for removal, and
+  Git/Worktrunk can reopen `.git` after the worker's final check; those
+  post-check races remain. Provider, PTY, service and script child launches
+  also still need a physical binding at execution. F061/R014/R007 remain open.

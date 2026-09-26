@@ -27,7 +27,17 @@ pub(super) fn run() -> anyhow::Result<()> {
         .ok();
 
     if std::env::args().nth(1).as_deref() == Some("--worktree-worker") {
-        return ade_daemon::worktrees::worker_main();
+        return match ade_daemon::worktrees::worker_main() {
+            Err(error)
+                if error
+                    .chain()
+                    .any(|cause| cause.is::<ade_core::error::NeedsRebind>()) =>
+            {
+                eprintln!("ADE_WORKER_NEEDS_REBIND_V1");
+                std::process::exit(86);
+            }
+            result => result,
+        };
     }
     if ade_daemon::bench::enabled() {
         std::thread::spawn(|| {

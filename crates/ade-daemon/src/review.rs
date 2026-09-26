@@ -13,6 +13,7 @@ use std::{
     fs,
     hash::{Hash, Hasher},
     io::Read,
+    os::unix::fs::MetadataExt,
     path::{Component, Path},
     process::Command,
     sync::{Arc, Mutex},
@@ -56,18 +57,41 @@ fn path_arg(path: &str) -> Result<()> {
 struct Git<'a> {
     root: &'a str,
     guard: &'a ReviewGuard,
+    binding: (u64, u64),
+    common_binding: Option<(u64, u64)>,
 }
 impl Git<'_> {
+    fn ensure_root_bound(&self) -> Result<()> {
+        ensure!(
+            fs::metadata(self.root)
+                .is_ok_and(|item| { item.is_dir() && (item.dev(), item.ino()) == self.binding }),
+            ade_core::error::NeedsRebind
+        );
+        Ok(())
+    }
     fn run(&self, args: &[&str], input: Option<Vec<u8>>, timeout: u64) -> Result<Value> {
         let mut c = Command::new(std::env::current_exe()?);
         c.args(["--worktree-worker", "git"]);
         worktrees::neutral(&mut c);
         c.current_dir(self.root)
+            .env("ADE_EXPECT_CWD_DEV", self.binding.0.to_string())
+            .env("ADE_EXPECT_CWD_INO", self.binding.1.to_string())
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_LITERAL_PATHSPECS", "1")
             .env("GIT_EDITOR", "true")
             .args(["-c", "color.ui=false", "-c", "core.quotePath=true"])
             .args(args);
+        if let Some((device, inode)) = self.common_binding {
+            c.env("ADE_EXPECT_GIT_COMMON_DEV", device.to_string())
+                .env("ADE_EXPECT_GIT_COMMON_INO", inode.to_string());
+        }
+        if cfg!(debug_assertions)
+            && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+            && let Ok(directory) = std::env::var("ADE_E2E_REVIEW_PAUSE_DIR")
+        {
+            c.env_remove("ADE_E2E_REVIEW_PAUSE_DIR")
+                .env("ADE_E2E_WORKER_PAUSE_DIR", directory);
+        }
         worktrees::run_input(c, timeout, Some(&self.guard.file), input)
     }
     fn text(&self, args: &[&str]) -> Result<String> {
@@ -97,6 +121,7 @@ impl Git<'_> {
         Ok(format!("{:016x}", h.finish()))
     }
     fn status(&self) -> Result<Value> {
+        self.ensure_root_bound()?;
         let raw = self.text(&[
             "status",
             "--porcelain=v2",
@@ -125,6 +150,7 @@ impl Git<'_> {
                 ));
             }
         }
+        self.ensure_root_bound()?;
         state["index_token"] = json!(token);
         state["revision"] = json!(fingerprint(&[
             raw.as_bytes(),
@@ -168,14 +194,9 @@ impl Git<'_> {
             args.extend(["--", path]);
         }
         let out = self.run(&args, None, 15)?;
-        ensure!(
-            out["exit_code"] == 0 || (untracked && out["exit_code"] == 1),
-            if out["exit_code"].is_null() {
-                ade_core::error::LifecycleFailure::LifecycleOutcomeUnknown
-            } else {
-                ade_core::error::LifecycleFailure::LifecycleCommandFailed
-            }
-        );
+        if !(untracked && out["exit_code"] == 1) {
+            worktrees::successful(&out)?;
+        }
         let patch = out["stdout"].as_str().context("Missing diff")?;
         let (header, hunks) = split_patch(patch);
         let special = file["conflict"] == true
@@ -305,9 +326,30 @@ impl Review {
         }
         Ok(None)
     }
-    pub fn command(self: &Arc<Self>, root: &str, request: &Value) -> Result<Value> {
+    pub fn command(
+        self: &Arc<Self>,
+        root: &str,
+        workspace_binding: (u64, u64),
+        common_binding: Option<(u64, u64)>,
+        request: &Value,
+    ) -> Result<Value> {
+        let metadata = fs::metadata(root)?;
+        ensure!(
+            metadata.is_dir() && (metadata.dev(), metadata.ino()) == workspace_binding,
+            ade_core::error::NeedsRebind
+        );
         let canonical = worktrees::git(root, &["rev-parse", "--show-toplevel"])?;
-        let root = canonical.as_str();
+        let git_root = canonical.as_str();
+        let metadata = fs::metadata(git_root)?;
+        let binding = (metadata.dev(), metadata.ino());
+        ensure!(
+            metadata.is_dir()
+                && fs::metadata(root).is_ok_and(|item| {
+                    item.is_dir() && (item.dev(), item.ino()) == workspace_binding
+                }),
+            ade_core::error::NeedsRebind
+        );
+        let root = git_root;
         let op = string(request, "op")?;
         if op == "review.operation" {
             return self
@@ -338,6 +380,8 @@ impl Review {
             let state = Git {
                 root,
                 guard: &guard,
+                binding,
+                common_binding,
             }
             .status()?;
             *cached = Some((Instant::now(), state.clone()));
@@ -348,6 +392,8 @@ impl Review {
             return Git {
                 root,
                 guard: &guard,
+                binding,
+                common_binding,
             }
             .diff(string(request, "path")?, request["staged"] == true);
         }
@@ -383,6 +429,8 @@ impl Review {
             let git = Git {
                 root: &root,
                 guard: &guard,
+                binding,
+                common_binding,
             };
             let result = hub.mutate(&git, &request);
             match result {
@@ -407,6 +455,12 @@ impl Review {
                 ],
             ) {
                 eprintln!("Could not persist Git receipt: {e}");
+            }
+            if cfg!(debug_assertions)
+                && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+                && let Ok(directory) = std::env::var("ADE_E2E_REVIEW_PAUSE_DIR")
+            {
+                let _ = fs::write(Path::new(&directory).join("done"), completed.to_string());
             }
             drop(guard);
             hub.cache.lock().unwrap().remove(&root);

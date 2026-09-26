@@ -1382,6 +1382,24 @@ impl Store {
         Ok(!repository.needs_rebind
             && binding_matches(&self.connection, "repository", id, &repository.root)?)
     }
+    pub fn workspace_binding_identity(&self, id: &str) -> Result<(u64, u64)> {
+        self.binding_identity("workspace", id)
+    }
+    pub fn repository_binding_identity(&self, id: &str) -> Result<(u64, u64)> {
+        self.binding_identity("repository", id)
+    }
+    fn binding_identity(&self, kind: &str, id: &str) -> Result<(u64, u64)> {
+        let saved: Option<(String, String)> = self
+            .connection
+            .query_row(
+                "SELECT device,inode FROM path_bindings WHERE kind=?1 AND id=?2",
+                params![kind, id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let (device, inode) = saved.context(ade_core::error::NeedsRebind)?;
+        Ok((device.parse()?, inode.parse()?))
+    }
     pub fn ensure_workspace_bound(&self, id: &str) -> Result<()> {
         // A path can be replaced by an external process after this check and
         // before a spawned child opens it. Callers recheck at admission and
