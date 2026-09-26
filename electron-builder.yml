@@ -15,17 +15,11 @@ mac:
 extraFiles:
   - from: target/release/ade-daemon
     to: MacOS/ade-daemon
+  - from: target/release/ade-control
+    to: MacOS/ade-control
   - from: target/release/ade-runtime
     to: MacOS/ade-runtime
 extraResources:
-  - from: scripts/browser_lease.py
-    to: browser_lease.py
-  - from: scripts/profiles.py
-    to: profiles.py
-  - from: scripts/managed_backup.py
-    to: managed_backup.py
-  - from: scripts/runtime.py
-    to: runtime.py
   - from: pnpm-lock.yaml
     to: pnpm-lock.yaml
   - from: .ade/package-stage/providers

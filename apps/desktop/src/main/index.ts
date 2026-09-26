@@ -586,7 +586,8 @@ function publishProfile(update: Partial<ProfileState>): ProfileState {
 }
 
 async function launcher(action: string, ...args: string[]): Promise<Record<string, unknown>> {
-  const script = app.isPackaged ? join(process.resourcesPath, 'profiles.py') : resolve(app.getAppPath(), '../../scripts/profiles.py')
+  const control = app.isPackaged ? resolve(process.resourcesPath, '../MacOS/ade-control')
+    : resolve(app.getAppPath(), '../../target/debug/ade-control')
   const binary = process.env.ADE_DAEMON_BIN ?? (app.isPackaged
     ? resolve(process.resourcesPath, '../MacOS/ade-daemon')
     : resolve(app.getAppPath(), '../../target/debug/ade-daemon'))
@@ -594,10 +595,10 @@ async function launcher(action: string, ...args: string[]): Promise<Record<strin
     ...process.env,
     ADE_NODE_BIN: process.execPath,
     ADE_BUN_BIN: join(process.resourcesPath, 'bin/bun'),
+    ADE_CONTROL_PACKAGED: '1',
     ELECTRON_RUN_AS_NODE: '1',
   } : process.env
-  const python = app.isPackaged ? '/usr/bin/python3' : 'python3'
-  const result = await execFileAsync(python, [script, '--daemon', binary, action, ...args], {
+  const result = await execFileAsync(control, ['profiles', '--daemon', binary, action, ...args], {
     timeout: 35_000,
     maxBuffer: 1024 * 1024,
     env: environment,

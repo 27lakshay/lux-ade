@@ -11,14 +11,14 @@ const execFileAsync = promisify(execFile)
 const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
 const electronExecutable = requireDesktop('electron') as string
-const launcher = resolve('scripts/profiles.py')
+const launcher = resolve('target/debug/ade-control')
 const daemonBinary = resolve('target/debug/ade-daemon')
 type Profile = { id: string; home: string }
 type Launch = { socket: string }
 
 async function command(home: string, ...args: string[]): Promise<Record<string, unknown>> {
   try {
-    const result = await execFileAsync('python3', [launcher, '--home', home, '--daemon', daemonBinary, ...args],
+    const result = await execFileAsync(launcher, ['profiles', '--home', home, '--daemon', daemonBinary, ...args],
       { timeout: 30_000 })
     return JSON.parse(result.stdout) as Record<string, unknown>
   } catch (error) {
@@ -69,8 +69,7 @@ test('Electron guides a restored profile through lifecycle, repository and works
     stage = 'Electron connection'
     await expect(window.locator('header').getByRole('status')).toHaveText('connected', { timeout: 15_000 })
     stage = 'target daemon ownership'
-    const located = await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate',
-      '--home', target.home])
+    const located = await execFileAsync(launcher, ['locate', '--home', target.home])
     const targetSocket = (JSON.parse(located.stdout) as { socket: string }).socket
     owned.push(await managedProfileOwner(targetSocket))
     const panel = window.getByRole('region', { name: 'Restore workspace paths' })
@@ -113,8 +112,7 @@ test('Electron guides a restored profile through lifecycle, repository and works
     await application?.close().catch(() => undefined)
     const targetProfiles = (await command(home, 'list').catch(() => ({ profiles: [] }))).profiles as Profile[]
     for (const target of targetProfiles) {
-      const located = await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate',
-        '--home', target.home]).catch(() => null)
+      const located = await execFileAsync(launcher, ['locate', '--home', target.home]).catch(() => null)
       if (located) {
         const socket = (JSON.parse(located.stdout) as { socket: string }).socket
         if (owned.some((item) => item.socket === socket)) continue

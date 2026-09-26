@@ -1,6 +1,6 @@
 import { expect, test, _electron as electron } from '@playwright/test'
-import { execFileSync } from 'node:child_process'
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { execFileSync, spawn } from 'node:child_process'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -10,8 +10,69 @@ import { managedProfileOwner, stopManagedProfile, stopManagedProfiles, type Mana
 const app = resolve(process.env.ADE_E2E_PACKAGE_APP ?? 'dist/electron/mac-arm64/Lux ADE.app')
 const executable = join(app, 'Contents/MacOS/Lux ADE')
 const resources = join(app, 'Contents/Resources')
+const nativeControl = join(app, 'Contents/MacOS/ade-control')
 const bundledBun = join(resources, 'bin/bun')
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+
+test('installed startup, browser lease, backup and interrupted restore use native control', async () => {
+  test.setTimeout(90_000)
+  const directory = await mkdtemp(join(tmpdir(), 'ade-package-native-control-'))
+  const profilesHome = join(directory, 'profiles')
+  const bundle = join(directory, 'backend-bundle')
+  const signal = join(directory, 'published')
+  const release = join(directory, 'release')
+  const asar = await readFile(join(resources, 'app.asar'))
+  expect(asar.includes('/usr/bin/python3')).toBe(false)
+  expect(asar.includes('profiles.py')).toBe(false)
+  expect((await readdir(resources)).filter((item) => item.endsWith('.py'))).toEqual([])
+  const env = { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    ADE_PROFILES_HOME: profilesHome, ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
+    ADE_E2E_HIDE_WINDOW: '1', ADE_PYTHON_BIN: join(directory, 'missing-python') }
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const run = async (...args: string[]): Promise<Record<string, any>> => JSON.parse((await promisify(execFile)(
+    nativeControl, args, { env: { ...env, PATH: '/no-system-tools' }, timeout: 35_000 })).stdout)
+  let application = await electron.launch({ executablePath: executable, cwd: directory, env })
+  let owner: ManagedProfileOwner | null = null
+  try {
+    const window = await application.firstWindow()
+    await window.getByRole('textbox', { name: 'New profile' }).fill('Native')
+    await window.getByRole('button', { name: 'Create' }).click()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const profile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles[0]
+    const located = await run('locate', '--home', profile.home)
+    owner = await managedProfileOwner(located.socket)
+    const busy = spawn(nativeControl, ['browser-lease', join(profile.home, '.ade-browser-session.lock')],
+      { stdio: ['pipe', 'pipe', 'pipe'], env: { ...env, PATH: '/no-system-tools' } })
+    const state = await new Promise<string>((done) => busy.stdout.once('data', (chunk: Buffer) => done(chunk.toString().trim())))
+    expect(state).toBe('busy')
+    busy.stdin.end()
+    expect((await run('profiles', '--home', profilesHome, 'backup-backend', '--out', bundle)).type)
+      .toBe('profile_backend_backup')
+    const restore = spawn(nativeControl, ['profiles', '--home', profilesHome, 'restore-backend',
+      '--backup', bundle, '--name', 'Recovered'], { stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...env, PATH: '/no-system-tools', ADE_E2E_RESTORE_PUBLISHED_SIGNAL: signal,
+        ADE_E2E_RESTORE_PUBLISHED_RELEASE: release } })
+    await expect.poll(async () => readFile(signal, 'utf8').catch(() => '')).not.toBe('')
+    restore.kill('SIGKILL')
+    await new Promise<void>((done) => restore.once('exit', () => done()))
+    const pending = await run('profiles', '--home', profilesHome, 'pending-restores')
+    expect(pending.profiles).toHaveLength(1)
+    const resumed = await run('profiles', '--home', profilesHome, 'resume-restore', pending.profiles[0].id)
+    expect(resumed).toMatchObject({ type: 'profile_backend_restored', scope: 'profile-backend-only' })
+    expect((await run('profiles', '--home', profilesHome, 'pending-restores')).profiles).toEqual([])
+    await application.close()
+    const free = spawn(nativeControl, ['browser-lease', join(profile.home, '.ade-browser-session.lock')],
+      { stdio: ['pipe', 'pipe', 'pipe'], env: { ...env, PATH: '/no-system-tools' } })
+    const next = await new Promise<string>((done) => free.stdout.once('data', (chunk: Buffer) => done(chunk.toString().trim())))
+    expect(next).toBe('ready')
+    free.stdin.end()
+  } finally {
+    await application.close().catch(() => undefined)
+    if (owner) await stopManagedProfile(owner)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 async function executableWrapper(filename: string, binary: string, script: string): Promise<void> {
   await writeFile(filename, `#!/bin/sh\nexec ${shellQuote(binary)} ${shellQuote(script)} "$@"\n`, { mode: 0o755 })
@@ -53,7 +114,7 @@ test('packaged macOS app runs from its own resources and retains work across reo
     runtimeHome = profile.home
     const locate = await import('node:child_process')
     const { promisify } = await import('node:util')
-    const result = await promisify(locate.execFile)('/usr/bin/python3', [join(app, 'Contents/Resources/runtime.py'), 'locate', '--home', profile.home])
+    const result = await promisify(locate.execFile)(nativeControl, ['locate', '--home', profile.home])
     const socket = (JSON.parse(result.stdout) as { socket: string }).socket
     const hello = await rpc(socket, { op: 'hello' })
     owned = await managedProfileOwner(socket)
@@ -141,7 +202,7 @@ test('packaged macOS app runs scripts with the project npm and Node from a Finde
     const profile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles[0]
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
-    const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
+    const located = await promisify(execFile)(nativeControl, ['locate', '--home', profile.home])
     const socket = (JSON.parse(located.stdout) as { socket: string }).socket
     owned = { ...await managedProfileOwner(socket), home: profile.home }
     await window.getByRole('textbox', { name: 'Open folder' }).fill(folder)
@@ -221,7 +282,7 @@ test('packaged macOS app keeps two profile daemons, terminals and conversations 
       const active = await window.evaluate(() => window.adeHost.getProfileState())
       const profile = active.profiles.find((item) => item.id === active.activeId)
       expect(profile?.name).toBe(name)
-      const located = await execFileAsync('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile!.home])
+      const located = await execFileAsync(nativeControl, ['locate', '--home', profile!.home])
       const socket = (JSON.parse(located.stdout) as { socket: string }).socket
       const hello = await rpc(socket, { op: 'hello' })
       owned.push({ ...await managedProfileOwner(socket), id: profile!.id, home: profile!.home })
@@ -395,7 +456,7 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
     runtimeHome = profile.home
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
-    const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
+    const located = await promisify(execFile)(nativeControl, ['locate', '--home', profile.home])
     const socket = (JSON.parse(located.stdout) as { socket: string }).socket
     const hello = await rpc(socket, { op: 'hello' })
     owned = await managedProfileOwner(socket)
@@ -455,9 +516,9 @@ test('packaged launcher preserves an incompatible live owner and explains recove
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
   const execFileAsync = promisify(execFile)
-  const created = await execFileAsync('/usr/bin/python3', [join(resources, 'profiles.py'), '--home', profilesHome, 'create', 'Future'])
+  const created = await execFileAsync(nativeControl, ['profiles', '--home', profilesHome, 'create', 'Future'])
   const profile = (JSON.parse(created.stdout) as { profile: { home: string } }).profile
-  const located = await execFileAsync('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
+  const located = await execFileAsync(nativeControl, ['locate', '--home', profile.home])
   const socket = (JSON.parse(located.stdout) as { socket: string }).socket
   const registryBefore = await readFile(join(profilesHome, 'registry.json'), 'utf8')
   let requests = 0
@@ -515,7 +576,7 @@ test('packaged macOS daemon inspects a managed Oh My Pi account with bundled res
     const profile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles[0]
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
-    const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
+    const located = await promisify(execFile)(nativeControl, ['locate', '--home', profile.home])
     const socket = (JSON.parse(located.stdout) as { socket: string }).socket
     owned = await managedProfileOwner(socket)
     const account = (await rpc(socket, { op: 'account.create', provider: 'omp', name: 'Packaged OMP' })).account as

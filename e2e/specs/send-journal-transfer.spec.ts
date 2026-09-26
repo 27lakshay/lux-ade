@@ -11,6 +11,7 @@ import { managedProfileOwner, rpc, stopManagedProfiles, stopOrphanRuntime, type 
 const desktopDirectory = resolve('apps/desktop')
 const electronExecutable = createRequire(join(desktopDirectory, 'package.json'))('electron') as string
 const run = promisify(execFile)
+const control = resolve('target/debug/ade-control')
 
 test('pending-send transfer validates restored intent and holds replay across profile identities', async () => {
   test.setTimeout(120_000)
@@ -38,7 +39,7 @@ test('pending-send transfer validates restored intent and holds replay across pr
     await window.getByRole('button', { name: 'Create' }).click()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const source = (await window.evaluate(() => window.adeHost.getProfileState())).profiles.find((item) => item.name === 'Source')!
-    const sourceSocket = (JSON.parse((await run('python3', [resolve('scripts/runtime.py'), 'locate', '--home', source.home])).stdout) as { socket: string }).socket
+    const sourceSocket = (JSON.parse((await run(control, ['locate', '--home', source.home])).stdout) as { socket: string }).socket
     owned.push(await managedProfileOwner(sourceSocket))
     await window.getByRole('button', { name: 'New conversation' }).click()
     const conversation = window.getByRole('region', { name: 'Conversation' })
@@ -78,21 +79,21 @@ test('pending-send transfer validates restored intent and holds replay across pr
       return (snapshot.messages as Array<{ id: string; role: string }>).some((message) =>
         message.id === record.requestId && message.role === 'user')
     }).toBe(true)
-    const binding = JSON.parse(await readFile(join(source.home, 'runtime.json'), 'utf8')) as { data_directory: string }
-    await run('python3', [resolve('scripts/managed_backup.py'), 'create', '--data-dir', binding.data_directory, '--out', backend])
+    const binding = JSON.parse((await run(control, ['runtime', 'status', '--home', source.home])).stdout) as { data_directory: string }
+    await run(control, ['backup', 'create', '--data-dir', binding.data_directory, '--out', backend])
     const targetData = join(target.home, 'data')
     restoredData = targetData
     await mkdir(target.home, { recursive: true })
-    await run('python3', [resolve('scripts/managed_backup.py'), 'restore', '--backup', backend, '--data-dir', targetData])
-    await run('python3', [resolve('scripts/runtime.py'), 'adopt', '--home', target.home, '--data-dir', targetData])
+    await run(control, ['backup', 'restore', '--backup', backend, '--data-dir', targetData])
+    await run(control, ['runtime', 'bind', '--home', target.home])
 
     await writeFile(release, 'release')
-    await run('python3', [resolve('scripts/profiles.py'), '--home', profileRoot, 'select', target.id])
+    await run(control, ['profiles', '--home', profileRoot, 'select', target.id])
     application = await electron.launch({ ...options,
       env: { ...options.env, ADE_E2E_TEST_CLOSE_GUARD: '1' } })
     window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
-    const targetSocket = (JSON.parse((await run('python3', [resolve('scripts/runtime.py'), 'locate', '--home', target.home])).stdout) as { socket: string }).socket
+    const targetSocket = (JSON.parse((await run(control, ['locate', '--home', target.home])).stdout) as { socket: string }).socket
     owned.push(await managedProfileOwner(targetSocket))
     const proof = await rpc(targetSocket, { op: 'draft.send.get', conversation_id: record.conversationId,
       window_id: record.windowId })
@@ -114,7 +115,7 @@ test('pending-send transfer validates restored intent and holds replay across pr
     expect(afterClose).toMatchObject({ requestId: record.requestId, restoreHold: true })
     expect((await rpc(targetSocket, { op: 'draft.send.get', conversation_id: record.conversationId,
       window_id: record.windowId })).intent).toMatchObject({ request_id: record.requestId, state: 'pending' })
-    await run('python3', [resolve('scripts/profiles.py'), '--home', profileRoot, 'select', source.id])
+    await run(control, ['profiles', '--home', profileRoot, 'select', source.id])
     application = await electron.launch(options)
     window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')

@@ -1170,10 +1170,16 @@ function App(): React.JSX.Element {
   const activeProfileId = React.useRef<string | null>(null)
   React.useEffect(() => {
     const unsubscribeClient = window.adeHost.onClientState(setState)
+    const refreshClient = (profileId: string | null): void => {
+      void window.adeHost.getClientState().then((next) => {
+        if (activeProfileId.current === profileId) setState(next)
+      })
+    }
     const updateProfile = (next: ProfileState): void => {
       if (activeProfileId.current !== next.activeId) {
         activeProfileId.current = next.activeId
         setState(null)
+        refreshClient(next.activeId)
       }
       setProfile(next)
     }
@@ -1184,9 +1190,7 @@ function App(): React.JSX.Element {
     })
     void window.adeHost.getProfileState().then((next) => { if (!profileEventSeen) updateProfile(next) })
     const initialProfileId = activeProfileId.current
-    void window.adeHost.getClientState().then((next) => {
-      if (activeProfileId.current === initialProfileId) setState(next)
-    })
+    refreshClient(initialProfileId)
     return () => { unsubscribeClient(); unsubscribeProfile() }
   }, [])
   React.useEffect(() => {

@@ -10,12 +10,13 @@ Public delivery, signing identity, and release ownership remain deferred.
 |---|---|---|
 | Client to daemon | `ade-application-v1` | `ade-core/src/protocol.rs` |
 | Daemon to supervisor | `ade-runtime-v8` | `ade-core/src/protocol.rs` |
-| SQLite data | `PRAGMA user_version = 7` | `ade-daemon/src/store.rs` |
+| SQLite data | `PRAGMA user_version = 15` | `crates/ade-daemon/src/store.rs` |
 | Executable identity | Content hash and Mach-O UUID | Packaged `Resources/build-manifest.json` |
 
 Protocol identifiers describe compatibility, not the app marketing version.
-The Python runtime controller mirrors the two protocol identifiers and must
-change with them. Build hashes distinguish binaries with the same protocol.
+The installed Rust `ade-control` controller mirrors the two protocol identifiers
+and must change with them. The source Python controller remains prototype tooling.
+Build hashes distinguish binaries with the same protocol.
 A running compatible daemon may stay alive when a new client starts; the
 controller reports the new build rather than silently stopping live work.
 
@@ -38,7 +39,7 @@ A reported crash is investigated against the executable UUID, not only 0.1.0.
 
 ## Local replacement behavior
 
-`scripts/runtime.py restart` asks the current daemon to stop admitting work and
+`ade-control runtime restart --home PATH` asks the current daemon to stop admitting work and
 prepare a restart, fenced by its boot identity. It waits for the database writer
 lock, starts the replacement, and verifies that the supervisor identity remains
 the same. Failure to release the lock is reported without forcing a replacement.

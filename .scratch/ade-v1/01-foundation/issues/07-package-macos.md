@@ -60,3 +60,12 @@ Signing, notarization and app updates remain separate release work. Renderer HMR
 belongs to 01-S15 and is not covered by this packaged-app check. Primary
 providers still need the full live-account and daily-use acceptance before
 F005/F007/R020 can be marked complete in the register.
+
+Dependency correction: the installed Electron app now invokes bundled Rust
+`ade-control` for profile startup, browser leases, compatible daemon restart and
+backend-only backup/restore. The package no longer copies the Python controller
+scripts. The source Python prototype tools remain for legacy development tests.
+Packaged E2E must prove startup/reopen, lease ownership, backup, restore,
+interrupted restore recovery and incompatible live-owner refusal without a
+Python executable or Python resources in the product path. This does not close
+the broader F005/F007/R020 or complete managed-backup requirements.

@@ -13,10 +13,10 @@ if (build.status !== 0) process.exit(build.status ?? 1)
 
 const environment = { ...process.env, ADE_DAEMON_BIN: daemonBinary }
 if (!environment.ADE_SOCKET) {
-  const profilesHome = environment.ADE_PROFILES_HOME ?? join(root, '.ade/dev-profiles')
+  const profilesHome = environment.ADE_PROFILES_HOME ?? join(root, '.ade/dev-profiles-v2')
   environment.ADE_PROFILES_HOME = profilesHome
-  const profileScript = join(root, 'scripts/profiles.py')
-  const runProfiles = (...args) => spawnSync('python3', [profileScript, '--home', profilesHome, ...args], {
+  const control = join(root, 'target/debug/ade-control')
+  const runProfiles = (...args) => spawnSync(control, ['profiles', '--home', profilesHome, ...args], {
     cwd: root, env: environment, encoding: 'utf8',
   })
   const listed = runProfiles('list')

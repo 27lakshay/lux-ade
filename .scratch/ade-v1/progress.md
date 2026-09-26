@@ -1,6 +1,6 @@
 # ADE v1 delivery record
 
-Status: active; requirements remain unverified until their full acceptance passes.
+Status: broader v1 build paused; requirements remain unverified until their full acceptance passes.
 Type: delivery record
 
 Updated: 2026-09-26. Branch: `codex/architecture-proposal`. No Git remote is
@@ -16,13 +16,10 @@ been changed since that baseline. The local build branch is
 
 ## Current state and next assignment
 
-Daily-use gate only until it passes; other V1 work stays queued. Use focused
-E2Es and affected static checks while implementing, one full source suite per
-integrated checkpoint, and packaged checks for changed packaging/installed
-behavior or delivery milestones. Repeat a full run only for relevant changes
-or failures. Keep the final full V1 audit. Do not reopen resolved issues without
-new failure evidence; fix acceptance/safety defects in the current slice and
-queue unrelated improvements.
+The daily-use gate is still open. The three bounded product dependency
+corrections are implemented and verified; broader v1 implementation and both
+heartbeats remain paused until the user explicitly resumes them. The existing
+gate and final full v1 acceptance audit remain unchanged.
 
 | Daily-use gate and IDs | Verified | Remaining before gate closes |
 |---|---|---|
@@ -32,13 +29,13 @@ queue unrelated improvements.
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell; service/script controls, observed ports and health, stable profile browser preview; one script-to-service-to-stable-URL flow survives app reopen and fails closed after stop | Broader F086/F088/F090 feature acceptance, including URL discovery and script supervisor recovery, remains queued after the daily-use gate |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume, paged diffs and durable review feedback | Matching CLI coverage for the rest of the selected daily-use flow |
 
-Blocker: a real Oh My Pi account is unavailable; continue other gate criteria
-without treating the fixture as live-account proof. Active owner: coordinator;
-no worker is running. Next assignment: remaining primary-provider daily-use
-criteria, beginning with managed two-account execution and installed continuity
-for available Codex and Claude accounts. The remaining
-rows are partial evidence, not closed feature IDs. F075/06-S06 and unrelated
-V1 work remain queued.
+Blocker for the future daily-use gate: a real Oh My Pi account is unavailable;
+fixtures are not live-account proof. Active owner: none; no worker is running.
+Next assignment after explicit user resumption: remaining primary-provider
+daily-use criteria, beginning with managed two-account execution and installed
+continuity for available Codex and Claude accounts. The remaining rows are
+partial evidence, not closed feature IDs. F075/06-S06 and unrelated v1 work
+remain queued.
 
 ## Integrated checkpoints
 
@@ -116,6 +113,21 @@ V1 work remain queued.
 | `8aa913a` | F061 live folder/project identity | Git and ordinary folder registration, stable reopen, missing/replaced warning and unrelated-binding refusal E2Es |
 | `3279394` | CLI review parity | Named paged diff, feedback search and durable same-ID feedback send E2E |
 | `16d4ce2` | Connected daily service flow | Workspace build script feeds managed HTTP service through stable URL and browser preview across app reopen; stopped URL returns 503 |
+| `b41d78c` | Direct Git worktree lifecycle | No product wt dependency; create/list/adopt/remove E2E protects external, dirty, locked and active trees; F063/F065/F069 wording corrected |
+| `eb96b56` | Project toolchain resolution | Monorepo-root declarations, exact installed tool versions and Finder-style discovery; real npm/pnpm/Yarn/Bun E2Es |
+| Native Rust control | Installed profile startup/restart, browser lease and backend-only backup/restore without Python; packaged interrupted-restore recovery E2E |
+
+Bounded dependency correction checkpoint, 2026-09-26: all three correction
+acceptance slices pass. Direct Git worktree operations require explicit adoption
+and retain dirty, locked, active and external safeguards. Workspace scripts use
+the applicable monorepo root and verified installed tool versions. The installed
+app ships `ade-control` instead of Python controllers and can resume an
+interrupted backend restore. The full source check passed 178 E2Es with one
+existing host skip; the rebuilt installed suite passed 7/7. Strict daemon
+Clippy, Rust formatting, and diff checks pass. No daily-use gate ID was closed
+by these corrections. Implementation and review were not separately timed;
+the final full source run took 5.8 minutes, and rebuild plus installed checks
+took about one minute. Broader v1 work remains paused.
 
 Connected service checkpoint, 2026-09-26: the selected daily-use
 script-to-service-to-preview scenario now passes through Electron, CLI and a

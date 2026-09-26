@@ -15,6 +15,14 @@ Local changes to dependencies belong in reviewed patches before release.
 
 ## Packaging
 
+The Electron successor is packaged with `pnpm package:mac`. Its installed
+`ade-control` Rust executable owns profile startup, compatible daemon restart,
+browser leases and backend-only backup/restore. The Electron app contains no
+Python controller or Python resource. Workspace scripts resolve the target
+project's installed package manager and Node runtime; ADE does not ship pnpm
+for project scripts. The source Python tools remain development and prototype
+fixtures, while the GPUI packaging path below remains historical.
+
 `python3 scripts/package.py --profile release` packages all four executables,
 provider bridges and their installed dependencies, UI assets, terminal theme,
 Ghostty resources and terminfo. Provider dependency links are preserved only after verifying that they stay
@@ -97,7 +105,8 @@ shim runs. This validates packaging resolution, not every optional OMP feature.
 
 | Capability | Current requirement |
 | --- | --- |
-| App launch/recovery controller | `python3` on the GUI process PATH. There is currently no lux-ade-specific Python executable override. Contributor tooling requires Python 3.12+; runtime validation used Python 3.13.15. |
+| Electron app launch/recovery controller | Bundled `Contents/MacOS/ade-control`; no installed Python requirement. |
+| Workspace package scripts | The target project's installed npm, pnpm, Yarn or Bun and a matching Node runtime where required. Exact `packageManager` pins, lockfile choice and Node declarations are checked under a Finder launch environment. Missing/conflicting tools fail before launch. |
 | Claude GUI | Node (`ADE_NODE_BIN` or `node`) plus a Claude CLI (`ADE_CLAUDE_BIN` or `claude`). The bridge explicitly requests that CLI even though the SDK package also contains a native executable. Adapter minimum is Node 18; current validation used Node 24.19.0. |
 | OpenCode GUI | Node plus OpenCode CLI (`ADE_OPENCODE_BIN` or `opencode`). |
 | OMP GUI | Bun (`ADE_BUN_BIN` or `bun`) plus packaged OMP dependencies. An optional `ADE_OMP_BIN` overrides its packaged CLI. The package declares Bun >=1.3.14; validation uses 1.4.2. |
@@ -106,12 +115,10 @@ shim runs. This validates packaging resolution, not every optional OMP feature.
 A Finder-launched app may inherit a different PATH from an interactive shell.
 Installed runtimes therefore are not yet a self-contained end-user experience.
 
-For a future self-contained distribution, bundle checksum-pinned Node and Bun
-runtimes and resolve them by bundle path, then sign and validate their native
-files. For Python, either bundle a complete standalone interpreter and standard
-library or migrate the launch controller into Rust while preserving its existing
-lifecycle tests. Prefer the Rust migration to avoid a third runtime. These are
-options, not changes implemented by provider resource packaging.
+For a future self-contained provider distribution, bundle checksum-pinned Node
+and Bun runtimes and resolve them by bundle path, then sign and validate their
+native files. Project scripts must continue to use each project's declared
+toolchain, not ADE's provider runtimes.
 
 ## Rust notice inventory
 
@@ -178,7 +185,7 @@ normal-dependency edges were missing. Fixture tests cover alias deduplication,
 edge resolution, missing declarations/text, custom license-file references, and
 escaping/broken symlinks. Native linked dependencies, embedded fonts and other
 resources still need their separate distribution review. External Node, Bun,
-Python and provider CLI prerequisites are outside this installed-package inventory.
+Provider CLI prerequisites are outside this installed-package inventory.
 
 ## Native and resource evidence inventory
 

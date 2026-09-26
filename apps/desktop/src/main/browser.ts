@@ -42,10 +42,10 @@ const browserStoragePath = (id: string): string => {
 }
 async function acquireBrowserLease(id: string, directory: string): Promise<BrowserLease> {
   await mkdir(directory, { recursive: true, mode: 0o700 })
-  const script = app.isPackaged ? join(process.resourcesPath, 'browser_lease.py')
-    : join(app.getAppPath(), '../../scripts/browser_lease.py')
-  const child = spawn(app.isPackaged ? '/usr/bin/python3' : 'python3',
-    [script, join(directory, '.ade-browser-session.lock')], { stdio: ['pipe', 'pipe', 'pipe'] })
+  const control = app.isPackaged ? join(process.resourcesPath, '../MacOS/ade-control')
+    : join(app.getAppPath(), '../../target/debug/ade-control')
+  const child = spawn(control, ['browser-lease', join(directory, '.ade-browser-session.lock')],
+    { stdio: ['pipe', 'pipe', 'pipe'] })
   child.stdin.on('error', () => undefined)
   const lease: BrowserLease = { id, process: child, released: false }
   try {
