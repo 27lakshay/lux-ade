@@ -14,15 +14,24 @@ type Snapshot = { conversation: Conversation; messages: Message[]; requests: Pen
 type Provider = { id: string; name: string }
 type ClaudeIdentity = { auth_method: string; api_provider: string; email: string; org_id: string }
 type CodexIdentity = { email: string; chatgpt_account_id: string }
-type AccountIdentity = ClaudeIdentity | CodexIdentity
+type OmpIdentity = { provider: string; credential_id: number; credential_type: string;
+  identity_key: string; email: string | null; account_id: string | null; org_id: string | null }
+type AccountIdentity = ClaudeIdentity | CodexIdentity | OmpIdentity
 type Account = { id: string; provider: string; name: string; native_home: string; generation: number; state: string;
-  claude_identity?: ClaudeIdentity; codex_identity?: CodexIdentity }
+  claude_identity?: ClaudeIdentity; codex_identity?: CodexIdentity; omp_identity?: OmpIdentity }
 type AccountInspection = { state: string; reason: string; version: string | null;
   identity: AccountIdentity | null }
 type AccountConversation = Conversation & { account_id?: string | null; account_context?: string }
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
+}
+function accountIdentityLabel(identity: AccountIdentity): string {
+  if ('credential_id' in identity) {
+    return `${identity.email ?? identity.account_id ?? identity.identity_key} · ${identity.provider} OAuth credential ${identity.credential_id}`
+  }
+  if ('chatgpt_account_id' in identity) return `${identity.email} · ChatGPT account ${identity.chatgpt_account_id}`
+  return `${identity.email} · organization ${identity.org_id} · ${identity.auth_method} / ${identity.api_provider}`
 }
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
@@ -746,7 +755,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const [provider, setProvider] = React.useState('codex')
   const [providers, setProviders] = React.useState<Provider[]>([])
   const [accounts, setAccounts] = React.useState<Account[]>([])
-  const [accountProvider, setAccountProvider] = React.useState<'claude' | 'codex'>('claude')
+  const [accountProvider, setAccountProvider] = React.useState<'claude' | 'codex' | 'omp'>('claude')
   const [accountName, setAccountName] = React.useState('')
   const [accountId, setAccountId] = React.useState('')
   const [managedAccountId, setManagedAccountId] = React.useState('')
@@ -959,8 +968,8 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
           <form onSubmit={(event) => void createAccount(event)}>
             <label className="field-label" htmlFor="account-provider">New account provider</label>
             <select id="account-provider" value={accountProvider} disabled={accountBusy}
-              onChange={(event) => setAccountProvider(event.target.value as 'claude' | 'codex')}>
-              <option value="claude">Claude Code</option><option value="codex">Codex</option>
+              onChange={(event) => setAccountProvider(event.target.value as 'claude' | 'codex' | 'omp')}>
+              <option value="claude">Claude Code</option><option value="codex">Codex</option><option value="omp">Oh My Pi</option>
             </select>
             <label className="field-label" htmlFor="account-name">New account name</label>
             <div className="account-create"><input id="account-name" value={accountName} maxLength={80}
@@ -979,19 +988,19 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
               <pre className="account-login-command" aria-label="Claude login command">{`env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL CLAUDE_CONFIG_DIR=${shellQuote(selectedAccount.native_home)} ANTHROPIC_CONFIG_DIR=${shellQuote(selectedAccount.native_home)} claude auth login`}</pre></>}
             {selectedAccount.provider === 'codex' && <><p>Run this in a terminal to sign in through Codex:</p>
               <pre className="account-login-command" aria-label="Codex login command">{`env -i HOME="$HOME" PATH="$PATH" TERM="$TERM" CODEX_HOME=${shellQuote(selectedAccount.native_home)} codex login`}</pre></>}
+            {selectedAccount.provider === 'omp' && <><p>Run this in a terminal and choose one OAuth provider. Keep only one credential in this account home:</p>
+              <pre className="account-login-command" aria-label="Oh My Pi login command">{`(cd ${shellQuote(selectedAccount.native_home)} && env -i HOME="$PWD" PATH="$PATH" TERM="$TERM" PI_CODING_AGENT_DIR="$PWD" sh -c 'test "$(omp --version)" = "omp/18.3.0" || { echo "ADE needs Oh My Pi 18.3.0" >&2; exit 1; }; exec omp login')`}</pre></>}
             {selectedAccount.claude_identity && <p>Bound identity: {selectedAccount.claude_identity.email} · organization {selectedAccount.claude_identity.org_id} · {selectedAccount.claude_identity.auth_method} / {selectedAccount.claude_identity.api_provider}</p>}
             {selectedAccount.codex_identity && <p>Bound identity: {selectedAccount.codex_identity.email} · ChatGPT account {selectedAccount.codex_identity.chatgpt_account_id}</p>}
+            {selectedAccount.omp_identity && <p>Bound identity: {accountIdentityLabel(selectedAccount.omp_identity)}</p>}
             {accountInspection && <div role="status"><p>Last inspection: {accountInspection.state.replaceAll('_', ' ')}</p>
               <p>{accountInspection.reason}</p>
-              {accountInspection.identity && <p>Native identity: {accountInspection.identity.email}
-                {'chatgpt_account_id' in accountInspection.identity
-                  ? ` · ChatGPT account ${accountInspection.identity.chatgpt_account_id}`
-                  : ` · organization ${accountInspection.identity.org_id} · ${accountInspection.identity.auth_method} / ${accountInspection.identity.api_provider}`}</p>}</div>}
-            {selectedAccount.provider !== 'claude' && selectedAccount.provider !== 'codex' &&
+              {accountInspection.identity && <p>Native identity: {accountIdentityLabel(accountInspection.identity)}</p>}</div>}
+            {!['claude', 'codex', 'omp'].includes(selectedAccount.provider) &&
               <p>Inspection and verification are unavailable for this provider.</p>}
             <div className="account-actions">
-              <button type="button" disabled={accountBusy || !['claude', 'codex'].includes(selectedAccount.provider)} onClick={() => void inspectAccount(selectedAccount.id)}>Inspect</button>
-              <button type="button" disabled={accountBusy || !['claude', 'codex'].includes(selectedAccount.provider) ||
+              <button type="button" disabled={accountBusy || !['claude', 'codex', 'omp'].includes(selectedAccount.provider)} onClick={() => void inspectAccount(selectedAccount.id)}>Inspect</button>
+              <button type="button" disabled={accountBusy || !['claude', 'codex', 'omp'].includes(selectedAccount.provider) ||
                 accountInspection?.state !== 'ready' || !accountInspection.identity}
                 onClick={() => void changeAccount('account.verify')}>Verify</button>
               <button type="button" disabled={accountBusy || selectedAccount.state === 'disabled'}

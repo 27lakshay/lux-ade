@@ -704,7 +704,7 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
   if (op === 'account.list' || op === 'account.create' || op === 'account.inspect' || op === 'account.verify' || op === 'account.disable') {
     let request: Record<string, unknown> = {}
     if (op === 'account.create') {
-      if ((args.provider !== 'claude' && args.provider !== 'codex') || typeof args.name !== 'string' || !args.name.trim() || args.name.length > 80) {
+      if (typeof args.provider !== 'string' || !['claude', 'codex', 'omp'].includes(args.provider) || typeof args.name !== 'string' || !args.name.trim() || args.name.length > 80) {
         throw new Error('Invalid managed account')
       }
       request = { provider: args.provider, name: args.name.trim() }
@@ -725,7 +725,17 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
           typeof expected.email === 'string' && expected.email.length > 0 && expected.email.length <= 320 &&
           typeof expected.chatgpt_account_id === 'string' && expected.chatgpt_account_id.length > 0 &&
           expected.chatgpt_account_id.length <= 256
-        if (!identity || typeof identity !== 'object' || Array.isArray(identity) || (!claudeIdentity && !codexIdentity)) {
+        const ompIdentity = expected && Object.keys(expected).sort().join(',') ===
+          'account_id,credential_id,credential_type,email,identity_key,org_id,provider' &&
+          typeof expected.provider === 'string' && /^[a-z0-9][a-z0-9-]{0,79}$/.test(expected.provider) &&
+          Number.isSafeInteger(expected.credential_id) && (expected.credential_id as number) > 0 &&
+          expected.credential_type === 'oauth' && typeof expected.identity_key === 'string' &&
+          expected.identity_key.length > 0 && expected.identity_key.length <= 512 &&
+          (expected.email === null || (typeof expected.email === 'string' && expected.email.length <= 320)) &&
+          (expected.account_id === null || (typeof expected.account_id === 'string' && expected.account_id.length <= 320)) &&
+          (expected.org_id === null || (typeof expected.org_id === 'string' && expected.org_id.length <= 320)) &&
+          (Boolean(expected.email) || Boolean(expected.account_id))
+        if (!identity || typeof identity !== 'object' || Array.isArray(identity) || (!claudeIdentity && !codexIdentity && !ompIdentity)) {
           throw new Error('Invalid inspected account identity')
         }
         request.expected_generation = args.expected_generation

@@ -24,7 +24,7 @@ Commands:
   conversation send ID TEXT             Send a prompt with a generated request ID
   account list                           List profile accounts
   account create PROVIDER NAME           Register a native account home
-  account inspect ID                     Check current Claude or Codex readiness
+  account inspect ID                     Check current Claude, Codex or Oh My Pi readiness
   account verify ID EXPECTED_GENERATION IDENTITY_JSON
                                         Pin only the identity returned by account inspect
   account disable ID                     Disable new ADE launches; does not log out native CLI or stop running agents
@@ -69,6 +69,8 @@ profile discovery, remote hosts and stable public command schemas remain open.
 Authenticate the returned native home with the provider CLI:
   Claude: CLAUDE_CONFIG_DIR=<native_home> claude auth login
   Codex:  env -i HOME="$HOME" PATH="$PATH" TERM="$TERM" CODEX_HOME=<native_home> codex login
+  Oh My Pi: (cd <native_home> && env -i HOME="$PWD" PATH="$PATH" TERM="$TERM" PI_CODING_AGENT_DIR="$PWD" sh -c 'test "$(omp --version)" = "omp/18.3.0" || { echo "ADE needs Oh My Pi 18.3.0" >&2; exit 1; }; exec omp login')
+             Choose one OAuth provider; managed API keys and multiple credentials are not supported yet.
 Then run account inspect and account verify with the inspected identity JSON.
 ADE never receives the login token.
 `

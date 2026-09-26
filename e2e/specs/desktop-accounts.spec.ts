@@ -1,7 +1,7 @@
 import { expect, test, _electron as electron } from '@playwright/test'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -207,6 +207,89 @@ test('desktop creates, verifies and runs a conversation under a private Codex ac
       codex_home: account.native_home, openai_key: false, codex_key: false, wif: false,
     })
     expect(await window.locator('body').innerText()).not.toContain('ambient-must-not-leak')
+  } finally {
+    await application.close()
+    await daemon.stop()
+    await rm(fixtures, { recursive: true, force: true })
+  }
+})
+
+test('desktop verifies and runs an Oh My Pi conversation in its private account home', async () => {
+  test.setTimeout(90_000)
+  const fixtures = await mkdtemp(join(tmpdir(), 'ade-desktop-omp-account-'))
+  const cli = join(fixtures, 'omp')
+  const userData = join(fixtures, 'electron')
+  await copyFile(resolve('e2e/fixtures/omp_account_cli.mjs'), cli)
+  await chmod(cli, 0o700)
+  const daemon = await startDaemon({ ADE_OMP_BIN: cli, ANTHROPIC_API_KEY: 'ambient-must-not-leak' })
+  const application = await electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+    env: { ...process.env, ADE_SOCKET: daemon.socket, ADE_E2E_USER_DATA_DIR: userData, ADE_E2E_HIDE_WINDOW: '1' } })
+  try {
+    const window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const panel = window.getByRole('region', { name: 'Accounts' })
+    await panel.getByLabel('New account provider').selectOption('omp')
+    await panel.getByRole('textbox', { name: 'New account name' }).fill('Personal OMP')
+    await panel.getByRole('button', { name: 'Add' }).click()
+    await expect(panel.getByLabel('Manage account')).toContainText('Personal OMP')
+    const account = ((await rpc(daemon.socket, { op: 'account.list' })).accounts as Array<Account & { provider: string }>)
+      .find((item) => item.name === 'Personal OMP')!
+    expect(account.provider).toBe('omp')
+    await expect(panel.getByLabel('Account Personal OMP')).toContainText(account.native_home)
+    const loginCommand = await panel.getByLabel('Oh My Pi login command').innerText()
+    expect(loginCommand).toContain(`cd '${account.native_home}'`)
+    const loginBin = join(fixtures, 'login-bin')
+    await mkdir(loginBin)
+    await writeFile(join(loginBin, 'omp'), `#!/bin/sh
+if [ "$1" = '--version' ]; then
+  if [ -f "$HOME/login-version" ]; then cat "$HOME/login-version"; else echo 'omp/18.3.0'; fi
+elif [ "$1" = 'login' ]; then
+  { pwd; printf '%s\\n' "\${OMP_AUTH_BROKER_URL-unset}"; } > "$HOME/login-context"
+fi
+`)
+    await chmod(join(loginBin, 'omp'), 0o700)
+    await writeFile(join(fixtures, '.env'), 'OMP_AUTH_BROKER_URL=https://workspace-broker.invalid\n')
+    await execFileAsync('/bin/zsh', ['-c', loginCommand], { cwd: fixtures,
+      env: { ...process.env, PATH: `${loginBin}:${process.env.PATH}`, OMP_AUTH_BROKER_URL: 'ambient-broker' } })
+    expect(await readFile(join(account.native_home, 'login-context'), 'utf8'))
+      .toBe(`${account.native_home}\nunset\n`)
+    await rm(join(account.native_home, 'login-context'))
+    await writeFile(join(account.native_home, 'login-version'), 'omp/99.0.0\n')
+    await expect(execFileAsync('/bin/zsh', ['-c', loginCommand], { cwd: fixtures,
+      env: { ...process.env, PATH: `${loginBin}:${process.env.PATH}` } })).rejects.toThrow()
+    expect(await readFile(join(account.native_home, 'login-context'), 'utf8').catch(() => null)).toBeNull()
+    await rm(join(account.native_home, 'login-version'))
+    await panel.getByRole('button', { name: 'Inspect' }).click()
+    await expect(panel.getByRole('status')).toContainText('unauthenticated')
+    await expect(panel.getByRole('button', { name: 'Verify' })).toBeDisabled()
+
+    const db = join(account.native_home, 'agent.db')
+    const seed = `import { Database } from 'bun:sqlite';
+const db = new Database(process.argv[1], { create: true });
+db.run('CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT NOT NULL, credential_type TEXT NOT NULL, data TEXT NOT NULL, disabled_cause TEXT, identity_key TEXT)');
+db.query('INSERT INTO auth_credentials(id,provider,credential_type,data,disabled_cause,identity_key) VALUES(11,?,?,?,?,?)').run(
+  'anthropic', 'oauth', JSON.stringify({ email: 'personal@example.invalid', accountId: 'personal-account',
+    access: 'synthetic-secret' }), null, 'email:personal@example.invalid');
+db.close();`
+    await execFileAsync('bun', ['-e', seed, db])
+    await chmod(db, 0o600)
+    await panel.getByRole('button', { name: 'Inspect' }).click()
+    await expect(panel.getByRole('status')).toContainText('personal@example.invalid')
+    await expect(panel.getByRole('status')).toContainText('anthropic OAuth credential 11')
+    await panel.getByRole('button', { name: 'Verify' }).click()
+    await expect(panel.getByLabel('Account Personal OMP')).toContainText('Personal OMP · verified')
+
+    await window.getByLabel('New conversation provider').selectOption('omp')
+    await window.getByLabel('New conversation account').selectOption(account.id)
+    await window.getByRole('button', { name: 'New conversation', exact: true }).click()
+    const conversation = window.getByRole('region', { name: 'Conversation' })
+    await expect(conversation).toContainText('Account: Personal OMP')
+    await conversation.getByRole('textbox', { name: 'Prompt' }).fill('Oh My Pi managed account')
+    await conversation.getByRole('button', { name: 'Send' }).click()
+    await expect.poll(async () => (await readFile(join(account.native_home, 'calls.jsonl'), 'utf8').catch(() => '')))
+      .toContain('Oh My Pi managed account')
+    expect((await readFile(join(account.native_home, 'calls.jsonl'), 'utf8'))).toContain('"ambient":false')
+    expect(await window.locator('body').innerText()).not.toContain('synthetic-secret')
   } finally {
     await application.close()
     await daemon.stop()
