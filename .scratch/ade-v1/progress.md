@@ -29,7 +29,7 @@ implementation, independent review, checks and packaging.
 | Daily-use gate and IDs | Verified so far | Remaining before gate closes |
 |---|---|---|
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
-| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts and file-reading tools; deterministic managed-identity, prompt and answer recovery, approvals/questions, CLI answer/decline and cancel/resume E2Es | Real Oh My Pi account; two-account hosted execution; real approval/answer/decline, cancel/resume and recovery across each primary provider |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es | Real Oh My Pi account; managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
 | Workspace/review: F061, F074 | Folder selection and revision-anchored agent feedback E2Es | Full atomic feedback admission and large-diff flow in integrated app; remaining lifecycle acceptance |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
 | Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume | Matching CLI coverage for the rest of the selected daily-use flow |
@@ -39,15 +39,13 @@ integrated running-app evidence. Oh My Pi live-account acceptance currently
 needs credentials; continue the other rows without substituting a fixture.
 The one-file Discard ticket, shared cancel/resume control slice, and durable
 answer-recovery slice are closed. F075/06-S06 and real-provider F021/F038
-acceptance remain open. Active owner: coordinator on connected provider/account
-daily-use acceptance; `/root/answer_cli_e2e` and
-`/root/answer_recovery_audit` have finished, and no worker is running. Next
-assignment: exercise available real Codex and Claude approval and cancel/resume
-flows through the running app/CLI, then implement the first demonstrated
-daily-use failure. Ambient prompt and file-reading tool checks passed on both;
-they do not prove managed two-account execution or native answer recovery.
-Continue around the Oh My Pi credential blocker. Queue unrelated V1 slices and
-preserve the final full V1 audit.
+acceptance remain open. Active owner: coordinator; `/root/codex_cancel_review`
+finished independent review and no worker is running. Next assignment: close
+the F074 atomic review-feedback admission gap and large-diff flow through the
+running app. Real Codex/Claude negative-choice semantics now work, but their
+ambient checks do not prove managed two-account execution or native answer
+crash recovery. Continue around the Oh My Pi credential blocker. Queue
+unrelated V1 slices and preserve the final full V1 audit.
 
 ## Integrated checkpoints
 
@@ -119,6 +117,28 @@ preserve the final full V1 audit.
 | `6e3f0a5` | Restored path rebind | Core/lifecycle immutable source claims, public CLI/protocol, cross-store source and repeated-rebind E2E |
 | `504a6b3` | Browser E2E profile switch race | Waits for the profile control to become enabled before a second switch |
 | `1e1b36a` | Durable native answer reconciliation | Crash/lost-reply/no-delivery/conflict and CLI answer E2Es; focused 11/11, source 162 passed/one host skip, installed 6/6; independent review found no confirmed P1/P2 |
+| `8f70037` | Native negative approval choices | Real Codex cancel and Claude decline, live accept/retry/conflict; CLI/Electron fixture choices, focused 3/3, source 162 passed/one host skip, installed 6/6 |
+
+Native-choice checkpoint `8f70037`: F021/F038's ambient Codex and Claude
+prompt, read-tool, active-turn cancel/resume and native write approval/negative
+choice observations pass. Codex offered `accept`/`cancel` and interrupted its
+turn on cancel; Claude's decline returned ready. Exact answer repeats
+acknowledged and changed decisions conflicted; the disposable file appeared
+only after acceptance. An independent reviewer found three current-slice
+defects in probe safety and UI choice semantics; all were fixed and re-reviewed
+with no confirmed P1/P2 remaining. F021/F038 remain open for managed accounts,
+native questions, crash/lost-reply recovery, Oh My Pi and installed flow.
+Implementation and triage occupied about 19 minutes from the first live
+control check to final code freeze; independent review overlapped and its
+elapsed time was not separately metered. Final focused E2Es took 5.5 seconds;
+the full source suite took 4.7 minutes; final guarded live approval runs took
+28.34 seconds for Codex and 15.39 seconds for Claude. Packaging plus installed
+E2Es took about 58 seconds. Failed exploratory live runs were changed before
+retry, and the integrated source suite ran once after code freeze. An earlier
+source run was interrupted for review fixes and left one test-owned runtime;
+it was stopped through its checked instance ID. The completed source and
+packaged runs left no test-owned ADE processes. SIGINT cleanup is queued as an
+unrelated test-harness improvement, not a reopened normal-teardown failure.
 
 Live-provider checkpoint, 2026-09-26: an opt-in `--tool-probe` in
 `scripts/live_provider_check.py` asks each native provider to read a unique

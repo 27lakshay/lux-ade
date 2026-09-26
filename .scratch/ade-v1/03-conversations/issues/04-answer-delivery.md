@@ -52,3 +52,13 @@ Real Claude, Codex and Oh My Pi answer flows, complete native failure modes and
 full F038/R001/R002 acceptance remain open. The initial `AnswerNotSent` proof
 path is an E2E fault injection at the runtime boundary; native adapters must
 never label an ambiguous write or timeout as definite no-delivery.
+
+Follow-up `8f70037`: real ambient Codex and Claude both surfaced native write
+approvals through ADE. A guarded opt-in live check accepted the exact temporary
+file operation, repeated the same answer, and rejected a conflicting answer.
+A second operation was denied: Claude offered `decline` and returned ready;
+Codex offered `cancel` instead and interrupted its turn. The Electron view
+renders both choices when offered, labels Codex cancel as turn-wide, and the
+CLI can submit it. Running-process fixture E2Es cover CLI and Electron choice
+mapping. This establishes live local behavior, not daemon-crash reconciliation
+against a real provider or managed-account identity.
