@@ -53,6 +53,11 @@ with 0 unavailable responses, on an Apple M4,
 macOS 26.6.1, Node 24.19.0. Four clients that send header bytes every 750 ms
 each received HTTP 400 within seven seconds. This is one local
 measurement, not a cross-machine performance claim or full F088 acceptance.
+The integrated 64/64 source suite served 100/100 asset requests in 1408 ms
+on the same host. The CLI exposes URL creation, inspection and explicit remap;
+the hidden Electron E2E opens the stable URL in the embedded preview and
+remaps a replaced service through the UI. Backend commit `abf03a3` and
+CLI/Electron commit `207ec62` contain this slice.
 The second E2E starts a real profile and services, converts its stopped SQLite
 database to v9 shape by removing the new identity field and schema marker, then
 restarts the daemon. It verifies distinct identities are backfilled, retained
@@ -70,7 +75,7 @@ An absolute guarantee against a process swapping that listener after the final
 OS proof but before the first forwarded byte requires inherited sockets or a
 stronger connected-socket owner proof and remains open. The E2E confirms the
 common close-and-rebind takeover fails closed.
-Route deletion and UI/CLI discovery beyond the public proxy commands remain to
-be completed before closing F088. The runtime's persisted proxy registry is
+Route retirement and broader URL discovery remain to be completed before
+closing F088. The runtime's persisted proxy registry is
 profile local; recovery from corruption and a rebind failure needs a dedicated
 recovery surface before full F088 acceptance.

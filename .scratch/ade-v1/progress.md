@@ -22,7 +22,7 @@ full acceptance in its owning spec:
 | Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged multi-profile shell and deterministic turns pass; real-agent continuity and full isolation acceptance remain |
 | Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live ambient prompts passed; Oh My Pi lacks configured account; Claude and Codex managed identity pinning pass deterministic E2E but hosted two-account execution and full controls remain |
 | Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
-| Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, service controls and recurring HTTP health checks, listener and bounded log inspection, and browser preview with profile cookie persistence pass; persistent logs/history and full F086 acceptance remain |
+| Terminal, service and browser: F081, F083, F085, F086, F088, F090, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service, run a workspace script and open a stable preview in the embedded browser | Shell, service/script controls, recurring HTTP health checks, listener and bounded log inspection, stable local preview, and browser profile cookies pass; full F086/F088/F090 acceptance remains |
 | Shared control: F101, F102, F103 | CLI and Electron target the same profile/workspace/conversation/terminal with structured outcomes | Local CLI subset works; public command coverage remains |
 
 Each row needs running-app E2E evidence on the integrated revision before the
@@ -77,6 +77,25 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `f7d6d4f` | Codex account controls in Electron | Native login guidance, inspect/verify and explicit conversation binding through hidden Electron E2E |
 | `724913c` | Packaged profile switch continuity | Two installed profiles retain distinct daemon, shell and conversation state across app reopen; startup selection race fenced |
 | `7024beb` | Managed service peer wiring | Verified direct IPv4 peer URL injected per run; stopped/failed/restarted service boundaries through daemon and Electron E2E |
+| `b995a60` | IPv6 peer wiring | Verified IPv6-only dependent service receives a managed loopback URL |
+| `c787274` | Workspace scripts backend | Durable run membership, supervised PTY/output, stop and retirement across daemon handoff and crash E2E |
+| `abf03a3` | Stable local service proxy | Runtime-owned HTTP/WebSocket URL, listener ownership proof, remap CAS, v9 migration and 100-asset E2E |
+| `78ac24b` | Script session formatting | Rustfmt correction for the script backend |
+| `207ec62` | Script and proxy CLI/Electron surfaces | Named script and URL/remap commands, hidden Electron run and preview E2E |
+| `b365be1` | Packaged workspace scripts | Bundled pinned pnpm and Node launcher; Finder-like PATH and reopen E2E |
+
+At `b365be1` on Apple M4/macOS 26.6.1, the integrated source suite passed
+64/64 real-process E2Es, including an IPv6-only peer, script daemon handoff,
+CLI/Electron script controls, local proxy takeover refusal, two-sided remapping
+and 100/100 concurrent assets in 1408 ms. Type checking, Fallow and the
+backend/desktop/CLI builds passed. Rust formatting and strict all-target
+Clippy passed; the GPUI prototype build-only package remains usable. The
+unsigned macOS app directory was rebuilt, and the packaged suite passed 5/5
+with hidden windows, including a workspace script through bundled pnpm/Node
+under a Finder-like `PATH`. The local ZIP was not regenerated. This checkpoint
+does not close F088 or F090: route retirement/rebind recovery and broader
+script discovery, exit status and escaped descendants remain. It also does not
+close any other F-series or R-series requirement by implication.
 
 At `7024beb` on macOS arm64, `pnpm check` passed type checking, Fallow,
 builds and 54/54 real-process E2Es. Rust formatting, strict workspace Clippy
@@ -237,13 +256,21 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 - Full account management, extensible providers/plugins, worktrees, full dev-service
   health/logs and browser features, notifications, remote hosts, unified catalogs/history, customization,
   operations and reliability acceptance remain in the v1 register.
-- Managed service peer URLs now resolve from a verified, directly owned IPv4
-  listener and stay tied to the dependent run. The daemon and hidden Electron
-  E2E cover stopped peers, failed launch, a changed peer, and daemon handoff.
-  Descendant/IPv6 listeners, cross-profile claims and stable F088 proxy URLs
-  remain open.
+- Managed service peer URLs now resolve from verified, directly owned IPv4 or
+  IPv6 loopback listeners and stay tied to the dependent run. The daemon and
+  hidden Electron E2E cover stopped peers, failed launch, a changed peer and
+  daemon handoff. Descendant listeners and cross-profile claims remain open.
+- A runtime-owned local/private F088 URL proxies HTTP/WebSocket traffic to a
+  verified managed listener, survives daemon handoff and requires explicit
+  identity-and-port-fenced remapping. Real-process E2E covers port takeover,
+  slow clients, v9-shaped service identity migration and 100 concurrent assets.
+  Route retirement, rebind recovery and the D09 public exposure policy remain.
+- F090 root package scripts now run under a supervised process with retained
+  output, stop/retire controls and daemon handoff. CLI, Electron and packaged
+  Finder-like launch pass E2E. Nested manifests, other package managers, exit
+  status and escaped descendants remain outside this slice.
 - Next daily-use work: Oh My Pi managed native accounts, real-agent
-  account/control acceptance, stable service URLs, and browser
+  account/control acceptance, proxy route retirement, and browser
   ownership and backup/retention coordination. Continue
   through the full V1 register afterward.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
