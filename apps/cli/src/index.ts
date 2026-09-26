@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto'
+import { link, open, unlink } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import {
   DaemonRequestError,
   openTerminalConnection,
@@ -20,6 +22,7 @@ Commands:
   workspace open PATH                   Register a repository or folder
   conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
+  conversation export ID FILE            Write complete readable JSON history to a new file
   conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID]
   conversation send ID TEXT             Send a prompt with a generated request ID
   account list                           List profile accounts
@@ -174,6 +177,89 @@ async function catalog(socketPath: string): Promise<Record<string, unknown>> {
   return object(result.catalog)
 }
 
+/** Export through the public paginated read without holding the whole transcript in memory. */
+async function exportConversation(socketPath: string, conversationId: string, destination: string): Promise<Record<string, unknown>> {
+  const pageSize = 100
+  const first = await requestDaemon(socketPath, 'conversation.get', { conversation_id: conversationId, limit: pageSize })
+  if (first.type !== 'conversation_snapshot') throw new CliError('protocol', 'Daemon returned an unexpected conversation response.')
+  const conversation = object(first.conversation)
+  if (conversation.id !== conversationId || typeof first.boot_id !== 'string' || !first.boot_id ||
+    !Number.isSafeInteger(first.revision) || (first.revision as number) < 0) {
+    throw new CliError('protocol', 'Daemon returned invalid conversation identity or revision.')
+  }
+  const bootId = first.boot_id
+  const revision = first.revision
+  const conversationRecord = JSON.stringify(conversation)
+  const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`)
+  let file: Awaited<ReturnType<typeof open>>
+  try { file = await open(temporary, 'wx', 0o600) }
+  catch (error) { throw new CliError('invalid_request', `Cannot create export file: ${String(error)}`) }
+  let fileClosed = false
+  let count = 0
+  let oldest = Number.POSITIVE_INFINITY
+  let page = first
+  try {
+    await file.writeFile(`{\n  "format": "ade-conversation-history-v1",\n  "scope": "conversation-history",\n  "message_order": "newest_first",\n  "boot_id": ${JSON.stringify(bootId)},\n  "revision": ${revision},\n  "conversation": ${JSON.stringify(conversation, null, 2)},\n  "messages": [\n`)
+    for (;;) {
+      if (page.type !== 'conversation_snapshot' || page.boot_id !== bootId || page.revision !== revision ||
+        !page.conversation || typeof page.conversation !== 'object' ||
+        (page.conversation as Record<string, unknown>).id !== conversationId ||
+        JSON.stringify(page.conversation) !== conversationRecord ||
+        !Array.isArray(page.messages) || page.messages.length > pageSize) {
+        throw new CliError('protocol', 'Conversation changed or daemon returned an invalid history page; retry the export.')
+      }
+      const messages = page.messages as unknown[]
+      let previous = 0
+      for (const value of messages) {
+        const message = object(value)
+        const sequence = message.sequence
+        if (message.conversation_id !== conversationId || typeof message.id !== 'string' || !message.id ||
+          !Number.isSafeInteger(sequence) || (sequence as number) <= previous || (sequence as number) >= oldest ||
+          typeof message.role !== 'string' || typeof message.kind !== 'string' ||
+          typeof message.text !== 'string' || typeof message.status !== 'string') {
+          throw new CliError('protocol', 'Daemon returned an invalid or overlapping history page; retry the export.')
+        }
+        previous = sequence as number
+      }
+      for (let index = messages.length - 1; index >= 0; index--) {
+        await file.writeFile(`${count ? ',\n' : ''}${JSON.stringify(messages[index], null, 2)}`)
+        count++
+      }
+      if (messages.length < pageSize) break
+      oldest = (messages[0] as Record<string, unknown>).sequence as number
+      page = await requestDaemon(socketPath, 'conversation.get', {
+        conversation_id: conversationId, before: oldest, limit: pageSize,
+      })
+    }
+    await file.writeFile('\n  ]\n}\n')
+    await file.sync()
+    await file.close()
+    fileClosed = true
+    try { await link(temporary, destination) }
+    catch (error) {
+      const reason = error as NodeJS.ErrnoException
+      throw new CliError('invalid_request', reason.code === 'EEXIST'
+        ? 'Export destination already exists; choose a new file.'
+        : `Cannot publish export file: ${String(error)}`)
+    }
+    try {
+      const directory = await open(dirname(destination), 'r')
+      try { await directory.sync() }
+      finally { await directory.close() }
+    } catch (error) {
+      throw new CliError('invalid_request', `Export was created, but directory sync failed; durability is unconfirmed: ${String(error)}`)
+    }
+    return { type: 'conversation_export', conversation_id: conversationId, file: destination,
+      format: 'ade-conversation-history-v1', message_count: count, boot_id: bootId, revision }
+  } catch (error) {
+    if (error instanceof CliError || error instanceof DaemonRequestError) throw error
+    throw new CliError('invalid_request', `Cannot write export file: ${String(error)}`)
+  } finally {
+    if (!fileClosed) await file.close()
+    await unlink(temporary).catch(() => undefined)
+  }
+}
+
 async function terminalTarget(socketPath: string, workspaceId: string, terminalId: string): Promise<void> {
   const result = await catalog(socketPath)
   const workspaces = result.workspaces
@@ -244,6 +330,10 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
   }
   if (area === 'conversation' && action === 'inspect') {
     return requestDaemon(socketPath, 'conversation.get', { conversation_id: required(rest[0], 'ID') })
+  }
+  if (area === 'conversation' && action === 'export') {
+    if (rest.length !== 2) throw new CliError('usage', 'conversation export requires ID FILE.')
+    return exportConversation(socketPath, required(rest[0], 'ID'), required(rest[1], 'FILE'))
   }
   if (area === 'conversation' && action === 'create') {
     const flag = rest.indexOf('--account')
