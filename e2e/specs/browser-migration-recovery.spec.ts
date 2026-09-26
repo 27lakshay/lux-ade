@@ -284,6 +284,8 @@ test('a mismatched owner refuses adoption and an ownerless switch targets the re
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const work = (await window.evaluate(() => window.adeHost.getProfileState())).profiles.find((item) => item.name === 'Work')!
     owned.push(await locateOwned(work.home))
+    // Connection can publish before createProfile finishes clearing its form.
+    await expect(window.getByRole('textbox', { name: 'New profile' })).toHaveValue('')
     await window.getByRole('textbox', { name: 'New profile' }).fill('Personal')
     await window.getByRole('button', { name: 'Create' }).click()
     await expect(window.getByText('Active profile: Personal')).toBeVisible()
