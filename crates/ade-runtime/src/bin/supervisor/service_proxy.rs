@@ -318,7 +318,11 @@ impl Manager {
         let mut routes = records
             .values()
             .map(|route| {
-                let mut item = reply(&route.record.lock().unwrap());
+                let record = route.record.lock().unwrap();
+                let mut item = reply(&record);
+                item["workspace_id"] = json!(record.key.workspace_id);
+                item["name"] = json!(record.key.service_name);
+                item["port_variable"] = json!(record.key.port_variable);
                 if let Some(reason) = route.blocked.lock().unwrap().as_ref() {
                     item["availability"] = json!("port_occupied");
                     item["url"] = Value::Null;

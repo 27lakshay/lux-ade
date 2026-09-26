@@ -144,6 +144,14 @@ and the focused proxy E2E passed 3/3 in 24.3 seconds.
 The CLI now exposes `service url-recovery`, `service url-retry`, and
 `service url-recovery-reset`; the real-process E2E uses the latter two for a
 successful fenced rebind and digest-fenced reset.
+The hidden Electron E2E now inspects blocked routes in the current workspace,
+retires one with the four-field route check, retries another on its original
+port, and shows a corrupt registry with an explicit cancel/confirm archive
+reset. It verifies the original route URL after retry, unchanged bytes after
+cancel, and healthy recovery state after reset. The focused proxy suite passed
+3/3 after `pnpm build:backend` and `pnpm --filter @ade/desktop build` on
+macOS 26.6.1 (Apple M4). The desktop recovery state is discarded on daemon
+boot change so a stale reset confirmation does not follow a profile restart.
 
 ## Remaining F088 work
 
@@ -158,8 +166,8 @@ OS proof but before the first forwarded byte requires inherited sockets or a
 stronger connected-socket owner proof and remains open. The E2E confirms the
 common close-and-rebind takeover fails closed.
 Broader URL discovery remains before closing F088. Recovery is profile local;
-the CLI exposes the raw repair operations, while an Electron recovery flow and
-managed backup restore remain open. Reset is an explicit destructive choice when no
+the CLI and Electron expose repair operations, while managed backup restore
+remains open. Reset is an explicit destructive choice when no
 known-good registry can be restored. Disk failures after an atomic rename may
 leave an uncertain outcome, which requires operator reconciliation with the
 retained archive and current recovery status.

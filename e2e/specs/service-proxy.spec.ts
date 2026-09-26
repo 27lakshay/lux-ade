@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, _electron as electron } from '@playwright/test'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -9,6 +10,8 @@ import { promisify } from 'node:util'
 import { rpc } from '../fixtures/daemon'
 
 const execFileAsync = promisify(execFile)
+const desktopDirectory = resolve('apps/desktop')
+const electronExecutable = createRequire(join(desktopDirectory, 'package.json'))('electron') as string
 
 test('runtime-owned service URL preserves HTTP and WebSocket traffic across service and daemon restarts', async () => {
   test.setTimeout(150_000)
@@ -473,8 +476,10 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
   const dataDirectory = join(root, 'data')
   const socket = join(root, 'daemon.sock')
   const registry = join(dataDirectory, 'service-proxies.json')
+  const userData = join(root, 'electron-user-data')
   await mkdir(dataDirectory, { mode: 0o700 })
   let child: ChildProcess | undefined
+  let application: Awaited<ReturnType<typeof electron.launch>> | undefined
   let hello: Record<string, unknown> | undefined
   const launch = async (): Promise<void> => {
     child = spawn(resolve('target/debug/ade-daemon'), [], { env: { ...process.env,
@@ -509,10 +514,11 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
   let workspace: { id: string }
   let occupied: ReturnType<typeof createServer> | undefined
   let occupiedRetired: ReturnType<typeof createServer> | undefined
+  let occupiedUi: ReturnType<typeof createServer> | undefined
   try {
     await launch()
     workspace = (await rpc(socket, { op: 'workspace.open', path: root })).workspace as { id: string }
-    for (const name of ['one', 'two', 'three']) {
+    for (const name of ['one', 'two', 'three', 'four']) {
       await rpc(socket, { op: 'service.configure', workspace_id: workspace.id, name,
         revision: 0, config: { program: process.execPath,
           args: ['-e', 'require("node:http").createServer((_,res)=>res.end(process.env.NAME)).listen(Number(process.env.PORT),"127.0.0.1");setInterval(()=>{},1000)'],
@@ -521,6 +527,7 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
     const first = await rpc(socket, { op: 'service.proxy.ensure', ...route('one') })
     const second = await rpc(socket, { op: 'service.proxy.ensure', ...route('two') })
     const third = await rpc(socket, { op: 'service.proxy.ensure', ...route('three') })
+    const fourth = await rpc(socket, { op: 'service.proxy.ensure', ...route('four') })
     await stop()
 
     occupied = createServer()
@@ -533,33 +540,55 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
       occupiedRetired!.once('error', (error) => fail(new Error(`Could not occupy saved three proxy port ${third.port}: ${error}`)))
       occupiedRetired!.listen(Number(third.port), '127.0.0.1', () => done())
     })
+    occupiedUi = createServer()
+    await new Promise<void>((done, fail) => {
+      occupiedUi!.once('error', (error) => fail(new Error(`Could not occupy saved four proxy port ${fourth.port}: ${error}`)))
+      occupiedUi!.listen(Number(fourth.port), '127.0.0.1', () => done())
+    })
     await launch()
     const degraded = await rpc(socket, { op: 'service.proxy.recovery.inspect' })
     expect(degraded.status).toBe('degraded')
     expect((degraded.routes as { route_id: string; availability: string }[])
-      .find((item) => item.route_id === first.route_id)?.availability).toBe('port_occupied')
+      .find((item) => item.route_id === first.route_id)).toMatchObject({
+        availability: 'port_occupied', workspace_id: workspace.id, name: 'one', port_variable: 'PORT',
+      })
     expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('one') })))
       .toMatchObject({ route_id: first.route_id, port: first.port,
         url: null, availability: 'port_occupied' })
     expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('two') })).url).toBe(second.url)
     expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('three') })))
       .toMatchObject({ route_id: third.route_id, url: null, availability: 'port_occupied' })
-    expect((await rpc(socket, { op: 'service.proxy.retire', ...route('three'),
-      expected_route_id: third.route_id, expected_service_identity: third.service_identity,
-      expected_target_port: third.target_port, expected_proxy_port: third.port })).type)
-      .toBe('service_proxy_retired')
-    await expect(rpc(socket, { op: 'service.proxy.inspect', ...route('three') }))
-      .rejects.toThrow(/does not exist/)
     await expect(rpc(socket, { op: 'service.proxy.ensure', ...route('one') }))
       .rejects.toThrow(/port is unavailable/)
     await rpc(socket, { op: 'service.start', workspace_id: workspace.id, name: 'two' })
     await expect.poll(async () => (await (await fetch(second.url as string)).text())).toBe('two')
+    application = await electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+      env: { ...process.env, ADE_SOCKET: socket, ADE_E2E_USER_DATA_DIR: userData, ADE_E2E_HIDE_WINDOW: '1' } })
+    const window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const services = window.getByRole('region', { name: 'Workspace services' })
+    await services.getByRole('button', { name: 'Inspect URL recovery' }).click()
+    const recovery = services.getByRole('region', { name: 'URL recovery' })
+    await expect(recovery).toContainText('Local URL registry: degraded')
+    await expect(recovery).toContainText(`four.PORT: original local URL on port ${fourth.port} is blocked`)
+    await recovery.getByRole('button', { name: 'Retire blocked URL for three.PORT' }).click()
+    await expect(recovery.getByRole('button', { name: 'Retire blocked URL for three.PORT' })).toHaveCount(0)
+    await expect(rpc(socket, { op: 'service.proxy.inspect', ...route('three') }))
+      .rejects.toThrow(/does not exist/)
     const retry = { op: 'service.proxy.recovery.retry', ...route('one'),
       expected_route_id: first.route_id, expected_service_identity: first.service_identity,
       expected_target_port: first.target_port, expected_proxy_port: first.port }
     await expect(rpc(socket, { ...retry, expected_route_id: 'route_stale' }))
       .rejects.toThrow(/route changed/)
     await expect(rpc(socket, retry)).rejects.toThrow(/port remains unavailable/)
+    await new Promise<void>((done, fail) => occupiedUi!.close((error) => error ? fail(error) : done()))
+    occupiedUi = undefined
+    await recovery.getByRole('button', { name: 'Retry original URL for four.PORT' }).click()
+    await expect(recovery).toContainText('Local URL registry: degraded')
+    await expect(recovery.getByRole('button', { name: 'Retry original URL for four.PORT' })).toHaveCount(0)
+    expect((await rpc(socket, { op: 'service.proxy.inspect', ...route('four') })).url).toBe(fourth.url)
+    await application.close()
+    application = undefined
     await new Promise<void>((done, fail) => occupied!.close((error) => error ? fail(error) : done()))
     occupied = undefined
     const retried = await execFileAsync(process.execPath, [resolve('apps/cli/dist/index.js'),
@@ -569,7 +598,7 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
     expect(JSON.parse(retried.stdout).url).toBe(first.url)
     await rpc(socket, { op: 'service.start', workspace_id: workspace.id, name: 'one' })
     await expect.poll(async () => (await (await fetch(first.url as string)).text())).toBe('one')
-    expect((await (await fetch(second.url as string)).text())).toBe('two')
+    await expect.poll(async () => (await (await fetch(second.url as string)).text())).toBe('two')
 
     await stop()
     const saved = await readFile(registry)
@@ -634,6 +663,29 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
     await expect(rpc(socket, { op: 'service.proxy.recovery.reset',
       expected_registry_sha256: current.registry_sha256 })).rejects.toThrow(/registry changed/)
     await writeFile(registry, broken)
+    application = await electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+      env: { ...process.env, ADE_SOCKET: socket, ADE_E2E_USER_DATA_DIR: userData, ADE_E2E_HIDE_WINDOW: '1' } })
+    const recoveryWindow = await application.firstWindow()
+    await expect(recoveryWindow.locator('header').getByRole('status')).toHaveText('connected')
+    const recoveryServices = recoveryWindow.getByRole('region', { name: 'Workspace services' })
+    await recoveryServices.getByRole('button', { name: 'Inspect URL recovery' }).click()
+    const corruptPanel = recoveryServices.getByRole('region', { name: 'URL recovery' })
+    await expect(corruptPanel).toContainText('Local URL registry: corrupt')
+    await corruptPanel.getByRole('button', { name: 'Review archive and reset' }).click()
+    await expect(corruptPanel).toContainText('Reset discards saved URL routes')
+    await corruptPanel.getByRole('button', { name: 'Cancel' }).click()
+    expect(await readFile(registry)).toEqual(broken)
+    await corruptPanel.getByRole('button', { name: 'Review archive and reset' }).click()
+    await corruptPanel.getByRole('button', { name: 'Confirm archive and reset' }).click()
+    await expect(corruptPanel).toContainText('Local URL registry: healthy')
+    await expect(corruptPanel).toContainText('Previous registry archived at')
+    expect((await rpc(socket, { op: 'service.proxy.recovery.inspect' })).status).toBe('healthy')
+    await application.close()
+    application = undefined
+
+    await stop()
+    await writeFile(registry, broken)
+    await launch()
     const resetCommand = await execFileAsync(process.execPath, [resolve('apps/cli/dist/index.js'),
       '--socket', socket, 'service', 'url-recovery-reset',
       current.registry_sha256 as string, '--confirm-reset'])
@@ -656,6 +708,10 @@ test('proxy recovery preserves other routes and requires explicit fenced repair'
     if (occupiedRetired?.listening) {
       await new Promise<void>((done) => occupiedRetired!.close(() => done()))
     }
+    if (occupiedUi?.listening) {
+      await new Promise<void>((done) => occupiedUi!.close(() => done()))
+    }
+    await application?.close()
     if (child && child.exitCode === null && hello) {
       await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id }).catch(() => undefined)
     }

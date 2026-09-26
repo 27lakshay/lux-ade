@@ -523,7 +523,7 @@ ipcMain.handle('ade:workspace-select', async (event, workspaceId: unknown, conve
     generation: clientGeneration, epoch: (prior?.epoch ?? 0) + 1 })
   return true
 })
-const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'service.proxy.retire', 'listener.list'])
+const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'service.proxy.retire', 'service.proxy.recovery.inspect', 'service.proxy.recovery.retry', 'service.proxy.recovery.reset', 'listener.list'])
 const scriptOps = new Set(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
 ipcMain.handle('ade:script-request', async (_event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !scriptOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
@@ -575,7 +575,7 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
     throw new Error('Invalid service request')
   }
   const args = fields as Record<string, unknown>
-  if (switching && !['service.list', 'service.inspect', 'service.proxy.inspect', 'listener.list'].includes(op)) {
+  if (switching && !['service.list', 'service.inspect', 'service.proxy.inspect', 'service.proxy.recovery.inspect', 'listener.list'].includes(op)) {
     throw new Error('Profile switch is in progress; retry the service action in the selected profile')
   }
   const endpoint = socket
@@ -586,6 +586,25 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
     if (Object.keys(args).length) throw new Error('Listener inventory does not accept fields')
     const result = await requestDaemon(endpoint, op, {})
     if (generation !== clientGeneration || socket !== endpoint) throw new Error('Profile changed while observing listeners')
+    return result
+  }
+  if (op === 'service.proxy.recovery.inspect' || op === 'service.proxy.recovery.reset') {
+    const request: Record<string, unknown> = {}
+    if (op === 'service.proxy.recovery.inspect' && Object.keys(args).length) {
+      throw new Error('URL recovery inspection does not accept fields')
+    }
+    if (op === 'service.proxy.recovery.reset') {
+      if (Object.keys(args).sort().join(',') !== 'confirm_reset,expected_registry_sha256' ||
+        args.confirm_reset !== true || typeof args.expected_registry_sha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(args.expected_registry_sha256)) {
+        throw new Error('Reset requires confirmation and the inspected registry SHA-256')
+      }
+      request.expected_registry_sha256 = args.expected_registry_sha256
+    }
+    const result = await requestDaemon(endpoint, op, request)
+    if (generation !== clientGeneration || socket !== endpoint) {
+      throw new Error('Profile changed while URL recovery completed; inspect the original profile before retrying')
+    }
     return result
   }
   if (!validId(args.workspace_id) || !state.catalog?.workspaces.some((item) => item.id === args.workspace_id)) {
@@ -604,18 +623,18 @@ ipcMain.handle('ade:service-request', async (_event, op: unknown, fields: unknow
     if (!args.config || typeof args.config !== 'object' || Array.isArray(args.config)) throw new Error('Invalid service configuration')
     request.config = args.config
   }
-  if (op === 'service.proxy.ensure' || op === 'service.proxy.inspect' || op === 'service.proxy.remap' || op === 'service.proxy.retire') {
+  if (op === 'service.proxy.ensure' || op === 'service.proxy.inspect' || op === 'service.proxy.remap' || op === 'service.proxy.retire' || op === 'service.proxy.recovery.retry') {
     if (typeof args.port_variable !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(args.port_variable)) {
       throw new Error('Invalid service port variable')
     }
     request.port_variable = args.port_variable
   }
-  if (op === 'service.proxy.remap' || op === 'service.proxy.retire') {
+  if (op === 'service.proxy.remap' || op === 'service.proxy.retire' || op === 'service.proxy.recovery.retry') {
     if (typeof args.expected_service_identity !== 'string' || !validId(args.expected_service_identity) ||
       !Number.isSafeInteger(args.expected_target_port) || (args.expected_target_port as number) < 1 || (args.expected_target_port as number) > 65535 ||
       (op === 'service.proxy.remap' && (typeof args.expected_route_identity !== 'string' || !validId(args.expected_route_identity) ||
         !Number.isSafeInteger(args.expected_route_port) || (args.expected_route_port as number) < 1 || (args.expected_route_port as number) > 65535)) ||
-      (op === 'service.proxy.retire' && (typeof args.expected_route_id !== 'string' || !validId(args.expected_route_id) ||
+      (op !== 'service.proxy.remap' && (typeof args.expected_route_id !== 'string' || !validId(args.expected_route_id) ||
         !Number.isSafeInteger(args.expected_proxy_port) || (args.expected_proxy_port as number) < 1 || (args.expected_proxy_port as number) > 65535))) {
       throw new Error('Invalid expected service targets')
     }

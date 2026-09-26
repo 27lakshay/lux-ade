@@ -43,6 +43,10 @@ type ServiceInspection = { execution_state: string; execution_error?: string | n
   effective_peers?: Record<string, string>; peer_error?: string | null;
   health?: { state: string; basis: string; status_code?: number; error?: string } }
 type ProxyRoute = { url: string; port: number; route_id: string; service_identity: string; target_port: number }
+type ProxyRecoveryRoute = Omit<ProxyRoute, 'url'> & { url: string | null; workspace_id: string; name: string;
+  port_variable: string; availability: string; reason?: string }
+type ProxyRecovery = { status: 'healthy' | 'degraded' | 'corrupt'; routes: ProxyRecoveryRoute[];
+  registry_sha256?: string; reason?: string }
 
 function proxyRoute(value: Frame): ProxyRoute {
   if (typeof value.url !== 'string' || typeof value.route_id !== 'string' ||
@@ -96,6 +100,10 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
   const [proxyUrls, setProxyUrls] = React.useState<Record<string, string>>({})
   const [proxyRouteMeta, setProxyRouteMeta] = React.useState<Record<string, ProxyRoute>>({})
   const [proxyRemap, setProxyRemap] = React.useState<Record<string, { identity: string; port: number }>>({})
+  const [proxyRecovery, setProxyRecovery] = React.useState<ProxyRecovery | null>(null)
+  const [proxyRecoveryBusy, setProxyRecoveryBusy] = React.useState(false)
+  const [confirmProxyReset, setConfirmProxyReset] = React.useState(false)
+  const [proxyArchive, setProxyArchive] = React.useState('')
   const healthRequest = React.useRef(0)
   const [inventoryError, setInventoryError] = React.useState('')
   const [busy, setBusy] = React.useState('')
@@ -240,14 +248,102 @@ function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.Element
     } catch (reason) { setError(String(reason)) }
     finally { setProxyBusy('') }
   }
+  const inspectProxyRecovery = async (): Promise<void> => {
+    if (proxyRecoveryBusy) return
+    setProxyRecoveryBusy(true)
+    try {
+      const result = await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery
+      setProxyRecovery(result)
+      setConfirmProxyReset(false)
+      setError('')
+    } catch (reason) { setProxyRecovery(null); setError(String(reason)) }
+    finally { setProxyRecoveryBusy(false) }
+  }
+  const retryProxyRoute = async (route: ProxyRecoveryRoute): Promise<void> => {
+    if (proxyRecoveryBusy) return
+    setProxyRecoveryBusy(true)
+    try {
+      const result = await window.adeHost.requestService('service.proxy.recovery.retry', {
+        workspace_id: route.workspace_id, name: route.name, port_variable: route.port_variable,
+        expected_route_id: route.route_id, expected_service_identity: route.service_identity,
+        expected_target_port: route.target_port, expected_proxy_port: route.port,
+      })
+      const rebound = proxyRoute(result)
+      const key = `${route.name}:${route.port_variable}`
+      setProxyUrls((urls) => ({ ...urls, [key]: rebound.url }))
+      setProxyRouteMeta((routes) => ({ ...routes, [key]: rebound }))
+      setProxyRecovery(await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery)
+      setError('')
+    } catch (reason) { setError(String(reason)) }
+    finally { setProxyRecoveryBusy(false) }
+  }
+  const retireBlockedProxyRoute = async (route: ProxyRecoveryRoute): Promise<void> => {
+    if (proxyRecoveryBusy) return
+    setProxyRecoveryBusy(true)
+    try {
+      await window.adeHost.requestService('service.proxy.retire', {
+        workspace_id: route.workspace_id, name: route.name, port_variable: route.port_variable,
+        expected_route_id: route.route_id, expected_service_identity: route.service_identity,
+        expected_target_port: route.target_port, expected_proxy_port: route.port,
+      })
+      const key = `${route.name}:${route.port_variable}`
+      setProxyUrls((urls) => { const next = { ...urls }; delete next[key]; return next })
+      setProxyRouteMeta((routes) => { const next = { ...routes }; delete next[key]; return next })
+      setProxyRecovery(await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery)
+      setError('')
+    } catch (reason) { setError(String(reason)) }
+    finally { setProxyRecoveryBusy(false) }
+  }
+  const resetProxyRegistry = async (): Promise<void> => {
+    if (proxyRecoveryBusy || !confirmProxyReset || !proxyRecovery?.registry_sha256) return
+    setProxyRecoveryBusy(true)
+    try {
+      const result = await window.adeHost.requestService('service.proxy.recovery.reset', {
+        expected_registry_sha256: proxyRecovery.registry_sha256, confirm_reset: true,
+      })
+      setProxyArchive(String(result.archive ?? ''))
+      setProxyRecovery(await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery)
+      setConfirmProxyReset(false)
+      setError('')
+    } catch (reason) { setError(String(reason)); setConfirmProxyReset(false) }
+    finally { setProxyRecoveryBusy(false) }
+  }
   const openPreview = async (url: string): Promise<void> => {
     try { await window.adeHost.browser.open(url); setError('') }
     catch (reason) { setError(String(reason)) }
   }
   return <section className="service-pane" aria-label="Workspace services">
-    <div className="service-heading"><h2>Services</h2><button onClick={() => setRefresh((value) => value + 1)}>Refresh</button></div>
+    <div className="service-heading"><h2>Services</h2><div className="service-actions">
+      <button type="button" disabled={proxyRecoveryBusy} onClick={() => void inspectProxyRecovery()}>Inspect URL recovery</button>
+      <button onClick={() => setRefresh((value) => value + 1)}>Refresh</button>
+    </div></div>
     <p className="muted">Configured services keep running when this window closes. TCP observation does not verify application health.</p>
     {error && <p role="alert" className="inline-error">{error}</p>}
+    {proxyRecovery && <section className="service-recovery" aria-label="URL recovery">
+      <p role="status">Local URL registry: {proxyRecovery.status}</p>
+      {proxyRecovery.status === 'corrupt' && <>
+        <p role="alert">{proxyRecovery.reason ?? 'The saved URL registry cannot be read.'} Existing URLs are unavailable until the registry is repaired.</p>
+        {proxyRecovery.registry_sha256 ? <>
+          <p>Restore a known-good registry offline if available. Otherwise, archive the current bytes and reset the registry. Reset discards saved URL routes.</p>
+          {!confirmProxyReset ? <button type="button" disabled={proxyRecoveryBusy}
+            onClick={() => setConfirmProxyReset(true)}>Review archive and reset</button> : <div className="service-actions">
+            <button type="button" disabled={proxyRecoveryBusy} onClick={() => void resetProxyRegistry()}>Confirm archive and reset</button>
+            <button type="button" disabled={proxyRecoveryBusy} onClick={() => setConfirmProxyReset(false)}>Cancel</button>
+          </div>}
+        </> : <p>Repair the registry offline; this file cannot be safely archived from ADE.</p>}
+      </>}
+      {proxyRecovery.routes.filter((route) => route.workspace_id === workspace.id && route.availability === 'port_occupied')
+        .map((route) => <div className="service-recovery-route" key={route.route_id}>
+          <p>{route.name}.{route.port_variable}: original local URL on port {route.port} is blocked. {route.reason}</p>
+          <button type="button" disabled={proxyRecoveryBusy} onClick={() => void retryProxyRoute(route)}>
+            Retry original URL for {route.name}.{route.port_variable}
+          </button>
+          <button type="button" disabled={proxyRecoveryBusy} onClick={() => void retireBlockedProxyRoute(route)}>
+            Retire blocked URL for {route.name}.{route.port_variable}
+          </button>
+        </div>)}
+      {proxyArchive && <p role="status">Previous registry archived at {proxyArchive}</p>}
+    </section>}
     {inventoryError && <p role="status" className="muted">Listener observation unavailable: {inventoryError}</p>}
     {!list && !error && <p className="muted">Loading services…</p>}
     {list?.services.length === 0 && <p className="muted">No services configured in this workspace. Use the ADE CLI to add one.</p>}
@@ -914,7 +1010,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
         {workspace && <>{acknowledgedSelection === selectionKey && <ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
           workspace={workspace} conversation={conversation} profileKey={profileKey} />}
-          <ServicePane key={workspace.id} workspace={workspace} /><ScriptPane key={`scripts:${workspace.id}`} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
+          <ServicePane key={`${state.bootId}:${workspace.id}`} workspace={workspace} /><ScriptPane key={`scripts:${workspace.id}`} workspace={workspace} /><TerminalPane workspace={workspace} /></>}
       </div>
     </div>
   )

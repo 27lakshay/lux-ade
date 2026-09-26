@@ -42,6 +42,12 @@ h1 { font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; line-height: 1.0
 .service-heading h2 { font-size: 15px; margin: 0; }
 .service-heading button, .service-actions button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
 .service-pane > .muted { margin: 10px 0; }
+.service-recovery { background: #202425; border: 1px solid #454b4c; border-radius: 9px; margin: 12px 0; padding: 12px; }
+.service-recovery p { color: #c5cfcb; font-size: 12px; margin: 6px 0; overflow-wrap: anywhere; }
+.service-recovery [role="alert"] { color: #eeb87b; }
+.service-recovery button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 6px 9px; }
+.service-recovery-route { border-top: 1px solid #454b4c; margin-top: 10px; padding-top: 8px; }
+.service-recovery-route button + button { margin-left: 8px; }
 .service-row { background: #202425; border: 1px solid #323637; border-radius: 9px; margin-top: 8px; padding: 12px; }
 .service-row strong { font-size: 13px; }
 .service-row p { color: #a5adae; font-size: 12px; margin: 7px 0; overflow-wrap: anywhere; }
