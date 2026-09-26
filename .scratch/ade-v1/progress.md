@@ -115,7 +115,7 @@ remain queued.
 | `16d4ce2` | Connected daily service flow | Workspace build script feeds managed HTTP service through stable URL and browser preview across app reopen; stopped URL returns 503 |
 | `b41d78c` | Direct Git worktree lifecycle | No product wt dependency; create/list/adopt/remove E2E protects external, dirty, locked and active trees; F063/F065/F069 wording corrected |
 | `eb96b56` | Project toolchain resolution | Monorepo-root declarations, exact installed tool versions and Finder-style discovery; real npm/pnpm/Yarn/Bun E2Es |
-| Native Rust control | Installed profile startup/restart, browser lease and backend-only backup/restore without Python; packaged interrupted-restore recovery E2E |
+| `ccb0bad` | Native Rust control | Installed profile startup/restart, browser lease and backend-only backup/restore without Python; packaged interrupted-restore recovery E2E |
 
 Bounded dependency correction checkpoint, 2026-09-26: all three correction
 acceptance slices pass. Direct Git worktree operations require explicit adoption
