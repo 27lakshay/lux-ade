@@ -3,12 +3,13 @@ use crate::model::*;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Serialize, de::DeserializeOwned};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const TEXT_LIMIT: usize = 1024 * 1024;
 const BUSY: &[&str] = &["starting", "running", "waiting", "cancelling"];
 pub struct Store {
     pub(crate) connection: Connection,
+    data_directory: PathBuf,
 }
 
 #[derive(Clone, Serialize)]
@@ -154,6 +155,14 @@ fn next_sequence(db: &Connection, conversation: &str) -> Result<i64> {
     current.checked_add(1).context("Message sequence exhausted")
 }
 fn write_conversation(db: &Connection, conversation: &Conversation) -> Result<()> {
+    let old: Conversation = one(db, "conversations", &conversation.id)?;
+    ensure!(
+        old.workspace_id == conversation.workspace_id
+            && old.provider == conversation.provider
+            && old.account_id == conversation.account_id
+            && old.account_context == conversation.account_context,
+        "Conversation identity cannot change"
+    );
     check_text(&conversation.title)?;
     if let Some(error) = &conversation.error {
         check_text(error)?;
@@ -253,14 +262,17 @@ impl Store {
         })
     }
     pub fn open(path: &Path) -> Result<Self> {
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent)?;
-        }
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let data_directory = parent.canonicalize()?;
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=8).contains(&version),
+            (0..=9).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -336,7 +348,99 @@ impl Store {
             )?;
             tx.commit()?;
         }
-        Ok(Self { connection })
+        if version < 9 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, provider TEXT NOT NULL, data TEXT NOT NULL); PRAGMA user_version=9;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(9,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        Ok(Self {
+            connection,
+            data_directory,
+        })
+    }
+    fn account_home(&self, id: &str) -> Result<PathBuf> {
+        let suffix = id.strip_prefix("account_").context("Invalid account ID")?;
+        ensure!(
+            suffix.len() == 36
+                && suffix.split('-').map(str::len).eq([8, 4, 4, 4, 12])
+                && suffix
+                    .chars()
+                    .all(|character| character == '-' || character.is_ascii_hexdigit()),
+            "Invalid account ID"
+        );
+        let homes = self.data_directory.join("provider-accounts");
+        let home = homes.join(id);
+        for directory in [&homes, &home] {
+            let metadata = std::fs::symlink_metadata(directory)?;
+            ensure!(
+                metadata.is_dir() && !metadata.file_type().is_symlink(),
+                "Account native home is unavailable or redirected"
+            );
+        }
+        Ok(home)
+    }
+    pub fn create_account(&self, provider: &str, name: &str) -> Result<Account> {
+        crate::provider::descriptor(provider)?;
+        let name = name.trim();
+        ensure!(
+            !name.is_empty() && name.len() <= 80 && !name.contains(['\0', '\n', '\r']),
+            "Account name must contain 1 to 80 characters without control line breaks"
+        );
+        let id = new_id("account");
+        let homes = self.data_directory.join("provider-accounts");
+        match std::fs::create_dir(&homes) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        let homes_metadata = std::fs::symlink_metadata(&homes)?;
+        ensure!(
+            homes_metadata.is_dir() && !homes_metadata.file_type().is_symlink(),
+            "Account native home root is redirected"
+        );
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&homes, std::fs::Permissions::from_mode(0o700))?;
+        let home = homes.join(&id);
+        std::fs::create_dir(&home)?;
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))?;
+        let home = self.account_home(&id)?;
+        let account = Account {
+            id,
+            provider: provider.into(),
+            name: name.into(),
+            native_home: home.to_string_lossy().into_owned(),
+            generation: 0,
+            state: "unverified".into(),
+        };
+        self.connection.execute(
+            "INSERT INTO accounts(id,provider,data) VALUES(?1,?2,?3)",
+            params![account.id, account.provider, encode(&account)?],
+        )?;
+        Ok(account)
+    }
+    pub fn accounts(&self) -> Result<Vec<Account>> {
+        all::<Account>(&self.connection, "SELECT data FROM accounts ORDER BY rowid")?
+            .into_iter()
+            .map(|mut account| {
+                account.native_home = self
+                    .account_home(&account.id)?
+                    .to_string_lossy()
+                    .into_owned();
+                Ok(account)
+            })
+            .collect()
+    }
+    pub fn account(&self, id: &str) -> Result<Account> {
+        let mut account: Account = one(&self.connection, "accounts", id)?;
+        account.native_home = self
+            .account_home(&account.id)?
+            .to_string_lossy()
+            .into_owned();
+        Ok(account)
     }
     pub fn send_intent(&self, conversation: &str, window: &str) -> Result<Option<SendIntent>> {
         self.conversation(conversation)?;
@@ -763,7 +867,24 @@ impl Store {
         provider: &str,
         provider_config: crate::provider::Config,
     ) -> Result<Conversation> {
+        self.create_with_account(workspace_id, title, provider, provider_config, None)
+    }
+    pub fn create_with_account(
+        &self,
+        workspace_id: &str,
+        title: &str,
+        provider: &str,
+        provider_config: crate::provider::Config,
+        account_id: Option<&str>,
+    ) -> Result<Conversation> {
         provider_config.validate(provider)?;
+        if let Some(id) = account_id {
+            let account = self.account(id)?;
+            ensure!(
+                account.provider == provider,
+                "Account belongs to another provider"
+            );
+        }
         check_text(title)?;
         let conversation = Conversation {
             terminal_owner: None,
@@ -776,6 +897,13 @@ impl Store {
             workspace_id: workspace_id.into(),
             title: title.into(),
             provider: provider.into(),
+            account_id: account_id.map(str::to_owned),
+            account_context: if account_id.is_some() {
+                "managed"
+            } else {
+                "legacy_ambient"
+            }
+            .into(),
             provider_config,
             provider_thread_id: None,
             status: "idle".into(),
@@ -1037,11 +1165,6 @@ impl Store {
     ) -> Result<()> {
         let started = std::time::Instant::now();
         let tx = self.transaction()?;
-        let old: Conversation = one(&tx, "conversations", &conversation.id)?;
-        ensure!(
-            old.workspace_id == conversation.workspace_id && old.provider == conversation.provider,
-            "Conversation identity cannot change"
-        );
         write_conversation(&tx, conversation)?;
         for incoming in messages {
             check_id(&incoming.id)?;

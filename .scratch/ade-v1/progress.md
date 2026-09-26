@@ -20,7 +20,7 @@ full acceptance in its owning spec:
 | Slice and requirement IDs | Observable gate | Current gap |
 |---|---|---|
 | Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged app, one profile, shell and deterministic turns pass; installed multi-profile and real-agent continuity remain |
-| Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live prompts passed; Oh My Pi lacks configured account; account and full control flows remain |
+| Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live prompts passed; Oh My Pi lacks configured account; profile-owned account registration and conversation pinning pass, but managed execution waits for native identity readback; full control flows remain |
 | Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
 | Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, managed-service controls, listener and bounded log inspection, an on-demand HTTP health check, and browser preview with profile cookie persistence pass; configured health monitoring and persistent logs remain |
 | Shared control: F101, F102, F103 | CLI and Electron target the same profile/workspace/conversation/terminal with structured outcomes | Local CLI subset works; public command coverage remains |
@@ -162,7 +162,12 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   Recall/stash, transfer, conflicting clients and daemon-crash acceptance remain.
 - Conversation pagination, native attachments/context, queues,
   broader approval forms, and live Oh My Pi verification remain.
-- Account management, extensible providers/plugins, worktrees, full dev-service
+- Account registration creates separate profile-owned native homes and pins a
+  provider-matched account to each conversation. A real-daemon E2E proves
+  persistence, v8 migration, redirect rejection and fail-closed launch when
+  ambient Claude credentials exist. Native authentication/readback, readiness,
+  logout fencing and two live-account execution remain open for F025/F027/R012.
+- Full account management, extensible providers/plugins, worktrees, full dev-service
   health/logs and browser features, notifications, remote hosts, unified catalogs/history, customization,
   operations and reliability acceptance remain in the v1 register.
 - Next daily-use work: configured service health/persistent logs, browser

@@ -1,5 +1,6 @@
 //! Provider interface: lux-ade owns identity/durability; each adapter owns its native protocol.
 use crate::{model::PendingRequest, rpc::Rpc};
+use ade_core::model::AccountExecution;
 use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 use std::sync::{Arc, mpsc};
@@ -53,9 +54,26 @@ pub trait Provider: Send + Sync {
 pub fn spawn(
     provider: &str,
     cwd: &str,
+    account: Option<&AccountExecution>,
     events: mpsc::SyncSender<Event>,
 ) -> Result<Arc<dyn Provider>> {
+    if let Some(account) = account {
+        ensure!(
+            account.provider == provider,
+            "Agent account belongs to another provider"
+        );
+    }
     match provider {
+        "claude" if account.is_some() => {
+            bail!("Managed Claude accounts need native identity readback before launch")
+        }
+        "codex" if account.is_some() => {
+            bail!("Managed Codex accounts need native credential readback before launch")
+        }
+        "omp" if account.is_some() => {
+            bail!("Managed Oh My Pi accounts need native credential readback before launch")
+        }
+        "opencode" if account.is_some() => bail!("Managed OpenCode accounts are not supported yet"),
         "codex" => Ok(crate::codex::Adapter::spawn(cwd, events)?),
         "claude" => Ok(crate::claude::Adapter::spawn(cwd, events)?),
         "opencode" => Ok(crate::opencode::Adapter::spawn(cwd, events)?),

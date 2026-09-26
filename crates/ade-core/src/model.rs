@@ -35,12 +35,39 @@ pub struct Conversation {
     pub title: String,
     pub provider: String,
     #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default = "legacy_ambient_account_context")]
+    pub account_context: String,
+    #[serde(default)]
     pub provider_config: crate::provider::Config,
     pub provider_thread_id: Option<String>,
     pub status: String,
     pub active_turn_id: Option<String>,
     pub error: Option<String>,
     pub updated_at: i64,
+}
+fn legacy_ambient_account_context() -> String {
+    "legacy_ambient".into()
+}
+
+/// Profile-owned account metadata. Credentials remain with the native provider.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Account {
+    pub id: String,
+    pub provider: String,
+    pub name: String,
+    pub native_home: String,
+    pub generation: u64,
+    pub state: String,
+}
+
+/// The immutable account context pinned to one provider execution.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AccountExecution {
+    pub id: String,
+    pub provider: String,
+    pub native_home: String,
+    pub generation: u64,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Draft {

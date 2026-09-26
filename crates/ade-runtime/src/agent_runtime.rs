@@ -29,6 +29,8 @@ pub struct Spec {
     pub run: String,
     pub provider: String,
     pub root: String,
+    #[serde(default)]
+    pub account: Option<ade_core::model::AccountExecution>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Envelope {
@@ -75,7 +77,7 @@ pub struct Run {
 impl Run {
     pub fn spawn(spec: Spec) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::sync_channel(256);
-        let adapter = provider::spawn(&spec.provider, &spec.root, tx)?;
+        let adapter = provider::spawn(&spec.provider, &spec.root, spec.account.as_ref(), tx)?;
         let run = Arc::new(Self {
             spec,
             adapter,
@@ -540,6 +542,7 @@ mod tests {
                     run: "r".into(),
                     provider: "codex".into(),
                     root: "/tmp".into(),
+                    account: None,
                 },
                 adapter: fake.clone(),
                 journal: Mutex::new(Journal {

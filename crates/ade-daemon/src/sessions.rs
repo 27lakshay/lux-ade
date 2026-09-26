@@ -675,6 +675,16 @@ impl Sessions {
                 Ok(json!({"type":"ack"}))
             }
             "provider.list" => Ok(provider::catalogue()),
+            "account.list" => Ok(
+                json!({"type":"accounts","accounts":self.data.lock().unwrap().store.accounts()?}),
+            ),
+            "account.create" => {
+                let d = self.data.lock().unwrap();
+                let account = d
+                    .store
+                    .create_account(string("provider")?, string("name")?)?;
+                Ok(json!({"type":"ack","account":account}))
+            }
             "catalog.get" => Ok(
                 json!({"type":"catalog","catalog":self.data.lock().unwrap().store.catalog()?,"providers":provider::descriptors(),"boot_id":self.boot_id}),
             ),
@@ -691,7 +701,11 @@ impl Sessions {
                 let mut d = self.data.lock().unwrap();
                 let title = request["title"].as_str().unwrap_or("New Conversation");
                 ensure!(title.len() <= 256, "Title is too long");
-                let c = d.store.create_with_provider(
+                let account_id = match request.get("account_id") {
+                    None => None,
+                    Some(value) => Some(value.as_str().context("Invalid account ID")?),
+                };
+                let c = d.store.create_with_account(
                     string("workspace_id")?,
                     title,
                     request["provider"].as_str().unwrap_or("codex"),
@@ -701,6 +715,7 @@ impl Sessions {
                             .cloned()
                             .unwrap_or_else(|| json!({})),
                     )?,
+                    account_id,
                 )?;
                 self.catalog_changed(&mut d)?;
                 Ok(json!({"type":"ack","conversation":c}))
@@ -1610,12 +1625,29 @@ impl Sessions {
         run: &str,
         restore: bool,
     ) -> Result<Arc<dyn Provider>> {
-        let (c, w) = {
+        let (c, w, account) = {
             let d = self.data.lock().unwrap();
             ensure!(Self::owns(&d, id, run), "Agent was cancelled");
             let c = d.store.conversation(id)?;
             let w = d.store.workspace(&c.workspace_id)?;
-            (c, w)
+            let account = c
+                .account_id
+                .as_deref()
+                .map(|account_id| {
+                    let account = d.store.account(account_id)?;
+                    ensure!(
+                        account.provider == c.provider,
+                        "Conversation account belongs to another provider"
+                    );
+                    Ok::<_, anyhow::Error>(ade_core::model::AccountExecution {
+                        id: account.id,
+                        provider: account.provider,
+                        native_home: account.native_home,
+                        generation: account.generation,
+                    })
+                })
+                .transpose()?;
+            (c, w, account)
         };
         ensure!(
             Path::new(&w.root).is_dir(),
@@ -1629,6 +1661,7 @@ impl Sessions {
                 run: run.into(),
                 provider: c.provider.clone(),
                 root: w.root,
+                account,
             },
         );
         if !restore {
