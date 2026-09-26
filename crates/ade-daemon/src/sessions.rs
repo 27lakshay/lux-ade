@@ -32,6 +32,18 @@ struct HealthCheck {
     path: String,
     timeout: std::time::Duration,
 }
+struct SendAdmission<'a> {
+    review_anchor: Option<&'a Value>,
+    prelease: Option<crate::worktrees::Lease>,
+}
+impl SendAdmission<'_> {
+    fn ordinary() -> Self {
+        Self {
+            review_anchor: None,
+            prelease: None,
+        }
+    }
+}
 impl From<&ade_core::services::HealthPolicy> for HealthCheck {
     fn from(policy: &ade_core::services::HealthPolicy) -> Self {
         Self {
@@ -391,6 +403,7 @@ impl Sessions {
                 &head.text,
                 &head.attachments,
                 true,
+                SendAdmission::ordinary(),
             ) {
                 let mut d = self.data.lock().unwrap();
                 if d.draining {
@@ -1395,6 +1408,7 @@ impl Sessions {
                     string("request_id")?,
                     &draft,
                     request["text"].as_str().context("Missing prompt text")?,
+                    request.get("review_anchor"),
                 ))?;
                 Ok(json!({"type":"send_intent","intent":intent}))
             }
@@ -1423,7 +1437,116 @@ impl Sessions {
                 let attachments = serde_json::from_value::<Vec<crate::model::Attachment>>(
                     request.get("attachments").cloned().unwrap_or(json!([])),
                 )?;
-                if let Err(error) = self.send(conversation, key, text, &attachments, false) {
+                if let Err(error) = self.send(
+                    conversation,
+                    key,
+                    text,
+                    &attachments,
+                    false,
+                    SendAdmission::ordinary(),
+                ) {
+                    let data = self.data.lock().unwrap();
+                    let _ = data
+                        .store
+                        .reject_send_intent(conversation, key, text, &attachments);
+                    return Err(error);
+                }
+                Ok(json!({"type":"ack"}))
+            }
+            "agent.send_review" => {
+                let conversation = string("conversation_id")?;
+                let key = string("request_id")?;
+                let text = request["text"].as_str().context("Missing prompt text")?;
+                let anchor = request
+                    .get("review_anchor")
+                    .context("Missing review anchor")?;
+                let attachments = serde_json::from_value::<Vec<crate::model::Attachment>>(
+                    request.get("attachments").cloned().unwrap_or(json!([])),
+                )?;
+                ensure!(
+                    attachments.is_empty(),
+                    "Review feedback cannot include attachments"
+                );
+                let (workspace, binding, common_binding) = {
+                    let data = self.data.lock().unwrap();
+                    data.store.guard_send_intent(
+                        conversation,
+                        key,
+                        text,
+                        &attachments,
+                        Some(anchor),
+                    )?;
+                    let current = data.store.conversation(conversation)?;
+                    let workspace = data.store.workspace(&current.workspace_id)?;
+                    ensure!(
+                        anchor["workspace_id"].as_str() == Some(workspace.id.as_str()),
+                        "Review feedback targets a different workspace"
+                    );
+                    let binding = data.store.workspace_binding_identity(&workspace.id)?;
+                    let common_binding = workspace
+                        .repository_id
+                        .as_deref()
+                        .map(|id| data.store.repository_binding_identity(id))
+                        .transpose()?;
+                    (workspace, binding, common_binding)
+                };
+                let accepted = self.data.lock().unwrap().store.message(key)?;
+                if accepted.is_some_and(|m| {
+                    m.conversation_id == conversation
+                        && m.role == "user"
+                        && m.text == text
+                        && m.attachments == attachments
+                }) {
+                    self.send(
+                        conversation,
+                        key,
+                        text,
+                        &attachments,
+                        false,
+                        SendAdmission {
+                            review_anchor: Some(anchor),
+                            prelease: None,
+                        },
+                    )?;
+                    return Ok(json!({"type":"ack"}));
+                }
+                let lease = {
+                    let mut attempts = 0;
+                    loop {
+                        match self.worktrees.agent_lease(&workspace.root) {
+                            Ok(lease) => break lease,
+                            Err(error)
+                                if attempts < 10
+                                    && error.to_string()
+                                        == "Worktree setup/lifecycle operation is in progress" =>
+                            {
+                                attempts += 1;
+                                std::thread::sleep(std::time::Duration::from_millis(20));
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                };
+                let result = self.review.validate_anchor_then(
+                    &workspace.root,
+                    binding,
+                    common_binding,
+                    anchor,
+                    || {
+                        self.send(
+                            conversation,
+                            key,
+                            text,
+                            &attachments,
+                            false,
+                            SendAdmission {
+                                review_anchor: Some(anchor),
+                                prelease: Some(lease),
+                            },
+                        )
+                    },
+                );
+                if let Err(error) = result {
                     let data = self.data.lock().unwrap();
                     let _ = data
                         .store
@@ -2373,6 +2496,7 @@ impl Sessions {
         text: &str,
         attachments: &[crate::model::Attachment],
         queued: bool,
+        admission: SendAdmission<'_>,
     ) -> Result<()> {
         ensure!(text.len() <= 64 * 1024, "Prompt exceeds 64 KiB");
         let workspace_id = self
@@ -2389,7 +2513,8 @@ impl Sessions {
                 !d.draining,
                 "Application daemon is restarting; prompt remains queued"
             );
-            d.store.guard_send_intent(id, key, text, attachments)?;
+            d.store
+                .guard_send_intent(id, key, text, attachments, admission.review_anchor)?;
             let current = d.store.conversation(id)?;
             Self::ensure_account_current(
                 &d,
@@ -2415,7 +2540,11 @@ impl Sessions {
             }
             let workspace = d.store.workspace(&d.store.conversation(id)?.workspace_id)?;
             d.store.ensure_workspace_bound(&workspace.id)?;
-            let lease = self.worktrees.agent_lease(&workspace.root)?;
+            let lease = if let Some(lease) = admission.prelease {
+                lease
+            } else {
+                self.worktrees.agent_lease(&workspace.root)?
+            };
             let prompt = d.store.prompt(id, text, attachments)?;
             let mut begin = d
                 .store

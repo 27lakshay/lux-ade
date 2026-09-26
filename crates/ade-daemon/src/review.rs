@@ -20,15 +20,209 @@ use std::{
         unix::{
             ffi::OsStrExt,
             fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+            process::CommandExt,
         },
     },
     path::{Component, Path, PathBuf},
-    process::Command,
-    sync::{Arc, Mutex},
+    process::{Command, Stdio},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 type StatusCache = Arc<Mutex<Option<(Instant, Value)>>>;
+const DIFF_SNAPSHOT_MAX_BYTES: usize = 16 * 1024 * 1024;
+const DIFF_PAGE_MAX_BYTES: usize = 240 * 1024;
+const DIFF_PAGE_MAX_ROWS: usize = 1000;
+const DIFF_SNAPSHOT_TTL: Duration = Duration::from_secs(120);
+
+struct DiffSnapshot {
+    workspace_id: String,
+    root: String,
+    path: String,
+    staged: bool,
+    revision: String,
+    token: String,
+    header: String,
+    patch: String,
+    body_start: usize,
+    binary: bool,
+    conflict: bool,
+    created: Instant,
+}
+
+impl DiffSnapshot {
+    fn new(
+        workspace_id: &str,
+        root: &str,
+        path: &str,
+        staged: bool,
+        state: &Value,
+        patch: String,
+    ) -> Result<Self> {
+        let revision = state["revision"]
+            .as_str()
+            .context("Missing review revision")?
+            .to_owned();
+        let index_token = state["index_token"]
+            .as_str()
+            .context("Missing index token")?;
+        let token = fingerprint(&[patch.as_bytes(), index_token.as_bytes()]);
+        let body_start = patch
+            .match_indices("\n@@ ")
+            .next()
+            .map_or(patch.len(), |(offset, _)| offset + 1);
+        let header = patch[..body_start].to_owned();
+        ensure!(
+            header.len() <= 64 * 1024,
+            "Diff header exceeds the paged review limit"
+        );
+        let binary = patch.contains("Binary files ") || patch.contains("GIT binary patch");
+        let conflict = state["files"]
+            .as_array()
+            .and_then(|files| files.iter().find(|file| file["path"] == path))
+            .is_some_and(|file| file["conflict"] == true);
+        Ok(Self {
+            workspace_id: workspace_id.to_owned(),
+            root: root.to_owned(),
+            path: path.to_owned(),
+            staged,
+            revision,
+            token,
+            header,
+            patch,
+            body_start,
+            binary,
+            conflict,
+            created: Instant::now(),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct DiffCursor {
+    snapshot_id: String,
+    offset: usize,
+    hunk: String,
+    old_line: u64,
+    new_line: u64,
+}
+
+#[derive(Default)]
+struct DiffPages {
+    snapshots: std::collections::HashMap<String, DiffSnapshot>,
+    cursors: std::collections::HashMap<String, DiffCursor>,
+}
+
+impl DiffPages {
+    fn prune(&mut self) {
+        self.snapshots
+            .retain(|_, snapshot| snapshot.created.elapsed() < DIFF_SNAPSHOT_TTL);
+        self.cursors
+            .retain(|_, cursor| self.snapshots.contains_key(&cursor.snapshot_id));
+        while self.snapshots.len() > 2 {
+            if let Some(oldest) = self
+                .snapshots
+                .iter()
+                .min_by_key(|(_, item)| item.created)
+                .map(|(id, _)| id.clone())
+            {
+                self.snapshots.remove(&oldest);
+                self.cursors
+                    .retain(|_, cursor| cursor.snapshot_id != oldest);
+            }
+        }
+    }
+}
+
+fn bounded_line(line: &str) -> (&str, bool) {
+    const LIMIT: usize = 8192;
+    if line.len() <= LIMIT {
+        return (line, false);
+    }
+    let mut end = LIMIT;
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&line[..end], true)
+}
+
+fn next_diff_row(raw: &str, state: &mut DiffCursor) -> Value {
+    let line = raw.strip_suffix('\n').unwrap_or(raw);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let (text, truncated) = bounded_line(line);
+    let (kind, old_line, new_line) = if line.starts_with("@@ ") {
+        state.hunk = line.to_owned();
+        let mut parts = line.split_whitespace();
+        let _ = parts.next();
+        state.old_line = parts
+            .next()
+            .and_then(|part| part.strip_prefix('-'))
+            .and_then(|part| part.split(',').next())
+            .and_then(|number| number.parse().ok())
+            .unwrap_or(0);
+        state.new_line = parts
+            .next()
+            .and_then(|part| part.strip_prefix('+'))
+            .and_then(|part| part.split(',').next())
+            .and_then(|number| number.parse().ok())
+            .unwrap_or(0);
+        ("hunk", None, None)
+    } else if line.starts_with(' ') {
+        let old = state.old_line;
+        let new = state.new_line;
+        state.old_line += 1;
+        state.new_line += 1;
+        ("context", Some(old), Some(new))
+    } else if line.starts_with('+') {
+        let new = state.new_line;
+        state.new_line += 1;
+        ("added", None, Some(new))
+    } else if line.starts_with('-') {
+        let old = state.old_line;
+        state.old_line += 1;
+        ("removed", Some(old), None)
+    } else {
+        ("meta", None, None)
+    };
+    json!({"kind":kind,"old_line":old_line,"new_line":new_line,"text":text,
+        "hunk":state.hunk,"truncated":truncated})
+}
+
+fn page_rows(
+    snapshot: &DiffSnapshot,
+    cursor: &DiffCursor,
+) -> Result<(Vec<Value>, Option<DiffCursor>)> {
+    ensure!(
+        cursor.offset >= snapshot.body_start && cursor.offset <= snapshot.patch.len(),
+        "Invalid diff page cursor"
+    );
+    let mut next = cursor.clone();
+    let mut rows = Vec::new();
+    let mut encoded_bytes = 1024 + snapshot.header.len().min(64 * 1024);
+    while next.offset < snapshot.patch.len() && rows.len() < DIFF_PAGE_MAX_ROWS {
+        let tail = &snapshot.patch[next.offset..];
+        let len = tail.find('\n').map_or(tail.len(), |index| index + 1);
+        let mut candidate = next.clone();
+        let row = next_diff_row(&tail[..len], &mut candidate);
+        let size = serde_json::to_vec(&row)?.len() + 1;
+        if !rows.is_empty() && encoded_bytes + size > DIFF_PAGE_MAX_BYTES {
+            break;
+        }
+        ensure!(
+            encoded_bytes + size <= DIFF_PAGE_MAX_BYTES,
+            "Diff row exceeds page limit"
+        );
+        candidate.offset += len;
+        next = candidate;
+        encoded_bytes += size;
+        rows.push(row);
+    }
+    let continuation = (next.offset < snapshot.patch.len()).then_some(next);
+    Ok((rows, continuation))
+}
 
 pub struct Review {
     worktrees: Arc<Worktrees>,
@@ -36,6 +230,7 @@ pub struct Review {
     // A short shared cache collapses refreshes from multiple windows. No polling
     // or repository scan exists when no Changes window requests it.
     cache: Mutex<std::collections::HashMap<String, StatusCache>>,
+    diff_pages: Mutex<DiffPages>,
 }
 fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v[key]
@@ -344,7 +539,7 @@ impl Git<'_> {
         );
         Ok(())
     }
-    fn run(&self, args: &[&str], input: Option<Vec<u8>>, timeout: u64) -> Result<Value> {
+    fn worker_command(&self, args: &[&str]) -> Result<Command> {
         let mut c = Command::new(std::env::current_exe()?);
         c.args(["--worktree-worker", "git"]);
         worktrees::neutral(&mut c);
@@ -367,7 +562,113 @@ impl Git<'_> {
             c.env_remove("ADE_E2E_REVIEW_PAUSE_DIR")
                 .env("ADE_E2E_WORKER_PAUSE_DIR", directory);
         }
+        Ok(c)
+    }
+    fn run(&self, args: &[&str], input: Option<Vec<u8>>, timeout: u64) -> Result<Value> {
+        let c = self.worker_command(args)?;
         worktrees::run_input(c, timeout, Some(&self.guard.file), input)
+    }
+    fn stream_diff(&self, args: &[&str], untracked: bool) -> Result<String> {
+        let mut command = self.worker_command(args)?;
+        let fd = self.guard.file.as_raw_fd();
+        command
+            .env("ADE_LIFECYCLE_LOCK_FD", fd.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0);
+        unsafe {
+            command.pre_exec(move || {
+                if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn()?;
+        let overflow = Arc::new(AtomicBool::new(false));
+        let output_overflow = overflow.clone();
+        let stdout = child.stdout.take().context("Missing Git stdout")?;
+        let output = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let mut reader = stdout;
+            let mut output = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                let count = reader.read(&mut chunk)?;
+                if count == 0 {
+                    break;
+                }
+                if output.len().saturating_add(count) > DIFF_SNAPSHOT_MAX_BYTES {
+                    output_overflow.store(true, Ordering::Release);
+                    break;
+                }
+                output.extend_from_slice(&chunk[..count]);
+            }
+            Ok(output)
+        });
+        let stderr = child.stderr.take().context("Missing Git stderr")?;
+        let errors = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let mut reader = stderr;
+            let mut output = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let count = reader.read(&mut chunk)?;
+                if count == 0 {
+                    break;
+                }
+                if output.len() < 64 * 1024 {
+                    output.extend_from_slice(&chunk[..count.min(64 * 1024 - output.len())]);
+                }
+            }
+            Ok(output)
+        });
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let (status, too_large, timed_out) = loop {
+            if overflow.load(Ordering::Acquire) {
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                break (child.wait()?, true, false);
+            }
+            if let Some(status) = child.try_wait()? {
+                break (status, false, false);
+            }
+            if Instant::now() >= deadline {
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                break (child.wait()?, false, true);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let pipe_deadline = Instant::now() + Duration::from_secs(2);
+        while (!output.is_finished() || !errors.is_finished()) && Instant::now() < pipe_deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        ensure!(
+            output.is_finished() && errors.is_finished(),
+            "Git diff output remained open after the worker stopped"
+        );
+        let bytes = output
+            .join()
+            .map_err(|_| anyhow::anyhow!("Git stdout reader failed"))??;
+        let error_bytes = errors
+            .join()
+            .map_err(|_| anyhow::anyhow!("Git stderr reader failed"))??;
+        ensure!(
+            !too_large && !overflow.load(Ordering::Acquire),
+            "Diff exceeds the 16 MiB paged review limit"
+        );
+        ensure!(
+            !timed_out,
+            "Diff generation exceeded the 15-second review limit"
+        );
+        ensure!(
+            status.success() || untracked && status.code() == Some(1),
+            "Git diff failed: {}",
+            String::from_utf8_lossy(&error_bytes)
+        );
+        self.ensure_root_bound()?;
+        String::from_utf8(bytes).context("Git diff contains non-UTF-8 text")
     }
     fn text(&self, args: &[&str]) -> Result<String> {
         let out = self.run(args, None, 15)?;
@@ -435,6 +736,39 @@ impl Git<'_> {
         state["type"] = json!("review_status");
         state["root"] = json!(self.root);
         Ok(state)
+    }
+    fn diff_source(&self, path: &str, staged: bool, state: &Value) -> Result<String> {
+        path_arg(path)?;
+        let file = state["files"]
+            .as_array()
+            .context("Missing changed files")?
+            .iter()
+            .find(|file| file["path"] == path)
+            .context("File is no longer changed; refresh")?;
+        ensure!(
+            file[if staged { "staged" } else { "unstaged" }] == true,
+            "This file has no changes in that area"
+        );
+        let mut args = vec![
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--no-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--unified=3",
+        ];
+        if staged {
+            args.push("--cached");
+        }
+        let untracked = file["untracked"] == true;
+        if untracked {
+            args.extend(["--no-index", "--", "/dev/null", path]);
+        } else {
+            args.extend(["--", path]);
+        }
+        self.stream_diff(&args, untracked)
     }
     fn diff(&self, path: &str, staged: bool) -> Result<Value> {
         path_arg(path)?;
@@ -576,6 +910,7 @@ impl Review {
             worktrees,
             db: Mutex::new(db),
             cache: Mutex::new(Default::default()),
+            diff_pages: Mutex::new(DiffPages::default()),
         }))
     }
     fn job(&self, root: &str, id: &str, request: Option<&Value>) -> Result<Option<Value>> {
@@ -600,6 +935,82 @@ impl Review {
             ));
         }
         Ok(None)
+    }
+    pub fn validate_anchor_then<T>(
+        &self,
+        root: &str,
+        workspace_binding: (u64, u64),
+        common_binding: Option<(u64, u64)>,
+        anchor: &Value,
+        admit: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let metadata = fs::metadata(root)?;
+        ensure!(
+            metadata.is_dir() && (metadata.dev(), metadata.ino()) == workspace_binding,
+            ade_core::error::NeedsRebind
+        );
+        let canonical = worktrees::git(root, &["rev-parse", "--show-toplevel"])?;
+        let root = canonical.as_str();
+        let metadata = fs::metadata(root)?;
+        ensure!(metadata.is_dir(), ade_core::error::NeedsRebind);
+        let guard = self.worktrees.review_guard(root)?;
+        let git = Git {
+            root,
+            guard: &guard,
+            binding: (metadata.dev(), metadata.ino()),
+            common_binding,
+        };
+        let path = string(anchor, "path")?;
+        path_arg(path)?;
+        let staged = anchor["staged"].as_bool().context("Invalid review side")?;
+        let revision = string(anchor, "revision")?;
+        let token = string(anchor, "token")?;
+        let hunk = string(anchor, "hunk")?;
+        let line = anchor["line"]
+            .as_u64()
+            .filter(|line| *line > 0)
+            .context("Invalid review line")?;
+        let text = anchor["text"]
+            .as_str()
+            .filter(|text| text.len() <= 8192)
+            .context("Invalid review line text")?;
+        let state = git.status()?;
+        ensure!(
+            state["revision"] == revision,
+            "Stale diff: workspace changes moved; refresh Changes"
+        );
+        let patch = git.diff_source(path, staged, &state)?;
+        let snapshot = DiffSnapshot::new("", root, path, staged, &state, patch)?;
+        ensure!(
+            snapshot.token == token,
+            "Stale diff: selected file changed; refresh Changes"
+        );
+        let mut cursor = DiffCursor {
+            snapshot_id: String::new(),
+            offset: snapshot.body_start,
+            hunk: String::new(),
+            old_line: 0,
+            new_line: 0,
+        };
+        let mut found = false;
+        for raw in snapshot.patch[snapshot.body_start..].split_inclusive('\n') {
+            let row = next_diff_row(raw, &mut cursor);
+            if row["hunk"] == hunk
+                && row["new_line"] == line
+                && row["text"] == text
+                && row["truncated"] == false
+                && (row["kind"] == "added" || row["kind"] == "context")
+            {
+                found = true;
+                break;
+            }
+        }
+        ensure!(found, "Stale diff: selected line changed; refresh Changes");
+        ensure!(
+            git.status()?["revision"] == revision,
+            "Stale diff: workspace changes moved; refresh Changes"
+        );
+        admit()
     }
     pub fn command(
         self: &Arc<Self>,
@@ -671,6 +1082,101 @@ impl Review {
                 common_binding,
             }
             .diff(string(request, "path")?, request["staged"] == true);
+        }
+        if op == "review.diff_page" {
+            let workspace_id = string(request, "workspace_id")?;
+            let path = string(request, "path")?;
+            path_arg(path)?;
+            let staged = request["staged"].as_bool().context("Invalid review side")?;
+            let guard = self.worktrees.review_guard(root)?;
+            let git = Git {
+                root,
+                guard: &guard,
+                binding,
+                common_binding,
+            };
+            let state = git.status()?;
+            let revision = state["revision"]
+                .as_str()
+                .context("Missing review revision")?;
+            let (snapshot_id, cursor) = if request.get("cursor").is_some() {
+                let cursor_id = string(request, "cursor")?;
+                ensure!(cursor_id.len() <= 128, "Invalid diff page cursor");
+                let mut pages = self.diff_pages.lock().unwrap();
+                pages.prune();
+                let cursor = pages
+                    .cursors
+                    .get(cursor_id)
+                    .context("Diff page cursor expired; refresh Changes")?
+                    .clone();
+                let snapshot = pages
+                    .snapshots
+                    .get(&cursor.snapshot_id)
+                    .context("Diff page cursor expired; refresh Changes")?;
+                ensure!(
+                    snapshot.workspace_id == workspace_id
+                        && snapshot.root == root
+                        && snapshot.path == path
+                        && snapshot.staged == staged,
+                    "Diff page cursor belongs to another file or side"
+                );
+                ensure!(
+                    snapshot.revision == revision,
+                    "Stale diff: workspace changes moved; refresh Changes"
+                );
+                (cursor.snapshot_id.clone(), cursor)
+            } else {
+                let patch = git.diff_source(path, staged, &state)?;
+                ensure!(
+                    git.status()?["revision"] == revision,
+                    "Stale diff: workspace changes moved; refresh Changes"
+                );
+                let snapshot = DiffSnapshot::new(workspace_id, root, path, staged, &state, patch)?;
+                let snapshot_id = new_id("diff");
+                let cursor = DiffCursor {
+                    snapshot_id: snapshot_id.clone(),
+                    offset: snapshot.body_start,
+                    hunk: String::new(),
+                    old_line: 0,
+                    new_line: 0,
+                };
+                let mut pages = self.diff_pages.lock().unwrap();
+                pages.prune();
+                pages.snapshots.insert(snapshot_id.clone(), snapshot);
+                pages.prune();
+                (snapshot_id, cursor)
+            };
+            let mut pages = self.diff_pages.lock().unwrap();
+            let snapshot = pages
+                .snapshots
+                .get(&snapshot_id)
+                .context("Diff page cursor expired; refresh Changes")?;
+            if let Some(expected) = request.get("expected_token") {
+                ensure!(
+                    expected.as_str() == Some(snapshot.token.as_str()),
+                    "Stale diff: token changed; refresh Changes"
+                );
+            }
+            let (rows, continuation) = page_rows(snapshot, &cursor)?;
+            let token = snapshot.token.clone();
+            let header = snapshot.header.clone();
+            let bytes = snapshot.patch.len();
+            let binary = snapshot.binary;
+            let conflict = snapshot.conflict;
+            let next_cursor = continuation.map(|continuation| {
+                let id = new_id("diff_page");
+                if pages.cursors.len() >= 4096 {
+                    pages.cursors.clear();
+                }
+                pages.cursors.insert(id.clone(), continuation);
+                id
+            });
+            return Ok(
+                json!({"type":"review_diff_page","path":path,"staged":staged,
+                "revision":revision,"token":token,"header":header,"rows":rows,
+                "next_cursor":next_cursor,"complete":next_cursor.is_none(),
+                "binary":binary,"conflict":conflict,"bytes":bytes}),
+            );
         }
         ensure!(
             [

@@ -376,7 +376,7 @@ def resume_restore(home, value, profile_id):
         managed_backup.directory(accounts)
     database = data / "sessions.sqlite"
     schema = managed_backup.database_check(database, "sessions.sqlite")
-    if schema not in (12, 13, 14):
+    if schema not in (12, 13, 14, 15):
         raise RuntimeError("Unpublished profile schema is unsupported; registry was left unchanged")
     with contextlib.closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as connection:
         marker = connection.execute("SELECT worktree_lifecycle_needs_rebind,restored_from_backup FROM restore_fence WHERE id=1").fetchone()

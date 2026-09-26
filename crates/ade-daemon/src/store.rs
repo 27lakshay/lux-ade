@@ -274,6 +274,7 @@ pub struct SendIntent {
     pub text: String,
     pub attachments: Vec<Attachment>,
     pub state: String,
+    pub review_anchor: Option<serde_json::Value>,
 }
 
 fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
@@ -286,6 +287,17 @@ fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
         text: row.get(5)?,
         attachments: attachment_row(row, 6)?,
         state: row.get(7)?,
+        review_anchor: row
+            .get::<_, Option<String>>(8)?
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?,
     })
 }
 
@@ -604,7 +616,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=14).contains(&version),
+            (0..=15).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -809,6 +821,24 @@ impl Store {
             tx.execute_batch("PRAGMA user_version=14;")?;
             tx.execute(
                 "INSERT OR IGNORE INTO schema_migrations VALUES(14,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        if version < 15 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            let has_anchor = tx
+                .prepare("PRAGMA table_info(send_intents)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .iter()
+                .any(|column| column == "review_anchor");
+            if !has_anchor {
+                tx.execute_batch("ALTER TABLE send_intents ADD COLUMN review_anchor TEXT;")?;
+            }
+            tx.execute_batch("PRAGMA user_version=15;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(15,?1)",
                 [now_ms()],
             )?;
             tx.commit()?;
@@ -1040,7 +1070,7 @@ impl Store {
         self.conversation(conversation)?;
         check_id(window)?;
         self.connection.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
             params![conversation, window],
             send_intent_row,
         ).optional().map_err(Into::into)
@@ -1053,9 +1083,10 @@ impl Store {
         request_id: &str,
         text: &str,
         attachments: &[Attachment],
+        review_anchor: Option<&serde_json::Value>,
     ) -> Result<()> {
         let intent: Option<SendIntent> = self.connection.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?;
         if let Some(intent) = intent {
@@ -1063,7 +1094,8 @@ impl Store {
             ensure!(
                 intent.conversation_id == conversation
                     && intent.text == text
-                    && intent.attachments == attachments,
+                    && intent.attachments == attachments
+                    && intent.review_anchor.as_ref() == review_anchor,
                 "Send intent ID was already used for a different prompt or conversation"
             );
             ensure!(intent.state != "aborted", "Send intent was aborted");
@@ -1102,6 +1134,7 @@ impl Store {
         request_id: &str,
         draft: &Draft,
         text: &str,
+        review_anchor: Option<&serde_json::Value>,
     ) -> Result<SendIntent> {
         check_id(request_id)?;
         check_id(window)?;
@@ -1114,13 +1147,14 @@ impl Store {
         validate_attachments(&self.connection, conversation, &draft.attachments)?;
         let tx = self.transaction()?;
         if let Some(existing) = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()? {
             ensure!(existing.conversation_id == conversation && existing.window_id == window
                 && existing.draft_revision == draft.revision && existing.draft_text == draft.text
                 && existing.text == text
-                && existing.attachments == draft.attachments,
+                && existing.attachments == draft.attachments
+                && existing.review_anchor.as_ref() == review_anchor,
                 "Send intent ID was already used for a different prompt or owner");
             return Ok(existing);
         }
@@ -1140,8 +1174,8 @@ impl Store {
             "SELECT 1 FROM send_intents WHERE conversation_id=?1 AND window_id=?2 AND state IN ('pending','rejected')",
             params![conversation,window], |_| Ok(()),
         ).optional()?.is_none(), "Resolve the pending send before preparing another prompt");
-        tx.execute("INSERT INTO send_intents(request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state) VALUES(?1,?2,?3,?4,?5,?6,?7,'pending')",
-            params![request_id,conversation,window,draft.revision,draft.text,text,encode(&draft.attachments)?])?;
+        tx.execute("INSERT INTO send_intents(request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor) VALUES(?1,?2,?3,?4,?5,?6,?7,'pending',?8)",
+            params![request_id,conversation,window,draft.revision,draft.text,text,encode(&draft.attachments)?,review_anchor.map(serde_json::to_string).transpose()?])?;
         tx.commit()?;
         Ok(SendIntent {
             request_id: request_id.into(),
@@ -1152,6 +1186,7 @@ impl Store {
             text: text.into(),
             attachments: draft.attachments.clone(),
             state: "pending".into(),
+            review_anchor: review_anchor.cloned(),
         })
     }
     /// An acknowledged user message and draft clear settle together. A missing
@@ -1167,7 +1202,7 @@ impl Store {
         self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?.context("Unknown send intent")?;
         ensure!(
@@ -1244,7 +1279,7 @@ impl Store {
         self.ensure_send_intent_unheld(request_id)?;
         let tx = self.transaction()?;
         let intent: SendIntent = tx.query_row(
-            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state FROM send_intents WHERE request_id=?1",
+            "SELECT request_id,conversation_id,window_id,draft_revision,draft_text,text,attachments,state,review_anchor FROM send_intents WHERE request_id=?1",
             [request_id], send_intent_row,
         ).optional()?.context("Unknown send intent")?;
         ensure!(

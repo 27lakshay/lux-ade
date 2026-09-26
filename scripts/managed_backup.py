@@ -39,7 +39,7 @@ LIMITATIONS = [
     "Running agent, terminal and service processes are not restored",
 ]
 DATABASES = {
-    "sessions.sqlite": (1, 14),
+    "sessions.sqlite": (1, 15),
     "sessions.review.sqlite3": (0, 0),
     "sessions.worktrees/lifecycle.sqlite3": (1, 3),
 }
