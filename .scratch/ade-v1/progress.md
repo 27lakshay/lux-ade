@@ -264,13 +264,23 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   verified managed listener, survives daemon handoff and requires explicit
   identity-and-port-fenced remapping. Real-process E2E covers port takeover,
   slow clients, v9-shaped service identity migration and 100 concurrent assets.
-  Route retirement, rebind recovery and the D09 public exposure policy remain.
-- F090 root package scripts now run under a supervised process with retained
-  output, stop/retire controls and daemon handoff. CLI, Electron and packaged
-  Finder-like launch pass E2E. Nested manifests, other package managers, exit
-  status and escaped descendants remain outside this slice.
+  Identity-fenced route retirement now persists removal before closing its
+  listener, rejects preaccepted idle requests and frees route quota. CLI and
+  Electron expose retirement; E2E covers stale retirement, failed persistence,
+  handoff and repeated create/retire cycles. Rebind and corrupt-registry recovery,
+  wider URL discovery and the D09 public exposure policy remain.
+- F090 root package scripts and checked-in `.ade/scripts.json` recipes now run
+  under supervised processes with retained output, stop/retire controls, exit
+  outcomes and daemon handoff. CLI, Electron and packaged Finder-like launch
+  pass E2E, including non-JavaScript recipes and two profile daemons. Nested
+  manifests, other package managers, supervisor-loss recovery, output saturation
+  and escaped descendants remain outside this slice.
+- Commits `0156d39`, `be11f21` and `03ef208` add the recipe/outcome and
+  route-retirement slices. The integrated source suite passes 66/66, the
+  packaged suite 5/5, strict Clippy and Rust formatting pass, and the GPUI
+  legacy build succeeds. These do not close F088 or F090.
 - Next daily-use work: Oh My Pi managed native accounts, real-agent
-  account/control acceptance, proxy route retirement, and browser
+  account/control acceptance, proxy recovery, and browser
   ownership and backup/retention coordination. Continue
   through the full V1 register afterward.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
