@@ -162,12 +162,12 @@ test('a current profile store can be adopted by a new runtime home without losin
 
     const futureStore = join(directory, 'future-store')
     await mkdir(futureStore)
-    await execFileAsync('python3', ['-c', 'import sqlite3, sys; db=sqlite3.connect(sys.argv[1]); db.execute("PRAGMA user_version=11"); db.close()',
+    await execFileAsync('python3', ['-c', 'import sqlite3, sys; db=sqlite3.connect(sys.argv[1]); db.execute("PRAGMA user_version=12"); db.close()',
       join(futureStore, 'sessions.sqlite')])
     const futureHome = join(directory, 'future-runtime')
     await expect(execFileAsync('python3', [runtime, 'adopt', '--home', futureHome,
       '--data-dir', futureStore, '--daemon', daemonBinary], { timeout: 30_000 }))
-      .rejects.toThrow(/Unsupported store version 11/)
+      .rejects.toThrow(/Unsupported store version 12/)
     await expect(access(join(futureHome, 'runtime.json'))).rejects.toThrow()
   } finally {
     if (launch) await stopOwned(launch).catch(() => undefined)

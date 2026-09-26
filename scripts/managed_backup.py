@@ -39,7 +39,7 @@ LIMITATIONS = [
     "Running agent, terminal and service processes are not restored",
 ]
 DATABASES = {
-    "sessions.sqlite": (1, 10),
+    "sessions.sqlite": (1, 11),
     "sessions.review.sqlite3": (0, 0),
     "sessions.worktrees/lifecycle.sqlite3": (1, 1),
 }
@@ -143,11 +143,15 @@ def database_check(path, kind):
         if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             fail(f"Invalid SQLite database: {kind}")
         if kind == "sessions.sqlite" and version >= 6:
-            for attachment_id, metadata, length in connection.execute(
-                "SELECT id,metadata,length(data) FROM attachments"
-            ):
+            query = ("SELECT id,metadata,length(data),generation,state FROM attachments"
+                     if version >= 11 else "SELECT id,metadata,length(data),NULL,'live' FROM attachments")
+            for attachment_id, metadata, length, generation, state in connection.execute(query):
                 value = strict_json(metadata)
-                if value.get("id") != attachment_id or value.get("size") != length:
+                if value.get("id") != attachment_id or state not in ("live", "discarded"):
+                    fail(f"Attachment record is invalid: {attachment_id}")
+                if version >= 11 and (not isinstance(generation, str) or not generation):
+                    fail(f"Attachment generation is invalid: {attachment_id}")
+                if (state == "live" and value.get("size") != length) or (state == "discarded" and length != 0):
                     fail(f"Attachment payload is incomplete: {attachment_id}")
         return version
     finally:
@@ -159,7 +163,25 @@ def snapshot_database(source, target):
     reader = sqlite3.connect(f"{source.as_uri()}?mode=ro", uri=True, timeout=30)
     writer = sqlite3.connect(target)
     try:
-        reader.backup(writer, pages=128, sleep=0.025)
+        signal = os.environ.get("ADE_E2E_BACKUP_PAUSE_SIGNAL") if source.name == "sessions.sqlite" else None
+        release = os.environ.get("ADE_E2E_BACKUP_PAUSE_RELEASE") if signal else None
+        paused = False
+
+        def progress(_status, remaining, _total):
+            nonlocal paused
+            if paused or not signal or not release or remaining <= 0:
+                return
+            if not os.path.isabs(signal) or not os.path.isabs(release):
+                fail("Backup test pause paths must be absolute")
+            paused = True
+            Path(signal).write_text("sqlite-backup-active\n")
+            deadline = time.monotonic() + 10
+            while not Path(release).exists():
+                if time.monotonic() >= deadline:
+                    fail("Backup test pause timed out")
+                time.sleep(0.01)
+
+        reader.backup(writer, pages=1 if signal else 128, progress=progress, sleep=0.025)
         writer.commit()
     finally:
         writer.close()

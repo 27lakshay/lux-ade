@@ -676,6 +676,28 @@ impl Sessions {
             );
         }
         match request["op"].as_str().unwrap_or("") {
+            "attachment.reclaim.preview" => {
+                let preview = self.data.lock().unwrap().store.attachment_reclaim_preview(
+                    string("conversation_id")?,
+                    string("attachment_id")?,
+                )?;
+                Ok(
+                    json!({"type":"attachment_reclaim_preview","preview":preview,
+                    "scope":"explicit_single_attachment","automatic_gc_eligible":false,
+                    "client_held_uploads":"not_enumerated","filesystem_reclaimed_bytes":0}),
+                )
+            }
+            "attachment.reclaim.apply" => {
+                let (attachment, reclaimed) =
+                    self.data.lock().unwrap().store.attachment_reclaim_apply(
+                        string("conversation_id")?,
+                        string("attachment_id")?,
+                        string("expected_generation")?,
+                    )?;
+                Ok(json!({"type":"attachment_reclaim","attachment":attachment,
+                    "reclaimed_payload_bytes":reclaimed,"filesystem_reclaimed_bytes":0,
+                    "scope":"explicit_single_attachment"}))
+            }
             "attachment.import" | "attachment.put" => {
                 use base64::Engine;
                 use std::io::Read;

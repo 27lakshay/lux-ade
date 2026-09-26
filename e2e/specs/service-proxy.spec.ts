@@ -419,7 +419,10 @@ with sqlite3.connect(sys.argv[1]) as db:
   service=json.loads(data)
   service.pop('identity',None)
   db.execute('UPDATE services SET data=? WHERE workspace_id=? AND name=?',(json.dumps(service),workspace,name))
- db.execute('DELETE FROM schema_migrations WHERE version=10')
+ db.execute('ALTER TABLE attachments DROP COLUMN created_at')
+ db.execute('ALTER TABLE attachments DROP COLUMN state')
+ db.execute('ALTER TABLE attachments DROP COLUMN generation')
+ db.execute('DELETE FROM schema_migrations WHERE version>=10')
  db.execute('PRAGMA user_version=9')`, database])
 
     await launch()
@@ -455,7 +458,7 @@ with sqlite3.connect(sys.argv[1]) as db:
     expect(upgradedRoutes[0]?.route_id).toBe(restored.route_id)
     const { stdout } = await execFileAsync('python3', ['-c',
       'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA user_version").fetchone()[0])', database])
-    expect(stdout.trim()).toBe('10')
+    expect(stdout.trim()).toBe('11')
   } finally {
     if (child && child.exitCode === null && hello) {
       await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id }).catch(() => undefined)

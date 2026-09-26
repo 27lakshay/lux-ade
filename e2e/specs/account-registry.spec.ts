@@ -115,7 +115,10 @@ test('a legacy profile database upgrades without losing ambient conversations', 
     await execFileAsync('python3', ['-c', `import sqlite3,sys
 with sqlite3.connect(sys.argv[1]) as db:
  db.execute('DROP TABLE accounts')
- db.execute('DELETE FROM schema_migrations WHERE version=9')
+ db.execute('ALTER TABLE attachments DROP COLUMN created_at')
+ db.execute('ALTER TABLE attachments DROP COLUMN state')
+ db.execute('ALTER TABLE attachments DROP COLUMN generation')
+ db.execute('DELETE FROM schema_migrations WHERE version>=9')
  db.execute('PRAGMA user_version=8')`, database])
 
     launch = await profile(home, 'start', selected.id) as Launch
