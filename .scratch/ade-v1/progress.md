@@ -22,7 +22,7 @@ full acceptance in its owning spec:
 | Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged app, one profile, shell and deterministic turns pass; installed multi-profile and real-agent continuity remain |
 | Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live prompts passed; Oh My Pi lacks configured account; account and full control flows remain |
 | Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
-| Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, managed-service controls, listener observation, bounded status/log inspection and browser preview pass; service UI/readiness health and browser account persistence remain |
+| Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, managed-service controls, listener and bounded log inspection in CLI and desktop, and browser preview with profile cookie persistence pass; application health remains |
 | Shared control: F101, F102, F103 | CLI and Electron target the same profile/workspace/conversation/terminal with structured outcomes | Local CLI subset works; public command coverage remains |
 
 Each row needs running-app E2E evidence on the integrated revision before the
@@ -61,11 +61,15 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `39cd32b` | CLI service inspection | Named listener and service-inspection JSON commands; real HTTP service E2E |
 | `735dc3b` | Completed review retry | A completed feedback request reconciles its durable send intent before a new prompt |
 | `6c0cdd4` | Profile browser preview | Profile-scoped tabs, untrusted pages, blocked downloads and managed service preview through real Electron E2E |
+| `68c41ae` | Desktop service observation | Shows managed and unrelated listener evidence, bounded output and unverified health in Electron |
+| `509594a` | Profile browser persistence | Moves browser storage into Electron user data; restart and legacy migration E2E |
+| `1004fa0` | Prompt close reconciliation | Quit completes accepted sends; unavailable daemon keeps the original retry intent |
 
-At integrated revision `6c0cdd4` on macOS arm64, `pnpm check` passed TypeScript
-type checking, Fallow, backend and desktop/CLI builds, and 33/33 real-process
+At integrated revision `1004fa0` on macOS arm64, `pnpm check` passed TypeScript
+type checking, Fallow, backend and desktop/CLI builds, and 35/35 real-process
 E2Es in `e2e/specs/`. The rebuilt package
-passed `pnpm test:e2e:package` 3/3 in `e2e/packaged/macos.spec.ts`; the earlier
+passed `pnpm test:e2e:package` 3/3 in `e2e/packaged/macos.spec.ts`; the browser
+cookie isolation/restart/migration case passed in the rebuilt packaged app. The earlier
 provider/new-draft scenario passed 5/5 repeated runs before this revision.
 `node scripts/cargo.mjs fmt --all -- --check` and strict
 Clippy passed. `pnpm --filter ade-claude-adapter test` passed 9/9 legacy bridge
@@ -83,13 +87,15 @@ verified. Build output is local and unsigned.
 | F085, partial | `ae71d0b` | `pnpm build:backend`, focused real-daemon E2E on macOS arm64 | Pass: `e2e/specs/listener-discovery.spec.ts`; assigned and verified ports are distinct, unrelated PID stays unknown. UI and broader host attribution remain. |
 | F086, partial | `4a19993` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/service-inspection.spec.ts`; direct-process TCP observation is separate from application health, logs are bounded PTY tail, runtime loss is unavailable. UI, health probes and persistent logs remain. |
 | F074/R010/R011, partial | `438e90c` | `pnpm check` and final focused review E2E on macOS arm64 | Pass: `e2e/specs/desktop-review-feedback.spec.ts`; stale diff, selection race, ordinary draft, definite rejection and same-ID uncertain recovery. Atomic validate/send and large diff acceptance remain. |
-| Hidden E2E close | `438e90c` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/desktop-send-recovery.spec.ts`; hidden ADE closes with uncertain send, reopens and retries original ID. Normal close guard remains. |
+| Hidden E2E close | `438e90c` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/desktop-send-recovery.spec.ts`; hidden ADE closes with uncertain send, reopens and retries original ID. Normal close guard was subsequently covered by `1004fa0`. |
 | F085/F086/F102, partial | `39cd32b` | CLI typecheck/build and focused real-daemon/Electron E2E on macOS arm64 | Pass: `e2e/specs/desktop-services.spec.ts`; named listener/inspection output, bounded log tail, honest TCP evidence and structured usage errors. Full feature acceptance remains. |
-| F091/F092, partial | `6c0cdd4` | `pnpm check` and packaged macOS E2E on arm64 | Pass: `e2e/specs/desktop-browser.spec.ts` and managed service preview path; live cookie isolation, metadata restart, bridge/popup/permission/download denial and exact tab identity. Post-restart persistent cookies fail in unsigned local Electron; full requirements remain open. |
+| F091/F092, partial | `6c0cdd4`, `509594a` | `pnpm check`, `pnpm test:e2e:package`, and packaged browser restart E2E on arm64 | Pass: `e2e/specs/desktop-browser.spec.ts` and managed service preview path; live cookie isolation and persistence across restart, legacy storage migration, metadata restart, bridge/popup/permission/download denial and exact tab identity. A signed build of the old storage code also lost cookies; moving session storage under Electron user data fixed this. Full requirements and R015 cleanup/backup coordination remain open. |
+| F085/F086, partial | `68c41ae` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/desktop-services.spec.ts`; Electron shows managed TCP observation, unrelated listener with unknown workspace, bounded output and explicit unverified application health. HTTP health, persistent logs and full host visibility remain. |
+| R001/R002/R005/F036, partial | `1004fa0` | `pnpm check` and focused 7/7 real-process E2E on macOS arm64 | Pass: `e2e/specs/desktop-send-recovery.spec.ts`; normal Quit reconciles an accepted prompt through its owning profile and original request ID, including an inactive profile. Unavailable daemon preserves the pending intent and warns; the original manual Retry path remains covered. Daemon crash boundaries and full draft acceptance remain open. |
 
 The packaged `.app` is about 2.5 GB unpacked and the local ZIP is 790 MB at
 `dist/electron/Lux-ADE-local-verified.zip`, SHA-256
-`19682de6c95a385685fd7d0599298d19bb6a7b3c47d9c6e1bbf9dc82d058e704`.
+`2887c72d008e9d638a489fc13e4116f24ab082b0c48949ded003714502bee514`.
 Oh My Pi uses about 1.5 GB unpacked and Claude about 515 MB. The package is
 unsigned; signing and notarization remain release work.
 
@@ -100,7 +106,7 @@ returned the expected answer in 5.9 seconds; Claude Code 2.1.282 did so in
 the failure may have another cause and needs a configured-account rerun.
 The repeatable command is `pnpm test:e2e:live codex claude omp`.
 
-The 33 main E2E cases and 3 packaged cases are narrow slices. No entire v1
+The 35 main E2E cases and 3 packaged cases are narrow slices. No entire v1
 domain or 140-item requirement
 register is marked complete by this record.
 
@@ -137,15 +143,16 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 - Workspace opening works for local folders; repository and worktree lifecycle
   acceptance remains.
 - Drafts survive renderer reload, send-reply loss and an Electron process crash,
-  and clear after acknowledged send. Recall/stash, transfer, conflicting clients
-  and daemon-crash acceptance remain.
+  and clear after acknowledged send. Normal Quit now reconciles accepted sends;
+  when the owning daemon cannot confirm one, ADE retains the original intent.
+  Recall/stash, transfer, conflicting clients and daemon-crash acceptance remain.
 - Conversation pagination, native attachments/context, queues,
   broader approval forms, and live Oh My Pi verification remain.
-- Account management, extensible providers/plugins, worktrees, dev services,
-  browsers, notifications, remote hosts, unified catalogs/history, customization,
+- Account management, extensible providers/plugins, worktrees, full dev-service
+  health/logs and browser features, notifications, remote hosts, unified catalogs/history, customization,
   operations and reliability acceptance remain in the v1 register.
-- Next daily-use work: browser cookie persistence in a signed package,
-  listener UI/health and real-agent account/control acceptance. Continue
+- Next daily-use work: service application-health and persistent logs, browser
+  cleanup/backup coordination, and real-agent account/control acceptance. Continue
   through the full V1 register afterward.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
   not establish live-account compatibility or quality.
