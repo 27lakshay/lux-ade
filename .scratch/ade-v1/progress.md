@@ -19,7 +19,7 @@ full acceptance in its owning spec:
 
 | Slice and requirement IDs | Observable gate | Current gap |
 |---|---|---|
-| Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged app, one profile, shell and deterministic turns pass; installed multi-profile and real-agent continuity remain |
+| Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged multi-profile shell and deterministic turns pass; real-agent continuity and full isolation acceptance remain |
 | Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live ambient prompts passed; Oh My Pi lacks configured account; Claude and Codex managed identity pinning pass deterministic E2E but hosted two-account execution and full controls remain |
 | Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
 | Terminal, service and browser: F081, F083, F085, F086, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service and open its preview in the embedded browser | Shell, service controls and recurring HTTP health checks, listener and bounded log inspection, and browser preview with profile cookie persistence pass; persistent logs/history and full F086 acceptance remain |
@@ -75,6 +75,18 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `7733e9c` | Service capture consistency | Error state and test construction match durable output ownership; strict all-target Clippy passes |
 | `4728251` | Managed Codex identity | Private file-backed native homes, fresh identity readback, connected-turn fences and hard-link rejection through real-daemon E2E |
 | `f7d6d4f` | Codex account controls in Electron | Native login guidance, inspect/verify and explicit conversation binding through hidden Electron E2E |
+| `724913c` | Packaged profile switch continuity | Two installed profiles retain distinct daemon, shell and conversation state across app reopen; startup selection race fenced |
+| `7024beb` | Managed service peer wiring | Verified direct IPv4 peer URL injected per run; stopped/failed/restarted service boundaries through daemon and Electron E2E |
+
+At `7024beb` on macOS arm64, `pnpm check` passed type checking, Fallow,
+builds and 54/54 real-process E2Es. Rust formatting, strict workspace Clippy
+and the GPUI prototype build-only package passed. `pnpm package:mac` rebuilt
+the unsigned app directory; `pnpm test:e2e:package` passed 4/4 with hidden
+windows. The local ZIP was not regenerated. Packaged profile continuity uses a
+deterministic provider fixture, not live accounts. Peer wiring currently covers
+directly owned IPv4 listeners; descendant and IPv6 listeners, cross-profile
+host claims and F088 stable URLs remain. No F-series or R-series requirement is
+newly marked complete by this checkpoint.
 
 At `f7d6d4f` on macOS arm64, `pnpm check` passed type checking, Fallow,
 backend/desktop/CLI builds and 52/52 real-process E2Es. Rust formatting and
@@ -205,8 +217,9 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   state without calling a TCP listener application-ready. An explicit HTTP
   loopback check now samples application response separately. F085 full host
   discovery and F086 persistent-log/history/alert acceptance remain open.
-- Electron profile creation/switching works in local development; the packaged
-  app bundles the profile launcher. Installed multi-profile continuity remains.
+- Electron profile creation/switching works in local development. Packaged E2E
+  now verifies two isolated profiles, daemon boot identities and persistent shell
+  PIDs across app reopen. Real-agent continuity and full F005/F007 remain.
 - Workspace opening works for local folders; repository and worktree lifecycle
   acceptance remains.
 - Drafts survive renderer reload, send-reply loss and an Electron process crash,
@@ -224,8 +237,13 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
 - Full account management, extensible providers/plugins, worktrees, full dev-service
   health/logs and browser features, notifications, remote hosts, unified catalogs/history, customization,
   operations and reliability acceptance remain in the v1 register.
-- Next daily-use work: Codex and Oh My Pi managed native accounts, real-agent
-  account/control acceptance, service wiring and stable URLs, and browser
+- Managed service peer URLs now resolve from a verified, directly owned IPv4
+  listener and stay tied to the dependent run. The daemon and hidden Electron
+  E2E cover stopped peers, failed launch, a changed peer, and daemon handoff.
+  Descendant/IPv6 listeners, cross-profile claims and stable F088 proxy URLs
+  remain open.
+- Next daily-use work: Oh My Pi managed native accounts, real-agent
+  account/control acceptance, stable service URLs, and browser
   ownership and backup/retention coordination. Continue
   through the full V1 register afterward.
 - Deterministic provider fixtures are evidence for protocol behavior. They do

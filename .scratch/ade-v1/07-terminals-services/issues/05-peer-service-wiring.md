@@ -36,6 +36,7 @@ an unavailable URL.
 - F088's stable proxy URL remains separate work. Direct peer URLs in this slice
   can stop serving when the target process stops or its assigned port changes.
 
-Evidence: `e2e/specs/service-peer-wiring.spec.ts` exercises the public protocol,
-real service processes and hidden Electron. Record the integrated revision and
-check result in `progress.md` after review and commit.
+Evidence: `7024beb` and `e2e/specs/service-peer-wiring.spec.ts` exercise the
+public protocol, real service processes and hidden Electron. The integrated
+check at that revision passed 54/54 source E2Es and 4/4 packaged E2Es;
+`progress.md` records the full gate and limits.
