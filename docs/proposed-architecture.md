@@ -194,10 +194,23 @@ The desktop, CLI, agents, and plugins enter the same admission path. Native host
 features expose explicit availability; a missing frontend-owned browser does not
 silently redirect an agent to another window.
 
-A command carries identity, target host/profile/resource, expected revision where
-needed, operation ID, payload fingerprint, and caller attribution. Retrying the
-same ID and payload returns the known result. Reusing the ID with a different
-payload is a conflict. Authentication and profile routing precede admission.
+Every operation declares one of three tiers in its contract (decided 2026-09-27):
+
+| Tier | Examples | Envelope and durability |
+|---|---|---|
+| Query | Catalog, snapshots, diffs, file listings | None. Retrying is free |
+| Idempotent command | Workspace registration, file browse cursors, view state | Target and caller attribution. Repeating it converges on the same state |
+| Effect command | Provider prompts, approval answers, Git mutations, worktree removal, process launch | The full envelope, a receipt and reconciliation |
+
+An effect command carries identity, target host/profile/resource, expected revision
+where needed, a caller-supplied operation ID, and caller attribution. The daemon
+computes the payload fingerprint over the canonical payload, excluding the ID;
+clients never send one. The receipt commits in the same transaction as the state
+change, in an `operations` table of the database that owns that state. Retrying
+the same ID and payload returns the known result. Reusing the ID with a different
+payload is a conflict. Receipts are kept for 30 days; after that, a reused ID
+returns `expired`, never a re-run. Authentication and profile routing precede
+admission.
 
 ```text
 received -> durably accepted -> dispatched -> provider acknowledged -> settled
