@@ -166,6 +166,7 @@ verified. Build output is local and unsigned.
 | F085/F086, partial | `68c41ae` | `pnpm check` on macOS arm64 | Pass: `e2e/specs/desktop-services.spec.ts`; Electron shows managed TCP observation, unrelated listener with unknown workspace, bounded output and explicit unverified application health. HTTP health, persistent logs and full host visibility remain. |
 | R001/R002/R005/F036, partial | `1004fa0` | `pnpm check` and focused 7/7 real-process E2E on macOS arm64 | Pass: `e2e/specs/desktop-send-recovery.spec.ts`; normal Quit reconciles an accepted prompt through its owning profile and original request ID, including an inactive profile. Unavailable daemon preserves the pending intent and warns; the original manual Retry path remains covered. Daemon crash boundaries and full draft acceptance remain open. |
 | F091/F092/R014/R015, partial | `3a283a7` | `pnpm check` and packaged browser E2E on macOS arm64 | Pass: conflicting legacy/destination storage refuses a profile switch while previous client, browser cookies and saved default remain usable. Managed backup, retention, multi-process ownership and interrupted migration recovery remain open in `08-browser-devices/issues/02-browser-session-lifecycle.md`. |
+| F092/R014/R015, partial | `487b907` | `pnpm check`, `pnpm package:mac`, `pnpm test:e2e:package`, and `ADE_E2E_BROWSER_APP="$PWD/dist/electron/mac-arm64/Lux ADE.app" pnpm exec playwright test e2e/specs/desktop-browser.spec.ts` on macOS arm64 | Pass: 84/84 source and 6/6 packaged E2Es, plus 2/2 browser E2Es in the packaged app. `browser-migration-recovery.spec.ts` kills Electron at six fresh/legacy storage boundaries, checks cookie/tab and retained source recovery, rejects wrong owners, requires explicit confirmation for ownerless old sessions, and refuses a moved runtime home before browser writes. Backup/restore, retention, a cross-process lease and successful runtime-home relocation remain open. |
 | F086, partial | `66396aa` | `pnpm check`, Rust fmt and strict Clippy on macOS arm64 | Pass: `e2e/specs/service-inspection.spec.ts` checks explicit loopback HTTP 200/503/302, timeout, invalid targets and stop race; `desktop-services.spec.ts` checks on-demand healthy/stopped states in Electron. HTTP probe timeout bounds the socket exchange, not full inspection. Continuous configured health, durable logs and full F086 acceptance remain open. |
 
 The packaged `.app` is about 2.5 GB unpacked and the local ZIP is 790 MB at
@@ -344,6 +345,18 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   visible ADE processes have not been inspected for pending prompts or
   restarted, so they may still show the alert until they load this build.
   F036 and the wider V1 register remain open.
+- Commit `487b907` adds profile ownership for Electron browser session storage
+  and recovers interrupted fresh creation and legacy migration after process
+  death. A wrong owner refuses selection; a pre-manifest ownerless session
+  requires an explicit in-app warning and confirmation before adoption.
+  `browser-migration-recovery.spec.ts` passes 9/9 through real Electron and
+  ADE processes, including six SIGKILL boundaries. Integrated `pnpm check`
+  passes 84/84 source E2Es; the macOS package passes 6/6 packaged E2Es and
+  2/2 packaged browser E2Es. The profile-home relocation scenario currently
+  fails at the runtime launcher's stale absolute binding before browser
+  writes. F092/R014/R015 remain partial: managed backup/restore, retention,
+  cross-process session ownership and successful home relocation are not yet
+  implemented or verified.
 - Deterministic provider fixtures are evidence for protocol behavior. They do
   not establish live-account compatibility or quality.
 
