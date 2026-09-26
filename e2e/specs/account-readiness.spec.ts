@@ -8,6 +8,7 @@ import { rpc, startDaemon } from '../fixtures/daemon'
 
 type Account = { id: string; native_home: string; generation: number; state: string;
   claude_identity?: { email: string; org_id: string } }
+type ClaudeIdentity = { auth_method: string; api_provider: string; email: string; org_id: string }
 type Conversation = { id: string; provider_thread_id: string | null; status: string; error: string | null }
 
 const nativeCli = `#!/usr/bin/env node
@@ -55,6 +56,13 @@ serve(fakeSdk(join(home, 'sessions')));
     CLAUDE_CONFIG_DIR: join(fixtures, 'ambient'), ANTHROPIC_API_KEY: 'must-not-leak',
     CLAUDE_CODE_OAUTH_TOKEN: 'must-not-leak', ANTHROPIC_BASE_URL: 'https://ambient.invalid' })
   const inspect = (id: string) => rpc(daemon.socket, { op: 'account.inspect', account_id: id })
+  const inspectedIdentity = async (id: string): Promise<ClaudeIdentity> => {
+    const identity = ((await inspect(id)).inspection as { identity: ClaudeIdentity | null }).identity
+    if (!identity) throw new Error('Fixture account was not ready')
+    return identity
+  }
+  const verify = (account: Account, expectedIdentity: ClaudeIdentity) => rpc(daemon.socket, { op: 'account.verify',
+    account_id: account.id, expected_generation: account.generation, expected_identity: expectedIdentity })
   const snapshot = async (id: string) => (await rpc(daemon.socket, { op: 'conversation.get', conversation_id: id })).conversation as Conversation
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory })).workspace as { id: string }
@@ -62,12 +70,20 @@ serve(fakeSdk(join(home, 'sessions')));
     const second = (await rpc(daemon.socket, { op: 'account.create', provider: 'claude', name: 'Two' })).account as Account
     await writeFile(join(first.native_home, 'identity.json'), JSON.stringify({ email: 'one@example.invalid', orgId: 'org-one' }))
     await writeFile(join(second.native_home, 'identity.json'), JSON.stringify({ email: 'two@example.invalid', orgId: 'org-two' }))
-    expect((await inspect(first.id)).inspection).toMatchObject({ state: 'ready', identity: { email: 'one@example.invalid' } })
-    expect((await inspect(second.id)).inspection).toMatchObject({ state: 'ready', identity: { email: 'two@example.invalid' } })
-    const boundFirst = (await rpc(daemon.socket, { op: 'account.verify', account_id: first.id,
-      expected_generation: first.generation })).account as Account
-    const boundSecond = (await rpc(daemon.socket, { op: 'account.verify', account_id: second.id,
-      expected_generation: second.generation })).account as Account
+    const firstIdentity = await inspectedIdentity(first.id)
+    const secondIdentity = await inspectedIdentity(second.id)
+    expect(firstIdentity.email).toBe('one@example.invalid')
+    expect(secondIdentity.email).toBe('two@example.invalid')
+    await expect(rpc(daemon.socket, { op: 'account.verify', account_id: first.id,
+      expected_generation: first.generation })).rejects.toThrow(/Missing inspected Claude identity/)
+    await writeFile(join(first.native_home, 'identity.json'), JSON.stringify({ email: 'changed@example.invalid', orgId: 'changed-org' }))
+    await expect(verify(first, firstIdentity)).rejects.toThrow(/identity changed since inspection/)
+    expect((await rpc(daemon.socket, { op: 'account.list' })).accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.id, state: 'unverified' }),
+    ]))
+    await writeFile(join(first.native_home, 'identity.json'), JSON.stringify({ email: 'one@example.invalid', orgId: 'org-one' }))
+    const boundFirst = (await verify(first, firstIdentity)).account as Account
+    const boundSecond = (await verify(second, secondIdentity)).account as Account
     expect(boundFirst).toMatchObject({ state: 'verified', claude_identity: { email: 'one@example.invalid', org_id: 'org-one' } })
     expect(boundSecond).toMatchObject({ state: 'verified', claude_identity: { email: 'two@example.invalid', org_id: 'org-two' } })
 
@@ -105,8 +121,7 @@ serve(fakeSdk(join(home, 'sessions')));
     await rpc(daemon.socket, { op: 'agent.disconnect', conversation_id: a.id })
     await writeFile(join(first.native_home, 'identity.json'), JSON.stringify({ email: 'other@example.invalid', orgId: 'org-other' }))
     expect((await inspect(first.id)).inspection).toMatchObject({ state: 'ready', identity: { email: 'other@example.invalid' } })
-    await expect(rpc(daemon.socket, { op: 'account.verify', account_id: first.id,
-      expected_generation: first.generation })).rejects.toThrow(/identity changed/)
+    await expect(verify(first, firstIdentity)).rejects.toThrow(/identity changed/)
     await rpc(daemon.socket, { op: 'agent.resume', conversation_id: a.id })
     await expect.poll(async () => (await snapshot(a.id)).error).toMatch(/identity changed/)
     expect((await snapshot(a.id)).provider_thread_id).toBe(aSession)
@@ -124,8 +139,7 @@ serve(fakeSdk(join(home, 'sessions')));
 
     await writeFile(join(second.native_home, 'identity.json'), JSON.stringify({ email: 'two@example.invalid', orgId: 'org-two' }))
     await writeFile(join(second.native_home, 'delay'), '')
-    const lateVerify = rpc(daemon.socket, { op: 'account.verify', account_id: second.id,
-      expected_generation: second.generation })
+    const lateVerify = verify(second, await inspectedIdentity(second.id))
     await delay(100)
     const disabled = (await rpc(daemon.socket, { op: 'account.disable', account_id: second.id })).account as Account
     expect(disabled).toMatchObject({ state: 'disabled', generation: 1 })
@@ -135,7 +149,7 @@ serve(fakeSdk(join(home, 'sessions')));
 
     const third = (await rpc(daemon.socket, { op: 'account.create', provider: 'claude', name: 'Launch race' })).account as Account
     await writeFile(join(third.native_home, 'identity.json'), JSON.stringify({ email: 'third@example.invalid', orgId: 'org-third' }))
-    await rpc(daemon.socket, { op: 'account.verify', account_id: third.id, expected_generation: 0 })
+    await verify(third, await inspectedIdentity(third.id))
     const c = (await rpc(daemon.socket, { op: 'conversation.create', workspace_id: workspace.id,
       provider: 'claude', account_id: third.id })).conversation as Conversation
     await writeFile(join(third.native_home, 'delay'), '')
@@ -149,7 +163,7 @@ serve(fakeSdk(join(home, 'sessions')));
 
     const fourth = (await rpc(daemon.socket, { op: 'account.create', provider: 'claude', name: 'Updated executable' })).account as Account
     await writeFile(join(fourth.native_home, 'identity.json'), JSON.stringify({ email: 'fourth@example.invalid', orgId: 'org-fourth' }))
-    await rpc(daemon.socket, { op: 'account.verify', account_id: fourth.id, expected_generation: 0 })
+    await verify(fourth, await inspectedIdentity(fourth.id))
     const d = (await rpc(daemon.socket, { op: 'conversation.create', workspace_id: workspace.id,
       provider: 'claude', account_id: fourth.id })).conversation as Conversation
     await writeFile(join(fourth.native_home, 'delay'), '')

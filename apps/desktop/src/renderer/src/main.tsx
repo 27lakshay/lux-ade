@@ -11,6 +11,15 @@ type Message = { id: string; role: string; kind: string; text: string; status: s
 type PendingRequest = { id: string; method: string; params: Frame }
 type Snapshot = { conversation: Conversation; messages: Message[]; requests: PendingRequest[]; revision: number; boot_id: string }
 type Provider = { id: string; name: string }
+type Account = { id: string; provider: string; name: string; native_home: string; generation: number; state: string;
+  claude_identity?: { auth_method: string; api_provider: string; email: string; org_id: string } }
+type AccountInspection = { state: string; reason: string; version: string | null;
+  identity: { auth_method: string; api_provider: string; email: string; org_id: string } | null }
+type AccountConversation = Conversation & { account_id?: string | null; account_context?: string }
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
 type Profile = { id: string; name: string; selected: boolean; home: string }
 type ProfileState = { managed: boolean; profiles: Profile[]; selectedId: string | null; activeId: string | null; error: string }
 type Service = { name: string; workspace_id: string; terminal_id: string | null; terminal_owner: Frame | null; ports: Record<string, number>; config: { program: string } }
@@ -281,7 +290,8 @@ function RequestForm({ request, busy, onAnswer }: {
   </section>
 }
 
-function ConversationView({ conversation, bootId }: { conversation: Conversation; bootId: string | null }): React.JSX.Element {
+function ConversationView({ conversation, bootId, accountLabel }: { conversation: Conversation; bootId: string | null;
+  accountLabel: string }): React.JSX.Element {
   const [snapshot, setSnapshot] = React.useState<Snapshot | null>(null)
   const [draft, setDraft] = React.useState('')
   const [draftLoaded, setDraftLoaded] = React.useState(false)
@@ -464,7 +474,7 @@ function ConversationView({ conversation, bootId }: { conversation: Conversation
   return (
     <section className="conversation-pane" aria-label="Conversation">
       <div className="conversation-heading">
-        <div><h2>{conversation.title}</h2><p>{conversation.provider} · {status}</p></div>
+        <div><h2>{conversation.title}</h2><p>{conversation.provider} · {accountLabel} · {status}</p></div>
       </div>
       {error && <p role="alert" className="inline-error">{error}</p>}
       {draftError && <p role="alert" className="inline-error">{draftError}</p>}
@@ -501,6 +511,13 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const [conversationId, setConversationId] = React.useState(() => localStorage.getItem(conversationStorageKey) ?? '')
   const [provider, setProvider] = React.useState('codex')
   const [providers, setProviders] = React.useState<Provider[]>([])
+  const [accounts, setAccounts] = React.useState<Account[]>([])
+  const [accountName, setAccountName] = React.useState('')
+  const [accountId, setAccountId] = React.useState('')
+  const [managedAccountId, setManagedAccountId] = React.useState('')
+  const [inspection, setInspection] = React.useState<{ accountId: string; value: AccountInspection; generation: number } | null>(null)
+  const [accountBusy, setAccountBusy] = React.useState(false)
+  const [accountError, setAccountError] = React.useState('')
   const [folderPath, setFolderPath] = React.useState('')
   const [opening, setOpening] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
@@ -549,12 +566,78 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     }).catch((reason) => { if (!disposed) setError(String(reason)) })
     return () => { disposed = true }
   }, [state.bootId])
+  const refreshAccounts = async (): Promise<Account[]> => {
+    const response = await window.adeHost.requestConversation('account.list', {})
+    const found = Array.isArray(response.accounts) ? response.accounts as Account[] : []
+    setAccounts(found)
+    setInspection(null)
+    return found
+  }
+  React.useEffect(() => {
+    let disposed = false
+    void window.adeHost.requestConversation('account.list', {}).then((response) => {
+      if (!disposed && Array.isArray(response.accounts)) setAccounts(response.accounts as Account[])
+    }).catch((reason) => { if (!disposed) setAccountError(String(reason)) })
+    return () => { disposed = true }
+  }, [state.bootId])
+  const inspectAccount = async (id: string): Promise<void> => {
+    if (!id || accountBusy) return
+    setAccountBusy(true)
+    setInspection(null)
+    try {
+      const response = await window.adeHost.requestConversation('account.inspect', { account_id: id })
+      setInspection({ accountId: id, value: response.inspection as AccountInspection, generation: response.generation as number })
+      setAccountError('')
+    } catch (reason) { setAccountError(String(reason)) }
+    finally { setAccountBusy(false) }
+  }
+  const createAccount = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!accountName.trim() || accountBusy) return
+    setAccountBusy(true)
+    try {
+      const response = await window.adeHost.requestConversation('account.create', { provider: 'claude', name: accountName.trim() })
+      const created = response.account as Account
+      await refreshAccounts()
+      setAccountId(created.id)
+      setInspection(null)
+      setAccountName('')
+      setAccountError('')
+    } catch (reason) { setAccountError(String(reason)) }
+    finally { setAccountBusy(false) }
+  }
+  const changeAccount = async (op: 'account.verify' | 'account.disable'): Promise<void> => {
+    const selected = accounts.find((item) => item.id === accountId)
+    if (!selected || accountBusy) return
+    if (op === 'account.verify' && (!inspection || inspection.accountId !== selected.id ||
+      inspection.value.state !== 'ready' || !inspection.value.identity)) return
+    setAccountBusy(true)
+    try {
+      await window.adeHost.requestConversation(op, { account_id: selected.id,
+        ...(op === 'account.verify' ? { expected_generation: inspection!.generation,
+          expected_identity: inspection!.value.identity } : {}) })
+      await refreshAccounts()
+      setInspection(null)
+      setAccountError('')
+    } catch (reason) { setAccountError(String(reason)) }
+    finally { setAccountBusy(false) }
+  }
+  const selectedAccount = accounts.find((item) => item.id === accountId)
+  const accountInspection = inspection?.accountId === accountId ? inspection.value : null
+  const selectedManagedAccount = accounts.find((item) => item.id === managedAccountId && item.provider === provider && item.state === 'verified')
+  const invalidManagedAccount = Boolean(managedAccountId && !selectedManagedAccount)
+  const accountLabel = (item: Conversation): string => {
+    const pinned = item as AccountConversation
+    if (!pinned.account_id) return 'Legacy ambient account'
+    return `Account: ${accounts.find((account) => account.id === pinned.account_id)?.name ?? pinned.account_id}`
+  }
   const create = async (): Promise<void> => {
-    if (!workspace || creating || opening) return
+    if (!workspace || creating || opening || invalidManagedAccount) return
     setCreating(true)
     try {
       const response = await window.adeHost.requestConversation('conversation.create', {
         workspace_id: workspace.id, title: 'New Conversation', provider,
+        ...(selectedManagedAccount ? { account_id: selectedManagedAccount.id } : {}),
       })
       const created = response.conversation as Conversation
       await selectVisible(workspace.id, created.id)
@@ -614,20 +697,69 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         <nav aria-label="Conversations"><ul className="conversation-list">
           {workspaceConversations.map((item) => <li key={item.id}><button disabled={creating || opening} className={conversation?.id === item.id ? 'selected' : ''} onClick={() => {
             if (workspace) void selectVisible(workspace.id, item.id).catch((reason) => setError(String(reason)))
-          }}>{item.title}<small>{item.provider} · {item.status}</small></button></li>)}
+          }}>{item.title}<small>{item.provider} · {accountLabel(item)} · {item.status}</small></button></li>)}
         </ul></nav>
         <div className="new-conversation">
           <label className="field-label" htmlFor="provider">New conversation provider</label>
-          <select id="provider" value={provider} disabled={creating || opening} onChange={(event) => setProvider(event.target.value)}>
+          <select id="provider" value={provider} disabled={creating || opening} onChange={(event) => {
+            setProvider(event.target.value); setManagedAccountId('')
+          }}>
             {providers.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
           </select>
-          <button disabled={creating || opening || !workspace || providers.length === 0} onClick={() => void create()}>New conversation</button>
+          <label className="field-label" htmlFor="conversation-account">New conversation account</label>
+          <select id="conversation-account" value={managedAccountId} disabled={creating || opening}
+            onChange={(event) => setManagedAccountId(event.target.value)}>
+            <option value="">Legacy ambient account</option>
+            {invalidManagedAccount && <option value={managedAccountId} disabled>Account unavailable — choose an account</option>}
+            {accounts.filter((item) => item.provider === provider && item.state === 'verified').map((item) =>
+              <option value={item.id} key={item.id}>{item.name} · managed</option>)}
+          </select>
+          {invalidManagedAccount && <p role="alert" className="inline-error">Selected account is unavailable. Choose another account or the legacy ambient account.</p>}
+          <button disabled={creating || opening || invalidManagedAccount || !workspace || providers.length === 0} onClick={() => void create()}>New conversation</button>
         </div>
+        <section className="accounts-panel" aria-label="Accounts">
+          <div className="account-heading"><h2>Accounts</h2><button type="button" disabled={accountBusy}
+            onClick={() => void refreshAccounts().catch((reason) => setAccountError(String(reason)))}>Refresh</button></div>
+          <p className="muted">Claude accounts use separate native homes. Sign in through Claude Code, then inspect and verify here.</p>
+          <form onSubmit={(event) => void createAccount(event)}>
+            <label className="field-label" htmlFor="account-name">New Claude account name</label>
+            <div className="account-create"><input id="account-name" value={accountName} maxLength={80}
+              onChange={(event) => setAccountName(event.target.value)} placeholder="Account name" />
+              <button type="submit" disabled={accountBusy || !accountName.trim()}>Add</button></div>
+          </form>
+          {accounts.length > 0 && <><label className="field-label" htmlFor="managed-account">Manage account</label>
+            <select id="managed-account" value={accountId} onChange={(event) => { setAccountId(event.target.value); setInspection(null) }}>
+              <option value="">Choose account</option>
+              {accounts.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.provider}</option>)}
+            </select></>}
+          {selectedAccount && <div className="account-details" aria-label={`Account ${selectedAccount.name}`}>
+            <p><strong>{selectedAccount.name}</strong> · {selectedAccount.state}</p>
+            <p>Native home: <code>{selectedAccount.native_home}</code></p>
+            {selectedAccount.provider === 'claude' && <><p>Run this in a terminal to sign in through Claude Code:</p>
+              <pre className="account-login-command" aria-label="Claude login command">{`env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL CLAUDE_CONFIG_DIR=${shellQuote(selectedAccount.native_home)} ANTHROPIC_CONFIG_DIR=${shellQuote(selectedAccount.native_home)} claude auth login`}</pre></>}
+            {selectedAccount.claude_identity && <p>Bound identity: {selectedAccount.claude_identity.email} · organization {selectedAccount.claude_identity.org_id} · {selectedAccount.claude_identity.auth_method} / {selectedAccount.claude_identity.api_provider}</p>}
+            {accountInspection && <div role="status"><p>Last inspection: {accountInspection.state.replaceAll('_', ' ')}</p>
+              <p>{accountInspection.reason}</p>
+              {accountInspection.identity && <p>Native identity: {accountInspection.identity.email} · organization {accountInspection.identity.org_id} · {accountInspection.identity.auth_method} / {accountInspection.identity.api_provider}</p>}</div>}
+            {selectedAccount.provider !== 'claude' && <p>Inspection and verification are unavailable for this provider.</p>}
+            <div className="account-actions">
+              <button type="button" disabled={accountBusy || selectedAccount.provider !== 'claude'} onClick={() => void inspectAccount(selectedAccount.id)}>Inspect</button>
+              <button type="button" disabled={accountBusy || selectedAccount.provider !== 'claude' ||
+                accountInspection?.state !== 'ready' || !accountInspection.identity}
+                onClick={() => void changeAccount('account.verify')}>Verify</button>
+              <button type="button" disabled={accountBusy || selectedAccount.state === 'disabled'}
+                onClick={() => void changeAccount('account.disable')}>Disable in ADE</button>
+            </div>
+            {selectedAccount.state === 'disabled' && <p>Disabled in ADE. Native Claude Code sign-in is unchanged.</p>}
+          </div>}
+          {accountError && <p role="alert" className="inline-error">{accountError}</p>}
+        </section>
         {error && <p role="alert" className="inline-error">{error}</p>}
       </aside>
       <div className="work-area">
         {creating || awaitingCreated ? <section className="empty-conversation" role="status">Creating conversation…</section>
-          : conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId} />
+          : conversation ? <ConversationView key={conversation.id} conversation={conversation} bootId={state.bootId}
+            accountLabel={accountLabel(conversation)} />
           : <section className="empty-conversation"><h2>Start a conversation</h2><p>Choose a provider and create a conversation in this workspace.</p></section>}
         {workspace && <>{acknowledgedSelection === selectionKey && <ReviewPane key={`${profileKey}:${workspace.id}:${conversation?.id ?? ''}`}
           workspace={workspace} conversation={conversation} profileKey={profileKey} />}

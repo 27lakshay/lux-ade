@@ -38,7 +38,7 @@ test('typing in a newly created conversation survives draft loading', async () =
     await window.getByRole('button', { name: 'New conversation', exact: true }).click()
     const prompt = conversation.getByRole('textbox', { name: 'Prompt' })
     await prompt.fill('second-conversation-draft')
-    await expect(conversation.locator('.conversation-heading')).toContainText('claude · idle')
+    await expect(conversation.locator('.conversation-heading')).toContainText('claude · Legacy ambient account · idle')
     await expect(prompt).toHaveValue('second-conversation-draft')
     await expect(conversation.getByRole('button', { name: 'Send' })).toBeEnabled()
     await window.waitForTimeout(800)

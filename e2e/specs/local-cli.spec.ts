@@ -122,7 +122,8 @@ test('CLI exposes managed account metadata and requires explicit account selecti
     const inspection = await runCli(daemon.socket, 'account', 'inspect', account.id)
     expect(inspection).toMatchObject({ code: 0, output: { type: 'account_inspection',
       inspection: { state: 'missing_executable' } } })
-    const verification = await runCli(daemon.socket, 'account', 'verify', account.id, '0')
+    const verification = await runCli(daemon.socket, 'account', 'verify', account.id, '0',
+      JSON.stringify({ auth_method: 'claude.ai', api_provider: 'firstParty', email: 'missing@example.invalid', org_id: 'missing' }))
     expect(verification).toMatchObject({ code: 7, output: { type: 'error', code: 'daemon' } })
     expect(String(verification.output.message)).toMatch(/not ready/)
 
@@ -137,7 +138,7 @@ test('CLI exposes managed account metadata and requires explicit account selecti
     const disabled = await runCli(daemon.socket, 'account', 'disable', account.id)
     expect(disabled.output.account).toMatchObject({ id: account.id, generation: 1, state: 'disabled' })
     expect(disabled.output.native_logout).toBe(false)
-    expect((await runCli(daemon.socket, 'account', 'verify', account.id, 'bad')).output)
+    expect((await runCli(daemon.socket, 'account', 'verify', account.id, 'bad', '{}')).output)
       .toMatchObject({ type: 'error', code: 'usage' })
   } finally {
     await daemon.stop()
@@ -176,9 +177,14 @@ serve(fakeSdk(join(process.env.CLAUDE_CONFIG_DIR, 'sessions')));
     const created = await runCli(daemon.socket, 'account', 'create', 'claude', 'Fixture account')
     const account = created.output.account as { id: string; native_home: string; generation: number }
     await writeFile(join(account.native_home, 'identity.json'), JSON.stringify({ email: 'cli@example.invalid', orgId: 'org-cli' }))
-    expect((await runCli(daemon.socket, 'account', 'inspect', account.id)).output.inspection)
+    const inspection = (await runCli(daemon.socket, 'account', 'inspect', account.id)).output.inspection as
+      { state: string; identity: Record<string, unknown> }
+    expect(inspection)
       .toMatchObject({ state: 'ready', identity: { email: 'cli@example.invalid' } })
-    const verified = await runCli(daemon.socket, 'account', 'verify', account.id, '0')
+    const wrongIdentity = await runCli(daemon.socket, 'account', 'verify', account.id, '0',
+      JSON.stringify({ ...inspection.identity, email: 'changed@example.invalid' }))
+    expect(wrongIdentity).toMatchObject({ code: 7, output: { type: 'error', code: 'daemon' } })
+    const verified = await runCli(daemon.socket, 'account', 'verify', account.id, '0', JSON.stringify(inspection.identity))
     expect(verified.output.account).toMatchObject({ state: 'verified',
       claude_identity: { email: 'cli@example.invalid', org_id: 'org-cli' } })
     const createdConversation = await runCli(daemon.socket, 'conversation', 'create', workspace.id,

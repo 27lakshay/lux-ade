@@ -86,6 +86,19 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .new-conversation { margin-top: 22px; }
 .new-conversation button, .composer button, .approval-actions button { background: #84c8aa; border: 0; border-radius: 7px; color: #132019; font-size: 13px; font-weight: 600; padding: 9px 12px; }
 .new-conversation button { margin-top: 10px; width: 100%; }
+.accounts-panel { border-top: 1px solid #323637; margin-top: 24px; padding-top: 2px; }
+.accounts-panel h2 { margin-top: 18px; }
+.account-heading { align-items: baseline; display: flex; justify-content: space-between; }
+.account-heading button { background: transparent; border: 0; color: #a5adae; font-size: 12px; padding: 5px; }
+.accounts-panel .muted { line-height: 1.4; }
+.account-create { display: flex; gap: 6px; }
+.account-create input { background: #242829; border: 1px solid #454b4c; border-radius: 7px; color: inherit; min-width: 0; padding: 8px; width: 100%; }
+.account-create button, .account-actions button { background: #303637; border: 1px solid #454b4c; border-radius: 7px; color: inherit; font-size: 12px; padding: 7px 9px; }
+.account-details { border-top: 1px solid #323637; font-size: 12px; margin-top: 16px; padding-top: 10px; }
+.account-details p { color: #c5cfcb; line-height: 1.45; overflow-wrap: anywhere; }
+.account-details code { font-size: 11px; }
+.account-login-command { background: #101213; border: 1px solid #323637; border-radius: 7px; font-size: 11px; overflow-x: auto; padding: 9px; user-select: text; white-space: pre-wrap; overflow-wrap: anywhere; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .work-area { min-width: 0; padding: 24px; }
 .conversation-pane { display: flex; flex-direction: column; height: min(58vh, 620px); min-height: 340px; }
 .conversation-heading { align-items: start; border-bottom: 1px solid #323637; display: flex; justify-content: space-between; padding-bottom: 12px; }

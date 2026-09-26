@@ -574,12 +574,13 @@ ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown)
   }
   return reviewDiff(context, workspaceId, args.path, args.staged)
 })
-const conversationOps = new Set(['provider.list', 'conversation.create', 'conversation.get', 'agent.send', 'agent.retry_send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
+const conversationOps = new Set(['provider.list', 'account.list', 'account.create', 'account.inspect', 'account.verify', 'account.disable', 'conversation.create', 'conversation.get', 'agent.send', 'agent.retry_send', 'agent.answer', 'draft.get', 'draft.save', 'draft.flush'])
 ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
   if (typeof op !== 'string' || !conversationOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
     throw new Error('Invalid conversation request')
   }
   const endpoint = socket
+  const generation = clientGeneration
   const args = fields as Record<string, unknown>
   if (op === 'draft.get' && endpoint && validId(args.conversation_id)) {
     const cached = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
@@ -591,13 +592,54 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
   }
   const catalog = client.getState().catalog
   if (op === 'provider.list') return requestDaemon(endpoint, op)
+  if (op === 'account.list' || op === 'account.create' || op === 'account.inspect' || op === 'account.verify' || op === 'account.disable') {
+    let request: Record<string, unknown> = {}
+    if (op === 'account.create') {
+      if (args.provider !== 'claude' || typeof args.name !== 'string' || !args.name.trim() || args.name.length > 80) {
+        throw new Error('Invalid Claude account')
+      }
+      request = { provider: 'claude', name: args.name.trim() }
+    } else if (op !== 'account.list') {
+      if (!validId(args.account_id)) throw new Error('Invalid account')
+      request = { account_id: args.account_id }
+      if (op === 'account.verify') {
+        if (!Number.isSafeInteger(args.expected_generation) || (args.expected_generation as number) < 0) {
+          throw new Error('Invalid account generation')
+        }
+        const identity = args.expected_identity
+        if (!identity || typeof identity !== 'object' || Array.isArray(identity) ||
+          Object.keys(identity).sort().join(',') !== 'api_provider,auth_method,email,org_id' ||
+          (identity as Record<string, unknown>).auth_method !== 'claude.ai' ||
+          (identity as Record<string, unknown>).api_provider !== 'firstParty' ||
+          typeof (identity as Record<string, unknown>).email !== 'string' ||
+          ((identity as Record<string, string>).email).length < 1 ||
+          ((identity as Record<string, string>).email).length > 320 ||
+          typeof (identity as Record<string, unknown>).org_id !== 'string' ||
+          ((identity as Record<string, string>).org_id).length < 1 ||
+          ((identity as Record<string, string>).org_id).length > 256) {
+          throw new Error('Invalid inspected Claude identity')
+        }
+        request.expected_generation = args.expected_generation
+        request.expected_identity = identity
+      }
+    }
+    const result = await requestDaemon(endpoint, op, request)
+    if (clientGeneration !== generation || socket !== endpoint) {
+      throw new Error('Profile changed during account request; inspect the original profile before retrying')
+    }
+    return result
+  }
   if (op === 'conversation.create') {
     const providers = await requestDaemon(endpoint, 'provider.list')
     const available = Array.isArray(providers.providers) ? providers.providers : []
     if (!validId(args.workspace_id) || !catalog?.workspaces.some((item) => item.id === args.workspace_id)
       || !available.some((item) => item && typeof item === 'object' && 'id' in item && item.id === args.provider)
-      || typeof args.title !== 'string' || args.title.length > 256) throw new Error('Invalid conversation creation')
-    return requestDaemon(endpoint, op, { workspace_id: args.workspace_id, provider: args.provider, title: args.title })
+      || typeof args.title !== 'string' || args.title.length > 256
+      || (args.account_id !== undefined && !validId(args.account_id))) throw new Error('Invalid conversation creation')
+    const result = await requestDaemon(endpoint, op, { workspace_id: args.workspace_id, provider: args.provider,
+      title: args.title, ...(args.account_id === undefined ? {} : { account_id: args.account_id }) })
+    if (clientGeneration !== generation || socket !== endpoint) throw new Error('Profile changed during conversation creation')
+    return result
   }
   if (!validId(args.conversation_id) || !catalog?.conversations.some((item) => item.id === args.conversation_id)) {
     throw new Error('Conversation is unavailable in this profile')

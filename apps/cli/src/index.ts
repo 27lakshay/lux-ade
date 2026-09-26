@@ -25,7 +25,8 @@ Commands:
   account list                           List profile accounts
   account create PROVIDER NAME           Register a native account home
   account inspect ID                     Check current Claude readiness
-  account verify ID EXPECTED_GENERATION  Pin the observed native identity
+  account verify ID EXPECTED_GENERATION IDENTITY_JSON
+                                        Pin only the identity returned by account inspect
   account disable ID                     Disable new ADE launches; does not log out native CLI or stop running agents
   terminal list                         List workspace terminals
   terminal inspect WORKSPACE_ID TERMINAL_ID
@@ -239,11 +240,12 @@ async function run(socketPath: string, words: string[]): Promise<DaemonResponse 
     })
   }
   if (area === 'account' && (action === 'inspect' || action === 'verify' || action === 'disable')) {
-    const count = action === 'verify' ? 2 : 1
-    if (rest.length !== count) throw new CliError('usage', `account ${action} requires ${action === 'verify' ? 'ID EXPECTED_GENERATION' : 'ID'}.`)
+    const count = action === 'verify' ? 3 : 1
+    if (rest.length !== count) throw new CliError('usage', `account ${action} requires ${action === 'verify' ? 'ID EXPECTED_GENERATION IDENTITY_JSON' : 'ID'}.`)
     return requestDaemon(socketPath, `account.${action}`, {
       account_id: required(rest[0], 'ID'),
-      ...(action === 'verify' ? { expected_generation: generation(rest[1]) } : {}),
+      ...(action === 'verify' ? { expected_generation: generation(rest[1]),
+        expected_identity: jsonObject(rest[2], 'IDENTITY_JSON') } : {}),
     })
   }
   if (area === 'terminal' && action === 'list') {

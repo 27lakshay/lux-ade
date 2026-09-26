@@ -758,6 +758,17 @@ impl Sessions {
                 } else {
                     None
                 };
+                let expected_identity: Option<ade_core::model::ClaudeIdentity> =
+                    if request["op"] == "account.verify" {
+                        Some(serde_json::from_value(
+                            request
+                                .get("expected_identity")
+                                .cloned()
+                                .context("Missing inspected Claude identity")?,
+                        )?)
+                    } else {
+                        None
+                    };
                 let context = ade_core::model::AccountExecution {
                     id: account.id.clone(),
                     provider: account.provider.clone(),
@@ -778,6 +789,10 @@ impl Sessions {
                     let identity = inspection
                         .identity
                         .context("Claude identity is unavailable")?;
+                    ensure!(
+                        expected_identity.as_ref() == Some(&identity),
+                        "Claude identity changed since inspection; inspect again"
+                    );
                     let updated = self
                         .data
                         .lock()

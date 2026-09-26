@@ -21,6 +21,8 @@ export interface Conversation {
   title: string
   provider: string
   status: string
+  account_id?: string | null
+  account_context?: 'managed' | 'legacy_ambient'
 }
 
 export interface Catalog {
@@ -67,9 +69,17 @@ function parseWorkspace(value: unknown): Workspace | null {
 
 function parseConversation(value: unknown): Conversation | null {
   const fields = stringFields(value, ['id', 'workspace_id', 'provider', 'status'])
-  const title = record(value)?.title
+  const source = record(value)
+  const title = source?.title
   if (!fields || typeof title !== 'string') return null
-  return { id: fields[0], workspace_id: fields[1], title, provider: fields[2], status: fields[3] }
+  const accountId = source?.account_id
+  const accountContext = source?.account_context
+  if (accountId !== undefined && accountId !== null && typeof accountId !== 'string') return null
+  if (accountContext !== undefined && accountContext !== 'managed' && accountContext !== 'legacy_ambient') return null
+  return { id: fields[0], workspace_id: fields[1], title, provider: fields[2], status: fields[3],
+    ...(accountId !== undefined ? { account_id: accountId } : {}),
+    ...(accountContext !== undefined ? { account_context: accountContext } : {}),
+  }
 }
 
 function parseCatalog(value: unknown): Catalog | null {

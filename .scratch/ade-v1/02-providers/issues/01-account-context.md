@@ -14,6 +14,16 @@ For Claude, `account.inspect` runs a fresh bounded `claude --version` and `claud
 
 `account.disable` is an ADE-only binding change: it increments generation, clears the verified identity and fences a late `account.verify`. It does not log out the native CLI or stop an already running Agent. Native logout/readback and its full R012 race acceptance remain separate work.
 
+Inspect-to-verify consent is fenced: `account.verify` requires the complete
+`expected_identity` returned by a prior `account.inspect`, plus its generation.
+The daemon performs a fresh native probe and rejects an identity change even
+when the ADE generation has not changed. The CLI accepts that identity as JSON;
+the Electron Accounts view forwards the inspected identity. The view offers a
+shell-quoted native Claude login command, displays both inspected and pinned
+identities, and labels legacy ambient conversation selection explicitly. A
+profile switch during a delayed inspection cannot render the prior profile’s
+identity or enable Verify in the new profile.
+
 After runtime creation, the daemon rechecks the account's generation, verified state and pinned identity immediately before opening the provider session. A disable during the native launch probe prevents that session and its prompt from being admitted. The probe records the resolved Claude executable's file identity and modification metadata before and after status checks; a replacement during that check fails closed. Replacement after the last check but before a later SDK-owned CLI invocation remains a native handoff race, so fresh checks still run on every ADE launch and resume.
 
 ## Acceptance remaining
@@ -22,3 +32,13 @@ After runtime creation, the daemon rechecks the account's generation, verified s
 - Validate the 2.1.x status schema and identity match against actual hosted Claude accounts and the installed SDK before claiming F025/F027 completion.
 - Exercise native credential refresh and logout, including late readback, before claiming R012 completion.
 - Record real-provider evidence separately from deterministic external protocol fixtures, as required by the provider specification.
+
+Integrated evidence (26 September 2026, macOS arm64): the running-daemon
+`account-readiness.spec.ts` rejects a changed identity between Inspect and
+Verify. `desktop-accounts.spec.ts` exercises account creation, readiness,
+verification, conversation binding, ADE-only disable, identity drift and a
+paused probe across a profile switch through hidden Electron. The CLI’s
+`local-cli.spec.ts` verifies and sends through a managed Claude home using an
+external CLI/SDK fixture. The 50-case `pnpm check` suite, Rust formatting and
+strict Clippy pass on the combined source tree. Hosted two-account verification
+and native logout remain open; fixture passes do not establish them.
