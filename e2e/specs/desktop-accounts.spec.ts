@@ -1,7 +1,7 @@
 import { expect, test, _electron as electron } from '@playwright/test'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -71,7 +71,7 @@ test('desktop manages Claude accounts and pins conversation account selection', 
     const window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const panel = window.getByRole('region', { name: 'Accounts' })
-    await panel.getByRole('textbox', { name: 'New Claude account name' }).fill('Personal')
+    await panel.getByRole('textbox', { name: 'New account name' }).fill('Personal')
     await panel.getByRole('button', { name: 'Add' }).click()
     await expect(panel.getByLabel('Manage account')).toContainText('Personal')
     const list = async (): Promise<Account[]> => (await rpc(daemon.socket, { op: 'account.list' })).accounts as Account[]
@@ -99,7 +99,7 @@ test('desktop manages Claude accounts and pins conversation account selection', 
     expect((await list()).find((account) => account.id === personal.id)).toMatchObject({ generation: 0,
       claude_identity: { email: 'personal@example.invalid', org_id: 'personal-org' } })
 
-    await panel.getByRole('textbox', { name: 'New Claude account name' }).fill('Work')
+    await panel.getByRole('textbox', { name: 'New account name' }).fill('Work')
     await panel.getByRole('button', { name: 'Add' }).click()
     const work = (await list()).find((account) => account.name === 'Work')!
     expect(work.native_home).not.toBe(personal.native_home)
@@ -155,6 +155,65 @@ test('desktop manages Claude accounts and pins conversation account selection', 
   }
 })
 
+test('desktop creates, verifies and runs a conversation under a private Codex account', async () => {
+  const fixtures = await mkdtemp(join(tmpdir(), 'ade-desktop-codex-accounts-'))
+  const cli = join(fixtures, 'codex')
+  const userData = join(fixtures, 'electron')
+  await copyFile(resolve('e2e/fixtures/codex_account_server.py'), cli)
+  await chmod(cli, 0o700)
+  const daemon = await startDaemon({ ADE_CODEX_BIN: cli, OPENAI_API_KEY: 'ambient-must-not-leak',
+    CODEX_API_KEY: 'ambient-must-not-leak', CODEX_AWS_BEARER_TOKEN: 'ambient-must-not-leak' })
+  const application = await electron.launch({ executablePath: electronExecutable, args: [desktopDirectory],
+    env: { ...process.env, ADE_SOCKET: daemon.socket, ADE_E2E_USER_DATA_DIR: userData } })
+  try {
+    const window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const panel = window.getByRole('region', { name: 'Accounts' })
+    await panel.getByLabel('New account provider').selectOption('codex')
+    await panel.getByRole('textbox', { name: 'New account name' }).fill('Personal Codex')
+    await panel.getByRole('button', { name: 'Add' }).click()
+    const accounts = (await rpc(daemon.socket, { op: 'account.list' })).accounts as Array<Account & { provider: string;
+      codex_identity?: { email: string; chatgpt_account_id: string } }>
+    const account = accounts.find((item) => item.name === 'Personal Codex')!
+    expect(account.provider).toBe('codex')
+    await expect(panel.getByLabel('Account Personal Codex')).toContainText(account.native_home)
+    await expect(panel.getByLabel('Codex login command')).toHaveText(`env -i HOME="$HOME" PATH="$PATH" TERM="$TERM" CODEX_HOME='${account.native_home}' codex login`)
+    await panel.getByRole('button', { name: 'Inspect' }).click()
+    await expect(panel.getByRole('status')).toContainText('unauthenticated')
+    await writeFile(join(account.native_home, 'auth.json'), '{}', { mode: 0o600 })
+    await writeFile(join(account.native_home, 'identity.json'), JSON.stringify({
+      email: 'personal@example.invalid', accountId: 'codex-personal',
+    }))
+    await panel.getByRole('button', { name: 'Inspect' }).click()
+    await expect(panel.getByRole('status')).toContainText('personal@example.invalid')
+    await panel.getByRole('button', { name: 'Verify' }).click()
+    await expect(panel.getByLabel('Account Personal Codex')).toContainText('Personal Codex · verified')
+    const boundAccounts = (await rpc(daemon.socket, { op: 'account.list' })).accounts as Array<{ id: string; codex_identity?: unknown }>
+    const bound = boundAccounts.find((item) => item.id === account.id)
+    expect(bound?.codex_identity).toEqual({ email: 'personal@example.invalid', chatgpt_account_id: 'codex-personal' })
+
+    await window.getByLabel('New conversation provider').selectOption('codex')
+    await window.getByLabel('New conversation account').selectOption(account.id)
+    await window.getByRole('button', { name: 'New conversation', exact: true }).click()
+    const conversation = window.getByRole('region', { name: 'Conversation' })
+    await expect(conversation).toContainText('Account: Personal Codex')
+    await conversation.getByRole('textbox', { name: 'Prompt' }).fill('Codex managed account')
+    await conversation.getByRole('button', { name: 'Send' }).click()
+    await expect.poll(async () => {
+      const calls = (await readFile(join(account.native_home, 'calls.jsonl'), 'utf8').catch(() => '')).split('\n').filter(Boolean)
+      return calls.filter((line) => JSON.parse(line).method === 'turn/start').length
+    }).toBe(1)
+    expect(JSON.parse(await readFile(join(account.native_home, 'environment.json'), 'utf8'))).toEqual({
+      codex_home: account.native_home, openai_key: false, codex_key: false, wif: false,
+    })
+    expect(await window.locator('body').innerText()).not.toContain('ambient-must-not-leak')
+  } finally {
+    await application.close()
+    await daemon.stop()
+    await rm(fixtures, { recursive: true, force: true })
+  }
+})
+
 test('delayed account inspection cannot cross a desktop profile switch', async () => {
   const fixtures = await mkdtemp(join(tmpdir(), 'ade-desktop-account-profiles-'))
   const cli = join(fixtures, 'claude')
@@ -177,7 +236,7 @@ test('delayed account inspection cannot cross a desktop profile switch', async (
     const personalSocket = await profileSocket(personalProfile.home)
     owned.push({ socket: personalSocket, bootId: (await rpc(personalSocket, { op: 'hello' })).boot_id })
     const panel = window.getByRole('region', { name: 'Accounts' })
-    await panel.getByRole('textbox', { name: 'New Claude account name' }).fill('Personal Claude')
+    await panel.getByRole('textbox', { name: 'New account name' }).fill('Personal Claude')
     await panel.getByRole('button', { name: 'Add' }).click()
     const account = ((await rpc(personalSocket, { op: 'account.list' })).accounts as Account[])[0]
     await writeFile(join(account.native_home, 'identity.json'), JSON.stringify({ email: 'personal@example.invalid', orgId: 'personal-org' }))
@@ -196,7 +255,7 @@ test('delayed account inspection cannot cross a desktop profile switch', async (
     expect(await readFile(join(account.native_home, 'probe-finished'), 'utf8').catch(() => '')).toBe('')
     await writeFile(join(account.native_home, 'continue'), 'yes')
     await expect.poll(async () => readFile(join(account.native_home, 'probe-finished'), 'utf8').catch(() => '')).toBe('yes')
-    await panel.getByRole('textbox', { name: 'New Claude account name' }).fill('Work Claude')
+    await panel.getByRole('textbox', { name: 'New account name' }).fill('Work Claude')
     await panel.getByRole('button', { name: 'Add' }).click()
     await expect(panel.getByLabel('Account Work Claude')).toContainText('unverified')
     await expect(panel.getByLabel('Account Work Claude').getByRole('status')).toHaveCount(0)

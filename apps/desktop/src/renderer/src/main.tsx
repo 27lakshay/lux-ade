@@ -11,10 +11,13 @@ type Message = { id: string; role: string; kind: string; text: string; status: s
 type PendingRequest = { id: string; method: string; params: Frame }
 type Snapshot = { conversation: Conversation; messages: Message[]; requests: PendingRequest[]; revision: number; boot_id: string }
 type Provider = { id: string; name: string }
+type ClaudeIdentity = { auth_method: string; api_provider: string; email: string; org_id: string }
+type CodexIdentity = { email: string; chatgpt_account_id: string }
+type AccountIdentity = ClaudeIdentity | CodexIdentity
 type Account = { id: string; provider: string; name: string; native_home: string; generation: number; state: string;
-  claude_identity?: { auth_method: string; api_provider: string; email: string; org_id: string } }
+  claude_identity?: ClaudeIdentity; codex_identity?: CodexIdentity }
 type AccountInspection = { state: string; reason: string; version: string | null;
-  identity: { auth_method: string; api_provider: string; email: string; org_id: string } | null }
+  identity: AccountIdentity | null }
 type AccountConversation = Conversation & { account_id?: string | null; account_context?: string }
 
 function shellQuote(value: string): string {
@@ -534,6 +537,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const [provider, setProvider] = React.useState('codex')
   const [providers, setProviders] = React.useState<Provider[]>([])
   const [accounts, setAccounts] = React.useState<Account[]>([])
+  const [accountProvider, setAccountProvider] = React.useState<'claude' | 'codex'>('claude')
   const [accountName, setAccountName] = React.useState('')
   const [accountId, setAccountId] = React.useState('')
   const [managedAccountId, setManagedAccountId] = React.useState('')
@@ -618,7 +622,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     if (!accountName.trim() || accountBusy) return
     setAccountBusy(true)
     try {
-      const response = await window.adeHost.requestConversation('account.create', { provider: 'claude', name: accountName.trim() })
+      const response = await window.adeHost.requestConversation('account.create', { provider: accountProvider, name: accountName.trim() })
       const created = response.account as Account
       await refreshAccounts()
       setAccountId(created.id)
@@ -742,9 +746,14 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         <section className="accounts-panel" aria-label="Accounts">
           <div className="account-heading"><h2>Accounts</h2><button type="button" disabled={accountBusy}
             onClick={() => void refreshAccounts().catch((reason) => setAccountError(String(reason)))}>Refresh</button></div>
-          <p className="muted">Claude accounts use separate native homes. Sign in through Claude Code, then inspect and verify here.</p>
+          <p className="muted">Managed accounts use separate native homes. Sign in through the provider, then inspect and verify here.</p>
           <form onSubmit={(event) => void createAccount(event)}>
-            <label className="field-label" htmlFor="account-name">New Claude account name</label>
+            <label className="field-label" htmlFor="account-provider">New account provider</label>
+            <select id="account-provider" value={accountProvider} disabled={accountBusy}
+              onChange={(event) => setAccountProvider(event.target.value as 'claude' | 'codex')}>
+              <option value="claude">Claude Code</option><option value="codex">Codex</option>
+            </select>
+            <label className="field-label" htmlFor="account-name">New account name</label>
             <div className="account-create"><input id="account-name" value={accountName} maxLength={80}
               onChange={(event) => setAccountName(event.target.value)} placeholder="Account name" />
               <button type="submit" disabled={accountBusy || !accountName.trim()}>Add</button></div>
@@ -759,20 +768,27 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
             <p>Native home: <code>{selectedAccount.native_home}</code></p>
             {selectedAccount.provider === 'claude' && <><p>Run this in a terminal to sign in through Claude Code:</p>
               <pre className="account-login-command" aria-label="Claude login command">{`env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL CLAUDE_CONFIG_DIR=${shellQuote(selectedAccount.native_home)} ANTHROPIC_CONFIG_DIR=${shellQuote(selectedAccount.native_home)} claude auth login`}</pre></>}
+            {selectedAccount.provider === 'codex' && <><p>Run this in a terminal to sign in through Codex:</p>
+              <pre className="account-login-command" aria-label="Codex login command">{`env -i HOME="$HOME" PATH="$PATH" TERM="$TERM" CODEX_HOME=${shellQuote(selectedAccount.native_home)} codex login`}</pre></>}
             {selectedAccount.claude_identity && <p>Bound identity: {selectedAccount.claude_identity.email} · organization {selectedAccount.claude_identity.org_id} · {selectedAccount.claude_identity.auth_method} / {selectedAccount.claude_identity.api_provider}</p>}
+            {selectedAccount.codex_identity && <p>Bound identity: {selectedAccount.codex_identity.email} · ChatGPT account {selectedAccount.codex_identity.chatgpt_account_id}</p>}
             {accountInspection && <div role="status"><p>Last inspection: {accountInspection.state.replaceAll('_', ' ')}</p>
               <p>{accountInspection.reason}</p>
-              {accountInspection.identity && <p>Native identity: {accountInspection.identity.email} · organization {accountInspection.identity.org_id} · {accountInspection.identity.auth_method} / {accountInspection.identity.api_provider}</p>}</div>}
-            {selectedAccount.provider !== 'claude' && <p>Inspection and verification are unavailable for this provider.</p>}
+              {accountInspection.identity && <p>Native identity: {accountInspection.identity.email}
+                {'chatgpt_account_id' in accountInspection.identity
+                  ? ` · ChatGPT account ${accountInspection.identity.chatgpt_account_id}`
+                  : ` · organization ${accountInspection.identity.org_id} · ${accountInspection.identity.auth_method} / ${accountInspection.identity.api_provider}`}</p>}</div>}
+            {selectedAccount.provider !== 'claude' && selectedAccount.provider !== 'codex' &&
+              <p>Inspection and verification are unavailable for this provider.</p>}
             <div className="account-actions">
-              <button type="button" disabled={accountBusy || selectedAccount.provider !== 'claude'} onClick={() => void inspectAccount(selectedAccount.id)}>Inspect</button>
-              <button type="button" disabled={accountBusy || selectedAccount.provider !== 'claude' ||
+              <button type="button" disabled={accountBusy || !['claude', 'codex'].includes(selectedAccount.provider)} onClick={() => void inspectAccount(selectedAccount.id)}>Inspect</button>
+              <button type="button" disabled={accountBusy || !['claude', 'codex'].includes(selectedAccount.provider) ||
                 accountInspection?.state !== 'ready' || !accountInspection.identity}
                 onClick={() => void changeAccount('account.verify')}>Verify</button>
               <button type="button" disabled={accountBusy || selectedAccount.state === 'disabled'}
                 onClick={() => void changeAccount('account.disable')}>Disable in ADE</button>
             </div>
-            {selectedAccount.state === 'disabled' && <p>Disabled in ADE. Native Claude Code sign-in is unchanged.</p>}
+            {selectedAccount.state === 'disabled' && <p>Disabled in ADE. Native provider sign-in is unchanged.</p>}
           </div>}
           {accountError && <p role="alert" className="inline-error">{accountError}</p>}
         </section>

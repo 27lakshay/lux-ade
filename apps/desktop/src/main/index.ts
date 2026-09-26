@@ -595,10 +595,10 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
   if (op === 'account.list' || op === 'account.create' || op === 'account.inspect' || op === 'account.verify' || op === 'account.disable') {
     let request: Record<string, unknown> = {}
     if (op === 'account.create') {
-      if (args.provider !== 'claude' || typeof args.name !== 'string' || !args.name.trim() || args.name.length > 80) {
-        throw new Error('Invalid Claude account')
+      if ((args.provider !== 'claude' && args.provider !== 'codex') || typeof args.name !== 'string' || !args.name.trim() || args.name.length > 80) {
+        throw new Error('Invalid managed account')
       }
-      request = { provider: 'claude', name: args.name.trim() }
+      request = { provider: args.provider, name: args.name.trim() }
     } else if (op !== 'account.list') {
       if (!validId(args.account_id)) throw new Error('Invalid account')
       request = { account_id: args.account_id }
@@ -607,17 +607,17 @@ ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: un
           throw new Error('Invalid account generation')
         }
         const identity = args.expected_identity
-        if (!identity || typeof identity !== 'object' || Array.isArray(identity) ||
-          Object.keys(identity).sort().join(',') !== 'api_provider,auth_method,email,org_id' ||
-          (identity as Record<string, unknown>).auth_method !== 'claude.ai' ||
-          (identity as Record<string, unknown>).api_provider !== 'firstParty' ||
-          typeof (identity as Record<string, unknown>).email !== 'string' ||
-          ((identity as Record<string, string>).email).length < 1 ||
-          ((identity as Record<string, string>).email).length > 320 ||
-          typeof (identity as Record<string, unknown>).org_id !== 'string' ||
-          ((identity as Record<string, string>).org_id).length < 1 ||
-          ((identity as Record<string, string>).org_id).length > 256) {
-          throw new Error('Invalid inspected Claude identity')
+        const expected = identity as Record<string, unknown> | null
+        const claudeIdentity = expected && Object.keys(expected).sort().join(',') === 'api_provider,auth_method,email,org_id' &&
+          expected.auth_method === 'claude.ai' && expected.api_provider === 'firstParty' &&
+          typeof expected.email === 'string' && expected.email.length > 0 && expected.email.length <= 320 &&
+          typeof expected.org_id === 'string' && expected.org_id.length > 0 && expected.org_id.length <= 256
+        const codexIdentity = expected && Object.keys(expected).sort().join(',') === 'chatgpt_account_id,email' &&
+          typeof expected.email === 'string' && expected.email.length > 0 && expected.email.length <= 320 &&
+          typeof expected.chatgpt_account_id === 'string' && expected.chatgpt_account_id.length > 0 &&
+          expected.chatgpt_account_id.length <= 256
+        if (!identity || typeof identity !== 'object' || Array.isArray(identity) || (!claudeIdentity && !codexIdentity)) {
+          throw new Error('Invalid inspected account identity')
         }
         request.expected_generation = args.expected_generation
         request.expected_identity = identity

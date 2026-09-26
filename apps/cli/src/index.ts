@@ -24,7 +24,7 @@ Commands:
   conversation send ID TEXT             Send a prompt with a generated request ID
   account list                           List profile accounts
   account create PROVIDER NAME           Register a native account home
-  account inspect ID                     Check current Claude readiness
+  account inspect ID                     Check current Claude or Codex readiness
   account verify ID EXPECTED_GENERATION IDENTITY_JSON
                                         Pin only the identity returned by account inspect
   account disable ID                     Disable new ADE launches; does not log out native CLI or stop running agents
@@ -46,9 +46,11 @@ All command results are JSON on stdout. Errors are JSON on stderr.
 Terminal send appends Enter; use terminal attach in a later CLI slice for raw I/O.
 The profile socket is always explicit. This CLI does not start a daemon. Plans for
 profile discovery, remote hosts and stable public command schemas remain open.
-For Claude, authenticate the returned native home with:
-  CLAUDE_CONFIG_DIR=<native_home> claude auth login
-Then run account inspect and account verify. ADE never receives the login token.
+Authenticate the returned native home with the provider CLI:
+  Claude: CLAUDE_CONFIG_DIR=<native_home> claude auth login
+  Codex:  env -i HOME="$HOME" PATH="$PATH" TERM="$TERM" CODEX_HOME=<native_home> codex login
+Then run account inspect and account verify with the inspected identity JSON.
+ADE never receives the login token.
 `
 
 type ErrorCode = 'usage' | 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' | 'invalid_request'
