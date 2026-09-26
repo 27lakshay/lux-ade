@@ -80,7 +80,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F058 | Lifecycle hooks | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F059 | Plugin state, credentials and settings | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F060 | Plugin development and recovery | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
-| F061 | Projects and ordinary folders | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
+| F061 | Projects and ordinary folders | V1 | [05-workspaces](05-workspaces/spec.md) | Verified |
 | F062 | Repository clone and publish | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
 | F063 | Managed worktree creation | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
 | F064 | Carry uncommitted changes | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |

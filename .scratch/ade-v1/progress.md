@@ -28,15 +28,16 @@ queue unrelated improvements.
 |---|---|---|
 | Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
 | Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude prompts, file-reading tools, turn cancel/resume, and native write approvals with exact retry/conflict; Codex native cancel and Claude decline prevent the write. Deterministic managed-identity, prompt/answer recovery, questions and CLI/Electron E2Es | Real Oh My Pi account; managed two-account execution; native questions, crash/lost-reply recovery and installed-app continuity across each primary provider |
-| Workspace/review: F061, F074 | F074 closed: large paged diff, multi-range notes, atomic stale admission, durable structured history/search and same-ID uncertain-send recovery; folder selection | F061 lifecycle acceptance |
+| Workspace/review: F061, F074 | Both closed: Git projects and ordinary folders reopen with stable identity; missing/replaced paths warn and execution fails closed; large paged diffs, multi-note feedback, durable history/search and uncertain-send recovery | None for these IDs |
 | Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
-| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume | Matching CLI coverage for the rest of the selected daily-use flow |
+| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes, including cancel/resume, paged diffs and durable review feedback | Matching CLI coverage for the rest of the selected daily-use flow |
 
 Blocker: a real Oh My Pi account is unavailable; continue other gate criteria
 without treating the fixture as live-account proof. Active owner: coordinator;
-no worker is running. Next assignment: F061 workspace/worktree lifecycle and
-matching CLI controls. The remaining rows are partial evidence, not closed
-feature IDs. F075/06-S06 and unrelated V1 work remain queued.
+no worker is running. Next assignment: connected F086/F088/F090 service,
+script and browser daily-use flow with matching CLI controls. The remaining
+rows are partial evidence, not closed feature IDs. F075/06-S06 and unrelated
+V1 work remain queued.
 
 ## Integrated checkpoints
 
@@ -111,6 +112,23 @@ feature IDs. F075/06-S06 and unrelated V1 work remain queued.
 | `8f70037` | Native negative approval choices | Real Codex cancel and Claude decline, live accept/retry/conflict; CLI/Electron fixture choices, focused 3/3, source 162 passed/one host skip, installed 6/6 |
 | `b4f1005`, `cdfdcfa` | F074 paged diff and review admission | 166 source E2Es passed/one host skip; installed 6/6; strict Clippy and rustfmt pass; 5 MiB later-page send, stale edit, crash recovery and stale cursor E2Es |
 | `75fbeda` | F074 structured feedback and history | 170 source E2Es passed/one host skip; installed 6/6; multi-note/range, stale edit, history search, uncertain send and pre-dispatch crash E2Es |
+| `8aa913a` | F061 live folder/project identity | Git and ordinary folder registration, stable reopen, missing/replaced warning and unrelated-binding refusal E2Es |
+| `3279394` | CLI review parity | Named paged diff, feedback search and durable same-ID feedback send E2E |
+
+F061/CLI review checkpoint, 2026-09-26: F061 is verified; F074 remains
+verified. F061 required cases pass for both Git projects and ordinary folders,
+stable reopen and missing/replaced directory reports without unrelated
+binding. A reviewer found that path probing held the daemon data lock; the
+probe now occurs outside it and a running-process E2E checks concurrent
+`hello`. CLI review controls share the daemon's paged diff and feedback
+history, and use a durable send intent for same-ID uncertain retries. F101–F103
+remain open for the rest of the daily-use CLI flow. Final focused E2Es passed
+5/5; full source checks passed 173 with one existing host skip, including
+typecheck and Fallow; strict daemon Clippy and rustfmt passed. Packaged macOS
+checks passed 6/6. No test-owned ADE process remains. Approximate time:
+implementation 10 minutes, review 3 minutes overlapping implementation,
+focused/static checks 1 minute, full source 5.2 minutes, packaging and
+installed checks 1.2 minutes. The next slice stays on the daily-use gate.
 
 F074 structured-feedback checkpoint, 2026-09-26: F074 is verified; the daily-use
 workspace/review row remains open for F061. Review findings in the current
