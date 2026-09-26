@@ -82,6 +82,7 @@ declare global {
       listProfiles(): Promise<ProfileState>
       createProfile(name: string): Promise<ProfileState>
       selectProfile(id: string): Promise<ProfileState>
+      adoptBrowserSession(profileId: string): Promise<ProfileState>
       onProfileState(listener: (state: ProfileState) => void): () => void
       openWorkspace(folder: string): Promise<Frame>
       chooseWorkspace(): Promise<Frame | null>
@@ -1033,6 +1034,7 @@ function App(): React.JSX.Element {
   const [newProfile, setNewProfile] = React.useState('')
   const [profileBusy, setProfileBusy] = React.useState(false)
   const [profileError, setProfileError] = React.useState('')
+  const [requestedProfileId, setRequestedProfileId] = React.useState<string | null>(null)
   const [pendingSends, setPendingSends] = React.useState<PendingSend[]>([])
   const [pendingSendError, setPendingSendError] = React.useState('')
   const activeProfileId = React.useRef<string | null>(null)
@@ -1066,8 +1068,10 @@ function App(): React.JSX.Element {
   }, [state?.status, profile?.activeId])
   const switchProfile = async (id: string): Promise<void> => {
     if (!id || profileBusy || id === profile?.activeId) return
+    setRequestedProfileId(id)
+    setProfileError('')
     setProfileBusy(true)
-    try { await window.adeHost.selectProfile(id); setProfileError('') }
+    try { await window.adeHost.selectProfile(id); setProfileError(''); setRequestedProfileId(null) }
     catch (error) { setProfileError(String(error)) }
     finally { setProfileBusy(false) }
   }
@@ -1075,19 +1079,39 @@ function App(): React.JSX.Element {
     event.preventDefault()
     const name = newProfile.trim()
     if (!name || profileBusy) return
+    setRequestedProfileId(null)
+    setProfileError('')
     setProfileBusy(true)
     try {
       const priorIds = new Set(profile?.profiles.map((item) => item.id))
       const next = await window.adeHost.createProfile(name)
       const created = next.profiles.find((item) => !priorIds.has(item.id))
       if (!created) throw new Error('Created profile was not returned by the launcher')
+      setRequestedProfileId(created.id)
       await window.adeHost.selectProfile(created.id)
       setNewProfile('')
       setProfileError('')
+      setRequestedProfileId(null)
     } catch (error) { setProfileError(String(error)) }
     finally { setProfileBusy(false) }
   }
   const active = profile?.profiles.find((item) => item.id === profile.activeId)
+  const ownershipError = (profileError || profile?.error || '').includes('Browser session ownership is unverified')
+  const adoptionProfileId = requestedProfileId ?? (profile?.activeId ? null : profile?.selectedId)
+  const adoptionProfile = profile?.profiles.find((item) => item.id === adoptionProfileId)
+  const adoptBrowserSession = async (): Promise<void> => {
+    if (!ownershipError || !adoptionProfile || profileBusy) return
+    const warning = `The original owner of this browser session cannot be proven.\n\nAdopting it for ${adoptionProfile.name} (${adoptionProfile.id}) could attach another profile's cookies. Continue?`
+    if (!window.confirm(warning)) return
+    setProfileBusy(true)
+    try {
+      const next = await window.adeHost.adoptBrowserSession(adoptionProfile.id)
+      setProfile(next)
+      setProfileError('')
+      setRequestedProfileId(null)
+    } catch (error) { setProfileError(String(error)) }
+    finally { setProfileBusy(false) }
+  }
   return <main><header><span className="brand">ADE</span><div className="header-controls">
     {profile?.managed && <label className="profile-picker">Profile <select aria-label="Profile" value={profile.activeId ?? ''}
       disabled={profileBusy} onChange={(event) => void switchProfile(event.target.value)}>
@@ -1101,6 +1125,10 @@ function App(): React.JSX.Element {
         <input id="new-profile" value={newProfile} maxLength={80} onChange={(event) => setNewProfile(event.target.value)} placeholder="Profile name" />
         <button type="submit" disabled={profileBusy || !newProfile.trim()}>Create</button></form>
       {(profileError || profile.error) && <span role="alert" className="inline-error">{profileError || profile.error}</span>}
+      {ownershipError && adoptionProfile && <div>
+        <p>The original owner of this browser session cannot be proven. Adopting it could attach another profile&apos;s cookies.</p>
+        <button type="button" disabled={profileBusy} onClick={() => void adoptBrowserSession()}>Adopt unverified browser session</button>
+      </div>}
     </div>}
     {state?.status !== 'connected' && (pendingSends.length > 0 || pendingSendError) &&
       <section aria-label="Pending prompts" className="account-panel">

@@ -5,7 +5,7 @@ import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { AdeClient, DaemonRequestError, openTerminalConnection, requestDaemon, type TerminalConnection } from '@ade/client'
-import { closeBrowserWindow, flushBrowserSessions, registerBrowserIpc, setBrowserProfile } from './browser'
+import { adoptUnownedBrowserStorage, closeBrowserWindow, flushBrowserSessions, registerBrowserIpc, setBrowserProfile } from './browser'
 import { SendJournal, type SendJournalIdentity, type SendJournalRecord } from './send-journal'
 
 type Profile = { id: string; name: string; selected: boolean; home: string }
@@ -594,6 +594,18 @@ ipcMain.handle('ade:profile-create', async (_event, name: unknown) => {
 ipcMain.handle('ade:profile-select', async (_event, id: unknown) => {
   if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid profile ID')
   if (startupProfileSelection) await startupProfileSelection
+  return selectProfile(id, true)
+})
+ipcMain.handle('ade:browser-adopt', async (event, id: unknown) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed() || event.senderFrame !== window.webContents.mainFrame) throw new Error('Browser adoption is unavailable')
+  if (!managedProfiles || typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id) || switching) {
+    throw new Error('Invalid browser adoption request')
+  }
+  if (startupProfileSelection) await startupProfileSelection
+  const profile = profileState.profiles.find((item) => item.id === id)
+  if (!profile) throw new Error('Unknown profile')
+  await adoptUnownedBrowserStorage(id, profile.home)
   return selectProfile(id, true)
 })
 async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> {

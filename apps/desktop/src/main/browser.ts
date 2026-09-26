@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, WebContentsView } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
-import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
 type Saved = { version: 1; selectedId: string | null; tabs: Array<Pick<Tab, 'id' | 'profileId' | 'requestedUrl' | 'observedUrl' | 'title'>> }
@@ -26,42 +26,204 @@ const profilePath = (id: string): string => {
   return directory
 }
 const target = (id: string): string => join(profilePath(id), 'browser-tabs-v1.json')
+const ownerName = '.ade-owner-v1.json'
+const stageName = '.ade-stage-owner-v1.json'
+const storageKey = (id: string): string => createHash('sha256').update(id).digest('hex')
 const browserStoragePath = (id: string): string => {
   if (id === 'fixed') return join(profilePath(id), 'browser-session')
-  const key = createHash('sha256').update(id).digest('hex')
-  return join(app.getPath('userData'), 'browser-sessions', key)
+  return join(app.getPath('userData'), 'browser-sessions', storageKey(id))
+}
+async function directoryExists(directory: string): Promise<boolean> {
+  try {
+    if (!(await lstat(directory)).isDirectory()) throw new Error('Browser storage is not a directory; preserve it for review')
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, 'r')
+  try { await handle.sync() } finally { await handle.close() }
+}
+async function writeOwner(directory: string, id: string): Promise<void> {
+  const handle = await open(join(directory, ownerName), 'wx', 0o600)
+  try {
+    await handle.writeFile(JSON.stringify({ version: 1, profileId: id, storageKey: storageKey(id) }))
+    await handle.sync()
+  } finally { await handle.close() }
+  await syncDirectory(directory)
+}
+async function readSmallJson(file: string, limit = 4096): Promise<unknown | null> {
+  let info: Awaited<ReturnType<typeof lstat>>
+  try { info = await lstat(file) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  if (!info.isFile() || info.size > limit) throw new Error('Browser storage record is unsafe; preserve it for review')
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'))
+    if (parsed === null) throw new Error('null record')
+    return parsed
+  }
+  catch { throw new Error('Browser storage record is invalid; preserve it for review') }
+}
+async function checkOwner(directory: string, id: string): Promise<boolean> {
+  const value = await readSmallJson(join(directory, ownerName))
+  if (value === null) return false
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+    (value as Record<string, unknown>).version !== 1 ||
+    (value as Record<string, unknown>).profileId !== id ||
+    (value as Record<string, unknown>).storageKey !== storageKey(id)) {
+    throw new Error('Browser session belongs to another profile or has an invalid owner; preserve it for review')
+  }
+  return true
+}
+async function syncTree(directory: string): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const child = join(directory, entry.name)
+    if (entry.isDirectory()) await syncTree(child)
+    else if (entry.isFile()) {
+      const handle = await open(child, 'r')
+      try { await handle.sync() } finally { await handle.close() }
+    } else throw new Error('Browser migration source has unsupported files; preserve it for review')
+  }
+  await syncDirectory(directory)
+}
+async function migrationPause(point: 'fresh-stage' | 'fresh-owner' | 'stage' | 'copy' | 'marker' | 'rename'): Promise<void> {
+  if (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_BROWSER_MIGRATION_PAUSE !== point) return
+  const signal = process.env.ADE_E2E_BROWSER_MIGRATION_SIGNAL
+  if (!signal || !isAbsolute(signal)) throw new Error('Browser migration test signal must be absolute')
+  await writeFile(signal, point, { flag: 'wx' })
+  await new Promise<void>(() => undefined)
 }
 async function migrateBrowserStorage(id: string): Promise<void> {
   const source = join(profilePath(id), 'browser-session')
   const destination = browserStoragePath(id)
-  if (source === destination) return
-  const marker = join(destination, '.ade-migration-v1.json')
-  if (await stat(destination).then(() => true).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return false
-    throw error
-  })) {
-    const completed = await readFile(marker, 'utf8').then((data) => JSON.parse(data) as { profileId?: string; source?: string }).catch(() => null)
-    if (completed?.profileId === id && completed.source === source) return
-    if (await stat(source).then(() => true).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return false
-      throw error
-    })) throw new Error('Existing browser session needs migration review; original profile data remains intact')
+  const parent = dirname(destination)
+  await mkdir(parent, { recursive: true, mode: 0o700 })
+  const creatingPrefix = `${basename(destination)}.creating-`
+  for (const name of await readdir(parent)) {
+    if (!name.startsWith(creatingPrefix)) continue
+    const stage = join(parent, name)
+    if (!(await directoryExists(stage))) throw new Error('Interrupted browser creation needs review')
+    const children = await readdir(stage)
+    const match = /^(\d+)-[0-9a-f-]{36}$/.exec(name.slice(creatingPrefix.length))
+    if (!match || children.some((child) => child !== ownerName)) {
+      throw new Error('Interrupted browser creation contains session data; preserve it for review')
+    }
+    let claim: unknown = null
+    try { claim = await readSmallJson(join(stage, ownerName)) }
+    catch { /* A partial owner record is safe to retire before any session starts. */ }
+    if (claim && typeof claim === 'object' && !Array.isArray(claim) &&
+      (claim as Record<string, unknown>).profileId !== undefined &&
+      (claim as Record<string, unknown>).profileId !== id) {
+      throw new Error('Interrupted browser creation belongs to another profile')
+    }
+    try { process.kill(Number(match[1]), 0); throw new Error('Another ADE process owns browser creation') }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error }
+    await rm(stage, { recursive: true })
+  }
+  if (source !== destination) {
+    const prefix = `${storageKey(id)}.migrating-`
+    for (const name of await readdir(parent)) {
+      if (!name.startsWith(prefix)) continue
+      const stage = join(parent, name)
+      if (!(await directoryExists(stage))) throw new Error('Interrupted browser migration needs review; preserve its temporary copy')
+      let claim: unknown | null = null
+      try { claim = await readSmallJson(join(stage, stageName)) }
+      catch { /* A partial claim is recoverable only before any session data was copied. */ }
+      const candidate = claim && typeof claim === 'object' && !Array.isArray(claim) ? claim as Record<string, unknown> : null
+      if (candidate?.profileId !== undefined && candidate.profileId !== id) {
+        throw new Error('Interrupted browser migration has a different owner; preserve its temporary copy')
+      }
+      if (!candidate || candidate.version !== 1 || candidate.profileId !== id || candidate.storageKey !== storageKey(id)) {
+        const match = /^(\d+)-[0-9a-f-]{36}$/.exec(name.slice(prefix.length))
+        const children = await readdir(stage)
+        if (!match || children.some((child) => child !== stageName)) {
+          throw new Error('Interrupted browser migration needs review; preserve its temporary copy')
+        }
+        try { process.kill(Number(match[1]), 0); throw new Error('Another ADE process owns the browser migration') }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error }
+        await rm(stage, { recursive: true })
+        continue
+      }
+      const pid = candidate.pid
+      const match = /^(\d+)-[0-9a-f-]{36}$/.exec(name.slice(prefix.length))
+      if (!match || typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid !== Number(match[1])) {
+        throw new Error('Interrupted browser migration has an invalid process owner; preserve its temporary copy')
+      }
+      try { process.kill(pid, 0); throw new Error('Another ADE process owns the browser migration') }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error }
+      await rm(stage, { recursive: true })
+    }
+  }
+  if (await directoryExists(destination)) {
+    const owned = await checkOwner(destination, id)
+    if (source === destination) { if (!owned) await writeOwner(destination, id); return }
+    const legacy = await readSmallJson(join(destination, '.ade-migration-v1.json')) as { profileId?: string } | null
+    if (legacy?.profileId === id) { if (!owned) await writeOwner(destination, id); return }
+    if (!(await directoryExists(source))) {
+      if (owned) return
+      throw new Error(`Browser session ownership is unverified for profile ${id}; review the saved session before adopting it`)
+    }
+    throw new Error('Existing browser session needs migration review; original profile data remains intact')
+  }
+  if (source === destination || !(await directoryExists(source))) {
+    const stage = `${destination}.creating-${process.pid}-${randomUUID()}`
+    await mkdir(stage, { mode: 0o700 })
+    try {
+      await migrationPause('fresh-stage')
+      await writeOwner(stage, id)
+      await migrationPause('fresh-owner')
+      await rename(stage, destination)
+      await syncDirectory(parent)
+    } finally { await rm(stage, { recursive: true, force: true }) }
     return
   }
-  if (!(await stat(source).then(() => true).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return false
-    throw error
-  }))) return
-  await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
-  const temporary = `${destination}.migrating-${randomUUID()}`
+  const stage = `${destination}.migrating-${process.pid}-${randomUUID()}`
+  await mkdir(stage, { mode: 0o700 })
   try {
-    await cp(source, temporary, { recursive: true, force: false, errorOnExist: true })
-    await writeFile(join(temporary, '.ade-migration-v1.json'), JSON.stringify({ profileId: id, source }), { mode: 0o600, flag: 'wx' })
-    await rename(temporary, destination)
-  } catch (error) {
-    await rm(temporary, { recursive: true, force: true })
-    throw error
+    await migrationPause('stage')
+    const claim = await open(join(stage, stageName), 'wx', 0o600)
+    try { await claim.writeFile(JSON.stringify({ version: 1, profileId: id, storageKey: storageKey(id), source, pid: process.pid })); await claim.sync() }
+    finally { await claim.close() }
+    await syncDirectory(stage)
+    await cp(source, join(stage, 'data'), { recursive: true, force: false, errorOnExist: true })
+    await migrationPause('copy')
+    if (!(await checkOwner(join(stage, 'data'), id))) await writeOwner(join(stage, 'data'), id)
+    const marker = join(stage, 'data', '.ade-migration-v1.json')
+    const existingMarker = await readSmallJson(marker) as { profileId?: string } | null
+    if (existingMarker && existingMarker.profileId !== id) throw new Error('Browser migration source has a different owner')
+    if (!existingMarker) {
+      const handle = await open(marker, 'wx', 0o600)
+      try { await handle.writeFile(JSON.stringify({ profileId: id, source })); await handle.sync() }
+      finally { await handle.close() }
+    }
+    await syncTree(join(stage, 'data'))
+    await migrationPause('marker')
+    await rename(join(stage, 'data'), destination)
+    await migrationPause('rename')
+    await syncDirectory(parent)
+  } finally { await rm(stage, { recursive: true, force: true }) }
+}
+export async function adoptUnownedBrowserStorage(id: string, directory: string): Promise<void> {
+  if (!validId(id) || id === 'fixed' || !isAbsolute(directory)) throw new Error('Invalid browser profile for adoption')
+  const destination = join(app.getPath('userData'), 'browser-sessions', storageKey(id))
+  const source = join(directory, 'browser-session')
+  if (!(await directoryExists(destination)) || await directoryExists(source)) {
+    throw new Error('Browser session adoption requires one existing destination and no legacy source')
   }
+  if (await checkOwner(destination, id)) throw new Error('Browser session already has a verified owner')
+  const marker = await readSmallJson(join(destination, '.ade-migration-v1.json')) as { profileId?: string } | null
+  if (marker) throw new Error('Browser migration marker requires separate review before adoption')
+  const entries = await readdir(dirname(destination))
+  if (entries.some((name) => name.startsWith(`${storageKey(id)}.migrating-`) ||
+    name.startsWith(`${storageKey(id)}.creating-`))) {
+    throw new Error('Interrupted browser storage work must be resolved before adoption')
+  }
+  await writeOwner(destination, id)
 }
 const snapshot = (id: string): { profileId: string; selectedId: string | null; tabs: Tab[] } => {
   const state = profiles.get(id)
