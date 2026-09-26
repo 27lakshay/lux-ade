@@ -28,6 +28,21 @@ and restore is still open. The test harness checks daemon and runtime exit
 after managed-profile cases. A malformed-journal Electron startup exits
 without opening a native blocking dialog in an isolated E2E.
 
+Commits `8e95138` and `7d77456` add a desktop path-rebind flow for restored
+profiles. It lists Worktrunk, Git repository, and workspace claims in order,
+verifies selected replacement folders through the daemon, and disables
+execution controls while a workspace is fenced. The desktop polls effective
+physical bindings to catch replacement after a successful rebind. A schema-12
+backup without saved source identity shows an unrebindable explanation.
+The daemon also recovers a crash after the final rebind commit, avoids opening
+an unknown startup root while restore is pending, and checks that linked Git
+workspaces still resolve to their bound repository. Source `pnpm check` passes
+116/116 E2Es; after a bounded Git-file hardening change, the focused rebind
+suite passes 10/10 and the packaged macOS app passes 6/6 E2Es. Test-owned daemon
+and runtime processes are gone after both suites. The path replacement race
+between admission and child launch remains open, as do the wider F061 and
+R014 acceptance cases.
+
 The first daily-use gate is a connected flow, not a substitute for each feature's
 full acceptance in its owning spec:
 

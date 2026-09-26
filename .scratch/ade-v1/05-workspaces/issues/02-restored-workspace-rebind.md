@@ -31,17 +31,19 @@ The daemon preserves catalogue and conversation reads, but
 rejects execution through agent, terminal, service, script, review and
 worktree entry points with a stable `needs_rebind` failure. The lifecycle
 database has its own fence for repositories that were never registered in the
-core catalogue. Opening a child of a fenced root inherits the fence without
-running Git there. While any restored claim remains pending, newly opened
-unknown roots are fenced too, because they may alias an old linked checkout.
+core catalogue. While any restored claim remains pending, opening a child or
+unknown root is refused before creating a workspace identity, because it may
+alias an old linked checkout.
 Schema 12 prevents older daemons from ignoring these
 binding fields. Startup does not
 lease saved external roots or launch the old default terminal. An exact
 attachment inspection can verify restored SQLite payloads without executing
 in a workspace.
 
-The public protocol and CLI now expose `worktree.rebind.list`,
-`worktree.rebind`, `repository.rebind`, and `workspace.rebind`. Core and
+The public protocol now exposes `worktree.rebind.list`, `worktree.rebind`,
+`repository.rebind.list`, `repository.rebind`, `workspace.rebind.list`, and
+`workspace.rebind`; the CLI exposes the three rebind actions and the
+Worktrunk list. Core and
 Worktrunk lifecycle stores record current and immutable source device/inode
 identities. A selected directory and Git common directory must match the
 expected lineage; old restored stores without reliable source identity remain
@@ -49,7 +51,7 @@ fenced. Linked core and lifecycle repositories must follow the same current
 binding. Rebind preserves repository, workspace and conversation IDs. Real
 process E2Es cover shared repositories, renamed sources, repeated rebinds,
 cross-store source claims and incompatible schema migrations. Independent
-review found no remaining P1/P2 in these rebind paths.
+review found no remaining P1/P2 in the initial rebind paths.
 
 ## Comments
 
@@ -62,3 +64,12 @@ review found no remaining P1/P2 in these rebind paths.
   race between validation and child launch need further work. Path-based child
   launch retains a check/use window unless execution is rooted in an opened
   directory descriptor. Do not close F061/R014 on this slice alone.
+- 2026-09-26: The desktop now lists pending Worktrunk, repository, and
+  workspace bindings, guides explicit path selection in that order, and
+  disables fenced workspace actions while history remains visible. It detects
+  live path replacement through the effective binding catalog. A schema-12
+  backup with no saved physical identity is reported as unrebindable. The
+  daemon avoids creating a new workspace on restored startup, reconciles a
+  crash after the last binding commit, and fences a linked workspace when its
+  Git common directory diverges from its repository. The admission-to-child
+  path replacement race still blocks full F061/R014 acceptance.
