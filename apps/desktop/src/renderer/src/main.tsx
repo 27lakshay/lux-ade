@@ -1056,7 +1056,13 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
         }}>
           {workspaces.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
         </select>}
-        {workspace && <p className="workspace-root" title={workspace.root}>{workspace.root}</p>}
+        {workspace && <><p className="workspace-kind">{workspace.repository_id ? 'Git project' : 'Folder'}</p>
+          <p className="workspace-root" title={workspace.root}>{workspace.root}</p>
+          {(workspace.needs_rebind || effectiveUnboundIds.includes(workspace.id)) &&
+            <p role="alert" className="inline-error">Workspace or repository binding is missing, replaced or awaiting rebind. Verify its path before using it.</p>}
+          {workspace.worktree_lifecycle_needs_rebind &&
+            <p role="alert" className="inline-error">Worktree lifecycle binding needs recovery before this workspace can run.</p>}
+        </>}
         <RestoreBindingsPanel bootId={state.bootId} profileKey={profileKey} onWorkspaceBindings={setEffectiveUnboundIds} />
         <form className="open-workspace" onSubmit={(event) => void openFolder(event)}>
           <label className="field-label" htmlFor="folder-path">Open folder</label>

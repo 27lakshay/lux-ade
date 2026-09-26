@@ -1,13 +1,16 @@
 import { expect, test, _electron as electron } from '@playwright/test'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { rpc, startDaemon } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
 const electronExecutable = requireDesktop('electron') as string
+const run = promisify(execFile)
 
 test('Electron opens a folder as a stable workspace in the selected profile', async () => {
   const daemon = await startDaemon()
@@ -32,6 +35,7 @@ test('Electron opens a folder as a stable workspace in the selected profile', as
     await expect(workspaceNavigation.getByRole('alert')).toHaveCount(0)
     await expect(window.getByRole('combobox', { name: 'Workspace' })).toHaveValue(/workspace_/)
     await expect(window.getByText(canonicalFolder, { exact: true })).toBeVisible()
+    await expect(workspaceNavigation.locator('.workspace-kind')).toHaveText('Folder')
     const catalog = await rpc(daemon.socket, { op: 'catalog.get' })
     const opened = (catalog.catalog as { workspaces: Array<{ id: string; root: string }> }).workspaces.find((item) => item.root === canonicalFolder)
     expect(opened).toBeDefined()
@@ -44,6 +48,15 @@ test('Electron opens a folder as a stable workspace in the selected profile', as
     await expect(window.getByRole('textbox', { name: 'Open folder' })).toHaveValue('')
     const repeated = await rpc(daemon.socket, { op: 'catalog.get' })
     expect((repeated.catalog as { workspaces: Array<{ root: string }> }).workspaces.filter((item) => item.root === canonicalFolder)).toHaveLength(1)
+    const gitFolder = join(daemon.rootDirectory, 'git-project')
+    await run('git', ['init', '-q', gitFolder])
+    await input.fill(gitFolder)
+    await window.getByRole('button', { name: 'Open folder' }).click()
+    await expect(workspaceNavigation.locator('.workspace-kind')).toHaveText('Git project')
+    await rename(gitFolder, `${gitFolder}-moved`)
+    await mkdir(gitFolder)
+    await expect(workspaceNavigation.getByRole('alert').filter({ hasText: 'binding is missing, replaced' }))
+      .toBeVisible({ timeout: 12_000 })
   } finally {
     await application.close()
     await daemon.stop()

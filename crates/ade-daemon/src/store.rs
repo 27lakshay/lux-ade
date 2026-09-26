@@ -16,6 +16,10 @@ pub struct Store {
     pub(crate) connection: Connection,
     data_directory: PathBuf,
 }
+pub(crate) struct CatalogBindingClaim {
+    workspace: Option<(u64, u64)>,
+    repository: Option<(String, Option<(u64, u64)>)>,
+}
 #[derive(Serialize)]
 pub struct WorkspaceRebindEntry {
     id: String,
@@ -41,6 +45,48 @@ fn binding_matches(db: &Connection, kind: &str, id: &str, root: &str) -> Result<
     Ok(metadata.is_dir()
         && device == metadata.dev().to_string()
         && inode == metadata.ino().to_string())
+}
+fn current_binding_identity(db: &Connection, kind: &str, id: &str) -> Result<Option<(u64, u64)>> {
+    let saved: Option<(String, String)> = db
+        .query_row(
+            "SELECT device,inode FROM path_bindings WHERE kind=?1 AND id=?2",
+            params![kind, id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    saved
+        .map(|(device, inode)| Ok((device.parse()?, inode.parse()?)))
+        .transpose()
+}
+fn physical_binding_matches(root: &str, expected: Option<(u64, u64)>) -> bool {
+    expected.is_some_and(|expected| {
+        std::fs::metadata(root)
+            .is_ok_and(|metadata| metadata.is_dir() && (metadata.dev(), metadata.ino()) == expected)
+    })
+}
+pub(crate) fn probe_catalog_bindings(catalog: &mut Catalogue, claims: &[CatalogBindingClaim]) {
+    if cfg!(debug_assertions)
+        && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+        && let Ok(directory) = std::env::var("ADE_E2E_CATALOG_PAUSE_DIR")
+        && Path::new(&directory).join("armed").exists()
+    {
+        let directory = Path::new(&directory);
+        let _ = std::fs::write(directory.join("signal"), b"");
+        for _ in 0..500 {
+            if directory.join("release").exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    for (workspace, claim) in catalog.workspaces.iter_mut().zip(claims) {
+        let repository_unbound = claim.repository.as_ref().is_some_and(|(root, expected)| {
+            !physical_binding_matches(root, *expected)
+                || !linked_common_matches(&workspace.root, root)
+        });
+        workspace.needs_rebind |=
+            repository_unbound || !physical_binding_matches(&workspace.root, claim.workspace);
+    }
 }
 fn small_git_path(path: &Path, prefix: &str) -> Option<PathBuf> {
     if !std::fs::symlink_metadata(path).ok()?.is_file() {
@@ -1700,6 +1746,38 @@ impl Store {
         };
         tx.commit()?;
         Ok(result)
+    }
+    pub(crate) fn catalog_binding_claims(
+        &self,
+        catalog: &Catalogue,
+    ) -> Result<Vec<CatalogBindingClaim>> {
+        catalog
+            .workspaces
+            .iter()
+            .map(|workspace| {
+                let repository = workspace
+                    .repository_id
+                    .as_ref()
+                    .map(|id| {
+                        let record: Repository = one(&self.connection, "repositories", id)?;
+                        let expected =
+                            current_binding_identity(&self.connection, "repository", id)?;
+                        Ok::<_, anyhow::Error>((
+                            record.root,
+                            if record.needs_rebind { None } else { expected },
+                        ))
+                    })
+                    .transpose()?;
+                Ok(CatalogBindingClaim {
+                    workspace: current_binding_identity(
+                        &self.connection,
+                        "workspace",
+                        &workspace.id,
+                    )?,
+                    repository,
+                })
+            })
+            .collect()
     }
     pub fn reserve_terminal(&self, id: &str, instance: &str) -> Result<Conversation> {
         let tx = self.transaction()?;

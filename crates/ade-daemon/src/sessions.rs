@@ -8,7 +8,7 @@ use crate::{
     model::*,
     provider::{self, Event, Provider},
     runtime::Supervisor,
-    store::Store,
+    store::{Store, probe_catalog_bindings},
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
@@ -709,12 +709,35 @@ impl Sessions {
             .store(d.subscribers.len(), Ordering::Relaxed);
     }
     fn catalog_changed(&self, d: &mut Data) -> Result<()> {
+        // Mutations publish the durable snapshot while holding the state lock.
+        // Clients needing current path health refresh with catalog.get, whose
+        // filesystem probes run outside this lock.
         let catalog = d.store.catalog()?;
         self.publish(
             d,
             json!({"type":"catalog","catalog":catalog,"providers":provider::descriptors()}),
         );
         Ok(())
+    }
+    fn live_catalog(&self) -> Result<(Catalogue, u64)> {
+        // Copy durable claims while holding the sole-writer lock, then let
+        // filesystem metadata and Git-layout probes run without blocking other
+        // commands. A changed daemon revision invalidates the entire snapshot.
+        for _ in 0..3 {
+            let (mut catalog, claims, revision) = {
+                let d = self.data.lock().unwrap();
+                let catalog = d.store.catalog()?;
+                let claims = d.store.catalog_binding_claims(&catalog)?;
+                (catalog, claims, d.revision)
+            };
+            probe_catalog_bindings(&mut catalog, &claims);
+            if self.data.lock().unwrap().revision == revision {
+                return Ok((catalog, revision));
+            }
+        }
+        Err(anyhow!(
+            "Catalog changed during workspace identity inspection; retry"
+        ))
     }
     fn changed(&self, d: &mut Data, c: &Conversation, messages: &[Message]) -> Result<()> {
         let requests: Vec<_> = d
@@ -732,12 +755,19 @@ impl Sessions {
     pub fn subscribe(&self) -> Result<(String, mpsc::Receiver<Value>)> {
         let (tx, rx) = mpsc::sync_channel(128);
         let id = new_id("subscriber");
-        let mut d = self.data.lock().unwrap();
-        tx.send(json!({"type":"catalog","catalog":d.store.catalog()?,"providers":provider::descriptors(),"boot_id":self.boot_id,"revision":d.revision}))?;
-        d.subscribers.insert(id.clone(), tx);
-        self.subscribers
-            .store(d.subscribers.len(), Ordering::Relaxed);
-        Ok((id, rx))
+        for _ in 0..3 {
+            let (catalog, revision) = self.live_catalog()?;
+            let mut d = self.data.lock().unwrap();
+            if d.revision != revision {
+                continue;
+            }
+            tx.send(json!({"type":"catalog","catalog":catalog,"providers":provider::descriptors(),"boot_id":self.boot_id,"revision":revision}))?;
+            d.subscribers.insert(id.clone(), tx);
+            self.subscribers
+                .store(d.subscribers.len(), Ordering::Relaxed);
+            return Ok((id, rx));
+        }
+        Err(anyhow!("Catalog changed during subscription; retry"))
     }
     pub fn unsubscribe(&self, id: &str) {
         let mut d = self.data.lock().unwrap();
@@ -1209,9 +1239,12 @@ impl Sessions {
                     .disable_account(string("account_id")?)?;
                 Ok(json!({"type":"ack","account":account,"native_logout":false}))
             }
-            "catalog.get" => Ok(
-                json!({"type":"catalog","catalog":self.data.lock().unwrap().store.catalog()?,"providers":provider::descriptors(),"boot_id":self.boot_id}),
-            ),
+            "catalog.get" => {
+                let (catalog, revision) = self.live_catalog()?;
+                Ok(
+                    json!({"type":"catalog","catalog":catalog,"providers":provider::descriptors(),"boot_id":self.boot_id,"revision":revision}),
+                )
+            }
             "workspace.rebind.list" => {
                 let workspaces = self.data.lock().unwrap().store.rebind_workspaces()?;
                 Ok(json!({"type":"workspace_rebind_catalog","workspaces":workspaces}))
