@@ -662,12 +662,11 @@ pub fn spawn_runtime(
             match output.read(&mut buffer) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if let Some(writer) = durable_log.as_mut() {
-                        if let Err(error) = writer.append(&buffer[..n]) {
-                            durable_log = None;
-                            terminal_state.lock().unwrap().durable_log_error =
-                                Some(error.to_string());
-                        }
+                    if let Some(writer) = durable_log.as_mut()
+                        && let Err(error) = writer.append(&buffer[..n])
+                    {
+                        durable_log = None;
+                        terminal_state.lock().unwrap().durable_log_error = Some(error.to_string());
                     }
                     terminal_state.lock().unwrap().append_terminal(&buffer[..n]);
                 }
@@ -831,6 +830,7 @@ mod tests {
             reply_dropped_bytes: 0,
             shell_pid: None,
             shell_running: true,
+            durable_log_error: None,
         };
         let release = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(500));
@@ -874,6 +874,7 @@ mod tests {
             reply_dropped_bytes: 0,
             shell_pid: None,
             shell_running: true,
+            durable_log_error: None,
         };
         state.append_terminal(b"\x1b[2J\x1b[HPINNED BEFORE RAW RING");
         let repaint = b"\x1b[2;1Hupdated row, pinned row remains".repeat(10000);
@@ -931,6 +932,7 @@ mod tests {
             reply_dropped_bytes: 0,
             shell_pid: None,
             shell_running: true,
+            durable_log_error: None,
         };
         let (tx, _rx) = mpsc::sync_channel(1);
         state.clients.insert(
