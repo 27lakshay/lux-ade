@@ -1,4 +1,4 @@
-# Workspace package scripts (F090)
+# Workspace scripts (F090)
 
 Status: first package-script execution slice in review; full F090 remains open
 Type: implementation ticket
@@ -6,11 +6,17 @@ Type: implementation ticket
 ## Contract
 
 The profile daemon discovers valid visible scripts from a workspace root's
-`package.json`. `script.list` reports the names and commands. `script.start`
-executes a discovered name with `pnpm run` under the selected workspace and
+`package.json` and checked-in `.ade/scripts.json` schema version 1. The ADE
+manifest maps names to `{ program, args?, cwd? }` recipes with explicit argv
+and workspace-relative directories. Discovery rejects duplicate names between
+the manifests, malformed recipes and directories that escape through symlinks.
+`script.list` reports the definitions. `script.start` executes a discovered
+package name with `pnpm run` or starts an ADE recipe directly under the selected workspace and
 returns a run identity. The Rust supervisor owns its process group, PTY and
 bounded durable output. `script.inspect` reports observed runtime state and
 bounded live/durable output; `script.stop` waits for verified process exit.
+Script run status separates successful exit, nonzero exit, signal termination
+and unknown wait/reap outcome; the actual code or signal is retained.
 `script.runs` lists retained runtime runs. `script.retire` releases an exited
 run and its spool so repeated use does not exhaust the runtime terminal limit.
 The run's terminal membership is committed in the workspace before launch and
@@ -22,28 +28,43 @@ public protocol.
 
 - A real daemon discovers a workspace package script, runs it in that workspace,
   and observes its side effect and output. Another workspace cannot inspect it.
+- A plain workspace with no `package.json` runs a checked-in ADE recipe with
+  explicit argv and relative cwd, then reports actual exit code 0, nonzero
+  code and signal termination. Duplicate names and symlink-escaping cwd fail.
+- Two profile daemons opening the same physical checkout have distinct run
+  identities; one cannot inspect or stop the other's run through its profile.
 - A long-running script produces output, appears in the run catalogue, and an
   authenticated stop reports exit only after the supervisor observes it. A
   running run cannot be retired; an exited run can be retired and disappears.
 - Restart only the daemon. The running script keeps its process and stop control;
   the exited script keeps its retained output. The supervisor identity is stable.
 - With `ADE_PNPM_BIN` configured, launch from a stripped inherited `PATH` and
-  observe a sibling `node` executable through the script's output.
-- Discovered scripts currently come from the root `package.json` only. Other
-  package managers, nested manifests and ADE-defined recipes remain open.
-- A supervisor restart loses its in-memory run catalogue; durable output
-  remains bounded by the existing service spool. The current interface does
-  not expose an exit code. Descendants that deliberately leave the supervised
+  observe a sibling `node` executable through both a package script and a
+  direct ADE recipe's output. The ADE repository permits a checked-in root
+  `.ade/scripts.json` while continuing to ignore its generated `.ade` files.
+- Discovery currently reads root `package.json` and `.ade/scripts.json` only.
+  Other package-manager manifests and nested package discovery remain open.
+- A supervisor restart still loses its in-memory run catalogue; durable output
+  remains bounded by the existing service spool. The `unknown` state is
+  surfaced when process reaping fails, but a lost supervisor does not yet
+  preserve a durable interrupted run record for public inspection.
+- Descendants that deliberately leave the supervised
   process group are not verified or stopped. These limits prevent declaring
   all F090 complete.
 
 Evidence: `e2e/specs/workspace-scripts.spec.ts` exercises public commands with
 real ADE processes, including a daemon handoff and crash between runtime and
-catalogue retirement. Focused run: 4/4 on macOS after the bundled-bin PATH
-change. The PATH case uses a deterministic external pnpm/node fixture. The
+catalogue retirement. Focused run after ADE recipes and exit outcomes: 6/6 on
+macOS, including a plain workspace, nonzero and signaled exits, relative argv,
+duplicate/escape rejection and two-profile isolation. The PATH case uses a
+deterministic external pnpm/node fixture. The
 packaged macOS app separately passed `e2e/packaged/macos.spec.ts`: the app
 launched with a Finder-like `PATH`, ran a `node` package script through its
-bundled pinned pnpm, and retained output after app reopen. The backend slice is
+bundled pinned pnpm and a `node` ADE recipe directly, and retained both outputs
+after app reopen. A fresh `pnpm build:backend` and focused source test passed
+6/6; `pnpm package:mac` and the focused packaged test passed 1/1 after the
+recipe PATH fix. `git check-ignore` confirms the root recipe manifest is
+trackable while generated `.ade` content remains ignored. The backend slice is
 `c787274`, the CLI/Electron surface is `207ec62`, and packaging is `b365be1`.
 Named CLI and hidden Electron flows passed
 `e2e/specs/workspace-scripts-cli.spec.ts` and

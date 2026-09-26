@@ -135,6 +135,13 @@ test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-
     name: 'ade-packaged-script', private: true,
     scripts: { check: 'node -e "console.log(\'PACKAGED_SCRIPT_READY\')"' },
   }))
+  await mkdir(join(folder, '.ade'))
+  await writeFile(join(folder, '.ade', 'scripts.json'), JSON.stringify({
+    schema_version: 1,
+    scripts: { recipe_check: {
+      program: 'node', args: ['-e', "console.log('PACKAGED_RECIPE_READY')"], cwd: '.',
+    } },
+  }))
   const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_DAEMON_BIN: _daemonBinary,
     ADE_PNPM_BIN: _pnpmBinary, ...parentEnvironment } = process.env
   const env = { ...parentEnvironment,
@@ -163,16 +170,25 @@ test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-
     await pane.getByRole('article', { name: 'Script check' }).getByRole('button', { name: 'Run' }).click()
     const run = pane.getByRole('article', { name: 'Script run check' })
     await expect(run).toContainText('PACKAGED_SCRIPT_READY')
-    await expect(run).toContainText('exited')
+    await expect(run).toContainText('succeeded')
+    await pane.getByRole('article', { name: 'Script recipe_check' }).getByRole('button', { name: 'Run' }).click()
+    const recipeRun = pane.getByRole('article', { name: 'Script run recipe_check' })
+    await expect(recipeRun).toContainText('PACKAGED_RECIPE_READY')
+    await expect(recipeRun).toContainText('succeeded')
     await application.close()
     application = await electron.launch({ executablePath: executable, cwd: directory, env })
     window = await application.firstWindow()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const restored = window.getByRole('region', { name: 'Workspace scripts' })
       .getByRole('article', { name: 'Script run check' })
-    await expect(restored).toContainText('exited')
+    await expect(restored).toContainText('succeeded')
     await restored.getByRole('button', { name: 'Inspect output' }).click()
     await expect(restored).toContainText('PACKAGED_SCRIPT_READY')
+    const restoredRecipe = window.getByRole('region', { name: 'Workspace scripts' })
+      .getByRole('article', { name: 'Script run recipe_check' })
+    await expect(restoredRecipe).toContainText('succeeded')
+    await restoredRecipe.getByRole('button', { name: 'Inspect output' }).click()
+    await expect(restoredRecipe).toContainText('PACKAGED_RECIPE_READY')
   } catch (error) {
     if (owned) {
       const log = await readFile(join(owned.home, 'daemon.log')).catch(() => Buffer.from('No daemon log was written'))

@@ -26,9 +26,44 @@ fn terminal<'a>(catalogue: &'a Value, workspace_id: &str, run_id: &str) -> Resul
 }
 
 fn run_state(terminal: &Value, run_id: &str) -> Value {
-    json!({"run_id":run_id,"name":run_name(run_id).unwrap_or(""),
-        "state":if terminal["metrics"]["shell_running"] == true {"running"} else {"exited"},
-        "metrics":terminal["metrics"]})
+    let metrics = &terminal["metrics"];
+    let state = match metrics["exit_status"]["kind"].as_str() {
+        Some("success" | "failure" | "signaled") => "exited",
+        Some("unknown") => "unknown",
+        _ if metrics["shell_running"] == true => "running",
+        _ => "unknown",
+    };
+    let mut run = json!({"run_id":run_id,"name":run_name(run_id).unwrap_or(""),
+        "state":state,"metrics":metrics});
+    if let Some(outcome) = metrics.get("exit_status") {
+        run["exit_status"] = outcome.clone();
+    }
+    run
+}
+
+fn script_environment() -> Result<(Option<String>, std::collections::BTreeMap<String, String>)> {
+    match std::env::var("ADE_PNPM_BIN") {
+        Ok(program) => {
+            let parent = Path::new(&program)
+                .parent()
+                .context("Bundled pnpm executable has no parent directory")?;
+            ensure!(
+                parent.is_absolute(),
+                "Bundled pnpm executable must be absolute"
+            );
+            let previous = std::env::var_os("PATH").unwrap_or_default();
+            let path = std::env::join_paths(std::iter::once(parent.to_path_buf()).chain(
+                std::env::split_paths(&previous).filter(|path| !path.as_os_str().is_empty()),
+            ))?
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("Script PATH is not valid UTF-8"))?;
+            let mut env = std::collections::BTreeMap::new();
+            env.insert("PATH".to_owned(), path);
+            Ok((Some(program), env))
+        }
+        Err(std::env::VarError::NotPresent) => Ok((None, Default::default())),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub fn command(
@@ -66,45 +101,31 @@ pub fn command(
             ensure!(scripts::valid_name(name), "Invalid script name");
             let configured: Script = scripts::discover(root)?
                 .into_iter()
-                .find(|script| script.name == name)
+                .find(|script| script.name() == name)
                 .context("Workspace script is not configured")?;
             let run_id = format!(
                 "script_{}_{}",
-                configured.name,
+                configured.name(),
                 new_id("run").trim_start_matches("run_")
             );
             let transfer_id = new_id("transfer");
-            let (program, env) = match std::env::var("ADE_PNPM_BIN") {
-                Ok(program) => {
-                    let parent = Path::new(&program)
-                        .parent()
-                        .context("Bundled pnpm executable has no parent directory")?;
-                    ensure!(
-                        parent.is_absolute(),
-                        "Bundled pnpm executable must be absolute"
-                    );
-                    let previous = std::env::var_os("PATH").unwrap_or_default();
-                    let path = std::env::join_paths(
-                        std::iter::once(parent.to_path_buf()).chain(
-                            std::env::split_paths(&previous)
-                                .filter(|path| !path.as_os_str().is_empty()),
-                        ),
-                    )?
-                    .into_string()
-                    .map_err(|_| anyhow::anyhow!("Script PATH is not valid UTF-8"))?;
-                    let mut env = std::collections::BTreeMap::new();
-                    env.insert("PATH".to_owned(), path);
-                    (program, env)
-                }
-                Err(std::env::VarError::NotPresent) => ("pnpm".into(), Default::default()),
-                Err(error) => return Err(error.into()),
+            let (bundled_pnpm, env) = script_environment()?;
+            let (program, args, cwd) = match configured {
+                Script::PackageJson { name, .. } => (
+                    bundled_pnpm.unwrap_or_else(|| "pnpm".into()),
+                    vec!["run".into(), name],
+                    None,
+                ),
+                Script::AdeRecipe {
+                    program, args, cwd, ..
+                } => (program, args, Some(cwd)),
             };
             let launch = Launch {
                 transfer_id: transfer_id.clone(),
                 program,
-                args: vec!["run".into(), configured.name],
+                args,
                 env,
-                cwd: None,
+                cwd,
             };
             let mut workspace = workspace;
             workspace.terminal_id = run_id.clone();
@@ -137,10 +158,10 @@ pub fn command(
                 result["metrics"]["transfer_id"] == transfer_id,
                 "Script launch returned another transfer identity"
             );
-            Ok(json!({"type":"script_run","run_id":run_id,"name":name,
-                "workspace_id":workspace.id,
-                "state":if result["metrics"]["shell_running"] == true {"running"} else {"exited"},
-                "metrics":result["metrics"]}))
+            let mut run = run_state(&json!({"metrics":result["metrics"]}), &run_id);
+            run["type"] = json!("script_run");
+            run["workspace_id"] = json!(workspace.id);
+            Ok(run)
         }
         "script.inspect" => {
             let run_id = request["run_id"]
@@ -195,6 +216,12 @@ pub fn command(
                 .as_str()
                 .context("Script transfer identity is unavailable")?
                 .to_owned();
+            if item["metrics"]["exit_status"]["kind"] == "unknown" {
+                let mut result = run_state(item, run_id);
+                result["type"] = json!("script_run");
+                result["workspace_id"] = json!(workspace.id);
+                return Ok(result);
+            }
             if item["metrics"]["shell_running"] == true {
                 runtime.command(json!({"op":"terminal.stop","workspace_id":workspace.id,
                     "terminal_id":run_id}))?;
@@ -208,9 +235,16 @@ pub fn command(
                     "Script run changed during stop"
                 );
                 if item["metrics"]["shell_running"] == false {
-                    return Ok(json!({"type":"script_run","workspace_id":workspace.id,
-                        "run_id":run_id,"name":run_name(run_id)?,"state":"exited",
-                        "metrics":item["metrics"]}));
+                    let mut result = run_state(item, run_id);
+                    result["type"] = json!("script_run");
+                    result["workspace_id"] = json!(workspace.id);
+                    return Ok(result);
+                }
+                if item["metrics"]["exit_status"]["kind"] == "unknown" {
+                    let mut result = run_state(item, run_id);
+                    result["type"] = json!("script_run");
+                    result["workspace_id"] = json!(workspace.id);
+                    return Ok(result);
                 }
                 if Instant::now() >= deadline {
                     bail!("Script has not exited; retry stop to confirm cleanup");

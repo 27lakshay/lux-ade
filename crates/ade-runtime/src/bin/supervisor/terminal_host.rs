@@ -78,6 +78,7 @@ struct State {
     reply_dropped_bytes: u64,
     shell_pid: Option<u32>,
     shell_running: bool,
+    exit_status: Option<Value>,
     workspace_id: String,
     terminal_id: String,
     run_id: String,
@@ -88,12 +89,16 @@ struct State {
 
 impl State {
     fn metrics(&self) -> Value {
-        json!({"pid":std::process::id(),"uptime_ms":self.started.elapsed().as_millis() as u64,
+        let mut metrics = json!({"pid":std::process::id(),"uptime_ms":self.started.elapsed().as_millis() as u64,
             "clients":self.clients.len()+self.session_subscribers.load(Ordering::Relaxed),
             "workspace_id":self.workspace_id,"terminal_id":self.terminal_id,"run_id":self.run_id,"transfer_id":self.transfer_id,"terminal_bytes":self.bytes,"events":self.events,
             "reply_dropped_bytes":self.reply_dropped_bytes,"pixel_size":self.pixel_size,"scrollback_bytes":self.terminal.len(),"resize_owner":self.owner,
             "shell_pid":self.shell_pid,"shell_running":self.shell_running,
-            "durable_log_error":self.durable_log_error})
+            "durable_log_error":self.durable_log_error});
+        if let Some(outcome) = &self.exit_status {
+            metrics["exit_status"] = outcome.clone();
+        }
+        metrics
     }
     fn snapshot(&self) -> Value {
         self.snapshot_for(true, true)
@@ -653,6 +658,7 @@ pub fn spawn_runtime(
         reply_dropped_bytes: 0,
         shell_pid: child.process_id(),
         shell_running: true,
+        exit_status: None,
         durable_log_error,
     }));
     let terminal_state = state.clone();
@@ -688,9 +694,16 @@ pub fn spawn_runtime(
         loop {
             let mut s = terminal_state.lock().unwrap();
             match child.try_wait() {
-                Ok(Some(_)) => {
+                Ok(Some(status)) => {
                     // Reap and update the state under the same lock as stop(),
                     // so a later stop never signals a reused process ID.
+                    s.exit_status = Some(match status.signal() {
+                        Some(signal) => json!({"kind":"signaled","signal":signal}),
+                        None if status.success() => {
+                            json!({"kind":"success","code":status.exit_code()})
+                        }
+                        None => json!({"kind":"failure","code":status.exit_code()}),
+                    });
                     s.shell_running = false;
                     let message = if s.transfer_id.is_some() {
                         "The process has exited. Its terminal output remains available."
@@ -701,6 +714,7 @@ pub fn spawn_runtime(
                     break;
                 }
                 Err(error) => {
+                    s.exit_status = Some(json!({"kind":"unknown","reason":error.to_string()}));
                     s.broadcast(json!({"type":"error","message":format!("Could not confirm terminal exit: {error}")}));
                     break;
                 }
@@ -830,6 +844,7 @@ mod tests {
             reply_dropped_bytes: 0,
             shell_pid: None,
             shell_running: true,
+            exit_status: None,
             durable_log_error: None,
         };
         let release = std::thread::spawn(move || {
@@ -874,6 +889,7 @@ mod tests {
             reply_dropped_bytes: 0,
             shell_pid: None,
             shell_running: true,
+            exit_status: None,
             durable_log_error: None,
         };
         state.append_terminal(b"\x1b[2J\x1b[HPINNED BEFORE RAW RING");
@@ -932,6 +948,7 @@ mod tests {
             reply_dropped_bytes: 0,
             shell_pid: None,
             shell_running: true,
+            exit_status: None,
             durable_log_error: None,
         };
         let (tx, _rx) = mpsc::sync_channel(1);

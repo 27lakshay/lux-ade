@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { chmod, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, realpath, symlink, unlink, writeFile } from 'node:fs/promises'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -70,6 +70,129 @@ test('workspace package scripts are discovered, run under the workspace, inspect
       run_id: longId })).rejects.toThrow(/unavailable/)
   } finally {
     await daemon.stop()
+  }
+})
+
+test('checked-in ADE recipes run explicit argv and report success, nonzero exit and signaled stop', async () => {
+  const daemon = await startDaemon()
+  const outside = await mkdtemp(join(tmpdir(), 'ade-script-escape-'))
+  try {
+    const subdirectory = join(daemon.rootDirectory, 'work')
+    const manifestDirectory = join(daemon.rootDirectory, '.ade')
+    await mkdir(subdirectory)
+    await mkdir(manifestDirectory)
+    await writeFile(join(subdirectory, 'runner.sh'), '#!/bin/sh\nprintf "ADE_RELATIVE_%s\\n" "$1"\n')
+    await chmod(join(subdirectory, 'runner.sh'), 0o755)
+    const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory }))
+      .workspace as { id: string }
+    const recipes = { schema_version: 1, scripts: {
+      success: { program: process.execPath, args: ['-e',
+        'require("fs").writeFileSync("receipt", process.cwd()); console.log("ADE_RECIPE_OK")'], cwd: 'work' },
+      failure: { program: process.execPath, args: ['-e', 'process.exit(23)'] },
+      relative: { program: './runner.sh', args: ['ARGV'], cwd: 'work' },
+      hold: { program: process.execPath, args: ['-e',
+        'console.log("ADE_RECIPE_HOLD"); setInterval(()=>{},1000)'] },
+    } }
+    const manifest = join(manifestDirectory, 'scripts.json')
+    await writeFile(manifest, JSON.stringify(recipes))
+    const listed = await rpc(daemon.socket, { op: 'script.list', workspace_id: workspace.id })
+    expect((listed.scripts as Array<{ name: string; kind: string }>).map((script) => [script.name, script.kind]))
+      .toEqual([['failure', 'ade_recipe'], ['hold', 'ade_recipe'],
+        ['relative', 'ade_recipe'], ['success', 'ade_recipe']])
+    const success = await rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id,
+      name: 'success' })
+    const successId = success.run_id as string
+    await expect.poll(async () => (await rpc(daemon.socket, { op: 'script.inspect',
+      workspace_id: workspace.id, run_id: successId })).exit_status).toEqual({ kind: 'success', code: 0 })
+    const succeeded = await rpc(daemon.socket, { op: 'script.inspect', workspace_id: workspace.id,
+      run_id: successId })
+    expect(succeeded.state).toBe('exited')
+    expect(Buffer.from((succeeded.output as { bytes_base64: string }).bytes_base64, 'base64').toString())
+      .toContain('ADE_RECIPE_OK')
+    expect(await readFile(join(subdirectory, 'receipt'), 'utf8')).toBe(await realpath(subdirectory))
+    const relative = await rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id,
+      name: 'relative' })
+    await expect.poll(async () => (await rpc(daemon.socket, { op: 'script.inspect',
+      workspace_id: workspace.id, run_id: relative.run_id })).exit_status)
+      .toEqual({ kind: 'success', code: 0 })
+    const relativeOutput = await rpc(daemon.socket, { op: 'script.inspect', workspace_id: workspace.id,
+      run_id: relative.run_id })
+    expect(Buffer.from((relativeOutput.output as { bytes_base64: string }).bytes_base64, 'base64').toString())
+      .toContain('ADE_RELATIVE_ARGV')
+
+    const failure = await rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id,
+      name: 'failure' })
+    await expect.poll(async () => (await rpc(daemon.socket, { op: 'script.inspect',
+      workspace_id: workspace.id, run_id: failure.run_id })).exit_status)
+      .toEqual({ kind: 'failure', code: 23 })
+    const hold = await rpc(daemon.socket, { op: 'script.start', workspace_id: workspace.id,
+      name: 'hold' })
+    await expect.poll(async () => (await rpc(daemon.socket, { op: 'script.inspect',
+      workspace_id: workspace.id, run_id: hold.run_id })).state).toBe('running')
+    const stopped = await rpc(daemon.socket, { op: 'script.stop', workspace_id: workspace.id,
+      run_id: hold.run_id })
+    expect(stopped.state).toBe('exited')
+    expect(stopped.exit_status).toMatchObject({ kind: 'signaled' })
+    expect((stopped.exit_status as { signal: string }).signal).toBeTruthy()
+
+    await writeFile(join(daemon.rootDirectory, 'package.json'), JSON.stringify({
+      name: 'ade-duplicate', scripts: { success: 'echo duplicate' },
+    }))
+    await expect(rpc(daemon.socket, { op: 'script.list', workspace_id: workspace.id }))
+      .rejects.toThrow(/Duplicate workspace script name/)
+    await unlink(join(daemon.rootDirectory, 'package.json'))
+    await symlink(outside, join(subdirectory, 'escape'))
+    await writeFile(manifest, JSON.stringify({ schema_version: 1, scripts: {
+      escape: { program: process.execPath, cwd: 'work/escape' },
+    } }))
+    await expect(rpc(daemon.socket, { op: 'script.list', workspace_id: workspace.id }))
+      .rejects.toThrow(/directory escapes its workspace/)
+    await rpc(daemon.socket, { op: 'script.retire', workspace_id: workspace.id, run_id: successId })
+    await rpc(daemon.socket, { op: 'script.retire', workspace_id: workspace.id,
+      run_id: failure.run_id })
+    await rpc(daemon.socket, { op: 'script.retire', workspace_id: workspace.id,
+      run_id: relative.run_id })
+    await rpc(daemon.socket, { op: 'script.retire', workspace_id: workspace.id,
+      run_id: hold.run_id })
+  } finally {
+    await daemon.stop()
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test('two profile daemons isolate runs in the same physical checkout', async () => {
+  const checkout = await mkdtemp(join(tmpdir(), 'ade-script-shared-'))
+  await mkdir(join(checkout, '.ade'))
+  await writeFile(join(checkout, '.ade', 'scripts.json'), JSON.stringify({ schema_version: 1,
+    scripts: { hold: { program: process.execPath, args: ['-e',
+      'console.log("PROFILE_SCRIPT_READY"); setInterval(()=>{},1000)'] } },
+  }))
+  const first = await startDaemon()
+  let second: Awaited<ReturnType<typeof startDaemon>> | undefined
+  try {
+    second = await startDaemon()
+    const one = (await rpc(first.socket, { op: 'workspace.open', path: checkout }))
+      .workspace as { id: string }
+    const two = (await rpc(second.socket, { op: 'workspace.open', path: checkout }))
+      .workspace as { id: string }
+    expect(one.id).not.toBe(two.id)
+    const left = await rpc(first.socket, { op: 'script.start', workspace_id: one.id, name: 'hold' })
+    const right = await rpc(second.socket, { op: 'script.start', workspace_id: two.id, name: 'hold' })
+    expect(left.run_id).not.toBe(right.run_id)
+    await expect(rpc(second.socket, { op: 'script.inspect', workspace_id: two.id,
+      run_id: left.run_id })).rejects.toThrow(/unavailable/)
+    const stopped = await rpc(second.socket, { op: 'script.stop', workspace_id: two.id,
+      run_id: right.run_id })
+    expect(stopped.exit_status).toMatchObject({ kind: 'signaled' })
+    expect((await rpc(first.socket, { op: 'script.inspect', workspace_id: one.id,
+      run_id: left.run_id })).state).toBe('running')
+    await rpc(first.socket, { op: 'script.stop', workspace_id: one.id, run_id: left.run_id })
+    await rpc(first.socket, { op: 'script.retire', workspace_id: one.id, run_id: left.run_id })
+    await rpc(second.socket, { op: 'script.retire', workspace_id: two.id, run_id: right.run_id })
+  } finally {
+    await second?.stop()
+    await first.stop()
+    await rm(checkout, { recursive: true, force: true })
   }
 })
 

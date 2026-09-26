@@ -1,13 +1,59 @@
-//! Project-defined package scripts. The manifest is configuration, never a shell
-//! command supplied by an ADE request.
+//! Checked-in workspace recipes and root package scripts. A script request
+//! names existing project configuration; it never carries an ad-hoc command.
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path},
+};
+
+fn manifest_present(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Script {
-    pub name: String,
-    pub command: String,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Script {
+    PackageJson {
+        name: String,
+        command: String,
+    },
+    AdeRecipe {
+        name: String,
+        program: String,
+        args: Vec<String>,
+        cwd: String,
+    },
+}
+impl Script {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::PackageJson { name, .. } | Self::AdeRecipe { name, .. } => name,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecipeFile {
+    schema_version: u32,
+    scripts: BTreeMap<String, Recipe>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Recipe {
+    program: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default = "default_cwd")]
+    cwd: String,
+}
+fn default_cwd() -> String {
+    ".".into()
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -39,14 +85,13 @@ pub fn run_name(run_id: &str) -> Result<&str> {
     Ok(name)
 }
 
-pub fn discover(root: &Path) -> Result<Vec<Script>> {
-    let root = root.canonicalize().context("Workspace is unavailable")?;
+fn load_package(root: &Path, scripts: &mut BTreeMap<String, Script>) -> Result<()> {
     let manifest = root.join("package.json");
-    if !manifest.exists() {
-        return Ok(Vec::new());
+    if !manifest_present(&manifest)? {
+        return Ok(());
     }
     ensure!(
-        manifest.canonicalize()?.starts_with(&root),
+        manifest.canonicalize()?.starts_with(root),
         "Script manifest escapes its workspace"
     );
     let file = std::fs::File::open(&manifest)?;
@@ -56,15 +101,100 @@ pub fn discover(root: &Path) -> Result<Vec<Script>> {
     );
     let package: serde_json::Value =
         serde_json::from_reader(file).context("Invalid package.json")?;
-    let Some(scripts) = package.get("scripts") else {
-        return Ok(Vec::new());
+    let Some(configured) = package.get("scripts") else {
+        return Ok(());
     };
-    let scripts: BTreeMap<String, String> =
-        serde_json::from_value(scripts.clone()).context("Invalid package.json scripts")?;
-    ensure!(scripts.len() <= 256, "Too many workspace scripts");
-    Ok(scripts
-        .into_iter()
-        .filter(|(name, command)| valid_name(name) && !command.is_empty())
-        .map(|(name, command)| Script { name, command })
-        .collect())
+    let configured: BTreeMap<String, String> =
+        serde_json::from_value(configured.clone()).context("Invalid package.json scripts")?;
+    ensure!(
+        configured.len() <= 256,
+        "Too many workspace package scripts"
+    );
+    for (name, command) in configured {
+        if valid_name(&name) && !command.is_empty() {
+            scripts.insert(name.clone(), Script::PackageJson { name, command });
+        }
+    }
+    Ok(())
+}
+
+fn load_recipes(root: &Path, scripts: &mut BTreeMap<String, Script>) -> Result<()> {
+    let manifest = root.join(".ade/scripts.json");
+    if !manifest_present(&manifest)? {
+        return Ok(());
+    }
+    ensure!(
+        manifest.canonicalize()?.starts_with(root),
+        "Script manifest escapes its workspace"
+    );
+    let file = std::fs::File::open(&manifest)?;
+    ensure!(
+        file.metadata()?.len() <= 64 * 1024,
+        "ADE script manifest exceeds 64 KiB"
+    );
+    let configured: RecipeFile =
+        serde_json::from_reader(file).context("Invalid ADE script manifest")?;
+    ensure!(
+        configured.schema_version == 1,
+        "Unsupported ADE script schema version"
+    );
+    ensure!(
+        configured.scripts.len() <= 64,
+        "Too many ADE workspace scripts"
+    );
+    for (name, recipe) in configured.scripts {
+        ensure!(valid_name(&name), "Invalid ADE script name");
+        ensure!(
+            !scripts.contains_key(&name),
+            "Duplicate workspace script name: {name}"
+        );
+        ensure!(
+            !recipe.program.is_empty()
+                && recipe.program.len() <= 4096
+                && !recipe.program.contains('\0'),
+            "Invalid ADE script executable"
+        );
+        ensure!(
+            recipe.args.len() <= 64
+                && recipe
+                    .args
+                    .iter()
+                    .all(|arg| arg.len() <= 8192 && !arg.contains('\0')),
+            "Invalid ADE script arguments"
+        );
+        ensure!(
+            !recipe.cwd.is_empty()
+                && recipe.cwd.len() <= 4096
+                && Path::new(&recipe.cwd)
+                    .components()
+                    .all(|component| matches!(component, Component::Normal(_) | Component::CurDir)),
+            "ADE script directory must be workspace-relative"
+        );
+        let cwd = root
+            .join(&recipe.cwd)
+            .canonicalize()
+            .context("ADE script directory is unavailable")?;
+        ensure!(
+            cwd.starts_with(root) && cwd.is_dir(),
+            "ADE script directory escapes its workspace or is unavailable"
+        );
+        scripts.insert(
+            name.clone(),
+            Script::AdeRecipe {
+                name,
+                program: recipe.program,
+                args: recipe.args,
+                cwd: recipe.cwd,
+            },
+        );
+    }
+    Ok(())
+}
+
+pub fn discover(root: &Path) -> Result<Vec<Script>> {
+    let root = root.canonicalize().context("Workspace is unavailable")?;
+    let mut scripts = BTreeMap::new();
+    load_package(&root, &mut scripts)?;
+    load_recipes(&root, &mut scripts)?;
+    Ok(scripts.into_values().collect())
 }

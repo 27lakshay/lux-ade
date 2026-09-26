@@ -1,4 +1,5 @@
-/.ade/
+/.ade/*
+!/.ade/scripts.json
 /target/
 /dist/
 /*.app/
