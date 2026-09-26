@@ -14,55 +14,48 @@ in the shared reliability spec also apply. No V1 disposition or acceptance has
 been changed since that baseline. The local build branch is
 `codex/architecture-proposal` in this checkout.
 
-## Active assignments at this checkpoint
+## Current state and next assignment
 
-The F071/F073 large-tree continuation is integrated. `/root/file_large_e2e`
-authored the public-protocol E2E and independently reviewed the backend;
-`/root/file_cursor_review` independently reviewed cursor and security behavior.
-Both are finished. `/root/git_ops_inventory` finished a read-only F075/F078
-inventory. For `06-files-git/issues/03-ordinary-git-local.md`,
-`/root/git_cli_controls` completed CLI code and CLI E2E;
-`/root/git_ui_controls` completed Electron code. The coordinator integrated
-public-protocol and Electron E2E, reviewed both surfaces, and committed the
-partial F075 slice as `da930c7`. Branch, stash, merge, discard, push and pull
-remain for later tickets.
+Execution order: finish the reviewed Discard safety slice before exposing it.
+Then assign only work that closes the daily-use gate below. Queue other V1
+requirements until that gate passes; keep the original V1 scope and E2E
+acceptance. Use focused E2Es and affected static checks during implementation,
+one full source suite per integrated checkpoint (repeat only for relevant
+changes or failures), and packaged checks for package/installed-app changes or
+delivery milestones. Do not reopen resolved issues without new failure evidence.
+At each checkpoint, record criteria closed/remaining and observed time in
+implementation, independent review, checks and packaging.
 
-The browser bundle and explicit attachment reclaim slices were integrated as
-partial R014/R015 building blocks. Registered backend restore and explicit
-workspace/repository rebind now preserve profile history and require selected
-new roots. Pending sends remain held. A complete coordinated profile backup
-and restore is still open. The test harness checks daemon and runtime exit
-after managed-profile cases. A malformed-journal Electron startup exits
-without opening a native blocking dialog in an isolated E2E.
-
-Commits `8e95138` and `7d77456` add a desktop path-rebind flow for restored
-profiles. It lists Worktrunk, Git repository, and workspace claims in order,
-verifies selected replacement folders through the daemon, and disables
-execution controls while a workspace is fenced. The desktop polls effective
-physical bindings to catch replacement after a successful rebind. A schema-12
-backup without saved source identity shows an unrebindable explanation.
-The daemon also recovers a crash after the final rebind commit, avoids opening
-an unknown startup root while restore is pending, and checks that linked Git
-workspaces still resolve to their bound repository. Source `pnpm check` passes
-116/116 E2Es; after a bounded Git-file hardening change, the focused rebind
-suite passes 10/10 and the packaged macOS app passes 6/6 E2Es. Test-owned daemon
-and runtime processes are gone after both suites. The path replacement race
-between admission and child launch remains open, as do the wider F061 and
-R014 acceptance cases.
-
-The first daily-use gate is a connected flow, not a substitute for each feature's
-full acceptance in its owning spec:
-
-| Slice and requirement IDs | Observable gate | Current gap |
+| Daily-use gate and IDs | Verified so far | Remaining before gate closes |
 |---|---|---|
-| Runtime and profiles: F005, F007, F010, R005, R020 | Launch installed app without the checkout; switch isolated profiles; close/reopen while a shell and agent turn continue | Packaged multi-profile shell and deterministic turns pass; real-agent continuity and full isolation acceptance remain |
-| Providers and conversations: F021, F025, F027, F031, F038, R001, R002 | Select each real primary agent and account; prompt, inspect tools, answer/decline, cancel and resume with truthful retry outcome | Codex/Claude single-account live ambient prompts passed; Oh My Pi lacks configured account; Claude and Codex managed identity pinning pass deterministic E2E but hosted two-account execution and full controls remain |
-| Workspaces and review: F061, F074 | Open a folder, inspect changed files and give agent feedback on a diff | Folder and anchored feedback pass; full F074 atomic admission, large diff handling and broader Git/worktree lifecycle remain |
-| Terminal, service and browser: F081, F083, F085, F086, F088, F090, F091 | Keep one shell alive through UI reload; discover/start/stop a dev service, run a workspace script and open a stable preview in the embedded browser | Shell, service/script controls, recurring HTTP health checks, listener and bounded log inspection, stable local preview, and browser profile cookies pass; full F086/F088/F090 acceptance remains |
-| Shared control: F101, F102, F103 | CLI and Electron target the same profile/workspace/conversation/terminal with structured outcomes | Local CLI subset works; public command coverage remains |
+| Installed runtime/profiles: F005, F007, F010, R005, R020 | Packaged fixture profiles retain distinct daemon, shell and conversation state across reopen | Real-agent continuity and complete isolation acceptance in the installed flow |
+| Primary providers/conversations: F021, F025, F027, F031, F038, R001, R002 | Live ambient Codex and Claude single-account prompts; deterministic managed-identity and prompt recovery E2Es | Real Oh My Pi account; two-account hosted execution; tools, answer/decline, cancel/resume and recovery across each primary provider |
+| Workspace/review: F061, F074 | Folder selection and revision-anchored agent feedback E2Es | Full atomic feedback admission and large-diff flow in integrated app; remaining lifecycle acceptance |
+| Shell/services/browser: F081, F083, F085, F086, F088, F090, F091 | Persistent shell, service/script controls, observed ports and health, stable profile browser preview | Complete F086/F088/F090 gate scenarios in one connected flow |
+| Shared controls: F101, F102, F103 | Local CLI and Electron share named daemon commands and outcomes | Matching CLI coverage for the selected daily-use flow |
 
-Each row needs running-app E2E evidence on the integrated revision before the
-daily-use gate can pass. The full requirement acceptance remains unchanged.
+These are partial observations, not closed feature IDs. Each row still needs
+integrated running-app evidence. Oh My Pi live-account acceptance currently
+needs credentials; continue the other rows without substituting a fixture.
+The Discard slice meets its three ticket criteria through 9 public-protocol/CLI
+and 2 hidden Electron E2Es. Independent safety review found no confirmed
+remaining byte-loss path after the local-APFS exchange and retained recovery
+file changes. The final integrated source suite passes 152 tests with one
+host-filesystem skip; the installed package passes 6/6 E2Es. F075 and 06-S06
+remain partial beyond this slice. Active owner: coordinator, preparing the
+connected provider/account daily-use flow. `/root/git_discard_e2e` and
+`/root/discard_safety_review` have finished; no worker is currently running.
+Next assignment: select the smallest real-provider/account flow that closes
+the provider/conversation row, while continuing around the Oh My Pi credential
+blocker. Queue unrelated V1 slices.
+
+Checkpoint timing: implementation and independent-review wall time were not
+recorded before this process change; start explicit category timing on the next
+assignment. After code freeze, focused E2Es took 31.9 seconds, the full source
+suite took about 4.4 minutes, and packaging plus installed-app E2Es took about
+41 seconds. Earlier full runs were repeated because safety-relevant code
+changed. No further full run is needed for tracker-only edits. The final full
+V1 acceptance audit remains required.
 
 ## Integrated checkpoints
 
@@ -120,6 +113,7 @@ daily-use gate can pass. The full requirement acceptance remains unchanged.
 | `207ec62` | Script and proxy CLI/Electron surfaces | Named script and URL/remap commands, hidden Electron run and preview E2E |
 | `b365be1` | Packaged workspace scripts | Bundled pinned pnpm and Node launcher; Finder-like PATH and reopen E2E |
 | `5455362` | Backend-only SQLite snapshot | Live draft-write capture, integrity and schema checks, offline restore E2E |
+| `9901747` | Safe one-file Git Discard | Atomic local-APFS exchange, retained recovery file, 11 focused E2Es; final source suite 152 passed/one host skip; installed suite 6/6 |
 | `a0a377a` | Browser recovery E2E race | First profile form reset is awaited before the next action |
 | `ddb8536` | Backup limits and evidence | Explicit independently consistent backend scope and exclusions |
 | `21b931b` | Explicit attachment reclaim | Durable tombstones, reference/race and backup-overlap E2E |
@@ -396,9 +390,9 @@ disposable `/tmp/ade-dev-smoke.DwLZ6c` directory, which remains.
   Hosted Oh My Pi
   OAuth, credential refresh/logout and native fallback behavior remain
   unverified. F021/F025/F027/R012 and F088 remain open.
-- Next daily-use work: real-agent account/control acceptance, browser
-  ownership and backup/retention coordination. Continue
-  through the full V1 register afterward.
+- At that checkpoint, the planned next work was real-agent account/control
+  acceptance, browser ownership and backup/retention coordination. The
+  current execution order is recorded in the Current state section above.
 - The recurring pending-prompt Quit alert now has a durable local recovery
   path. Electron fsyncs the exact send intent and dispatch state before each
   network handoff, reopens offline with the original profile and request ID
