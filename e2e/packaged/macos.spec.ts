@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { rpc } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfile, stopManagedProfiles, type ManagedProfileOwner, rpc } from '../fixtures/daemon'
 
 const app = resolve(process.env.ADE_E2E_PACKAGE_APP ?? 'dist/electron/mac-arm64/Lux ADE.app')
 const executable = join(app, 'Contents/MacOS/Lux ADE')
@@ -14,28 +14,6 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 
 async function executableWrapper(filename: string, binary: string, script: string): Promise<void> {
   await writeFile(filename, `#!/bin/sh\nexec ${shellQuote(binary)} ${shellQuote(script)} "$@"\n`, { mode: 0o755 })
-}
-
-async function stopOwned(socket: string, bootId: unknown): Promise<void> {
-  const hello = await rpc(socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== bootId) return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try { await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId }); break }
-    catch (error) {
-      if (attempt === 49 || !String(error).includes('A command is still being admitted')) throw error
-      await new Promise((done) => setTimeout(done, 100))
-    }
-  }
-  if (typeof hello.runtime_socket !== 'string') return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-      return
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((done) => setTimeout(done, 50))
-    }
-  }
 }
 
 test('packaged macOS app runs from its own resources and retains work across reopen', async ({}, testInfo) => {
@@ -60,7 +38,7 @@ test('packaged macOS app runs from its own resources and retains work across reo
     ADE_PACKAGED_SENTINEL: '__ADE_PACKAGED_TERMINAL_EXECUTED__',
   }
   let application = await electron.launch({ executablePath: executable, cwd: directory, env })
-  let owned: { socket: string; bootId: unknown } | null = null
+  let owned: ManagedProfileOwner | null = null
   let runtimeHome: string | null = null
   try {
     let window = await application.firstWindow()
@@ -77,7 +55,7 @@ test('packaged macOS app runs from its own resources and retains work across reo
     const result = await promisify(locate.execFile)('/usr/bin/python3', [join(app, 'Contents/Resources/runtime.py'), 'locate', '--home', profile.home])
     const socket = (JSON.parse(result.stdout) as { socket: string }).socket
     const hello = await rpc(socket, { op: 'hello' })
-    owned = { socket, bootId: hello.boot_id }
+    owned = await managedProfileOwner(socket)
     const runtimeInstance = hello.runtime_instance
 
     await window.getByRole('textbox', { name: 'Open folder' }).fill(folder)
@@ -121,7 +99,7 @@ test('packaged macOS app runs from its own resources and retains work across reo
     throw error
   } finally {
     await application.close().catch(() => undefined)
-    if (owned) await stopOwned(owned.socket, owned.bootId)
+    if (owned) await stopManagedProfile(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -150,7 +128,7 @@ test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-
     ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
   }
   let application = await electron.launch({ executablePath: executable, cwd: directory, env })
-  let owned: { socket: string; bootId: unknown; home: string } | null = null
+  let owned: (ManagedProfileOwner & { home: string }) | null = null
   try {
     let window = await application.firstWindow()
     expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(false)
@@ -162,7 +140,7 @@ test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-
     const { promisify } = await import('node:util')
     const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
     const socket = (JSON.parse(located.stdout) as { socket: string }).socket
-    owned = { socket, bootId: (await rpc(socket, { op: 'hello' })).boot_id, home: profile.home }
+    owned = { ...await managedProfileOwner(socket), home: profile.home }
     await window.getByRole('textbox', { name: 'Open folder' }).fill(folder)
     await window.getByRole('button', { name: 'Open folder' }).click()
     await expect(window.getByText(await realpath(folder), { exact: true })).toBeVisible()
@@ -197,7 +175,7 @@ test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-
     throw error
   } finally {
     await application.close().catch(() => undefined)
-    if (owned) await stopOwned(owned.socket, owned.bootId)
+    if (owned) await stopManagedProfile(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -227,7 +205,7 @@ test('packaged macOS app keeps two profile daemons, terminals and conversations 
   const { promisify } = await import('node:util')
   const execFileAsync = promisify(execFile)
   let application = await electron.launch({ executablePath: executable, cwd: directory, env })
-  const owned: Array<{ id: string; socket: string; bootId: unknown; home: string }> = []
+  const owned: Array<ManagedProfileOwner & { id: string; home: string }> = []
   const profiles: Array<{ id: string; name: string; workspace: string; conversationId: string; shellPid: number }> = []
   try {
     let window = await application.firstWindow()
@@ -243,7 +221,7 @@ test('packaged macOS app keeps two profile daemons, terminals and conversations 
       const located = await execFileAsync('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile!.home])
       const socket = (JSON.parse(located.stdout) as { socket: string }).socket
       const hello = await rpc(socket, { op: 'hello' })
-      owned.push({ id: profile!.id, socket, bootId: hello.boot_id, home: profile!.home })
+      owned.push({ ...await managedProfileOwner(socket), id: profile!.id, home: profile!.home })
 
       await window.getByRole('textbox', { name: 'Open folder' }).fill(folders[index])
       await window.getByRole('button', { name: 'Open folder' }).click()
@@ -328,7 +306,7 @@ test('packaged macOS app keeps two profile daemons, terminals and conversations 
     throw error
   } finally {
     await application.close().catch(() => undefined)
-    for (const owner of owned) await stopOwned(owner.socket, owner.bootId)
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -403,7 +381,7 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
     ADE_OMP_BIN: ompWrapper,
   }
   const application = await electron.launch({ executablePath: executable, cwd: directory, env })
-  let owned: { socket: string; bootId: unknown } | null = null
+  let owned: ManagedProfileOwner | null = null
   let runtimeHome: string | null = null
   try {
     const window = await application.firstWindow()
@@ -417,7 +395,7 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
     const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
     const socket = (JSON.parse(located.stdout) as { socket: string }).socket
     const hello = await rpc(socket, { op: 'hello' })
-    owned = { socket, bootId: hello.boot_id }
+    owned = await managedProfileOwner(socket)
     await window.getByRole('textbox', { name: 'Open folder' }).fill(folder)
     await window.getByRole('button', { name: 'Open folder' }).click()
     const canonicalFolder = await realpath(folder)
@@ -463,7 +441,7 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
     throw error
   } finally {
     await application.close().catch(() => undefined)
-    if (owned) await stopOwned(owned.socket, owned.bootId)
+    if (owned) await stopManagedProfile(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -525,7 +503,7 @@ test('packaged macOS daemon inspects a managed Oh My Pi account with bundled res
     env: { ...parentEnvironment, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
       ADE_OMP_BIN: wrapper, ADE_PROFILES_HOME: join(directory, 'profiles'),
       ADE_E2E_USER_DATA_DIR: join(directory, 'electron'), ADE_E2E_HIDE_WINDOW: '1' } })
-  let owned: { socket: string; bootId: unknown } | null = null
+  let owned: ManagedProfileOwner | null = null
   try {
     const window = await application.firstWindow()
     await window.getByRole('textbox', { name: 'New profile' }).fill('OMP')
@@ -536,7 +514,7 @@ test('packaged macOS daemon inspects a managed Oh My Pi account with bundled res
     const { promisify } = await import('node:util')
     const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
     const socket = (JSON.parse(located.stdout) as { socket: string }).socket
-    owned = { socket, bootId: (await rpc(socket, { op: 'hello' })).boot_id }
+    owned = await managedProfileOwner(socket)
     const account = (await rpc(socket, { op: 'account.create', provider: 'omp', name: 'Packaged OMP' })).account as
       { id: string; native_home: string }
     const database = join(account.native_home, 'agent.db')
@@ -560,7 +538,7 @@ db.close();`
     expect(JSON.stringify(verified)).not.toContain('secret')
   } finally {
     await application.close().catch(() => undefined)
-    if (owned) await stopOwned(owned.socket, owned.bootId)
+    if (owned) await stopManagedProfile(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })

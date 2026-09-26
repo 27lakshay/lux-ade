@@ -175,7 +175,7 @@ test('managed Codex homes verify native identity and fence drift, overrides, and
     expect((await snapshot(c.id)).provider_thread_id).toBeNull()
     expect(await readFile(join(fourth.native_home, 'calls.jsonl'), 'utf8')).not.toContain('thread/start')
   } finally {
-    await daemon.stop().catch(() => undefined)
+    await daemon.stop()
     await rm(fixtures, { recursive: true, force: true })
   }
 })

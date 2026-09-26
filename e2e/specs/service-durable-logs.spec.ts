@@ -46,7 +46,7 @@ test('durable service output is bounded and a failed successor never exposes pri
     expect(afterFailedStart.service.last_run_transfer_id).toBeTruthy()
     expect(afterFailedStart.service.last_run_transfer_id).not.toBe(prior)
     expect(output(failed)).not.toContain('LAST_RUN_MARKER')
-  } finally { await daemon.stop().catch(() => undefined) }
+  } finally { await daemon.stop() }
 })
 
 test('durable service output survives daemon handoff and remains readable after runtime loss', async () => {
@@ -131,7 +131,7 @@ test('a redirected service log directory reports capture failure without writing
     expect(result.available).toBe(false)
     expect(result.capture_error).toContain('redirected')
     expect((await readdir(daemon.rootDirectory)).some(name => /^[0-9a-f]{64}\.[01]$/.test(name))).toBe(false)
-  } finally { await daemon.stop().catch(() => undefined) }
+  } finally { await daemon.stop() }
 })
 
 test('replaced FIFO, oversized segment, and overflowing offset fail bounded inspection', async () => {
@@ -169,5 +169,5 @@ test('replaced FIFO, oversized segment, and overflowing offset fail bounded insp
     const overflowing = (await inspect()).durable_logs as Durable & { error?: string }
     expect(overflowing).toMatchObject({ available: false, reason: 'log_unavailable' })
     expect(overflowing.error).toContain('offset overflows')
-  } finally { await daemon.stop().catch(() => undefined) }
+  } finally { await daemon.stop() }
 })

@@ -5,7 +5,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { rpc, startDaemon } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfiles, type ManagedProfileOwner, rpc, startDaemon } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
@@ -17,21 +17,7 @@ async function profileSocket(home: string): Promise<string> {
   return (JSON.parse(result.stdout) as { socket: string }).socket
 }
 
-async function stopOwned(socket: string, bootId: unknown): Promise<void> {
-  const hello = await rpc(socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== bootId) return
-  await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
-  if (typeof hello.runtime_socket !== 'string') return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-      return
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((done) => setTimeout(done, 50))
-    }
-  }
-}
+
 
 type Account = { id: string; name: string; native_home: string; generation: number; state: string;
   claude_identity?: { email: string; org_id: string } }
@@ -307,7 +293,7 @@ test('delayed account inspection cannot cross a desktop profile switch', async (
     env: { ...environment, ADE_PROFILES_HOME: join(fixtures, 'profiles'),
       ADE_E2E_USER_DATA_DIR: join(fixtures, 'electron'), ADE_DAEMON_BIN: resolve('target/debug/ade-daemon'),
       ADE_CLAUDE_BIN: cli } })
-  const owned: Array<{ socket: string; bootId: unknown }> = []
+  const owned: ManagedProfileOwner[] = []
   try {
     const window = await application.firstWindow()
     await window.getByRole('textbox', { name: 'New profile' }).fill('Personal')
@@ -317,7 +303,7 @@ test('delayed account inspection cannot cross a desktop profile switch', async (
     const personalProfile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles
       .find((item) => item.name === 'Personal')!
     const personalSocket = await profileSocket(personalProfile.home)
-    owned.push({ socket: personalSocket, bootId: (await rpc(personalSocket, { op: 'hello' })).boot_id })
+    owned.push(await managedProfileOwner(personalSocket))
     const panel = window.getByRole('region', { name: 'Accounts' })
     await panel.getByRole('textbox', { name: 'New account name' }).fill('Personal Claude')
     await panel.getByRole('button', { name: 'Add' }).click()
@@ -334,7 +320,7 @@ test('delayed account inspection cannot cross a desktop profile switch', async (
     const workProfile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles
       .find((item) => item.name === 'Work')!
     const workSocket = await profileSocket(workProfile.home)
-    owned.push({ socket: workSocket, bootId: (await rpc(workSocket, { op: 'hello' })).boot_id })
+    owned.push(await managedProfileOwner(workSocket))
     expect(await readFile(join(account.native_home, 'probe-finished'), 'utf8').catch(() => '')).toBe('')
     await writeFile(join(account.native_home, 'continue'), 'yes')
     await expect.poll(async () => readFile(join(account.native_home, 'probe-finished'), 'utf8').catch(() => '')).toBe('yes')
@@ -352,7 +338,7 @@ test('delayed account inspection cannot cross a desktop profile switch', async (
     })
   } finally {
     await application.close()
-    for (const item of owned) await stopOwned(item.socket, item.bootId).catch(() => undefined)
+    await stopManagedProfiles(owned)
     await rm(fixtures, { recursive: true, force: true })
   }
 })

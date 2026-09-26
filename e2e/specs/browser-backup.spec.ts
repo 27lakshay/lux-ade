@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { rpc } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfiles, type ManagedProfileOwner, rpc } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const electronExecutable = createRequire(join(desktopDirectory, 'package.json'))('electron') as string
@@ -44,7 +44,7 @@ test('active browser backup restores a tab and persistent cookie into an indepen
       ADE_DAEMON_BIN: resolve('target/debug/ade-daemon'), ADE_E2E_HIDE_WINDOW: '1',
       ADE_E2E_BROWSER_PAUSE: 'open-before-mutation', ADE_E2E_BROWSER_PAUSE_URL: `${base}/slow-open`,
       ADE_E2E_BROWSER_PAUSE_SIGNAL: pauseSignal, ADE_E2E_BROWSER_PAUSE_RELEASE: pauseRelease } })
-  const owned: Array<{ socket: string; bootId: unknown }> = []
+  const owned: ManagedProfileOwner[] = []
   try {
     const window = await application.firstWindow()
     await window.getByRole('textbox', { name: 'New profile' }).fill('Source')
@@ -52,7 +52,7 @@ test('active browser backup restores a tab and persistent cookie into an indepen
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const source = (await window.evaluate(() => window.adeHost.getProfileState())).profiles.find((item) => item.name === 'Source')!
     const located = JSON.parse((await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate', '--home', source.home])).stdout) as { socket: string }
-    owned.push({ socket: located.socket, bootId: (await rpc(located.socket, { op: 'hello' })).boot_id })
+    owned.push(await managedProfileOwner(located.socket))
 
     const initial = await window.evaluate((url) => window.adeHost.browser.open(url), `${base}/set`)
     const sourceTabId = initial.tabs[0].id
@@ -107,6 +107,8 @@ test('active browser backup restores a tab and persistent cookie into an indepen
       profile_id: target.id, tab_count: 2, cookie_count: 1 })
     await window.evaluate((id) => window.adeHost.selectProfile(id), target.id)
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const targetLocation = JSON.parse((await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate', '--home', target.home])).stdout) as { socket: string }
+    owned.push(await managedProfileOwner(targetLocation.socket))
     const restoredTabs = await window.evaluate(() => window.adeHost.browser.list())
     expect(restoredTabs.profileId).toBe(target.id)
     expect(restoredTabs.tabs).toHaveLength(2)
@@ -122,14 +124,8 @@ test('active browser backup restores a tab and persistent cookie into an indepen
       { file: bundle, id: target.id })).rejects.toThrow()
   } finally {
     await application.close().catch(() => undefined)
-    for (const item of owned) {
-      const hello = await rpc(item.socket, { op: 'hello' }).catch(() => null)
-      if (!hello || hello.boot_id !== item.bootId) continue
-      await rpc(item.socket, { op: 'runtime.prepare_restart', boot_id: item.bootId }).catch(() => undefined)
-      if (typeof hello.runtime_socket === 'string') await rpc(hello.runtime_socket,
-        { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true }).catch(() => undefined)
-    }
     await new Promise<void>((done) => server.close(() => done()))
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -154,7 +150,7 @@ for (const phase of ['cookies', 'tabs', 'owner'] as const) {
         ADE_DAEMON_BIN: resolve('target/debug/ade-daemon'), ADE_E2E_HIDE_WINDOW: '1',
         ADE_E2E_BROWSER_RESTORE_FAIL: phase, ADE_E2E_BROWSER_RESTORE_FAIL_ONCE: failOnce } }
     let application = await electron.launch(launchOptions)
-    const owned: Array<{ socket: string; bootId: unknown }> = []
+    const owned: ManagedProfileOwner[] = []
     try {
       let window = await application.firstWindow()
       await window.getByRole('textbox', { name: 'New profile' }).fill('Source')
@@ -162,7 +158,7 @@ for (const phase of ['cookies', 'tabs', 'owner'] as const) {
       await expect(window.locator('header').getByRole('status')).toHaveText('connected')
       const source = (await window.evaluate(() => window.adeHost.getProfileState())).profiles.find((item) => item.name === 'Source')!
       const sourceLocation = JSON.parse((await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate', '--home', source.home])).stdout) as { socket: string }
-      owned.push({ socket: sourceLocation.socket, bootId: (await rpc(sourceLocation.socket, { op: 'hello' })).boot_id })
+      owned.push(await managedProfileOwner(sourceLocation.socket))
       await window.evaluate((url) => window.adeHost.browser.open(url), `http://127.0.0.1:${address.port}/`)
       await expect.poll(async () => (await window.evaluate(() => window.adeHost.browser.list())).tabs[0]?.title)
         .toBe('Restore')
@@ -193,19 +189,15 @@ for (const phase of ['cookies', 'tabs', 'owner'] as const) {
       expect(JSON.parse(await readFile(join(targetStorage, '.ade-owner-v1.json'), 'utf8')))
         .toMatchObject({ profileId: target.id })
       await window.evaluate((id) => window.adeHost.selectProfile(id), target.id)
+      const targetLocation = JSON.parse((await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate', '--home', target.home])).stdout) as { socket: string }
+      owned.push(await managedProfileOwner(targetLocation.socket))
       const restored = await window.evaluate(() => window.adeHost.browser.list())
       expect(restored.tabs).toHaveLength(1)
       expect(restored.profileId).toBe(target.id)
     } finally {
       await application.close().catch(() => undefined)
-      for (const item of owned) {
-        const hello = await rpc(item.socket, { op: 'hello' }).catch(() => null)
-        if (!hello || hello.boot_id !== item.bootId) continue
-        await rpc(item.socket, { op: 'runtime.prepare_restart', boot_id: item.bootId }).catch(() => undefined)
-        if (typeof hello.runtime_socket === 'string') await rpc(hello.runtime_socket,
-          { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true }).catch(() => undefined)
-      }
       await new Promise<void>((done) => server.close(() => done()))
+      await stopManagedProfiles(owned)
       await rm(directory, { recursive: true, force: true })
     }
   })

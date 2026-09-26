@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { rpc, startDaemon } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfiles, type ManagedProfileOwner, rpc, startDaemon } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const electronExecutable = createRequire(join(desktopDirectory, 'package.json'))('electron') as string
@@ -51,21 +51,7 @@ async function fixture(): Promise<{ server: Server; url: string; reports: Array<
   return { server, url: `http://127.0.0.1:${address.port}`, reports }
 }
 
-async function stopOwned(socket: string, bootId: unknown): Promise<void> {
-  const hello = await rpc(socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== bootId) return
-  await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
-  if (typeof hello.runtime_socket !== 'string') return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-      return
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((done) => setTimeout(done, 50))
-    }
-  }
-}
+
 
 async function quitNormally(application: Awaited<ReturnType<typeof electron.launch>>): Promise<void> {
   const process = application.process()
@@ -82,7 +68,7 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
   const { ADE_SOCKET: _fixedSocket, ADE_DAEMON_BIN: _parentDaemon, ...environment } = process.env
   const env = { ...environment, ADE_PROFILES_HOME: profilesHome, ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
     ...(signedApp ? {} : { ADE_DAEMON_BIN: resolve('target/debug/ade-daemon') }) }
-  const owned: Array<{ socket: string; bootId: unknown }> = []
+  const owned: ManagedProfileOwner[] = []
   const launch = () => electron.launch({ executablePath: signedApp ? join(signedApp, 'Contents/MacOS/Lux ADE') : electronExecutable,
     args: signedApp ? [] : [desktopDirectory], env })
   let application = await launch()
@@ -93,7 +79,7 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const first = (await window.evaluate(() => window.adeHost.getProfileState())).profiles.find((item) => item.name === 'Personal')!
     const firstSocket = JSON.parse((await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate', '--home', first.home])).stdout) as { socket: string }
-    owned.push({ socket: firstSocket.socket, bootId: (await rpc(firstSocket.socket, { op: 'hello' })).boot_id })
+    owned.push(await managedProfileOwner(firstSocket.socket))
     await window.getByRole('button', { name: 'Show preview' }).click()
     await window.getByRole('textbox', { name: 'Address' }).fill(`${web.url}/set?value=personal`)
     await window.getByRole('button', { name: 'Open tab' }).click()
@@ -111,7 +97,7 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const second = (await window.evaluate(() => window.adeHost.getProfileState())).profiles.find((item) => item.name === 'Work')!
     const secondSocket = JSON.parse((await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate', '--home', second.home])).stdout) as { socket: string }
-    owned.push({ socket: secondSocket.socket, bootId: (await rpc(secondSocket.socket, { op: 'hello' })).boot_id })
+    owned.push(await managedProfileOwner(secondSocket.socket))
     expect((await window.evaluate(() => window.adeHost.browser.list())).tabs).toHaveLength(0)
     await window.getByRole('button', { name: 'Show preview' }).click()
     await window.getByRole('textbox', { name: 'Address' }).fill(`${web.url}/set?value=work`)
@@ -196,8 +182,8 @@ test('profile browser tabs isolate cookies, restore identity, and reject closed 
       .toContain('profile=work')
   } finally {
     await application.close().catch(() => undefined)
-    for (const item of owned) await stopOwned(item.socket, item.bootId).catch(() => undefined)
     await new Promise<void>((done) => web.server.close(() => done()))
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })

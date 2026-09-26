@@ -8,14 +8,14 @@ import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { rpc } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfile, stopManagedProfiles, type ManagedProfileOwner, rpc } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const electronExecutable = createRequire(join(desktopDirectory, 'package.json'))('electron') as string
 const execFileAsync = promisify(execFile)
 
 type Application = Awaited<ReturnType<typeof electron.launch>>
-type OwnedRuntime = { socket: string; bootId: unknown }
+type OwnedRuntime = ManagedProfileOwner
 
 async function fixture(): Promise<{ server: Server; url: string; reports: Array<{ page: string; cookie: string }> }> {
   const reports: Array<{ page: string; cookie: string }> = []
@@ -36,25 +36,11 @@ async function fixture(): Promise<{ server: Server; url: string; reports: Array<
   return { server, url: `http://127.0.0.1:${address.port}`, reports }
 }
 
-async function stopOwned({ socket, bootId }: OwnedRuntime): Promise<void> {
-  const hello = await rpc(socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== bootId) return
-  await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
-  if (typeof hello.runtime_socket !== 'string') return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-      return
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((done) => setTimeout(done, 50))
-    }
-  }
-}
+
 
 async function locateOwned(home: string): Promise<OwnedRuntime> {
   const located = JSON.parse((await execFileAsync('python3', [resolve('scripts/runtime.py'), 'locate', '--home', home])).stdout) as { socket: string }
-  return { socket: located.socket, bootId: (await rpc(located.socket, { op: 'hello' })).boot_id }
+  return managedProfileOwner(located.socket)
 }
 
 async function quitNormally(application: Application): Promise<void> {
@@ -120,8 +106,8 @@ test('a second Electron process cannot write one profile browser while its owner
   } finally {
     await first?.close().catch(() => undefined)
     await second?.close().catch(() => undefined)
-    for (const item of owned) await stopOwned(item).catch(() => undefined)
     await new Promise<void>((done) => web.server.close(() => done()))
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -185,8 +171,8 @@ for (const pause of ['fresh-stage', 'fresh-owner'] as const) {
       expect(await creationStages(storageParent, storageKey)).toHaveLength(0)
     } finally {
       await application?.close().catch(() => undefined)
-      for (const item of owned) await stopOwned(item).catch(() => undefined)
       await new Promise<void>((done) => web.server.close(() => done()))
+      await stopManagedProfiles(owned)
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -260,8 +246,8 @@ for (const pause of ['stage', 'copy', 'marker', 'rename'] as const) {
     } finally {
       if (paused) { paused.kill('SIGKILL'); await waitForExit(paused).catch(() => undefined) }
       await application?.close().catch(() => undefined)
-      for (const item of owned) await stopOwned(item).catch(() => undefined)
       await new Promise<void>((done) => web.server.close(() => done()))
+      await stopManagedProfiles(owned)
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -346,8 +332,8 @@ test('a mismatched owner refuses adoption and an ownerless switch targets the re
     await expect.poll(() => web.reports.findLast((item) => item.page === 'probe')?.cookie).toContain('profile=migrated')
   } finally {
     await application.close().catch(() => undefined)
-    for (const item of owned) await stopOwned(item).catch(() => undefined)
     await new Promise<void>((done) => web.server.close(() => done()))
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -385,7 +371,7 @@ test('moving a profile home refuses a stale runtime binding before browser write
     const ownerFile = join(userData, 'browser-sessions', originalStorageKey, '.ade-owner-v1.json')
     const originalOwner = await readFile(ownerFile)
     const originalSessionFiles = await readdir(join(userData, 'browser-sessions', originalStorageKey))
-    await stopOwned(owned.at(-1)!)
+    await stopManagedProfile(owned.at(-1)!)
     owned.pop()
     await rename(originalHome, movedHome)
 
@@ -409,8 +395,8 @@ test('moving a profile home refuses a stale runtime binding before browser write
     expect(tabId).toBe(JSON.parse(originalTabs.toString())?.tabs?.[0]?.id)
   } finally {
     await application?.close().catch(() => undefined)
-    for (const item of owned) await stopOwned(item).catch(() => undefined)
     await new Promise<void>((done) => web.server.close(() => done()))
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -488,8 +474,8 @@ test('a pre-manifest browser session requires explicit adoption before its tab a
     expect(await readFile(sentinel, 'utf8')).toBe('preserve the existing session')
   } finally {
     await application?.close().catch(() => undefined)
-    for (const item of owned) await stopOwned(item).catch(() => undefined)
     await new Promise<void>((done) => web.server.close(() => done()))
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })

@@ -225,6 +225,6 @@ test('service inspection keeps configured identity when its isolated supervisor 
         service: (result as unknown as { service: { name: string } }).service.name }
     }).toEqual({ state: 'unavailable', readiness: 'unknown', logs: false, service: 'web' })
   } finally {
-    await daemon.stop().catch(() => undefined)
+    await daemon.stop()
   }
 })

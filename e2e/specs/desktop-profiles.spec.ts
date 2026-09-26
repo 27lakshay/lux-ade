@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { rpc } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfiles, type ManagedProfileOwner, rpc } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
@@ -17,21 +17,7 @@ async function profileSocket(home: string): Promise<string> {
   return (JSON.parse(result.stdout) as { socket: string }).socket
 }
 
-async function stopOwned(socket: string, bootId: unknown): Promise<void> {
-  const hello = await rpc(socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== bootId) return
-  await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
-  if (typeof hello.runtime_socket !== 'string') return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-      return
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((done) => setTimeout(done, 50))
-    }
-  }
-}
+
 
 test('Electron creates and switches independent profiles without stopping either daemon', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ade-desktop-profiles-e2e-'))
@@ -47,7 +33,7 @@ test('Electron creates and switches independent profiles without stopping either
       ADE_DAEMON_BIN: resolve('target/debug/ade-daemon'),
     },
   })
-  const owned: Array<{ socket: string; bootId: unknown }> = []
+  const owned: ManagedProfileOwner[] = []
   try {
     const window = await application.firstWindow()
     const picker = window.getByRole('combobox', { name: 'Profile' })
@@ -63,7 +49,7 @@ test('Electron creates and switches independent profiles without stopping either
     const first = firstState.profiles.find((item) => item.name === 'Personal')!
     const firstSocket = await profileSocket(first.home)
     const firstHello = await rpc(firstSocket, { op: 'hello' })
-    owned.push({ socket: firstSocket, bootId: firstHello.boot_id })
+    owned.push(await managedProfileOwner(firstSocket))
     expect(firstBoot).toContain(String(firstHello.boot_id))
     const firstCatalog = await rpc(firstSocket, { op: 'catalog.get' })
     const workspace = (firstCatalog.catalog as { workspaces: Array<{ id: string }> }).workspaces[0]
@@ -73,7 +59,9 @@ test('Electron creates and switches independent profiles without stopping either
     expect(created.type).toBe('ack')
     await expect(window.getByRole('button', { name: /Personal only/ })).toBeVisible()
 
+    await expect(window.getByRole('textbox', { name: 'New profile' })).toHaveValue('')
     await window.getByRole('textbox', { name: 'New profile' }).fill('Work')
+    await expect(window.getByRole('button', { name: 'Create' })).toBeEnabled()
     await window.getByRole('button', { name: 'Create' }).click()
     await expect(window.getByText('Active profile: Work')).toBeVisible()
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
@@ -81,7 +69,7 @@ test('Electron creates and switches independent profiles without stopping either
     const second = secondState.profiles.find((item) => item.name === 'Work')!
     const secondSocket = await profileSocket(second.home)
     const secondHello = await rpc(secondSocket, { op: 'hello' })
-    owned.push({ socket: secondSocket, bootId: secondHello.boot_id })
+    owned.push(await managedProfileOwner(secondSocket))
     expect(secondHello.boot_id).not.toBe(firstHello.boot_id)
     expect(await window.locator('.connection-meta').textContent()).toContain(String(secondHello.boot_id))
     await expect(window.getByRole('button', { name: /Personal only/ })).toHaveCount(0)
@@ -97,7 +85,7 @@ test('Electron creates and switches independent profiles without stopping either
     expect((await rpc(secondSocket, { op: 'hello' })).boot_id).toBe(secondHello.boot_id)
   } finally {
     await application.close()
-    for (const item of owned) await stopOwned(item.socket, item.bootId).catch(() => undefined)
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })

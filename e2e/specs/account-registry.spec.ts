@@ -4,37 +4,25 @@ import { access, mkdtemp, rename, rm, stat, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { setTimeout as delay } from 'node:timers/promises'
-import { rpc } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfile, type ManagedProfileOwner, rpc } from '../fixtures/daemon'
 
 const execFileAsync = promisify(execFile)
 const profiles = resolve('scripts/profiles.py')
 const daemonBinary = resolve('target/debug/ade-daemon')
 
-type Launch = { socket: string; daemon: { boot_id: string } }
+type Launch = { socket: string; daemon: { boot_id: string }; owner: ManagedProfileOwner }
 type Account = { id: string; provider: string; name: string; native_home: string; generation: number; state: string }
 type Conversation = { id: string; account_id: string | null; account_context: string; provider: string }
 
 async function profile(home: string, ...args: string[]): Promise<Record<string, unknown>> {
   const result = await execFileAsync('python3', [profiles, '--home', home, '--daemon', daemonBinary, ...args], { timeout: 30_000 })
-  return JSON.parse(result.stdout) as Record<string, unknown>
+  const value = JSON.parse(result.stdout) as Record<string, unknown>
+  if (args[0] === 'start' && typeof value.socket === 'string') value.owner = await managedProfileOwner(value.socket)
+  return value
 }
 
 async function stop(launch: Launch): Promise<void> {
-  const hello = await rpc(launch.socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== launch.daemon.boot_id) return
-  await rpc(launch.socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id })
-  if (typeof hello.runtime_socket === 'string') {
-    for (let attempt = 0; attempt < 50; attempt++) {
-      try {
-        await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-        return
-      } catch (error) {
-        if (attempt === 49) throw error
-        await delay(20)
-      }
-    }
-  }
+  await stopManagedProfile(launch.owner)
 }
 
 test('accounts have durable, distinct profile homes and conversations keep their account', async () => {
@@ -91,7 +79,7 @@ test('accounts have durable, distinct profile homes and conversations keep their
     await symlink(second.native_home, first.native_home)
     await expect(rpc(launch.socket, { op: 'account.list' })).rejects.toThrow(/redirected/)
   } finally {
-    if (launch) await stop(launch).catch(() => undefined)
+    if (launch) await stop(launch)
     await rm(directory, { recursive: true, force: true })
   }
 })
@@ -118,6 +106,7 @@ with sqlite3.connect(sys.argv[1]) as db:
  db.execute('ALTER TABLE attachments DROP COLUMN created_at')
  db.execute('ALTER TABLE attachments DROP COLUMN state')
  db.execute('ALTER TABLE attachments DROP COLUMN generation')
+ db.execute('DROP TABLE restore_fence')
  db.execute('DELETE FROM schema_migrations WHERE version>=9')
  db.execute('PRAGMA user_version=8')`, database])
 
@@ -128,7 +117,7 @@ with sqlite3.connect(sys.argv[1]) as db:
     const account = (await rpc(launch.socket, { op: 'account.create', provider: 'codex', name: 'New' })).account as Account
     expect(account.state).toBe('unverified')
   } finally {
-    if (launch) await stop(launch).catch(() => undefined)
+    if (launch) await stop(launch)
     await rm(directory, { recursive: true, force: true })
   }
 })

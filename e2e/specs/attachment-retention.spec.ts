@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { execFile } from 'node:child_process'
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -174,7 +175,8 @@ with sqlite3.connect(sys.argv[1]) as db:
  db.execute('ALTER TABLE attachments DROP COLUMN created_at')
  db.execute('ALTER TABLE attachments DROP COLUMN state')
  db.execute('ALTER TABLE attachments DROP COLUMN generation')
- db.execute('DELETE FROM schema_migrations WHERE version=11')
+ db.execute('DROP TABLE restore_fence')
+ db.execute('DELETE FROM schema_migrations WHERE version>=11')
  db.execute('PRAGMA user_version=10')`, join(restored, 'sessions.sqlite')])
     const upgraded = await startDaemon({ ADE_DATA_DIR: restored })
     try {
@@ -188,7 +190,7 @@ with sqlite3.connect(sys.argv[1]) as db:
       const { stdout } = await execFileAsync('python3', ['-c',
         'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA user_version").fetchone()[0])',
         join(restored, 'sessions.sqlite')])
-      expect(stdout.trim()).toBe('11')
+      expect(stdout.trim()).toBe('12')
     } finally {
       await upgraded.stop()
     }
@@ -199,7 +201,6 @@ with sqlite3.connect(sys.argv[1]) as db:
 
 test('a backend snapshot remains valid while attachment reclaim runs', async () => {
   const daemon = await startDaemon()
-  const mockDirectory = await mkdtemp(join(tmpdir(), 'ade-retention-restore-codex-'))
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: daemon.rootDirectory }))
       .workspace as { id: string }
@@ -232,7 +233,7 @@ test('a backend snapshot remains valid while attachment reclaim runs', async () 
     const snapshot = await create
     expect(JSON.parse(snapshot.stdout)).toMatchObject({ type: 'managed_backup', operation: 'create',
       manifest: { scope: 'backend-snapshot-only', entries: expect.arrayContaining([
-        expect.objectContaining({ path: 'sessions.sqlite', schema: 11 }),
+        expect.objectContaining({ path: 'sessions.sqlite', schema: 12 }),
       ]) } })
     expect(reclaimed).toMatchObject({ reclaimed_payload_bytes: freeAttachment.size })
     const inspected = await execFileAsync('python3', ['scripts/managed_backup.py', 'inspect', '--backup', backup],
@@ -241,9 +242,7 @@ test('a backend snapshot remains valid while attachment reclaim runs', async () 
     const restored = join(daemon.rootDirectory, 'restored-retention')
     await execFileAsync('python3', ['scripts/managed_backup.py', 'restore', '--backup', backup,
       '--data-dir', restored], { timeout: 20_000 })
-    const restoredDaemon = await startDaemon({ ADE_DATA_DIR: restored,
-      ADE_CODEX_BIN: resolve('scripts/fixtures/codex_mock.py'),
-      ADE_CODEX_TRANSPORT: 'stdio', ADE_MOCK_DIR: mockDirectory })
+    const restoredDaemon = await startDaemon({ ADE_DATA_DIR: restored })
     try {
       expect((await rpc(restoredDaemon.socket, { op: 'draft.get', conversation_id: conversation.id,
         window_id: 'backup-window' })).draft).toMatchObject({ attachments: [protectedAttachment] })
@@ -251,11 +250,11 @@ test('a backend snapshot remains valid while attachment reclaim runs', async () 
         conversation_id: conversation.id, attachment_id: freeAttachment.id })).preview as Preview
       expect(['live', 'discarded']).toContain(restoredFree.state)
       expect(restoredFree.payload_bytes).toBe(restoredFree.state === 'live' ? freeAttachment.size : 0)
-      await rpc(restoredDaemon.socket, { op: 'agent.send', conversation_id: conversation.id,
-        request_id: 'restored-protected-image', text: 'Read restored image',
-        attachments: [protectedAttachment] })
-      await expect.poll(async () => (await readFile(join(mockDirectory, 'calls.jsonl'), 'utf8').catch(() => '')))
-        .toContain(`data:image/png;base64,${pixel}`)
+      const inspectedAttachment = await rpc(restoredDaemon.socket, { op: 'attachment.inspect',
+        conversation_id: conversation.id, attachment_id: protectedAttachment.id })
+      expect(inspectedAttachment).toMatchObject({ type: 'attachment_inspection',
+        attachment: protectedAttachment,
+        sha256: createHash('sha256').update(Buffer.from(pixel, 'base64')).digest('hex') })
     } finally {
       await restoredDaemon.stop()
     }
@@ -265,6 +264,5 @@ test('a backend snapshot remains valid while attachment reclaim runs', async () 
       attachment_id: protectedAttachment.id })).preview).toMatchObject({ protected_by: ['draft'] })
   } finally {
     await daemon.stop()
-    await rm(mockDirectory, { recursive: true, force: true })
   }
 })

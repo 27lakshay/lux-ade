@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rename, rm, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { rpc, startDaemon } from '../fixtures/daemon'
+import { managedProfileOwner, stopManagedProfiles, type ManagedProfileOwner, rpc, startDaemon } from '../fixtures/daemon'
 
 const desktopDirectory = resolve('apps/desktop')
 const requireDesktop = createRequire(join(desktopDirectory, 'package.json'))
@@ -19,29 +19,7 @@ async function profileSocket(home: string): Promise<string> {
   return (JSON.parse(result.stdout) as { socket: string }).socket
 }
 
-async function stopOwned(socket: string, bootId: unknown): Promise<void> {
-  const hello = await rpc(socket, { op: 'hello' }).catch(() => null)
-  if (!hello || hello.boot_id !== bootId) return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
-      break
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((done) => setTimeout(done, 50))
-    }
-  }
-  if (typeof hello.runtime_socket !== 'string') return
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: hello.runtime_instance, stop_active: true })
-      return
-    } catch (error) {
-      if (attempt === 49) throw error
-      await new Promise((done) => setTimeout(done, 50))
-    }
-  }
-}
+
 
 test('a dropped send reply keeps one prompt across renderer reload, hidden app close and retry', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'ade-send-recovery-'))
@@ -685,9 +663,8 @@ test('Quit reconciles an accepted prompt from an inactive managed profile', asyn
       ADE_CODEX_TRANSPORT: 'stdio', ADE_MOCK_DIR: mockDirectory, ADE_E2E_TEST_CLOSE_GUARD: '1' } })
   let firstSocket = ''
   let firstActual = ''
-  let firstBoot: unknown
+  const owned: ManagedProfileOwner[] = []
   let secondSocket = ''
-  let secondBoot: unknown
   let proxy: ReturnType<typeof createServer> | null = null
   const peers = new Set<Socket>()
   try {
@@ -699,7 +676,7 @@ test('Quit reconciles an accepted prompt from an inactive managed profile', asyn
     const state = await window.evaluate(() => window.adeHost.getProfileState())
     const personal = state.profiles.find((item) => item.name === 'Personal')!
     firstSocket = await profileSocket(personal.home)
-    firstBoot = (await rpc(firstSocket, { op: 'hello' })).boot_id
+    owned.push(await managedProfileOwner(firstSocket))
 
     // Proxy the profile's stable socket while its real daemon continues to run.
     // This isolates the lost completion reply to Personal and leaves Work intact.
@@ -762,7 +739,7 @@ test('Quit reconciles an accepted prompt from an inactive managed profile', asyn
     await expect(window.locator('header').getByRole('status')).toHaveText('connected')
     const work = (await window.evaluate(() => window.adeHost.getProfileState())).profiles.find((item) => item.name === 'Work')!
     secondSocket = await profileSocket(work.home)
-    secondBoot = (await rpc(secondSocket, { op: 'hello' })).boot_id
+    owned.push(await managedProfileOwner(secondSocket))
     await application.evaluate(({ dialog }, log) => {
       const dialogs = dialog as unknown as { showMessageBox: (...args: unknown[]) => Promise<{ response: number; checkboxChecked: boolean }> }
       dialogs.showMessageBox = async (...args) => {
@@ -787,8 +764,7 @@ test('Quit reconciles an accepted prompt from an inactive managed profile', asyn
       await unlink(firstSocket).catch(() => undefined)
       await rename(firstActual, firstSocket).catch(() => undefined)
     }
-    if (firstSocket) await stopOwned(firstSocket, firstBoot).catch(() => undefined)
-    if (secondSocket) await stopOwned(secondSocket, secondBoot).catch(() => undefined)
+    await stopManagedProfiles(owned)
     await rm(directory, { recursive: true, force: true })
   }
 })

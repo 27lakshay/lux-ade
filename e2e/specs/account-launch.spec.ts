@@ -24,7 +24,7 @@ test('an unverified managed account cannot fall back to ambient Claude credentia
     expect(snapshot.conversation).toMatchObject({ account_id: account.id })
     expect(snapshot.messages).toEqual([])
   } finally {
-    await daemon.stop().catch(() => undefined)
+    await daemon.stop()
     await rm(directory, { recursive: true, force: true })
   }
 })

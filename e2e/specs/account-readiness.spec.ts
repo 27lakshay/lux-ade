@@ -174,7 +174,7 @@ serve(fakeSdk(join(home, 'sessions')));
     expect((await snapshot(d.id)).provider_thread_id).toBeNull()
     await expect(readFile(join(fourth.native_home, 'sessions', 'calls.jsonl'))).rejects.toThrow()
   } finally {
-    await daemon.stop().catch(() => undefined)
+    await daemon.stop()
     await rm(fixtures, { recursive: true, force: true })
   }
 })
