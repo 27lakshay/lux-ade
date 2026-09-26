@@ -226,10 +226,10 @@ function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
   return entry.send ? { request_id: entry.send.requestId, text: entry.send.text, state: entry.send.state } : null
 }
 
-async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>> {
   const result = await requestDaemon(entry.endpoint, 'draft.send.complete', {
     conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
-  })
+  }, { timeoutMs })
   const cleared = result.draft as Draft
   if (!cleared || cleared.text !== '' || !Number.isSafeInteger(cleared.revision)) throw new Error('Invalid completed draft')
   entry.draft = cleared
@@ -239,6 +239,19 @@ async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Rec
   publishDraftError(entry, '')
   entry.send = null
   return response
+}
+
+// Closing a view must not turn an uncertain prompt into a new provider request.
+// The owning daemon can only complete this intent after it has recorded the exact
+// accepted user message, and an already completed intent returns the same draft.
+async function reconcileAcceptedSend(entry: DraftEntry): Promise<void> {
+  const intent = entry.send
+  if (!intent || intent.preparing) return
+  if (intent.inFlight) await intent.inFlight.catch(() => undefined)
+  if (entry.send !== intent) return
+  try {
+    await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true }, 3_000)
+  } catch { /* Keep the original request ID and ask the user to retry after recovery. */ }
 }
 
 function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<string, unknown>> {
@@ -729,39 +742,40 @@ function openMainWindow(): void {
     // E2E teardown must not surface a native modal over the user's active Space.
     // The test process owns this isolated profile and may deliberately leave an
     // uncertain send to verify recovery after process exit.
-    if (process.env.ADE_E2E_HIDE_WINDOW === '1') return
+    if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.env.ADE_E2E_TEST_CLOSE_GUARD !== '1') return
     if (readyForClose) return
     if (closeFlushInProgress) { event.preventDefault(); return }
-    if ([...drafts.entries()].some(([key, entry]) => key.startsWith(`${window.webContents.id}:`) && entry.send)) {
-      event.preventDefault()
-      void dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
-        message: 'This window is staying open until the prompt is reconciled.',
-        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
-      return
-    }
-    const pending = [...drafts.entries()].filter(([key, entry]) =>
-      key.startsWith(`${window.webContents.id}:`) && (entry.timer || entry.savedRevision < entry.draft.revision))
-      .map(([, entry]) => entry)
-    if (!pending.length) return
+    const owned = [...drafts.entries()].filter(([key]) => key.startsWith(`${window.webContents.id}:`)).map(([, entry]) => entry)
+    const hasWindowSend = (): boolean => [...drafts.entries()].some(([key, entry]) =>
+      key.startsWith(`${window.webContents.id}:`) && Boolean(entry.send))
+    if (!owned.some((entry) => entry.send || entry.timer || entry.savedRevision < entry.draft.revision)) return
     event.preventDefault()
     closeFlushInProgress = true
-    void Promise.allSettled(pending.map(flushDraft)).then((results) => {
-      closeFlushInProgress = false
+    void (async () => {
+      await Promise.allSettled(owned.filter((entry) => entry.send).map(reconcileAcceptedSend))
+      if (hasWindowSend()) {
+        await dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
+          message: 'This window is staying open until the prompt is reconciled.',
+          detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+        return
+      }
+      const pending = owned.filter((entry) => entry.timer || entry.savedRevision < entry.draft.revision)
+      const results = await Promise.allSettled(pending.map(flushDraft))
       if (results.some((result) => result.status === 'rejected')) {
-        void dialog.showMessageBox(window, { type: 'error', title: 'Draft was not saved',
+        await dialog.showMessageBox(window, { type: 'error', title: 'Draft was not saved',
           message: 'This window is staying open because a draft could not be saved.',
           detail: 'Restore the profile daemon and try closing the window again.' })
         return
       }
-      if ([...drafts.entries()].some(([key, entry]) => key.startsWith(`${window.webContents.id}:`) && entry.send)) {
-        void dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
+      if (hasWindowSend()) {
+        await dialog.showMessageBox(window, { type: 'warning', title: 'Prompt delivery is unconfirmed',
           message: 'This window is staying open until the prompt is reconciled.',
           detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
         return
       }
       readyForClose = true
-      window.close()
-    })
+      if (!window.isDestroyed()) window.close()
+    })().finally(() => { closeFlushInProgress = false })
   })
   window.webContents.on('did-start-navigation', () => closeSenderTerminals(window.webContents.id))
   window.webContents.on('destroyed', () => {
@@ -816,36 +830,41 @@ app.whenReady().then(async () => {
 })
 
 let readyToQuit = false
+let quitFlushInProgress = false
 let browserReadyToQuit = false
 let browserFlushInProgress = false
 app.on('before-quit', (event) => {
-  if (!readyToQuit && process.env.ADE_E2E_HIDE_WINDOW !== '1') {
-    if ([...drafts.values()].some((entry) => entry.send)) {
+  if (!readyToQuit && (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_TEST_CLOSE_GUARD === '1')) {
+    const owned = [...drafts.values()]
+    if (owned.some((entry) => entry.send || entry.timer || entry.savedRevision < entry.draft.revision)) {
       event.preventDefault()
-      void dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
-        message: 'ADE is staying open until the prompt is reconciled.',
-        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
-      return
-    }
-    const pending = [...drafts.values()].filter((entry) => entry.timer || entry.savedRevision < entry.draft.revision)
-    if (pending.length) {
-      event.preventDefault()
-      void Promise.allSettled(pending.map(flushDraft)).then((results) => {
+      if (quitFlushInProgress) return
+      quitFlushInProgress = true
+      void (async () => {
+        await Promise.allSettled(owned.filter((entry) => entry.send).map(reconcileAcceptedSend))
+        if ([...drafts.values()].some((entry) => entry.send)) {
+          await dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
+            message: 'ADE is staying open until the prompt is reconciled.',
+            detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
+          return
+        }
+        const pending = owned.filter((entry) => entry.timer || entry.savedRevision < entry.draft.revision)
+        const results = await Promise.allSettled(pending.map(flushDraft))
         if (results.some((result) => result.status === 'rejected')) {
-          void dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
+          await dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
             message: 'ADE is staying open because a draft could not be saved.',
             detail: 'Restore the profile daemon and try closing ADE again.' })
           return
         }
         if ([...drafts.values()].some((entry) => entry.send)) {
-          void dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
+          await dialog.showMessageBox({ type: 'warning', title: 'Prompt delivery is unconfirmed',
             message: 'ADE is staying open until the prompt is reconciled.',
             detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' })
           return
         }
         readyToQuit = true
         app.quit()
-      })
+      })().finally(() => { quitFlushInProgress = false })
       return
     }
   }

@@ -1,6 +1,6 @@
 # Recover per-window conversation drafts
 
-Status: initial renderer-reload slice implemented; full F036 remains open
+Status: partial recovery and close-guard slices implemented; full F036 remains open
 Type: implementation ticket
 Owner: desktop draft worker, integrated by coordinator
 Requirements: F036 (initial slice)
@@ -19,8 +19,18 @@ reload, kept a second conversation's draft separate, cleared after an
 acknowledged send, and observed one provider turn. The full `pnpm check`
 passed 14/14 running-process E2E cases.
 
-Remaining: window identity across Electron process crash, draft recall/stash,
-explicit transfer and conflict UI across clients, attachments, and failure-path
-E2E. A lost `agent.send` acknowledgement leaves the outcome uncertain; the UI
-currently creates a new request ID on retry, which could duplicate a prompt.
-This must be resolved before claiming reliable retry or full F036 acceptance.
+Later slices added a durable request ID across send-reply loss and Electron
+process restart. Retry reconciles the original ID instead of creating a new
+provider turn. The normal Quit and window-close guards now first ask each
+pending intent's original profile daemon to complete an already accepted
+message. They do not dispatch a new prompt merely to close. If the daemon
+cannot confirm acceptance, ADE retains the intent and stays open. Running
+Electron/real-daemon E2Es cover a dropped completion reply, an unavailable
+reconciliation endpoint, a prompt from an inactive managed profile, manual
+Retry and exactly one provider turn. Hidden test windows intercept native
+warnings without opening ADE in the user's active macOS Space.
+
+Remaining: draft recall/stash, explicit transfer and conflict UI across
+clients, attachments, daemon-crash acceptance and the full F036 specification.
+The currently running old ADE process must restart to load the new close guard;
+its live pending intent was not inspected or changed by these tests.
