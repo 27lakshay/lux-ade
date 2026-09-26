@@ -126,6 +126,66 @@ test('packaged macOS app runs from its own resources and retains work across reo
   }
 })
 
+test('packaged macOS app runs workspace scripts with bundled pnpm from a Finder-like PATH', async ({}, testInfo) => {
+  test.setTimeout(90_000)
+  const directory = await mkdtemp(join(tmpdir(), 'ade-package-scripts-e2e-'))
+  const folder = join(directory, 'project')
+  await mkdir(folder)
+  await writeFile(join(folder, 'package.json'), JSON.stringify({
+    name: 'ade-packaged-script', private: true,
+    scripts: { check: 'node -e "console.log(\'PACKAGED_SCRIPT_READY\')"' },
+  }))
+  const { ADE_SOCKET: _socket, ADE_ROOT: _root, ADE_DAEMON_BIN: _daemonBinary,
+    ADE_PNPM_BIN: _pnpmBinary, ...parentEnvironment } = process.env
+  const env = { ...parentEnvironment,
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    ADE_PROFILES_HOME: join(directory, 'profiles'),
+    ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
+  }
+  let application = await electron.launch({ executablePath: executable, cwd: directory, env })
+  let owned: { socket: string; bootId: unknown; home: string } | null = null
+  try {
+    let window = await application.firstWindow()
+    expect(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(false)
+    await window.getByRole('textbox', { name: 'New profile' }).fill('Scripts')
+    await window.getByRole('button', { name: 'Create' }).click()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const profile = (await window.evaluate(() => window.adeHost.getProfileState())).profiles[0]
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const located = await promisify(execFile)('/usr/bin/python3', [join(resources, 'runtime.py'), 'locate', '--home', profile.home])
+    const socket = (JSON.parse(located.stdout) as { socket: string }).socket
+    owned = { socket, bootId: (await rpc(socket, { op: 'hello' })).boot_id, home: profile.home }
+    await window.getByRole('textbox', { name: 'Open folder' }).fill(folder)
+    await window.getByRole('button', { name: 'Open folder' }).click()
+    await expect(window.getByText(await realpath(folder), { exact: true })).toBeVisible()
+    const pane = window.getByRole('region', { name: 'Workspace scripts' })
+    await pane.getByRole('article', { name: 'Script check' }).getByRole('button', { name: 'Run' }).click()
+    const run = pane.getByRole('article', { name: 'Script run check' })
+    await expect(run).toContainText('PACKAGED_SCRIPT_READY')
+    await expect(run).toContainText('exited')
+    await application.close()
+    application = await electron.launch({ executablePath: executable, cwd: directory, env })
+    window = await application.firstWindow()
+    await expect(window.locator('header').getByRole('status')).toHaveText('connected')
+    const restored = window.getByRole('region', { name: 'Workspace scripts' })
+      .getByRole('article', { name: 'Script run check' })
+    await expect(restored).toContainText('exited')
+    await restored.getByRole('button', { name: 'Inspect output' }).click()
+    await expect(restored).toContainText('PACKAGED_SCRIPT_READY')
+  } catch (error) {
+    if (owned) {
+      const log = await readFile(join(owned.home, 'daemon.log')).catch(() => Buffer.from('No daemon log was written'))
+      await testInfo.attach('packaged-script-daemon.log', { body: log.subarray(-64 * 1024), contentType: 'text/plain' })
+    }
+    throw error
+  } finally {
+    await application.close().catch(() => undefined)
+    if (owned) await stopOwned(owned.socket, owned.bootId)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('packaged macOS app keeps two profile daemons, terminals and conversations isolated across reopen', async ({}, testInfo) => {
   test.setTimeout(150_000)
   const directory = await mkdtemp(join(tmpdir(), 'ade-package-profiles-e2e-'))

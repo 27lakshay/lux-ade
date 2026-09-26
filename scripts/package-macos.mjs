@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
@@ -7,6 +7,8 @@ const stage = join(root, '.ade/package-stage')
 const providers = join(stage, 'providers')
 const bin = join(stage, 'bin')
 const bunVersion = '1.3.14'
+const pnpmVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).packageManager?.match(/^pnpm@([0-9.]+)$/)?.[1]
+if (!pnpmVersion) throw new Error('The root packageManager must pin a pnpm version')
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', env: process.env })
@@ -81,4 +83,15 @@ const installedBunVersion = execFileSync(bun, ['--version'], { encoding: 'utf8' 
 if (installedBunVersion !== bunVersion) throw new Error(`Expected Bun ${bunVersion}, found ${installedBunVersion}`)
 mkdirSync(bin, { recursive: true })
 copyFileSync(bun, join(bin, 'bun'))
+const pnpm = realpathSync(process.env.ADE_PACKAGE_PNPM_BIN || execFileSync('/bin/sh', ['-c', 'command -v pnpm'], { encoding: 'utf8' }).trim())
+if (!statSync(pnpm).isFile()) throw new Error('A standalone pnpm executable is required for workspace scripts')
+const pnpmMagic = readFileSync(pnpm).subarray(0, 4).toString('hex')
+if (!new Set(['cffaedfe', 'feedfacf', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']).has(pnpmMagic)) {
+  throw new Error('Packaged pnpm must be a standalone Mach-O executable')
+}
+const installedPnpmVersion = execFileSync(pnpm, ['--version'], { encoding: 'utf8' }).trim()
+if (installedPnpmVersion !== pnpmVersion) throw new Error(`Expected pnpm ${pnpmVersion}, found ${installedPnpmVersion}`)
+copyFileSync(pnpm, join(bin, 'pnpm'))
+chmodSync(join(bin, 'pnpm'), 0o755)
+writeFileSync(join(bin, 'node'), '#!/bin/sh\nif [ -z "${ADE_NODE_BIN:-}" ]; then echo "Bundled Node runtime is unavailable" >&2; exit 127; fi\nELECTRON_RUN_AS_NODE=1 exec "$ADE_NODE_BIN" "$@"\n', { mode: 0o755 })
 run('pnpm', ['exec', 'electron-builder', '--mac', '--dir', '--publish', 'never', '--config', 'electron-builder.yml'])
