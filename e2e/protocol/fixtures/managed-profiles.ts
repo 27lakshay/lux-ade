@@ -19,7 +19,7 @@ import type { CallRequest, Operation } from '../../../packages/client/dist/index
 import type { Response } from '../../../packages/contracts/dist/index.js'
 import { rpc } from '../../fixtures/daemon'
 import { controlBinary } from './control'
-import { binaries, scratchEnvironment } from './environment'
+import { binaries, scratchEnvironment, scratchGitConfig } from './environment'
 import { test as base, type AdeHarness } from './index'
 import { isRunning } from './processes'
 import type { CliResult, Hello, ScratchProfile } from './profile'
@@ -249,7 +249,7 @@ export class ProfileHost {
   static async create(ade: AdeHarness): Promise<ProfileHost> {
     const host = new ProfileHost(ade)
     for (const directory of [host.userHome, host.cwd]) await mkdir(directory, { recursive: true, mode: 0o700 })
-    await writeFile(join(host.userHome, '.gitconfig'), '[user]\n\tname = ADE E2E\n\temail = e2e@example.invalid\n')
+    await writeFile(join(host.userHome, '.gitconfig'), scratchGitConfig())
     return host
   }
 
