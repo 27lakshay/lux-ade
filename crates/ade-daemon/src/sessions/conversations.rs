@@ -16,6 +16,26 @@ use ade_core::contract::conversations::{
     WindowCloseRequest, WindowSaveRequest,
 };
 
+/// Why `agent.disconnect` must refuse a Conversation, if it must.
+///
+/// An imported conversation stays read-only: marking it "disconnected" would
+/// let a later send start a fresh native session under imported history.
+fn disconnect_refusal(status: &str, terminal_owned: bool) -> Option<String> {
+    if status == crate::history::import::IMPORTED_STATUS {
+        return Some(format!(
+            "This conversation is an imported native session and is read-only: {}",
+            crate::history::import::RESUME_UNAVAILABLE
+        ));
+    }
+    if terminal_owned {
+        return Some("Return this Conversation from its terminal before disconnecting".into());
+    }
+    if matches!(status, "starting" | "running" | "waiting" | "cancelling") {
+        return Some("Cancel the active turn before disconnecting".into());
+    }
+    None
+}
+
 /// Checks a field before decoding, so it keeps its established error message.
 fn field<'a, T>(
     request: &'a Value,
@@ -560,22 +580,21 @@ impl Sessions {
                 let disconnect: AgentDisconnectRequest = decode(request)?;
                 let id = non_empty("conversation_id", &disconnect.conversation_id)?;
                 let mut d = self.data.lock().unwrap();
-                let mut c = d.store.conversation(id)?;
-                ensure!(
-                    c.terminal_owner.is_none(),
-                    "Return this Conversation from its terminal before disconnecting"
-                );
-                ensure!(
-                    !matches!(
-                        c.status.as_str(),
-                        "starting" | "running" | "waiting" | "cancelling"
-                    ),
-                    "Cancel the active turn before disconnecting"
-                );
-                if let Some(rpc) = d.agents.get(id).and_then(|agent| agent.rpc.as_ref()) {
-                    rpc.stop_confirmed()?;
+                let c = d.store.conversation(id)?;
+                if let Some(refusal) = disconnect_refusal(&c.status, c.terminal_owner.is_some()) {
+                    bail!(refusal);
                 }
-                d.agents.remove(id);
+                // The provider stop can take a full shutdown escalation, so it
+                // runs without the session lock.
+                if let Some((run, rpc)) = Self::begin_stop(&mut d, id)? {
+                    drop(d);
+                    self.finish_stop(id, &run, rpc)?;
+                    d = self.data.lock().unwrap();
+                    if Self::owns(&d, id, &run) {
+                        d.agents.remove(id);
+                    }
+                }
+                let mut c = d.store.conversation(id)?;
                 c.status = "disconnected".into();
                 c.updated_at = now_ms();
                 d.store.commit_conversation(&c, &[], &[])?;
@@ -617,6 +636,28 @@ impl Sessions {
                 reply(&Ack::default())
             }
             _ => bail!("Unknown session operation"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_imported_conversation_is_never_disconnected_into_a_sendable_one() {
+        let refusal = disconnect_refusal(crate::history::import::IMPORTED_STATUS, false);
+        assert!(refusal.is_some_and(|reason| reason.contains("read-only")));
+    }
+
+    #[test]
+    fn disconnect_keeps_its_terminal_and_active_turn_refusals() {
+        assert!(disconnect_refusal("ready", true).is_some());
+        for busy in ["starting", "running", "waiting", "cancelling"] {
+            assert!(disconnect_refusal(busy, false).is_some());
+        }
+        for idle in ["idle", "ready", "error", "interrupted", "disconnected"] {
+            assert_eq!(disconnect_refusal(idle, false), None);
         }
     }
 }

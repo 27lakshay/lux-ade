@@ -283,7 +283,7 @@ impl Sessions {
     pub(super) fn ensure_lease_resolved(d: &Data, key: &LeaseKey) -> Result<()> {
         if let Some(unresolved) = d.unresolved.get(key) {
             bail!(
-                "Execution ownership is unresolved after a daemon restart: {}. ADE will not start conflicting work until the runtime confirms it has stopped",
+                "Execution ownership is unresolved: {}. ADE will not start conflicting work until the runtime confirms it has stopped",
                 unresolved.reason
             );
         }

@@ -7,7 +7,9 @@
 //! refusal rolls the receipt back. The runtime keys each native call by the
 //! operation ID, so a retry after a lost reply asks the same run for its
 //! stored answer instead of calling the provider again. A retry that finds a
-//! different run can prove nothing and settles as unknown.
+//! different run can prove nothing and settles as unknown. A refusal the
+//! provider itself sent settles as refused; any other failure stays
+//! unconfirmed.
 //!
 //! File rewind delegates to the checkpoint restore under a derived operation
 //! ID, whose own receipt and reconciliation make a retry safe.
@@ -134,6 +136,48 @@ fn unknown_reply(
     }
 }
 
+/// The provider's refusal when `error` proves a control took no effect.
+///
+/// Only a runtime error receipt (`Rejected`) whose typed cause is a reply
+/// the provider itself sent is proof. A transport failure, a lost reply or a
+/// receipt with no typed cause cannot show the provider never acted, so it
+/// stays uncertain.
+fn definite_refusal(error: &anyhow::Error) -> Option<String> {
+    use ade_core::error::Failure;
+    error.downcast_ref::<crate::runtime::Rejected>()?;
+    match error.downcast_ref::<Failure>()? {
+        failure @ (Failure::Rejected
+        | Failure::Authentication
+        | Failure::RateLimit
+        | Failure::UsageLimit
+        | Failure::SessionUnavailable) => Some(failure.to_string()),
+        // These also describe a closed or failed transport.
+        Failure::ProcessExited
+        | Failure::Disconnected
+        | Failure::InvalidData
+        | Failure::SaveFailed
+        | Failure::OutcomeUnknown
+        | Failure::Unavailable => None,
+    }
+}
+
+fn refused(
+    operation_id: &str,
+    conversation_id: &str,
+    control: ConversationControl,
+    reason: String,
+) -> ConversationControlReply {
+    ConversationControlReply {
+        reason: Some(reason),
+        ..control_reply(
+            operation_id,
+            conversation_id,
+            control,
+            ControlOutcome::Refused,
+        )
+    }
+}
+
 fn not_confirmed(error: anyhow::Error) -> anyhow::Error {
     anyhow!(
         "{error:#}. The outcome was not confirmed; retry with the same operation_id to read it, never with a new one"
@@ -170,7 +214,8 @@ impl Live {
 
 fn live(d: &Data, id: &str) -> Result<Live> {
     let conversation = d.store.conversation(id)?;
-    let agent = d.agents.get(id);
+    // An Agent whose stop is in flight takes no controls.
+    let agent = d.agents.get(id).filter(|agent| !agent.stopping);
     Ok(Live {
         conversation,
         run: agent.map(|a| a.run_id.clone()),
@@ -373,9 +418,20 @@ impl Sessions {
             text: steer.text.clone(),
             attachments: vec![],
         };
-        let turn = rpc
-            .steer(&thread, &steer.turn_id, &steer.operation_id, &prompt)
-            .map_err(not_confirmed)?;
+        let turn = match rpc.steer(&thread, &steer.turn_id, &steer.operation_id, &prompt) {
+            Ok(turn) => turn,
+            Err(error) => {
+                let Some(reason) = definite_refusal(&error) else {
+                    return Err(not_confirmed(error));
+                };
+                return self.settle_control(&refused(
+                    &steer.operation_id,
+                    &steer.conversation_id,
+                    control,
+                    reason,
+                ));
+            }
+        };
         self.settle_control(&ConversationControlReply {
             turn_id: Some(turn),
             ..control_reply(
@@ -429,8 +485,17 @@ impl Sessions {
                     .context("The provider session is unknown")?,
             )
         };
-        rpc.compact(&thread, &compact.operation_id)
-            .map_err(not_confirmed)?;
+        if let Err(error) = rpc.compact(&thread, &compact.operation_id) {
+            let Some(reason) = definite_refusal(&error) else {
+                return Err(not_confirmed(error));
+            };
+            return self.settle_control(&refused(
+                &compact.operation_id,
+                &compact.conversation_id,
+                control,
+                reason,
+            ));
+        }
         self.settle_control(&control_reply(
             &compact.operation_id,
             &compact.conversation_id,
@@ -629,6 +694,63 @@ mod tests {
                 Some("run_1")
             ),
             Replay::Unknown
+        );
+    }
+
+    /// The runtime's error receipt, as `Supervisor::agent` returns it.
+    fn receipt_error(failure: ade_core::error::Failure) -> anyhow::Error {
+        anyhow::Error::new(failure).context(crate::runtime::Rejected(failure.to_string()))
+    }
+
+    #[test]
+    fn a_provider_refusal_settles_as_refused_and_a_retry_reads_it() {
+        use ade_core::error::Failure;
+        // `turn/steer` refused because the turn ended before the call arrived.
+        let reason = definite_refusal(&receipt_error(Failure::Rejected))
+            .expect("a provider refusal is proof");
+        let reply = refused("op_1", "conversation_1", ConversationControl::Steer, reason);
+        assert_eq!(reply.outcome, ControlOutcome::Refused);
+        // The settled receipt answers the retry instead of asking the run again.
+        let stored = serde_json::to_value(&reply).unwrap();
+        assert_eq!(
+            replay(
+                &receipt(Status::Settled, Some(stored.clone())),
+                Some("run_1")
+            ),
+            Replay::Stored(stored)
+        );
+        for failure in [
+            Failure::Authentication,
+            Failure::RateLimit,
+            Failure::UsageLimit,
+            Failure::SessionUnavailable,
+        ] {
+            assert!(definite_refusal(&receipt_error(failure)).is_some());
+        }
+    }
+
+    #[test]
+    fn an_uncertain_control_failure_is_never_settled_as_refused() {
+        use ade_core::error::Failure;
+        for failure in [
+            Failure::OutcomeUnknown,
+            Failure::Disconnected,
+            Failure::ProcessExited,
+            Failure::InvalidData,
+            Failure::Unavailable,
+            Failure::SaveFailed,
+        ] {
+            assert_eq!(definite_refusal(&receipt_error(failure)), None);
+        }
+        // An error that never came from a runtime receipt.
+        assert_eq!(
+            definite_refusal(&anyhow::Error::new(Failure::Rejected)),
+            None
+        );
+        // An error receipt without a typed cause proves nothing.
+        assert_eq!(
+            definite_refusal(&crate::runtime::Rejected("Missing steered turn".into()).into()),
+            None
         );
     }
 

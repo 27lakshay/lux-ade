@@ -6957,6 +6957,11 @@
           "type": "string"
         },
         {
+          "const": "refused",
+          "description": "The provider definitely refused the request, so it took no effect;\n`reason` carries the refusal. The receipt is settled, and a new\nrequest needs a new operation ID.",
+          "type": "string"
+        },
+        {
           "const": "unknown",
           "description": "ADE cannot prove whether the effect happened. It is never retried\nautomatically; inspect the Conversation or workspace.",
           "type": "string"

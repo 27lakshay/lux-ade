@@ -20,8 +20,42 @@ pub(super) struct Agent {
     pub(super) rpc: Option<Arc<dyn Provider>>,
     pub(super) submission: Option<String>,
     pub(super) account_generation: Option<u64>,
+    /// A stop is in flight outside the session lock. The stopper owns the
+    /// outcome; no new work is admitted to this Agent meanwhile.
+    pub(super) stopping: bool,
     pub(super) _lease: crate::worktrees::Lease,
 }
+
+/// A stopping Agent's run and its provider handle, if one was attached.
+pub(super) type Stopping = (String, Option<Arc<dyn Provider>>);
+
+/// How a failed Agent is recorded once its provider stop has returned.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct FailedAgent {
+    pub(super) status: &'static str,
+    /// Why the worktree lease stays held; `None` releases it.
+    pub(super) hold: Option<String>,
+}
+
+/// Decides a failed Agent's record from its stop. `stop` is `None` when no
+/// provider was attached. Only a confirmed stop releases the worktree lease;
+/// an unconfirmed one keeps it and marks the attempt interrupted, because the
+/// provider may still be running.
+pub(super) fn failed_agent(stop: Option<Result<(), String>>) -> FailedAgent {
+    match stop {
+        None | Some(Ok(())) => FailedAgent {
+            status: "error",
+            hold: None,
+        },
+        Some(Err(error)) => FailedAgent {
+            status: "interrupted",
+            hold: Some(format!(
+                "the provider was not confirmed stopped ({error}); ADE keeps its workspace leased until the runtime confirms it has stopped"
+            )),
+        },
+    }
+}
+
 pub(super) fn e2e_answer_exit(point: &str) {
     if std::env::var("ADE_E2E_ANSWER_FAILPOINT").as_deref() == Ok(point) {
         std::process::exit(94);
@@ -93,13 +127,30 @@ impl Sessions {
             .conversation(id)?
             .workspace_id;
         self.ensure_workspace_bound(&workspace_id)?;
-        let (c, run, rpc, prompt) = {
+        let mut lease = admission.prelease;
+        let (c, run, rpc, prompt) = loop {
+            // A new Agent's lease runs git, so it is taken before the session
+            // lock. A connected Agent already holds one.
+            if lease.is_none() {
+                let root = {
+                    let d = self.data.lock().unwrap();
+                    if d.agents.contains_key(id) {
+                        None
+                    } else {
+                        Some(d.store.workspace(&workspace_id)?.root)
+                    }
+                };
+                if let Some(root) = root {
+                    lease = Some(self.worktrees.agent_lease(&root)?);
+                }
+            }
             let mut d = self.data.lock().unwrap();
             ensure!(
                 !d.draining,
                 "Application daemon is restarting; prompt remains queued"
             );
             Self::ensure_lease_resolved(&d, &super::leases::LeaseKey::Agent(id.to_owned()))?;
+            Self::ensure_not_stopping(&d, id)?;
             d.store.guard_send_intent(
                 id,
                 key,
@@ -134,11 +185,10 @@ impl Sessions {
             }
             let workspace = d.store.workspace(&d.store.conversation(id)?.workspace_id)?;
             d.store.ensure_workspace_bound(&workspace.id)?;
-            let lease = if let Some(lease) = admission.prelease {
-                lease
-            } else {
-                self.worktrees.agent_lease(&workspace.root)?
-            };
+            if lease.is_none() && !d.agents.contains_key(id) {
+                // The Agent disconnected after the lease check; take one and admit again.
+                continue;
+            }
             let prompt = d.store.prompt(id, text, attachments)?;
             let prompt = d.store.with_switch_context(id, key, prompt)?;
             ade_core::prompt_context::admit(&current.provider, &prompt)?;
@@ -158,7 +208,8 @@ impl Sessions {
                 rpc: None,
                 submission: None,
                 account_generation: None,
-                _lease: lease,
+                stopping: false,
+                _lease: lease.take().expect("a new Agent's lease was taken above"),
             });
             run.submission = Some(key.into());
             begin.conversation.runtime_run = Some(run.run_id.clone());
@@ -174,7 +225,7 @@ impl Sessions {
             );
             d.store.commit_conversation(&begin.conversation, &[], &[])?;
             self.changed(&mut d, &begin.conversation, &[begin.message])?;
-            result
+            break result;
         };
         let hub = self.clone();
         let key = key.to_owned();
@@ -200,6 +251,7 @@ impl Sessions {
                     let d = hub.data.lock().unwrap();
                     ensure!(
                         Self::owns(&d, &c.id, &run)
+                            && !d.agents[&c.id].stopping
                             && d.agents[&c.id].submission.as_deref() == Some(&key),
                         "Agent submission was cancelled"
                     );
@@ -259,7 +311,24 @@ impl Sessions {
         if clear_view {
             self.clear_view_terminal(id)?;
         }
-        let run = {
+        let mut lease = None;
+        let run = loop {
+            // A new Agent's lease runs git, so it is taken before the session
+            // lock. A connected Agent already holds one.
+            if lease.is_none() {
+                let root = {
+                    let d = self.data.lock().unwrap();
+                    if d.agents.contains_key(id) {
+                        None
+                    } else {
+                        let c = d.store.conversation(id)?;
+                        Some(d.store.workspace(&c.workspace_id)?.root)
+                    }
+                };
+                if let Some(root) = root {
+                    lease = Some(self.worktrees.agent_lease(&root)?);
+                }
+            }
             let mut d = self.data.lock().unwrap();
             let mut c = d.store.conversation(id)?;
             Self::ensure_account_current(
@@ -272,6 +341,7 @@ impl Sessions {
                 "Return this Conversation from its terminal before resuming"
             );
             Self::ensure_lease_resolved(&d, &super::leases::LeaseKey::Agent(id.to_owned()))?;
+            Self::ensure_not_stopping(&d, id)?;
             if let Some(agent) = d.agents.get(id) {
                 ensure!(
                     agent.rpc.is_some()
@@ -291,7 +361,10 @@ impl Sessions {
             ensure!(d.agents.len() < 16, "Limit of 16 connected Agents reached");
             let workspace = d.store.workspace(&c.workspace_id)?;
             d.store.ensure_workspace_bound(&workspace.id)?;
-            let lease = self.worktrees.agent_lease(&workspace.root)?;
+            let Some(lease) = lease.take() else {
+                // The Agent disconnected after the lease check; take one and admit again.
+                continue;
+            };
             c.status = "starting".into();
             c.error = None;
             c.updated_at = now_ms();
@@ -307,11 +380,12 @@ impl Sessions {
                     rpc: None,
                     submission: None,
                     account_generation: None,
+                    stopping: false,
                     _lease: lease,
                 },
             );
             self.changed(&mut d, &c, &[])?;
-            run
+            break run;
         };
         let hub = self.clone();
         let id = id.to_owned();
@@ -340,6 +414,42 @@ impl Sessions {
     }
     pub(super) fn owns(d: &Data, id: &str, run: &str) -> bool {
         d.agents.get(id).is_some_and(|a| a.run_id == run)
+    }
+    /// Refuses work for an Agent whose stop is in flight.
+    pub(super) fn ensure_not_stopping(d: &Data, id: &str) -> Result<()> {
+        ensure!(
+            !d.agents.get(id).is_some_and(|agent| agent.stopping),
+            "The Agent is stopping; retry once it has stopped"
+        );
+        Ok(())
+    }
+    /// Marks a connected Agent stopping and returns what its stop needs, so
+    /// the stop runs after the caller releases the session lock.
+    pub(super) fn begin_stop(d: &mut Data, id: &str) -> Result<Option<Stopping>> {
+        Self::ensure_not_stopping(d, id)?;
+        Ok(d.agents.get_mut(id).map(|agent| {
+            agent.stopping = true;
+            (agent.run_id.clone(), agent.rpc.clone())
+        }))
+    }
+    /// Stops an Agent marked by [`Self::begin_stop`]; call it without the
+    /// session lock. A failed stop leaves the Agent attached as it was.
+    pub(super) fn finish_stop(
+        &self,
+        id: &str,
+        run: &str,
+        rpc: Option<Arc<dyn Provider>>,
+    ) -> Result<()> {
+        let result = rpc.map_or(Ok(()), |rpc| rpc.stop_confirmed());
+        if result.is_err() {
+            let mut d = self.data.lock().unwrap();
+            if let Some(agent) = d.agents.get_mut(id)
+                && agent.run_id == run
+            {
+                agent.stopping = false;
+            }
+        }
+        result
     }
     pub(super) fn connect_agent(
         self: &Arc<Self>,
@@ -581,21 +691,71 @@ impl Sessions {
         } else {
             error
         };
-        let result = (|| -> Result<()> {
+        // Mark the Agent stopping under the lock, then stop its provider
+        // without the lock: a stop can take a full shutdown escalation.
+        let rpc = {
             let mut d = self.data.lock().unwrap();
             if !Self::owns(&d, id, run)
+                || d.agents[id].stopping
                 || submission.is_some_and(|key| d.agents[id].submission.as_deref() != Some(key))
             {
+                return;
+            }
+            let agent = d.agents.get_mut(id).unwrap();
+            agent.stopping = true;
+            agent.rpc.clone()
+        };
+        let stop = rpc.map(|rpc| rpc.stop_confirmed().map_err(|error| format!("{error:#}")));
+        let outcome = failed_agent(stop);
+        let result = (|| -> Result<()> {
+            let mut d = self.data.lock().unwrap();
+            if !Self::owns(&d, id, run) {
                 return Ok(());
             }
             let agent = d.agents.remove(id).unwrap();
-            if let Some(rpc) = agent.rpc {
-                rpc.stop();
+            let current = d.store.conversation(id).ok();
+            if let Some(reason) = &outcome.hold {
+                // The provider may still run in the worktree: keep its lease
+                // until the runtime reports the run gone.
+                let workspace_id = current
+                    .as_ref()
+                    .map(|c| c.workspace_id.clone())
+                    .unwrap_or_default();
+                let root = d
+                    .store
+                    .workspace(&workspace_id)
+                    .map(|w| w.root)
+                    .unwrap_or_default();
+                let key = super::leases::LeaseKey::Agent(id.to_owned());
+                eprintln!("Session lease unresolved: {key:?}: {reason}");
+                d.unresolved.insert(
+                    key.clone(),
+                    super::leases::Unresolved {
+                        claim: super::leases::Claim {
+                            key,
+                            workspace_id,
+                            root,
+                            holder: super::leases::Holder::Agent {
+                                run: Some(run.to_owned()),
+                                provider: current
+                                    .as_ref()
+                                    .map(|c| c.provider.clone())
+                                    .unwrap_or_default(),
+                                account: current.as_ref().and_then(|c| c.account_id.clone()),
+                            },
+                        },
+                        reason: reason.clone(),
+                        lease: Some(agent._lease),
+                    },
+                );
             }
-            let mut c = d.store.conversation(id)?;
-            c.status = "error".into();
+            let mut c = current.context("Missing Conversation")?;
+            c.status = outcome.status.into();
             c.queue_paused = true;
-            c.error = Some(error);
+            c.error = Some(match &outcome.hold {
+                Some(reason) => format!("{error}. {reason}"),
+                None => error,
+            });
             c.active_turn_id = None;
             c.updated_at = now_ms();
             let mut requests = d.store.pending(id)?;
@@ -1063,5 +1223,35 @@ impl Sessions {
         c.updated_at = now_ms();
         d.store.commit_conversation(&c, &[], &[p])?;
         self.changed(&mut d, &c, &[])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unconfirmed_stop_keeps_the_lease_and_marks_the_attempt_interrupted() {
+        // The runtime answered `Unconfirmed`, or its socket was refused
+        // because the supervisor exited while the provider group lives on.
+        for error in [
+            "Provider shutdown was not confirmed",
+            "Connection refused (os error 61)",
+        ] {
+            let failed = failed_agent(Some(Err(error.into())));
+            assert_eq!(failed.status, "interrupted");
+            assert!(failed.hold.is_some_and(|reason| reason.contains(error)));
+        }
+    }
+
+    #[test]
+    fn only_a_confirmed_stop_releases_the_lease() {
+        let released = FailedAgent {
+            status: "error",
+            hold: None,
+        };
+        assert_eq!(failed_agent(Some(Ok(()))), released);
+        // No provider was attached to this Agent.
+        assert_eq!(failed_agent(None), released);
     }
 }
