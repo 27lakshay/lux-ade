@@ -956,6 +956,502 @@
         }
       ]
     },
+    "BrowserCloseRequest": {
+      "additionalProperties": false,
+      "description": "`browser.close`: close an exact tab.",
+      "properties": {
+        "op": {
+          "const": "browser.close"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "operation_id",
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "BrowserInspectRequest": {
+      "additionalProperties": false,
+      "description": "`browser.inspect`: inspect one exact tab.",
+      "properties": {
+        "op": {
+          "const": "browser.inspect"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "BrowserListRequest": {
+      "additionalProperties": false,
+      "description": "`browser.list`: list the tabs under one exact owner.",
+      "properties": {
+        "op": {
+          "const": "browser.list"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id"
+      ],
+      "type": "object"
+    },
+    "BrowserMutation": {
+      "description": "The `browser.open`, `browser.navigate` and `browser.close` reply, relayed\nfrom the owner. `payload_fingerprint` is the daemon's fingerprint of the\noperation, its profile, owner, tab and URL.",
+      "properties": {
+        "op": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "payload_fingerprint": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_mutation` type tag.",
+          "enum": [
+            "browser_mutation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "request_id",
+        "payload_fingerprint",
+        "op",
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "BrowserNavigateRequest": {
+      "additionalProperties": false,
+      "description": "`browser.navigate`: load a URL in an exact tab.",
+      "properties": {
+        "op": {
+          "const": "browser.navigate"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "operation_id",
+        "tab_id",
+        "url"
+      ],
+      "type": "object"
+    },
+    "BrowserOpenRequest": {
+      "additionalProperties": false,
+      "description": "`browser.open`: open a tab. `operation_id` is the caller-owned operation\nID; the daemon still accepts it as `request_id`.",
+      "properties": {
+        "op": {
+          "const": "browser.open"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "url": {
+          "description": "An `http://` or `https://` URL of at most 8192 bytes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "operation_id",
+        "url"
+      ],
+      "type": "object"
+    },
+    "BrowserOperation": {
+      "description": "The `browser.operation` reply: the daemon's receipt, or the owner's.",
+      "properties": {
+        "op": {
+          "description": "The mutation's operation; only the owner's receipt carries it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "payload_fingerprint": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "result": {
+          "description": "The completed mutation's reply. The daemon's receipt sends `null`\nbefore completion; the owner's omits it without a tab."
+        },
+        "state": {
+          "$ref": "#/$defs/BrowserOperationState"
+        },
+        "type": {
+          "description": "The `browser_operation` type tag.",
+          "enum": [
+            "browser_operation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "request_id",
+        "payload_fingerprint",
+        "state"
+      ],
+      "type": "object"
+    },
+    "BrowserOperationRequest": {
+      "additionalProperties": false,
+      "description": "`browser.operation`: read a browser mutation's receipt by its operation ID.",
+      "properties": {
+        "op": {
+          "const": "browser.operation"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "description": "Defaults to this daemon's browser profile.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "BrowserOperationState": {
+      "description": "Where a browser mutation stands.",
+      "oneOf": [
+        {
+          "enum": [
+            "completed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "The daemon admitted the mutation and has no outcome yet.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "The outcome was lost; inspect before another action.",
+          "type": "string"
+        }
+      ]
+    },
+    "BrowserOwnerGetRequest": {
+      "additionalProperties": false,
+      "description": "`browser.owner.get`: read the live browser owner of a profile.",
+      "properties": {
+        "op": {
+          "const": "browser.owner.get"
+        },
+        "profile_id": {
+          "description": "Defaults to this daemon's browser profile.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "BrowserOwnerRegisterRequest": {
+      "additionalProperties": false,
+      "description": "`browser.owner.register`: name the Unix socket that owns the profile's browser.",
+      "properties": {
+        "op": {
+          "const": "browser.owner.register"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "socket_path": {
+          "description": "An absolute path to a private, owned Unix socket.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "socket_path"
+      ],
+      "type": "object"
+    },
+    "BrowserOwnerReleased": {
+      "description": "The `browser.owner.unregister` reply.",
+      "properties": {
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id"
+      ],
+      "type": "object"
+    },
+    "BrowserOwnerReply": {
+      "description": "The `browser.owner.get` and `browser.owner.register` reply.",
+      "properties": {
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_owner` type tag.",
+          "enum": [
+            "browser_owner"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id"
+      ],
+      "type": "object"
+    },
+    "BrowserOwnerUnregisterRequest": {
+      "additionalProperties": false,
+      "description": "`browser.owner.unregister`: release the owner registration.",
+      "properties": {
+        "op": {
+          "const": "browser.owner.unregister"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id"
+      ],
+      "type": "object"
+    },
+    "BrowserTabRecord": {
+      "description": "One browser tab as the owner reports it. The owner uses camelCase names.",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "loading": {
+          "type": "boolean"
+        },
+        "observedUrl": {
+          "type": "string"
+        },
+        "profileId": {
+          "description": "The owner's browser storage profile.",
+          "type": "string"
+        },
+        "requestedUrl": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "profileId",
+        "requestedUrl",
+        "observedUrl",
+        "title",
+        "loading",
+        "error"
+      ],
+      "type": "object"
+    },
+    "BrowserTabReply": {
+      "description": "The `browser.inspect` reply, relayed from the owner.",
+      "properties": {
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab": {
+          "$ref": "#/$defs/BrowserTabRecord"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_tab` type tag.",
+          "enum": [
+            "browser_tab"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "tab"
+      ],
+      "type": "object"
+    },
+    "BrowserTabs": {
+      "description": "The `browser.list` reply, relayed from the owner.",
+      "properties": {
+        "owner_id": {
+          "type": "string"
+        },
+        "profileId": {
+          "description": "The owner's browser storage profile.",
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "selectedId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tabs": {
+          "items": {
+            "$ref": "#/$defs/BrowserTabRecord"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `browser_tabs` type tag.",
+          "enum": [
+            "browser_tabs"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "profileId",
+        "selectedId",
+        "tabs"
+      ],
+      "type": "object"
+    },
     "CatalogFrame": {
       "description": "The `catalog.get` reply and the `catalog` feed frame.",
       "properties": {
@@ -1443,6 +1939,89 @@
         "queued",
         "boot_id",
         "revision"
+      ],
+      "type": "object"
+    },
+    "DaemonHello": {
+      "description": "The `hello` reply: build identity and every protocol version.",
+      "properties": {
+        "application_protocol": {
+          "type": "string"
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "build_id": {
+          "description": "`ADE_BUILD_ID`, or `null` when the daemon was built without one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "response_owner": {
+          "type": "string"
+        },
+        "review_protocol": {
+          "type": "string"
+        },
+        "runtime_instance": {
+          "type": "string"
+        },
+        "runtime_pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtime_protocol": {
+          "type": "string"
+        },
+        "runtime_socket": {
+          "type": "string"
+        },
+        "session_protocol": {
+          "type": "string"
+        },
+        "terminal_snapshot_format": {
+          "type": "string"
+        },
+        "terminal_snapshot_formats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `hello` type tag.",
+          "enum": [
+            "hello"
+          ],
+          "type": "string"
+        },
+        "worktree_protocol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "build_id",
+        "application_protocol",
+        "runtime_protocol",
+        "runtime_instance",
+        "runtime_pid",
+        "runtime_socket",
+        "pid",
+        "session_protocol",
+        "worktree_protocol",
+        "review_protocol",
+        "response_owner",
+        "terminal_snapshot_format",
+        "terminal_snapshot_formats",
+        "boot_id"
       ],
       "type": "object"
     },
@@ -2118,6 +2697,19 @@
         "path",
         "timeout_ms",
         "interval_ms"
+      ],
+      "type": "object"
+    },
+    "HelloRequest": {
+      "additionalProperties": false,
+      "description": "`hello`: the handshake every connection sends first.",
+      "properties": {
+        "op": {
+          "const": "hello"
+        }
+      },
+      "required": [
+        "op"
       ],
       "type": "object"
     },
@@ -2901,6 +3493,30 @@
       ],
       "type": "object"
     },
+    "RestartPrepared": {
+      "description": "The `runtime.prepare_restart` reply.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "runtime_instance": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "boot_id",
+        "runtime_instance"
+      ],
+      "type": "object"
+    },
     "ReviewCommitRequest": {
       "additionalProperties": false,
       "description": "`review.commit`: commit the reviewed staged index.",
@@ -3543,6 +4159,109 @@
         "operation_id",
         "path",
         "revision"
+      ],
+      "type": "object"
+    },
+    "RuntimePrepareRestartRequest": {
+      "additionalProperties": false,
+      "description": "`runtime.prepare_restart`: drain the daemon so a new build can take over.",
+      "properties": {
+        "boot_id": {
+          "description": "The `boot_id` from `runtime.status`; a different daemon refuses.",
+          "type": "string"
+        },
+        "op": {
+          "const": "runtime.prepare_restart"
+        }
+      },
+      "required": [
+        "op",
+        "boot_id"
+      ],
+      "type": "object"
+    },
+    "RuntimeStatus": {
+      "description": "The `runtime.status` reply.",
+      "properties": {
+        "active_git_operations": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "agents": {
+          "description": "The runtime supervisor's agent runs without their command logs."
+        },
+        "application_protocol": {
+          "type": "string"
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "connected_agents": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtime_instance": {
+          "type": "string"
+        },
+        "runtime_pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtime_protocol": {
+          "type": "string"
+        },
+        "runtime_socket": {
+          "type": "string"
+        },
+        "stopping": {
+          "type": "boolean"
+        },
+        "terminals": {
+          "description": "The runtime supervisor's terminal list, relayed as it sends it."
+        },
+        "type": {
+          "description": "The `runtime_status` type tag.",
+          "enum": [
+            "runtime_status"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "application_protocol",
+        "runtime_protocol",
+        "boot_id",
+        "pid",
+        "runtime_pid",
+        "runtime_instance",
+        "runtime_socket",
+        "connected_agents",
+        "active_git_operations",
+        "stopping",
+        "terminals",
+        "agents"
+      ],
+      "type": "object"
+    },
+    "RuntimeStatusRequest": {
+      "additionalProperties": false,
+      "description": "`runtime.status`: read the daemon and runtime supervisor state.",
+      "properties": {
+        "op": {
+          "const": "runtime.status"
+        }
+      },
+      "required": [
+        "op"
       ],
       "type": "object"
     },
@@ -4192,6 +4911,39 @@
         },
         "service": {
           "$ref": "#/$defs/Service"
+        },
+        "type": {
+          "description": "The `service_changed` type tag.",
+          "enum": [
+            "service_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "service",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ServiceChanged2": {
+      "description": "The `service_changed` feed frame.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "metrics": {
+          "description": "Launch metrics; present only when the service was just launched."
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "service": {
+          "description": "The changed service definition."
         },
         "type": {
           "description": "The `service_changed` type tag.",
@@ -5183,6 +5935,19 @@
         "op",
         "workspace_id",
         "name"
+      ],
+      "type": "object"
+    },
+    "SessionSubscribeRequest": {
+      "additionalProperties": false,
+      "description": "`session.subscribe`: turn this connection into the feed. The reply is the\nfirst `catalog` frame; later lines are feed frames.",
+      "properties": {
+        "op": {
+          "const": "session.subscribe"
+        }
+      },
+      "required": [
+        "op"
       ],
       "type": "object"
     },
@@ -6258,6 +7023,11 @@
       "domain": "services",
       "frame": "ServiceChanged",
       "type": "service_changed"
+    },
+    {
+      "domain": "daemon",
+      "frame": "ServiceChanged2",
+      "type": "service_changed"
     }
   ],
   "operations": [
@@ -6882,6 +7652,97 @@
       "name": "file.preview",
       "request": "FilePreviewRequest",
       "response": "FilePreview",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "hello",
+      "request": "HelloRequest",
+      "response": "DaemonHello",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "runtime.status",
+      "request": "RuntimeStatusRequest",
+      "response": "RuntimeStatus",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "runtime.prepare_restart",
+      "request": "RuntimePrepareRestartRequest",
+      "response": "RestartPrepared",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "daemon",
+      "name": "session.subscribe",
+      "request": "SessionSubscribeRequest",
+      "response": "CatalogFrame",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.owner.get",
+      "request": "BrowserOwnerGetRequest",
+      "response": "BrowserOwnerReply",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.owner.register",
+      "request": "BrowserOwnerRegisterRequest",
+      "response": "BrowserOwnerReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.owner.unregister",
+      "request": "BrowserOwnerUnregisterRequest",
+      "response": "BrowserOwnerReleased",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.list",
+      "request": "BrowserListRequest",
+      "response": "BrowserTabs",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.inspect",
+      "request": "BrowserInspectRequest",
+      "response": "BrowserTabReply",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.open",
+      "request": "BrowserOpenRequest",
+      "response": "BrowserMutation",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.navigate",
+      "request": "BrowserNavigateRequest",
+      "response": "BrowserMutation",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.close",
+      "request": "BrowserCloseRequest",
+      "response": "BrowserMutation",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "daemon",
+      "name": "browser.operation",
+      "request": "BrowserOperationRequest",
+      "response": "BrowserOperation",
       "tier": "query"
     }
   ]

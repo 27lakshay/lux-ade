@@ -1,4 +1,4 @@
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand } from '@ade/client'
 import { CliError, required, type CommandResult } from '../shared.js'
 
 export const browserUsage = `  browser owner                         Inspect the selected profile's live browser owner
@@ -14,22 +14,20 @@ export async function runBrowserCommand(socketPath: string, area: string | undef
   rest: string[]): Promise<CommandResult | undefined> {
   if (area === 'browser' && action === 'owner') {
     if (rest.length) throw new CliError('usage', 'browser owner does not accept arguments.')
-    return requestDaemon(socketPath, 'browser.owner.get')
+    return dailyUseCommand(socketPath, { op: 'browser.owner.get' })
   }
   if (area === 'browser' && (action === 'list' || action === 'inspect')) {
     const count = action === 'inspect' ? 2 : 1
     if (rest.length !== count) throw new CliError('usage', `browser ${action} requires OWNER_ID${count === 2 ? ' TAB_ID' : ''}.`)
-    const owner = await requestDaemon(socketPath, 'browser.owner.get')
-    const profileId = owner.profile_id
-    if (typeof profileId !== 'string' || !profileId) throw new CliError('protocol', 'Browser owner has no profile identity.')
-    return requestDaemon(socketPath, `browser.${action}`, {
-      profile_id: profileId, owner_id: required(rest[0], 'OWNER_ID'),
-      ...(action === 'inspect' ? { tab_id: required(rest[1], 'TAB_ID') } : {}),
-    })
+    const profileId = await browserProfile(socketPath)
+    const ownerId = required(rest[0], 'OWNER_ID')
+    if (action === 'list') return dailyUseCommand(socketPath, { op: 'browser.list', profile_id: profileId, owner_id: ownerId })
+    return dailyUseCommand(socketPath, { op: 'browser.inspect', profile_id: profileId, owner_id: ownerId,
+      tab_id: required(rest[1], 'TAB_ID') })
   }
   if (area === 'browser' && action === 'operation') {
     if (rest.length !== 1) throw new CliError('usage', 'browser operation requires REQUEST_ID.')
-    return requestDaemon(socketPath, 'browser.operation', { request_id: required(rest[0], 'REQUEST_ID') })
+    return dailyUseCommand(socketPath, { op: 'browser.operation', operation_id: required(rest[0], 'REQUEST_ID') })
   }
   if (area === 'browser' && (action === 'open' || action === 'navigate' || action === 'close')) {
     const positionalCount = action === 'open' ? 2 : action === 'navigate' ? 3 : 2
@@ -38,15 +36,21 @@ export async function runBrowserCommand(socketPath: string, area: string | undef
       throw new CliError('usage', `browser ${action} requires OWNER_ID${action === 'open' ? ' URL' :
         action === 'navigate' ? ' TAB_ID URL' : ' TAB_ID'} --request-id ID.`)
     }
-    const owner = await requestDaemon(socketPath, 'browser.owner.get')
-    const profileId = owner.profile_id
-    if (typeof profileId !== 'string' || !profileId) throw new CliError('protocol', 'Browser owner has no profile identity.')
-    return requestDaemon(socketPath, `browser.${action}`, {
-      profile_id: profileId, owner_id: required(rest[0], 'OWNER_ID'),
-      request_id: rest[positionalCount + 1],
-      ...(action !== 'open' ? { tab_id: required(rest[1], 'TAB_ID') } : {}),
-      ...(action !== 'close' ? { url: required(rest[action === 'open' ? 1 : 2], 'URL') } : {}),
-    })
+    const profileId = await browserProfile(socketPath)
+    const target = { profile_id: profileId, owner_id: required(rest[0], 'OWNER_ID'),
+      operation_id: rest[positionalCount + 1] }
+    if (action === 'open') return dailyUseCommand(socketPath, { op: 'browser.open', ...target, url: required(rest[1], 'URL') })
+    if (action === 'navigate') {
+      return dailyUseCommand(socketPath, { op: 'browser.navigate', ...target, tab_id: required(rest[1], 'TAB_ID'),
+        url: required(rest[2], 'URL') })
+    }
+    return dailyUseCommand(socketPath, { op: 'browser.close', ...target, tab_id: required(rest[1], 'TAB_ID') })
   }
   return undefined
+}
+
+async function browserProfile(socketPath: string): Promise<string> {
+  const owner = await dailyUseCommand<'browser.owner.get'>(socketPath, { op: 'browser.owner.get' })
+  if (!owner.profile_id) throw new CliError('protocol', 'Browser owner has no profile identity.')
+  return owner.profile_id
 }

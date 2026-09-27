@@ -37,6 +37,23 @@ export type ContractDefinition =
   | AttachmentReclaimPreviewRequest
   | AttachmentReply
   | BranchPolicy
+  | BrowserCloseRequest
+  | BrowserInspectRequest
+  | BrowserListRequest
+  | BrowserMutation
+  | BrowserNavigateRequest
+  | BrowserOpenRequest
+  | BrowserOperation
+  | BrowserOperationRequest
+  | BrowserOperationState
+  | BrowserOwnerGetRequest
+  | BrowserOwnerRegisterRequest
+  | BrowserOwnerReleased
+  | BrowserOwnerReply
+  | BrowserOwnerUnregisterRequest
+  | BrowserTabRecord
+  | BrowserTabReply
+  | BrowserTabs
   | CatalogFrame
   | CatalogGetRequest
   | Catalogue
@@ -50,6 +67,7 @@ export type ContractDefinition =
   | ConversationCreated
   | ConversationGetRequest
   | ConversationSnapshot
+  | DaemonHello
   | Descriptor
   | Draft
   | DraftGetRequest
@@ -72,6 +90,7 @@ export type ContractDefinition =
   | GitOperationStatus
   | HealthCheckRequest
   | HealthPolicy
+  | HelloRequest
   | Inspection
   | ListenerFamily
   | ListenerInventory
@@ -105,6 +124,7 @@ export type ContractDefinition =
   | RepositoryRebindListRequest
   | RepositoryRebindRequest
   | RepositoryRecord
+  | RestartPrepared
   | ReviewCommitRequest
   | ReviewDiff
   | ReviewDiffPage
@@ -124,6 +144,9 @@ export type ContractDefinition =
   | ReviewStatus
   | ReviewStatusRequest
   | ReviewUnstageRequest
+  | RuntimePrepareRestartRequest
+  | RuntimeStatus
+  | RuntimeStatusRequest
   | Script
   | ScriptInspectRequest
   | ScriptInspection
@@ -143,6 +166,7 @@ export type ContractDefinition =
   | SendIntentState
   | Service
   | ServiceChanged
+  | ServiceChanged2
   | ServiceConfigureRequest
   | ServiceExecution
   | ServiceHealthSample
@@ -169,6 +193,7 @@ export type ContractDefinition =
   | ServiceReply
   | ServiceStartRequest
   | ServiceStopRequest
+  | SessionSubscribeRequest
   | SetupState
   | TerminalCreateRequest
   | TerminalCreated
@@ -210,6 +235,10 @@ export type ContractDefinition =
  * What `worktree.remove` does with the removed tree's branch.
  */
 export type BranchPolicy = 'keep' | 'merged'
+/**
+ * Where a browser mutation stands.
+ */
+export type BrowserOperationState = 'completed' | 'accepted' | 'unknown'
 /**
  * Whether a service's recorded run is live in the current runtime.
  */
@@ -759,6 +788,213 @@ export interface AttachmentReply {
   [k: string]: unknown
 }
 /**
+ * `browser.close`: close an exact tab.
+ */
+export interface BrowserCloseRequest {
+  op: 'browser.close'
+  operation_id: string
+  owner_id: string
+  profile_id: string
+  tab_id: string
+}
+/**
+ * `browser.inspect`: inspect one exact tab.
+ */
+export interface BrowserInspectRequest {
+  op: 'browser.inspect'
+  owner_id: string
+  profile_id: string
+  tab_id: string
+}
+/**
+ * `browser.list`: list the tabs under one exact owner.
+ */
+export interface BrowserListRequest {
+  op: 'browser.list'
+  owner_id: string
+  profile_id: string
+}
+/**
+ * The `browser.open`, `browser.navigate` and `browser.close` reply, relayed
+ * from the owner. `payload_fingerprint` is the daemon's fingerprint of the
+ * operation, its profile, owner, tab and URL.
+ */
+export interface BrowserMutation {
+  op: string
+  owner_id: string
+  payload_fingerprint: string
+  profile_id: string
+  request_id: string
+  tab_id: string
+  /**
+   * The `browser_mutation` type tag.
+   */
+  type: 'browser_mutation'
+  [k: string]: unknown
+}
+/**
+ * `browser.navigate`: load a URL in an exact tab.
+ */
+export interface BrowserNavigateRequest {
+  op: 'browser.navigate'
+  operation_id: string
+  owner_id: string
+  profile_id: string
+  tab_id: string
+  url: string
+}
+/**
+ * `browser.open`: open a tab. `operation_id` is the caller-owned operation
+ * ID; the daemon still accepts it as `request_id`.
+ */
+export interface BrowserOpenRequest {
+  op: 'browser.open'
+  operation_id: string
+  owner_id: string
+  profile_id: string
+  /**
+   * An `http://` or `https://` URL of at most 8192 bytes.
+   */
+  url: string
+}
+/**
+ * The `browser.operation` reply: the daemon's receipt, or the owner's.
+ */
+export interface BrowserOperation {
+  /**
+   * The mutation's operation; only the owner's receipt carries it.
+   */
+  op?: string | null
+  owner_id: string
+  payload_fingerprint: string
+  profile_id: string
+  request_id: string
+  /**
+   * The completed mutation's reply. The daemon's receipt sends `null`
+   * before completion; the owner's omits it without a tab.
+   */
+  result?: unknown
+  state: BrowserOperationState
+  /**
+   * The `browser_operation` type tag.
+   */
+  type: 'browser_operation'
+  [k: string]: unknown
+}
+/**
+ * `browser.operation`: read a browser mutation's receipt by its operation ID.
+ */
+export interface BrowserOperationRequest {
+  op: 'browser.operation'
+  operation_id: string
+  /**
+   * Defaults to this daemon's browser profile.
+   */
+  profile_id?: string | null
+}
+/**
+ * `browser.owner.get`: read the live browser owner of a profile.
+ */
+export interface BrowserOwnerGetRequest {
+  op: 'browser.owner.get'
+  /**
+   * Defaults to this daemon's browser profile.
+   */
+  profile_id?: string | null
+}
+/**
+ * `browser.owner.register`: name the Unix socket that owns the profile's browser.
+ */
+export interface BrowserOwnerRegisterRequest {
+  op: 'browser.owner.register'
+  owner_id: string
+  profile_id: string
+  /**
+   * An absolute path to a private, owned Unix socket.
+   */
+  socket_path: string
+}
+/**
+ * The `browser.owner.unregister` reply.
+ */
+export interface BrowserOwnerReleased {
+  owner_id: string
+  profile_id: string
+  /**
+   * The `ack` type tag.
+   */
+  type: 'ack'
+  [k: string]: unknown
+}
+/**
+ * The `browser.owner.get` and `browser.owner.register` reply.
+ */
+export interface BrowserOwnerReply {
+  owner_id: string
+  profile_id: string
+  /**
+   * The `browser_owner` type tag.
+   */
+  type: 'browser_owner'
+  [k: string]: unknown
+}
+/**
+ * `browser.owner.unregister`: release the owner registration.
+ */
+export interface BrowserOwnerUnregisterRequest {
+  op: 'browser.owner.unregister'
+  owner_id: string
+  profile_id: string
+}
+/**
+ * One browser tab as the owner reports it. The owner uses camelCase names.
+ */
+export interface BrowserTabRecord {
+  error: string
+  id: string
+  loading: boolean
+  observedUrl: string
+  /**
+   * The owner's browser storage profile.
+   */
+  profileId: string
+  requestedUrl: string
+  title: string
+  [k: string]: unknown
+}
+/**
+ * The `browser.inspect` reply, relayed from the owner.
+ */
+export interface BrowserTabReply {
+  owner_id: string
+  profile_id: string
+  tab: BrowserTabRecord
+  tab_id: string
+  /**
+   * The `browser_tab` type tag.
+   */
+  type: 'browser_tab'
+  [k: string]: unknown
+}
+/**
+ * The `browser.list` reply, relayed from the owner.
+ */
+export interface BrowserTabs {
+  owner_id: string
+  /**
+   * The owner's browser storage profile.
+   */
+  profileId: string
+  profile_id: string
+  selectedId: string | null
+  tabs: BrowserTabRecord[]
+  /**
+   * The `browser_tabs` type tag.
+   */
+  type: 'browser_tabs'
+  [k: string]: unknown
+}
+/**
  * The `catalog.get` reply and the `catalog` feed frame.
  */
 export interface CatalogFrame {
@@ -981,6 +1217,33 @@ export interface ConversationSnapshot {
    * The `conversation_snapshot` type tag.
    */
   type: 'conversation_snapshot'
+  [k: string]: unknown
+}
+/**
+ * The `hello` reply: build identity and every protocol version.
+ */
+export interface DaemonHello {
+  application_protocol: string
+  boot_id: string
+  /**
+   * `ADE_BUILD_ID`, or `null` when the daemon was built without one.
+   */
+  build_id: string | null
+  pid: number
+  response_owner: string
+  review_protocol: string
+  runtime_instance: string
+  runtime_pid: number
+  runtime_protocol: string
+  runtime_socket: string
+  session_protocol: string
+  terminal_snapshot_format: string
+  terminal_snapshot_formats: string[]
+  /**
+   * The `hello` type tag.
+   */
+  type: 'hello'
+  worktree_protocol: string
   [k: string]: unknown
 }
 /**
@@ -1253,6 +1516,12 @@ export interface HealthPolicy {
   timeout_ms: number
 }
 /**
+ * `hello`: the handshake every connection sends first.
+ */
+export interface HelloRequest {
+  op: 'hello'
+}
+/**
  * The `listener.list` reply.
  */
 export interface ListenerInventory {
@@ -1441,6 +1710,18 @@ export interface RepositoryRebindRequest {
   op: 'repository.rebind'
   path: string
   repository_id: string
+}
+/**
+ * The `runtime.prepare_restart` reply.
+ */
+export interface RestartPrepared {
+  boot_id: string
+  runtime_instance: string
+  /**
+   * The `ack` type tag.
+   */
+  type: 'ack'
+  [k: string]: unknown
 }
 /**
  * `review.commit`: commit the reviewed staged index.
@@ -1726,6 +2007,50 @@ export interface ReviewUnstageRequest {
   workspace_id: string
 }
 /**
+ * `runtime.prepare_restart`: drain the daemon so a new build can take over.
+ */
+export interface RuntimePrepareRestartRequest {
+  /**
+   * The `boot_id` from `runtime.status`; a different daemon refuses.
+   */
+  boot_id: string
+  op: 'runtime.prepare_restart'
+}
+/**
+ * The `runtime.status` reply.
+ */
+export interface RuntimeStatus {
+  active_git_operations: number
+  /**
+   * The runtime supervisor's agent runs without their command logs.
+   */
+  agents: unknown
+  application_protocol: string
+  boot_id: string
+  connected_agents: number
+  pid: number
+  runtime_instance: string
+  runtime_pid: number
+  runtime_protocol: string
+  runtime_socket: string
+  stopping: boolean
+  /**
+   * The runtime supervisor's terminal list, relayed as it sends it.
+   */
+  terminals: unknown
+  /**
+   * The `runtime_status` type tag.
+   */
+  type: 'runtime_status'
+  [k: string]: unknown
+}
+/**
+ * `runtime.status`: read the daemon and runtime supervisor state.
+ */
+export interface RuntimeStatusRequest {
+  op: 'runtime.status'
+}
+/**
  * `script.inspect`: one run's state and output tail.
  */
 export interface ScriptInspectRequest {
@@ -2005,6 +2330,26 @@ export interface ServiceChanged {
   metrics?: unknown
   revision: number
   service: Service
+  /**
+   * The `service_changed` type tag.
+   */
+  type: 'service_changed'
+  [k: string]: unknown
+}
+/**
+ * The `service_changed` feed frame.
+ */
+export interface ServiceChanged2 {
+  boot_id: string
+  /**
+   * Launch metrics; present only when the service was just launched.
+   */
+  metrics?: unknown
+  revision: number
+  /**
+   * The changed service definition.
+   */
+  service: unknown
   /**
    * The `service_changed` type tag.
    */
@@ -2441,6 +2786,13 @@ export interface ServiceStopRequest {
   workspace_id: string
 }
 /**
+ * `session.subscribe`: turn this connection into the feed. The reply is the
+ * first `catalog` frame; later lines are feed frames.
+ */
+export interface SessionSubscribeRequest {
+  op: 'session.subscribe'
+}
+/**
  * `terminal.create`: add another terminal to a workspace.
  *
  * `operation_id` is the caller-owned receipt ID; `request_id` is accepted as
@@ -2857,7 +3209,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -2949,6 +3301,19 @@ export interface RequestByOperation {
   "file.list": FileListRequest
   "file.search": FileSearchRequest
   "file.preview": FilePreviewRequest
+  "hello": HelloRequest
+  "runtime.status": RuntimeStatusRequest
+  "runtime.prepare_restart": RuntimePrepareRestartRequest
+  "session.subscribe": SessionSubscribeRequest
+  "browser.owner.get": BrowserOwnerGetRequest
+  "browser.owner.register": BrowserOwnerRegisterRequest
+  "browser.owner.unregister": BrowserOwnerUnregisterRequest
+  "browser.list": BrowserListRequest
+  "browser.inspect": BrowserInspectRequest
+  "browser.open": BrowserOpenRequest
+  "browser.navigate": BrowserNavigateRequest
+  "browser.close": BrowserCloseRequest
+  "browser.operation": BrowserOperationRequest
 }
 
 export interface ResponseByOperation {
@@ -3041,6 +3406,19 @@ export interface ResponseByOperation {
   "file.list": FileList
   "file.search": FileSearch
   "file.preview": FilePreview
+  "hello": DaemonHello
+  "runtime.status": RuntimeStatus
+  "runtime.prepare_restart": RestartPrepared
+  "session.subscribe": CatalogFrame
+  "browser.owner.get": BrowserOwnerReply
+  "browser.owner.register": BrowserOwnerReply
+  "browser.owner.unregister": BrowserOwnerReleased
+  "browser.list": BrowserTabs
+  "browser.inspect": BrowserTabReply
+  "browser.open": BrowserMutation
+  "browser.navigate": BrowserMutation
+  "browser.close": BrowserMutation
+  "browser.operation": BrowserOperation
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged
+export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ServiceChanged2

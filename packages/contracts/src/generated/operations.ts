@@ -91,6 +91,19 @@ export const operations = {
   "file.list": { tier: "query", domain: "files", request: "FileListRequest", response: "FileList" },
   "file.search": { tier: "query", domain: "files", request: "FileSearchRequest", response: "FileSearch" },
   "file.preview": { tier: "query", domain: "files", request: "FilePreviewRequest", response: "FilePreview" },
+  "hello": { tier: "query", domain: "daemon", request: "HelloRequest", response: "DaemonHello" },
+  "runtime.status": { tier: "query", domain: "daemon", request: "RuntimeStatusRequest", response: "RuntimeStatus" },
+  "runtime.prepare_restart": { tier: "effect_command", domain: "daemon", request: "RuntimePrepareRestartRequest", response: "RestartPrepared" },
+  "session.subscribe": { tier: "query", domain: "daemon", request: "SessionSubscribeRequest", response: "CatalogFrame" },
+  "browser.owner.get": { tier: "query", domain: "daemon", request: "BrowserOwnerGetRequest", response: "BrowserOwnerReply" },
+  "browser.owner.register": { tier: "idempotent_command", domain: "daemon", request: "BrowserOwnerRegisterRequest", response: "BrowserOwnerReply" },
+  "browser.owner.unregister": { tier: "idempotent_command", domain: "daemon", request: "BrowserOwnerUnregisterRequest", response: "BrowserOwnerReleased" },
+  "browser.list": { tier: "query", domain: "daemon", request: "BrowserListRequest", response: "BrowserTabs" },
+  "browser.inspect": { tier: "query", domain: "daemon", request: "BrowserInspectRequest", response: "BrowserTabReply" },
+  "browser.open": { tier: "effect_command", domain: "daemon", request: "BrowserOpenRequest", response: "BrowserMutation" },
+  "browser.navigate": { tier: "effect_command", domain: "daemon", request: "BrowserNavigateRequest", response: "BrowserMutation" },
+  "browser.close": { tier: "effect_command", domain: "daemon", request: "BrowserCloseRequest", response: "BrowserMutation" },
+  "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */
@@ -98,4 +111,5 @@ export const frames = {
   "catalog": { domain: "workspaces", frame: "CatalogFrame" },
   "conversation_changed": { domain: "conversations", frame: "ConversationChanged" },
   "service_changed": { domain: "services", frame: "ServiceChanged" },
+  "service_changed": { domain: "daemon", frame: "ServiceChanged2" },
 } as const
