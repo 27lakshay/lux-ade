@@ -122,6 +122,7 @@
     {
       "files": ["apps/desktop/src/renderer/**"],
       "rules": {
+        "ade/require-store-selector": "error",
         "no-restricted-imports": [
           "error",
           {
@@ -129,12 +130,22 @@
               {
                 "name": "electron",
                 "message": "The renderer is sandboxed. Reach the backend through window.adeHost (see apps/desktop/AGENTS.md)."
+              },
+              {
+                "name": "@ade/client",
+                "allowTypeImports": true,
+                "message": "The SDK's root opens sockets, which the sandboxed renderer cannot. Import types only, or use @ade/client/sync."
               }
             ],
             "patterns": [
               {
                 "group": ["node:*"],
                 "message": "The renderer is sandboxed and has no Node. Ask the main process through window.adeHost."
+              },
+              {
+                "group": ["@ade/client/*", "!@ade/client/sync"],
+                "allowTypeImports": true,
+                "message": "Only @ade/client/sync is transport-free; import types only from the rest of the SDK."
               }
             ]
           }

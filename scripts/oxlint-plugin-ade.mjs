@@ -82,7 +82,31 @@ const electronWebPreferences = {
   },
 }
 
+// Store hooks that must be given a selector: without one, a component re-renders on every change.
+const STORE_HOOKS = { useStore: 2, useDaemon: 1 }
+
+const requireStoreSelector = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'A component reads a store through a selector, never the whole store.' },
+  },
+  create(context) {
+    return {
+      CallExpression(node) {
+        if (node.callee.type !== 'Identifier' || !(node.callee.name in STORE_HOOKS)) return
+        const needed = STORE_HOOKS[node.callee.name]
+        if (node.arguments.length < needed) {
+          context.report({
+            node,
+            message: `${node.callee.name} without a selector re-renders on every store change; pass a selector that picks only what the component renders.`,
+          })
+        }
+      },
+    }
+  },
+}
+
 export default {
   meta: { name: 'ade' },
-  rules: { 'electron-web-preferences': electronWebPreferences },
+  rules: { 'electron-web-preferences': electronWebPreferences, 'require-store-selector': requireStoreSelector },
 }

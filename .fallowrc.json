@@ -31,7 +31,8 @@
     "rules": [
       { "from": "desktop-main", "allow": ["desktop-shared", "sdk", "contracts"] },
       { "from": "desktop-preload", "allow": ["desktop-shared", "terminal"], "allowTypeOnly": ["sdk", "contracts"] },
-      { "from": "desktop-renderer", "allow": ["desktop-shared", "terminal"], "allowTypeOnly": ["sdk", "contracts"] },
+      // The renderer may use the SDK's transport-free sync module; lint limits it to that module.
+      { "from": "desktop-renderer", "allow": ["desktop-shared", "terminal", "sdk"], "allowTypeOnly": ["contracts"] },
       { "from": "desktop-stream-bridge", "allow": ["desktop-shared", "sdk", "contracts"] },
       // Code every process loads: the IPC contract, bridge types, commands, the content policy.
       { "from": "desktop-shared", "allow": [], "allowTypeOnly": ["sdk", "contracts", "terminal"] },

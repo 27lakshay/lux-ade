@@ -103,3 +103,9 @@ invalid(
   `const extra = {}; new BrowserWindow({ webPreferences: { ${safe}, ...extra } })`,
   /Do not spread/,
 )
+
+valid('require-store-selector', 'allows useStore with a selector', 'useStore(store, (state) => state.status)')
+valid('require-store-selector', 'allows useDaemon with a selector', 'useDaemon((state) => state.workspaces.w1)')
+valid('require-store-selector', 'ignores other calls', 'useState(0)')
+invalid('require-store-selector', 'reports useStore without a selector', 'useStore(store)', /without a selector/)
+invalid('require-store-selector', 'reports useDaemon without a selector', 'useDaemon()', /without a selector/)
