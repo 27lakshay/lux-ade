@@ -10,6 +10,14 @@
   round-trips and reconciliation deciders, kept beside the code they test.
   A feature is accepted only when its register acceptance passes as E2E.
   Write specs on the shared fixtures described in `e2e/protocol/README.md`.
+- Machine safety (after the 2026-09-27 incident where test runs likely wedged
+  the Mac's `securityd` and the user could not log in until a safe-mode boot):
+  E2E and workers must never call the macOS Security framework or the
+  `security` tool, create keychains, or touch the login keychain. Secret
+  storage is tested through a test-only file backend. The real Keychain backend
+  is checked only by hand, with the user present. Specs that use other system
+  services (`hdiutil`, and similar) are opt-in through `ADE_E2E_SYSTEM=1` and run
+  serially. Rounds use at most 5 workers, each with `ADE_E2E_WORKERS=2`.
 - Existing prototype and E2E tests are legacy coverage. Do not delete them. Keep
   the legacy Rust tests passing, because `check:static` runs them.
 - Operations fall into three tiers: query, idempotent command and effect command.
