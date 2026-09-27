@@ -8,7 +8,8 @@ use super::*;
 use crate::store::context_nodes::sha256;
 use ade_core::contract::context::{
     ContextCaptureRequest, ContextGetRequest, ContextKind, ContextNode, ContextNodeReply,
-    ContextOrigin, ContextPlan, ContextPlanRequest, ContextProvenance, ContextSource,
+    ContextOrigin, ContextPlan, ContextPlanRequest, ContextPreview, ContextProvenance,
+    ContextSource,
 };
 use ade_core::contract::files::{FilePreview, PreviewKind};
 use ade_core::contract::review::ReviewDiff;
@@ -60,9 +61,21 @@ fn client_text(text: &str) -> Result<String> {
     Ok(plain)
 }
 
+/// The request without its `op`. Context requests refuse unknown fields, so
+/// the operation name must not reach the decoder.
+fn fields(request: &Value) -> Value {
+    let mut fields = request.clone();
+    if let Some(map) = fields.as_object_mut() {
+        map.remove("op");
+    }
+    fields
+}
+
 impl Sessions {
     pub(super) fn context_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
-        match request["op"].as_str().unwrap_or("") {
+        let op = request["op"].as_str().unwrap_or("");
+        let request = &fields(request);
+        match op {
             "context.capture" => self.context_capture(decode(request)?),
             "context.get" => {
                 let get: ContextGetRequest = decode(request)?;
@@ -99,15 +112,25 @@ impl Sessions {
 
     fn context_reply(&self, store: &Store, node: ContextNode) -> Result<Value> {
         let mut available = true;
+        let mut previews = Vec::new();
         for attachment in &node.attachments {
-            available &= store
-                .attachment_bytes(&node.conversation_id, &attachment.id)?
-                .is_some();
+            match store.attachment_bytes(&node.conversation_id, &attachment.id)? {
+                None => available = false,
+                Some((stored, bytes)) => previews.push(ContextPreview {
+                    attachment_id: stored.id,
+                    text: (stored.media_type == "text/plain")
+                        .then(|| String::from_utf8(bytes))
+                        .transpose()
+                        .context("A text context attachment is not UTF-8")?,
+                    media_type: stored.media_type,
+                }),
+            }
         }
         reply(&ContextNodeReply {
             tag: Default::default(),
             node,
             available,
+            previews,
         })
     }
 

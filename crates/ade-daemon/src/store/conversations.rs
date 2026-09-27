@@ -235,6 +235,26 @@ impl Store {
     }
     /// Queues a prompt under `id`, or finds the same prompt already under it
     /// and reports where it stands.
+    /// Where a queued prompt stands now, without changing anything. `None`
+    /// when no prompt or message has this ID.
+    pub fn queue_entry(&self, id: &str) -> Result<Option<QueueEntry>> {
+        if message_by_id(&self.connection, id)?.is_some() {
+            return Ok(Some(QueueEntry::Delivered));
+        }
+        let state: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT status FROM queued_prompts WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(state.map(|state| match state.as_str() {
+            "cancelled" => QueueEntry::Cancelled,
+            "submitted" => QueueEntry::Delivered,
+            _ => QueueEntry::Queued,
+        }))
+    }
     pub fn enqueue_content(
         &self,
         conversation: &str,

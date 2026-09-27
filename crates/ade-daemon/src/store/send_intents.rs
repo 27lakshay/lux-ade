@@ -34,9 +34,14 @@ pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendI
 pub(super) fn draft_from(db: &Connection, conversation: &str, window: &str) -> Result<Draft> {
     one::<Conversation>(db, "conversations", conversation)?;
     check_id(window)?;
-    Ok(db.query_row("SELECT text,revision,attachments FROM drafts WHERE conversation_id=?1 AND window_id=?2",
+    let mut draft: Draft = db.query_row("SELECT text,revision,attachments FROM drafts WHERE conversation_id=?1 AND window_id=?2",
         params![conversation,window], |row| Ok(Draft { text: row.get(0)?, revision: row.get(1)?,
-            attachments: attachment_row(row, 2)? })).optional()?.unwrap_or_default())
+            attachments: attachment_row(row, 2)?, context_nodes: Vec::new() })).optional()?.unwrap_or_default();
+    if draft.revision > 0 {
+        draft.context_nodes =
+            super::drafts::draft_context(db, conversation, window, draft.revision)?;
+    }
+    Ok(draft)
 }
 
 impl Store {
@@ -194,6 +199,7 @@ impl Store {
         );
         if intent.state == "completed" {
             return Ok(Draft {
+                context_nodes: Vec::new(),
                 text: String::new(),
                 revision: intent
                     .draft_revision
@@ -239,6 +245,7 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(Draft {
+            context_nodes: Vec::new(),
             text: String::new(),
             revision: next,
             attachments: vec![],
@@ -318,6 +325,7 @@ impl Store {
         check_id(window)?;
         check_text(&draft.text)?;
         validate_attachments(&self.connection, conversation, &draft.attachments)?;
+        super::drafts::check_context_nodes(&draft.context_nodes)?;
         ensure!(draft.revision > 0, "Invalid draft revision");
         ensure!(
             self.send_intent(conversation, window)?.is_none(),
@@ -328,6 +336,15 @@ impl Store {
         let tx = self.transaction()?;
         let previous = draft_from(&tx, conversation, window)?;
         let written = tx.execute("INSERT INTO drafts(conversation_id,window_id,revision,text,attachments) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation_id,window_id) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachments=excluded.attachments WHERE excluded.revision>drafts.revision",params![conversation,window,draft.revision,draft.text,encode(&draft.attachments)?])?;
+        if written == 1 {
+            super::drafts::write_draft_context(
+                &tx,
+                conversation,
+                window,
+                draft.revision,
+                &draft.context_nodes,
+            )?;
+        }
         // A save that clears a non-empty draft keeps it recallable.
         if written == 1 && super::drafts::discarded_by(&previous, draft) {
             super::drafts::record_history(

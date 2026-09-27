@@ -200,6 +200,7 @@ export type ContractDefinition =
   | ContextOrigin
   | ContextPlan
   | ContextPlanRequest
+  | ContextPreview
   | ContextProvenance
   | ContextSource
   | ContextTransfer
@@ -4804,9 +4805,26 @@ export interface ContextNodeReply {
   available: boolean
   node: ContextNode
   /**
+   * Each live attachment in order. A text attachment carries the exact
+   * document the provider receives after its plan's `text_prefix`.
+   */
+  previews: ContextPreview[]
+  /**
    * The `context_node` type tag.
    */
   type: 'context_node'
+  [k: string]: unknown
+}
+/**
+ * What one node attachment holds, for a preview before sending.
+ */
+export interface ContextPreview {
+  attachment_id: string
+  media_type: string
+  /**
+   * The UTF-8 document of a `text/plain` attachment; null for an image.
+   */
+  text: string | null
   [k: string]: unknown
 }
 /**
@@ -5902,6 +5920,7 @@ export interface DiagnosticsStatusRequest {
  */
 export interface Draft {
   attachments?: Attachment[]
+  context_nodes?: DraftContextNode[]
   revision: number
   text: string
   [k: string]: unknown
@@ -6037,6 +6056,7 @@ export interface DraftRestored {
  */
 export interface Draft1 {
   attachments?: Attachment[]
+  context_nodes?: DraftContextNode[]
   revision: number
   text: string
   [k: string]: unknown
@@ -6046,6 +6066,11 @@ export interface Draft1 {
  */
 export interface DraftSaveRequest {
   attachments?: Attachment[]
+  /**
+   * Context nodes the window attached, such as `context.capture` nodes.
+   * They are kept with this revision and restored after a crash.
+   */
+  context_nodes?: DraftContextNode[]
   conversation_id: string
   /**
    * Resolve a conflict: save only if the stored revision is still this one.

@@ -6506,6 +6506,14 @@
         "node": {
           "$ref": "#/$defs/ContextNode"
         },
+        "previews": {
+          "default": [],
+          "description": "Each live attachment in order. A text attachment carries the exact\ndocument the provider receives after its plan's `text_prefix`.",
+          "items": {
+            "$ref": "#/$defs/ContextPreview"
+          },
+          "type": "array"
+        },
         "type": {
           "description": "The `context_node` type tag.",
           "enum": [
@@ -6517,7 +6525,8 @@
       "required": [
         "type",
         "node",
-        "available"
+        "available",
+        "previews"
       ],
       "type": "object"
     },
@@ -6606,6 +6615,30 @@
       "required": [
         "op",
         "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ContextPreview": {
+      "description": "What one node attachment holds, for a preview before sending.",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "text": {
+          "description": "The UTF-8 document of a `text/plain` attachment; null for an image.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "attachment_id",
+        "media_type",
+        "text"
       ],
       "type": "object"
     },
@@ -9645,6 +9678,12 @@
           },
           "type": "array"
         },
+        "context_nodes": {
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
+          },
+          "type": "array"
+        },
         "revision": {
           "maximum": 9007199254740991,
           "minimum": -9007199254740991,
@@ -9973,6 +10012,13 @@
         "attachments": {
           "items": {
             "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "context_nodes": {
+          "description": "Context nodes the window attached, such as `context.capture` nodes.\nThey are kept with this revision and restored after a crash.",
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
           },
           "type": "array"
         },
