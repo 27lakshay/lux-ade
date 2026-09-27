@@ -79,7 +79,7 @@ existing daemon.
 | 5 browser tabs | same: 5 tabs through the daemon relay to a scripted owner, listed and inspected in every round and relayed again after the crash | pass at daemon level; Electron renderers not covered |
 | Large searchable history | same: 20 imported Claude Code sessions, 10,000 messages, index caught up, searched every round | pass |
 | Large diff | same: 5000 changed lines, `review.diff` every sustained round | pass |
-| Slow consumer | same: a feed subscriber that never reads is evicted (`feed.subscribers_evicted` 1); terminal viewers that fall 64 frames behind are cut off and reattach (85 times) | pass |
+| Slow consumer | same: a feed subscriber that never reads is evicted (`feed.subscribers_evicted` 1); terminal viewers that fall 64 frames behind are cut off and reattach (85 times). Since the resync change, no attachment is closed: a lagging viewer is resynchronized (19 resyncs, no closes; see `e2e-terminal-cleanup.md`) | pass |
 | Sustained and idle phases | same, plus a daemon-crash phase | pass |
 | Record p95 echo and admission | same (`ADE_E2E_LOAD_RESULTS`) | pass; admission p95 asserted under 250 ms in every phase, echo recorded only |
 | Whole-process-tree memory | same: `phys_footprint` over 36 processes | pass for daemon, runtime and children; browser renderers not included |
