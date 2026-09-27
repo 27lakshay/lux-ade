@@ -127,6 +127,11 @@ fn every_operation_declares_a_tier_and_named_types() {
         tiers,
         [
             ("catalog.get", "query"),
+            ("workspace.open", "idempotent_command"),
+            ("workspace.rebind.list", "query"),
+            ("workspace.rebind", "idempotent_command"),
+            ("repository.rebind.list", "query"),
+            ("repository.rebind", "idempotent_command"),
             ("conversation.get", "query"),
             ("agent.send", "effect_command"),
             ("agent.answer", "effect_command"),

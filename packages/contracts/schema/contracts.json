@@ -609,6 +609,132 @@
       ],
       "type": "object"
     },
+    "RepositoryAck": {
+      "description": "The `repository.rebind` reply.",
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/RepositoryRecord"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repository"
+      ],
+      "type": "object"
+    },
+    "RepositoryRebindCatalog": {
+      "description": "The `repository.rebind.list` reply.",
+      "properties": {
+        "repositories": {
+          "items": {
+            "$ref": "#/$defs/RepositoryRebindEntry"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `repository_rebind_catalog` type tag.",
+          "enum": [
+            "repository_rebind_catalog"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repositories"
+      ],
+      "type": "object"
+    },
+    "RepositoryRebindEntry": {
+      "description": "One restored repository. `rebindable` says a saved physical identity exists.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "needs_rebind": {
+          "type": "boolean"
+        },
+        "rebindable": {
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "needs_rebind",
+        "rebindable"
+      ],
+      "type": "object"
+    },
+    "RepositoryRebindListRequest": {
+      "additionalProperties": false,
+      "description": "`repository.rebind.list`: restored repositories and whether each needs a path.",
+      "properties": {
+        "op": {
+          "const": "repository.rebind.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "RepositoryRebindRequest": {
+      "additionalProperties": false,
+      "description": "`repository.rebind`: bind a restored Git repository to a verified checkout.",
+      "properties": {
+        "op": {
+          "const": "repository.rebind"
+        },
+        "path": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "path"
+      ],
+      "type": "object"
+    },
+    "RepositoryRecord": {
+      "description": "A saved repository as the daemon stores it.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "needs_rebind": {
+          "type": "boolean"
+        },
+        "root": {
+          "description": "The Git common directory.",
+          "type": "string"
+        },
+        "worktree_lifecycle_needs_rebind": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "needs_rebind",
+        "worktree_lifecycle_needs_rebind"
+      ],
+      "type": "object"
+    },
     "TerminalOwner": {
       "properties": {
         "runtime_instance": {
@@ -625,6 +751,129 @@
         "terminal_id",
         "transfer_id",
         "runtime_instance"
+      ],
+      "type": "object"
+    },
+    "WorkspaceAck": {
+      "description": "The `workspace.open` and `workspace.rebind` reply.",
+      "properties": {
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceRecord"
+        }
+      },
+      "required": [
+        "type",
+        "workspace"
+      ],
+      "type": "object"
+    },
+    "WorkspaceOpenRequest": {
+      "additionalProperties": false,
+      "description": "`workspace.open`: register a folder, or return the workspace already at it.",
+      "properties": {
+        "op": {
+          "const": "workspace.open"
+        },
+        "path": {
+          "description": "The folder to open; the daemon canonicalizes it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRebindCatalog": {
+      "description": "The `workspace.rebind.list` reply.",
+      "properties": {
+        "type": {
+          "description": "The `workspace_rebind_catalog` type tag.",
+          "enum": [
+            "workspace_rebind_catalog"
+          ],
+          "type": "string"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceRebindEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "workspaces"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRebindEntry": {
+      "description": "One restored workspace. `rebindable` says a saved physical identity exists.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "needs_rebind": {
+          "type": "boolean"
+        },
+        "rebindable": {
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "name",
+        "needs_rebind",
+        "rebindable"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRebindListRequest": {
+      "additionalProperties": false,
+      "description": "`workspace.rebind.list`: restored workspaces and whether each needs a path.",
+      "properties": {
+        "op": {
+          "const": "workspace.rebind.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRebindRequest": {
+      "additionalProperties": false,
+      "description": "`workspace.rebind`: bind a restored workspace to a verified directory.",
+      "properties": {
+        "op": {
+          "const": "workspace.rebind"
+        },
+        "path": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "path"
       ],
       "type": "object"
     },
@@ -698,6 +947,41 @@
       "request": "CatalogGetRequest",
       "response": "CatalogFrame",
       "tier": "query"
+    },
+    {
+      "domain": "workspaces",
+      "name": "workspace.open",
+      "request": "WorkspaceOpenRequest",
+      "response": "WorkspaceAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "workspaces",
+      "name": "workspace.rebind.list",
+      "request": "WorkspaceRebindListRequest",
+      "response": "WorkspaceRebindCatalog",
+      "tier": "query"
+    },
+    {
+      "domain": "workspaces",
+      "name": "workspace.rebind",
+      "request": "WorkspaceRebindRequest",
+      "response": "WorkspaceAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "workspaces",
+      "name": "repository.rebind.list",
+      "request": "RepositoryRebindListRequest",
+      "response": "RepositoryRebindCatalog",
+      "tier": "query"
+    },
+    {
+      "domain": "workspaces",
+      "name": "repository.rebind",
+      "request": "RepositoryRebindRequest",
+      "response": "RepositoryAck",
+      "tier": "idempotent_command"
     },
     {
       "domain": "conversations",

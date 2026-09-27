@@ -1,4 +1,4 @@
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand, requestDaemon } from '@ade/client'
 import { catalog, CliError, required, type CommandResult } from '../shared.js'
 
 export const workspaceUsage = `  workspace list                        List registered workspaces
@@ -38,17 +38,17 @@ function worktreeMutationArgs(rest: string[], action: 'create' | 'remove'): {
 export async function runWorkspaceCommand(socketPath: string, area: string | undefined, action: string | undefined,
   rest: string[]): Promise<CommandResult | undefined> {
   if (area === 'workspace' && action === 'list') return { type: 'workspaces', workspaces: (await catalog(socketPath)).workspaces }
-  if (area === 'workspace' && action === 'open') return requestDaemon(socketPath, 'workspace.open', { path: required(rest[0], 'PATH') })
+  if (area === 'workspace' && action === 'open') return dailyUseCommand(socketPath, { op: 'workspace.open', path: required(rest[0], 'PATH') })
   if (area === 'workspace' && action === 'rebind') {
     if (rest.length !== 2) throw new CliError('usage', 'workspace rebind requires WORKSPACE_ID PATH.')
-    return requestDaemon(socketPath, 'workspace.rebind', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
+    return dailyUseCommand(socketPath, {
+      op: 'workspace.rebind', workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
     })
   }
   if (area === 'repository' && action === 'rebind') {
     if (rest.length !== 2) throw new CliError('usage', 'repository rebind requires REPOSITORY_ID PATH.')
-    return requestDaemon(socketPath, 'repository.rebind', {
-      repository_id: required(rest[0], 'REPOSITORY_ID'), path: required(rest[1], 'PATH'),
+    return dailyUseCommand(socketPath, {
+      op: 'repository.rebind', repository_id: required(rest[0], 'REPOSITORY_ID'), path: required(rest[1], 'PATH'),
     })
   }
   if (area === 'worktree' && action === 'rebind') {

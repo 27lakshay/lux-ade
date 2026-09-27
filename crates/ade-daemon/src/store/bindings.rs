@@ -4,14 +4,7 @@ pub(crate) struct CatalogBindingClaim {
     workspace: Option<(u64, u64)>,
     repository: Option<(String, Option<(u64, u64)>)>,
 }
-#[derive(Serialize)]
-pub struct WorkspaceRebindEntry {
-    id: String,
-    root: String,
-    name: String,
-    needs_rebind: bool,
-    rebindable: bool,
-}
+pub use ade_core::contract::workspaces::WorkspaceRebindEntry;
 fn binding_matches(db: &Connection, kind: &str, id: &str, root: &str) -> Result<bool> {
     let saved: Option<(String, String)> = db
         .query_row(
