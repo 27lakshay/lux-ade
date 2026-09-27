@@ -4,6 +4,7 @@ import type {
   EventChannels,
   InvokeChannel,
   InvokeChannels,
+  PortChannel,
   SendChannel,
   SendChannels,
 } from '../shared/ipc'
@@ -19,6 +20,14 @@ export function invoke<C extends InvokeChannel>(
 
 export function send<C extends SendChannel>(channel: C, ...args: Parameters<SendChannels[C]>): void {
   ipcRenderer.send(channel, ...args)
+}
+
+/** Calls `listener` with each MessagePort main delivers on `channel`. */
+export function receivePorts(channel: PortChannel, listener: (port: MessagePort) => void): void {
+  ipcRenderer.on(channel, (event) => {
+    const [port] = event.ports
+    if (port) listener(port)
+  })
 }
 
 /** Calls `listener` with each event's arguments; returns the unsubscribe function. */

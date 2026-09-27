@@ -1,5 +1,3 @@
-import type { FeedFrame } from '@ade/client'
-import type { TerminalFrame } from '@ade/terminal'
 import type { AppCommand } from './app-commands'
 import type { AdeHost } from './bridge'
 import type { BrowserBridge, BrowserState } from './bridge/browser'
@@ -59,16 +57,13 @@ export interface InvokeChannels {
   'ade:browser-backup-capture': BrowserBridge['captureProfile']
   'ade:browser-backup-restore': BrowserBridge['restoreProfile']
 
-  'ade:terminal-attach': (connectionId: string, workspaceId: string, terminalId: string) => Promise<boolean>
+  /** Asks main for a fresh MessagePort to the stream bridge; it arrives as `ade:stream-port`. */
+  'ade:stream-connect': () => Promise<boolean>
 }
 
 /** Renderer → main messages with no reply (`send` / `listen`). */
 export interface SendChannels {
   'ade:theme': AdeHost['setTheme']
-  'ade:terminal-input': (connectionId: string, data: string) => void
-  'ade:terminal-binary': (connectionId: string, bytes: number[]) => void
-  'ade:terminal-resize': (connectionId: string, cols: number, rows: number, widthPx: number, heightPx: number) => void
-  'ade:terminal-detach': (connectionId: string) => void
 }
 
 /** Main → renderer events (`emit` / `broadcast` / `subscribe`), as the arguments they carry. */
@@ -76,13 +71,18 @@ export interface EventChannels {
   'ade:command': [command: AppCommand]
   'ade:client-state-changed': [state: Awaited<ReturnType<ProfilesBridge['getClientState']>>]
   'ade:profile-state-changed': [state: ProfileState]
-  'ade:feed-frame': [frame: FeedFrame]
   'ade:draft-error': [error: { conversationId: string; message: string }]
   'ade:browser-state': [state: BrowserState]
   'ade:browser-lease-lost': [profileId: string]
-  'ade:terminal-frame': [connectionId: string, frame: TerminalFrame]
-  'ade:terminal-close': [connectionId: string, reason: string]
+  /** The stream bridge restarted; its ports are closed. Reconnect with `ade:stream-connect`. */
+  'ade:stream-lost': []
 }
+
+/**
+ * Main → renderer MessagePort deliveries (webContents.postMessage with a transfer list). The
+ * conversation feed and terminal streams run over this port, not over IPC (src/shared/stream-bridge.ts).
+ */
+export type PortChannel = 'ade:stream-port'
 
 export type InvokeChannel = keyof InvokeChannels
 export type SendChannel = keyof SendChannels

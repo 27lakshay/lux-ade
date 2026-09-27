@@ -1,8 +1,17 @@
 # Desktop app
 
-Electron app: `src/main` (Node, owns windows, menus and the daemon connection), `src/preload` (the
-only bridge into a window) and `src/renderer` (React UI). Built with electron-vite; `pnpm dev` at
-the repo root builds the backend and starts the app with hot reload.
+Electron app, in four parts:
+
+- `src/main`: Node; owns windows, menus, requests to the daemon, the send journal and quit guards.
+- `src/stream-bridge`: a utility process that carries the daemon's conversation feed and terminal
+  streams straight to each window over a MessagePort, batched once per frame. Main starts and
+  restarts it (`src/main/stream-bridge.ts`); the preload holds the port (`src/preload/stream.ts`).
+- `src/preload`: the only bridge into a window.
+- `src/renderer`: the React UI.
+- `src/shared`: types and pure code all of them use: the IPC contract, bridge types, commands.
+
+Built with electron-vite; `pnpm dev` at the repo root builds the backend and starts the app with
+hot reload.
 
 ## Seeing the running app
 
@@ -16,7 +25,12 @@ claiming a UI change works.
 - The renderer never imports `electron` or `node:*`. It reaches the backend only through
   `window.adeHost`, which the preload exposes and `src/renderer/src/host.d.ts` types.
 - The preload exposes typed functions, never `ipcRenderer` itself.
+- Every IPC channel is declared in `src/shared/ipc.ts`, typed from the bridge interfaces in
+  `src/shared/bridge`. Use the helpers in `src/main/ipc.ts` and `src/preload/ipc.ts`; lint bans
+  `ipcMain` and `ipcRenderer` elsewhere. Main accepts requests only from an app window's main frame.
 - Main-process IPC handlers validate their input; the renderer is not trusted with paths or IDs.
+- High-volume streams go through the stream bridge, not IPC. Add a stream there
+  (`src/shared/stream-bridge.ts`), not as an IPC event.
 - Web content shown in the app (browser tabs, previews) gets no preload and no application bridge.
 
 ## Renderer

@@ -1,6 +1,5 @@
 // Profile switching: starts a profile daemon through the launcher, attaches the
 // connection in profile-connection.ts and serves the profile IPC channels.
-import { BrowserWindow } from 'electron'
 import { broadcast, handle } from './ipc'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
@@ -32,7 +31,7 @@ import {
   type ProfileState,
 } from './profile-connection'
 import { watchActivity } from './notifications'
-import { closeSenderTerminals } from './terminals'
+import { setStreamProfile } from './stream-bridge'
 import { selectedWorkspaces, selectionRequests } from './workspaces'
 
 async function attachClient(endpoint: string, profileId: string): Promise<void> {
@@ -57,8 +56,9 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
   selectionRequests.clear()
   setClient(next)
   setSocket(endpoint)
+  // The bridge closes the previous profile's terminal attachments and streams from the new one.
+  setStreamProfile(endpoint)
   publishProfile({ activeId: profileId, error: '' })
-  for (const window of BrowserWindow.getAllWindows()) closeSenderTerminals(window.webContents.id)
   previousSubscription?.()
   previousFeed?.()
   previous.stop()
@@ -74,14 +74,8 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
       }
     }),
   )
-  const stopFeed = next.subscribeFeed((frame) => {
-    if (generation === getClientGeneration()) broadcast('ade:feed-frame', frame)
-  })
-  const stopActivity = watchActivity(next)
-  setUnsubscribeFeed(() => {
-    stopFeed()
-    stopActivity()
-  })
+  // The feed reaches windows through the stream bridge; main watches it only for notifications.
+  setUnsubscribeFeed(watchActivity(next))
   next.start()
 }
 

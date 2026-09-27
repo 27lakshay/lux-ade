@@ -1,4 +1,5 @@
 import { invoke, subscribe } from './ipc'
+import { onFeedFrame } from './stream'
 import type { ConversationsBridge } from '../shared/bridge/conversations'
 
 export const conversations: ConversationsBridge = {
@@ -7,6 +8,6 @@ export const conversations: ConversationsBridge = {
   exportSendJournal: (profileId, destination) => invoke('ade:send-journal-export', profileId, destination),
   importSendJournal: (bundle, sourceProfileId, targetProfileId) =>
     invoke('ade:send-journal-import', bundle, sourceProfileId, targetProfileId),
-  onFeedFrame: (listener) => subscribe('ade:feed-frame', listener),
+  onFeedFrame,
   onDraftError: (listener) => subscribe('ade:draft-error', listener),
 }

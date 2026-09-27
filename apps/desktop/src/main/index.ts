@@ -22,6 +22,7 @@ import {
   fixedSocket,
   getBrowserOwner,
   getClient,
+  getSocket,
   managedProfiles,
   publishProfile,
   refreshProfiles,
@@ -36,7 +37,7 @@ import { finishQuit, holdQuit, registerQuitGuard, registerQuitTeardown } from '.
 import { registerReviewIpc, setGitJournal } from './review'
 import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
-import { closeAll as closeAllTerminals, closeSenderTerminals, registerTerminalIpc } from './terminals'
+import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge } from './stream-bridge'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
 import { installAppMenu } from './app-menu'
 import { appUrl, registerAppScheme, serveAppScheme } from './app-protocol'
@@ -69,7 +70,6 @@ registerWorkspaceIpc()
 registerServiceIpc()
 registerReviewIpc()
 registerFileIpc()
-registerTerminalIpc()
 
 // Order matters: drafts are saved before browser sessions are flushed.
 registerQuitGuard(draftQuitGuard)
@@ -81,7 +81,7 @@ registerQuitTeardown(async () => {
   await owner?.close()
 })
 registerQuitTeardown(() => {
-  closeAllTerminals()
+  stopStreamBridge()
   stopClient()
 })
 // localStorage (the renderer's layout and appearance settings) is written lazily; flush it so a
@@ -171,10 +171,12 @@ function openMainWindow(): void {
       closeFlushInProgress = false
     })
   })
-  window.webContents.on('did-start-navigation', () => closeSenderTerminals(window.webContents.id))
+  window.webContents.on('did-start-navigation', (event) => {
+    if (event.isMainFrame && !event.isSameDocument) disconnectWindow(window.webContents.id)
+  })
   window.webContents.on('destroyed', () => {
     closeBrowserWindow(window)
-    closeSenderTerminals(window.webContents.id)
+    disconnectWindow(window.webContents.id)
     selectedWorkspaces.delete(window.webContents.id)
     selectionRequests.delete(window.webContents.id)
     for (const [key, entry] of drafts) {
@@ -220,13 +222,11 @@ app
         }
       }),
     )
-    const stopFeed = getClient().subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
-    const stopActivity = watchActivity(getClient())
-    setUnsubscribeFeed(() => {
-      stopFeed()
-      stopActivity()
-    })
+    // The feed reaches windows through the stream bridge; main watches it only for notifications.
+    setUnsubscribeFeed(watchActivity(getClient()))
     getClient().start()
+    startStreamBridge()
+    setStreamProfile(getSocket() ?? null)
     openMainWindow()
     if (managedProfiles) {
       setStartupProfileSelection(

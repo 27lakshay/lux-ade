@@ -3,6 +3,7 @@
   "entry": [
     "apps/desktop/src/main/index.ts",
     "apps/desktop/src/preload/index.ts",
+    "apps/desktop/src/stream-bridge/index.ts",
     "apps/desktop/src/renderer/src/main.tsx",
     "apps/desktop/src/renderer/src/dev/*.ts"
   ],
@@ -20,6 +21,7 @@
       { "name": "desktop-preload", "patterns": ["apps/desktop/src/preload/**"] },
       { "name": "desktop-renderer", "patterns": ["apps/desktop/src/renderer/**"] },
       { "name": "desktop-shared", "patterns": ["apps/desktop/src/shared/**"] },
+      { "name": "desktop-stream-bridge", "patterns": ["apps/desktop/src/stream-bridge/**"] },
       { "name": "cli", "patterns": ["apps/cli/**"] },
       { "name": "sdk", "patterns": ["packages/client/**"] },
       { "name": "contracts", "patterns": ["packages/contracts/**"] },
@@ -30,6 +32,7 @@
       { "from": "desktop-main", "allow": ["desktop-shared", "sdk", "contracts"] },
       { "from": "desktop-preload", "allow": ["desktop-shared", "terminal"], "allowTypeOnly": ["sdk", "contracts"] },
       { "from": "desktop-renderer", "allow": ["desktop-shared", "terminal"], "allowTypeOnly": ["sdk", "contracts"] },
+      { "from": "desktop-stream-bridge", "allow": ["desktop-shared", "sdk", "contracts"] },
       // Code every process loads: the IPC contract, bridge types, commands, the content policy.
       { "from": "desktop-shared", "allow": [], "allowTypeOnly": ["sdk", "contracts", "terminal"] },
       { "from": "cli", "allow": ["sdk", "contracts"] },

@@ -43,6 +43,13 @@ export default defineConfig({
   main: {
     build: {
       externalizeDeps: { exclude: ['@ade/client', '@ade/contracts'] },
+      // The stream bridge runs as its own utility process (src/main/stream-bridge.ts forks it).
+      rolldownOptions: {
+        input: {
+          index: resolve(import.meta.dirname, 'src/main/index.ts'),
+          'stream-bridge': resolve(import.meta.dirname, 'src/stream-bridge/index.ts'),
+        },
+      },
     },
   },
   preload: {
