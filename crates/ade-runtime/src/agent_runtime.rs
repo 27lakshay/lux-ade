@@ -33,6 +33,49 @@ pub struct Spec {
     pub root: String,
     #[serde(default)]
     pub account: Option<ade_core::model::AccountExecution>,
+    /// The plugin worker artifact this run leases, for a `plugin:` provider.
+    /// The run keeps it for its whole life; absent for every other provider,
+    /// so their wire shape is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<ade_core::contract::providers::ProviderWorker>,
+}
+/// Starts the provider a run names. A plugin provider must arrive with the
+/// worker pin its session leases; every provider goes through a registry
+/// entry, bundled ones through [`provider::registry::bundled`].
+fn launch(spec: &Spec, events: mpsc::SyncSender<Event>) -> Result<Arc<dyn Provider>> {
+    use provider::registry::{ProviderEntry, Registry};
+    use provider::worker::{WorkerEntry, is_plugin_provider};
+    match &spec.worker {
+        None => {
+            ensure!(
+                !is_plugin_provider(&spec.provider),
+                "Plugin provider {} needs a pinned worker",
+                spec.provider
+            );
+            provider::spawn(&spec.provider, &spec.root, spec.account.as_ref(), events)
+        }
+        Some(worker) => {
+            ensure!(
+                worker.provider == spec.provider,
+                "Run provider {} does not match its worker {}",
+                spec.provider,
+                worker.provider
+            );
+            let entry = WorkerEntry {
+                worker: worker.clone(),
+                name: worker.pin.plugin_id.clone(),
+            };
+            let mut registry = Registry::default();
+            registry.register(
+                &worker.provider,
+                ade_core::contract::providers::ProviderOrigin::Plugin {
+                    pin: worker.pin.clone(),
+                },
+                Arc::new(entry) as Arc<dyn ProviderEntry>,
+            )?;
+            registry.launch(&spec.provider, &spec.root, spec.account.as_ref(), events)
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Envelope {
@@ -96,7 +139,7 @@ pub struct Run {
 impl Run {
     pub fn spawn(spec: Spec) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::sync_channel(256);
-        let adapter = provider::spawn(&spec.provider, &spec.root, spec.account.as_ref(), tx)?;
+        let adapter = launch(&spec, tx)?;
         let run = Arc::new(Self {
             spec,
             adapter,
@@ -529,6 +572,9 @@ impl Provider for Remote {
         match self.spec.provider.as_str() {
             "claude" | "omp" => Some(uuid::Uuid::new_v4().to_string()),
             "opencode" => Some(format!("msg_{}", uuid::Uuid::new_v4())),
+            provider if provider::worker::is_plugin_provider(provider) => {
+                Some(uuid::Uuid::new_v4().to_string())
+            }
             _ => None,
         }
     }
@@ -666,6 +712,7 @@ mod tests {
                     provider: "codex".into(),
                     root: "/tmp".into(),
                     account: None,
+                    worker: None,
                 },
                 adapter: fake.clone(),
                 journal: Mutex::new(Journal::new()),

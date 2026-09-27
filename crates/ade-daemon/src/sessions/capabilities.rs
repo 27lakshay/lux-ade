@@ -21,6 +21,7 @@ impl Sessions {
             }
             "provider.readiness" => self.readiness(decode(request)?),
             "provider.quota" => self.quota(decode(request)?),
+            "provider.registrations" => self.registrations(decode(request)?),
             "preset.list" => {
                 let _: PresetListRequest = decode(request)?;
                 let records = caps::records();
@@ -75,6 +76,34 @@ impl Sessions {
             } else {
                 error
             }
+        })
+    }
+
+    /// Replays every registration through the runtime's provider registry.
+    /// A plugin registry that cannot be read is reported, not hidden.
+    fn registrations(&self, _: ProviderRegistrationsRequest) -> Result<Value> {
+        let (workers, plugins_unavailable) = match &self.plugins {
+            Ok(plugins) => match plugins.provider_workers() {
+                Ok(workers) => (workers, None),
+                Err(error) => {
+                    tracing::warn!(target: "ade", event = "provider_workers_unavailable", error = %error);
+                    (
+                        vec![],
+                        Some("Installed plugins could not be read; retry".to_owned()),
+                    )
+                }
+            },
+            Err(error) => (
+                vec![],
+                Some(format!("Plugin registry is unavailable: {error}")),
+            ),
+        };
+        let (_, providers) =
+            ade_runtime::provider::registry::compose(self.adapters.definitions()?, workers);
+        reply(&ProviderRegistrations {
+            tag: Default::default(),
+            providers,
+            plugins_unavailable,
         })
     }
 

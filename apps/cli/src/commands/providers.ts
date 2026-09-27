@@ -9,7 +9,9 @@ export const providerUsage = `  provider capabilities [PROVIDER]      Show what 
   provider quota [--provider ID] [--account ID]
                                         Show reported limits per account with their age;
                                         ADE never switches account or model on exhaustion
-  preset list                            List presets with capability conflicts
+  provider registrations                 List every registered provider and its origin:
+                                        bundled, adapter or plugin worker version
+  preset list                           List presets with capability conflicts
   preset show NAME                       Show one preset with capability conflicts
   preset save NAME --provider ID [--model MODEL] [--reasoning LEVEL] [--permission MODE]
               [--expected-revision N]    Create a preset, or replace the revision given
@@ -30,6 +32,10 @@ async function runProvider(socketPath: string, action: string | undefined,
   if (action === 'capabilities') {
     if (rest.length > 1) throw new CliError('usage', 'provider capabilities accepts at most one PROVIDER.')
     return dailyUseCommand(socketPath, { op: 'provider.capabilities', ...(rest[0] ? { provider: rest[0] } : {}) })
+  }
+  if (action === 'registrations') {
+    if (rest.length) throw new CliError('usage', 'provider registrations does not accept arguments.')
+    return dailyUseCommand(socketPath, { op: 'provider.registrations' })
   }
   if (action === 'readiness') {
     const provider = required(rest[0], 'PROVIDER')

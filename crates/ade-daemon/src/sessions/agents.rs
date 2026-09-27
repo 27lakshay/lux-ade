@@ -415,6 +415,7 @@ impl Sessions {
                 provider: c.provider.clone(),
                 root: w.root,
                 account,
+                worker: None,
             },
         );
         if !restore {

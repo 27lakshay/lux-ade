@@ -14151,6 +14151,64 @@
       ],
       "type": "object"
     },
+    "ProviderOrigin": {
+      "description": "Who registered a provider. Every origin goes through the same registry\nand the same provider interface; none has a privileged path.",
+      "oneOf": [
+        {
+          "description": "Shipped with ADE.",
+          "properties": {
+            "kind": {
+              "const": "bundled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A profile's generic ACP or custom executable adapter definition.",
+          "properties": {
+            "adapter_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "adapter",
+              "type": "string"
+            },
+            "revision": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "adapter_id",
+            "revision"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An installed plugin's `provider` entry point.",
+          "properties": {
+            "kind": {
+              "const": "plugin",
+              "type": "string"
+            },
+            "pin": {
+              "$ref": "#/$defs/ProviderWorkerPin"
+            }
+          },
+          "required": [
+            "kind",
+            "pin"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ProviderQuota": {
       "description": "The `provider.quota` reply.",
       "properties": {
@@ -14290,6 +14348,82 @@
       ],
       "type": "object"
     },
+    "ProviderRegistrationView": {
+      "description": "One registration and its outcome.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/ProviderOrigin"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "Null when registered.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/RegistrationState"
+        }
+      },
+      "required": [
+        "provider",
+        "name",
+        "origin",
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ProviderRegistrations": {
+      "description": "The `provider.registrations` reply.",
+      "properties": {
+        "plugins_unavailable": {
+          "description": "Why the plugin registry could not be read, when it could not. Plugin\nproviders are then missing from `providers`, not reported as absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/ProviderRegistrationView"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `provider_registrations` type tag.",
+          "enum": [
+            "provider_registrations"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "providers",
+        "plugins_unavailable"
+      ],
+      "type": "object"
+    },
+    "ProviderRegistrationsRequest": {
+      "additionalProperties": false,
+      "description": "`provider.registrations`: every registered provider and its origin.",
+      "properties": {
+        "op": {
+          "const": "provider.registrations"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "ProviderSelection": {
       "description": "Which providers an entry applies to.",
       "oneOf": [
@@ -14354,6 +14488,35 @@
         "native",
         "unsupported_reason",
         "wired"
+      ],
+      "type": "object"
+    },
+    "ProviderWorkerPin": {
+      "additionalProperties": false,
+      "description": "The artifact a provider worker runs. A session started on one pin stays\non it: a newer version serves new sessions only (architecture section 8).",
+      "properties": {
+        "activation_generation": {
+          "description": "The plugin activation that published the registration. A lease does\nnot depend on it: re-enabling the same artifact does not change code.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "artifact_digest": {
+          "description": "`sha256:<hex>` over the installed artifact's files.",
+          "type": "string"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin_id",
+        "version",
+        "artifact_digest",
+        "activation_generation"
       ],
       "type": "object"
     },
@@ -14739,6 +14902,20 @@
         "corrupt"
       ],
       "type": "string"
+    },
+    "RegistrationState": {
+      "oneOf": [
+        {
+          "const": "registered",
+          "description": "The provider is registered under this ID.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The registry refused it; `reason` says why.",
+          "type": "string"
+        }
+      ]
     },
     "RegistryScope": {
       "enum": [
@@ -24510,6 +24687,13 @@
       "name": "provider.quota",
       "request": "ProviderQuotaRequest",
       "response": "ProviderQuota",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "provider.registrations",
+      "request": "ProviderRegistrationsRequest",
+      "response": "ProviderRegistrations",
       "tier": "query"
     },
     {

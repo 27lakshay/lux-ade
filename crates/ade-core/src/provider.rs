@@ -114,7 +114,12 @@ impl Default for Config {
 }
 impl Config {
     pub fn validate(&self, provider: &str) -> Result<()> {
-        let descriptor = descriptor(provider)?;
+        self.validate_against(descriptor(provider)?)
+    }
+    /// Validates against a descriptor that is not in the static catalogue,
+    /// such as one a plugin provider worker declared in its handshake.
+    pub fn validate_against(&self, descriptor: &Descriptor) -> Result<()> {
+        let provider = &descriptor.id;
         ensure!(
             self.model
                 .as_ref()

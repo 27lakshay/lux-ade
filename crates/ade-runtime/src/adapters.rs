@@ -143,6 +143,14 @@ pub(crate) fn command(definition: &AdapterDefinition, cwd: &str) -> Command {
     command
 }
 
+/// What a custom executable adapter can do, before any probe.
+pub fn executable_capabilities() -> Vec<String> {
+    executable::CAPABILITIES
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect()
+}
+
 /// Adapters have no model, permission-mode or settings-source options yet.
 pub(crate) fn ensure_default_config(config: &Config) -> Result<()> {
     ensure!(
@@ -192,10 +200,7 @@ pub fn probe(
     };
     let outcome = match definition.kind {
         AdapterKind::Executable => ProbeOutcome::Ready {
-            capabilities: executable::CAPABILITIES
-                .iter()
-                .map(|s| (*s).to_owned())
-                .collect(),
+            capabilities: executable_capabilities(),
             acp: None,
         },
         AdapterKind::Acp => {
