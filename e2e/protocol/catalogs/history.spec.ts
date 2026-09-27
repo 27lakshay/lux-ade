@@ -121,7 +121,7 @@ test('catches up after a daemon kill without losing or duplicating indexed messa
 })
 
 // F043 asks that deleted records leave the results. Messages a Conversation
-// rewind removes leave search (e2e/protocol/ops3/rewind.spec.ts). No operation
+// rewind removes leave search (e2e/protocol/accounts-rewind/rewind.spec.ts). No operation
 // deletes a whole Conversation, so this path still cannot be driven.
 test.fixme('a deleted conversation disappears from search results', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')

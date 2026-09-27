@@ -171,6 +171,10 @@ pub struct Run {
     changed: Condvar,
     receipts: Mutex<HashMap<String, Arc<Receipt>>>,
     receipt_bytes: AtomicUsize,
+    /// The native session the last rewind forked into (F039), and the one it
+    /// left. A daemon that reattaches reads the fork in place of the
+    /// session `open` connected; it may still hold the one left.
+    session: Mutex<Option<(String, String)>>,
 }
 impl Run {
     pub fn spawn(spec: Spec) -> Result<Arc<Self>> {
@@ -189,6 +193,7 @@ impl Run {
             changed: Condvar::new(),
             receipts: Mutex::new(HashMap::new()),
             receipt_bytes: AtomicUsize::new(0),
+            session: Mutex::new(None),
         });
         let weak = Arc::downgrade(&run);
         std::thread::spawn(move || {
@@ -345,7 +350,14 @@ impl Run {
             .get("open")
             .cloned()
             .context("Agent startup was not admitted before daemon loss; resume explicitly")?;
-        receipt.wait()
+        let mut connected = receipt.wait()?;
+        if let Some((forked, left)) = self.session.lock().unwrap().clone()
+            && connected["type"] == "connected"
+        {
+            connected["connected"]["session"] = json!(forked);
+            connected["connected"]["rewound_from"] = json!(left);
+        }
+        Ok(connected)
     }
     /// Must run while the supervisor still holds its owner-admission lock.
     pub fn admit(&self, request: &Value) -> Result<Admission> {
@@ -459,7 +471,13 @@ impl Run {
                     Ok(json!({"type":"steered","turn":turn}))
                 }
                 "compact" => { self.adapter.compact(string("session")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
-                "rewind" => { self.adapter.rewind(string("session")?, string("turn")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
+                "rewind" => {
+                    let forked = self.adapter.rewind(string("session")?, string("turn")?, string("operation")?)?;
+                    if let Some(forked) = &forked {
+                        *self.session.lock().unwrap() = Some((forked.clone(), string("session")?.to_owned()));
+                    }
+                    Ok(json!({"type":"ack","session":forked}))
+                }
                 "answer" => {
                     let p: PendingRequest = serde_json::from_value(request["request"].clone())?;
                     ensure!(p.run_id == self.spec.run && p.conversation_id == self.spec.conversation, "Interaction belongs to another Agent run");
@@ -686,14 +704,14 @@ impl Provider for Remote {
         ensure!(result["type"] == "ack", "Invalid compaction receipt");
         Ok(())
     }
-    fn rewind(&self, session: &str, turn: &str, operation: &str) -> Result<()> {
+    fn rewind(&self, session: &str, turn: &str, operation: &str) -> Result<Option<String>> {
         let result = self.call(
             "rewind",
             format!("rewind:{operation}"),
             json!({"session":session,"turn":turn,"operation":operation}),
         )?;
         ensure!(result["type"] == "ack", "Invalid rewind receipt");
-        Ok(())
+        Ok(result["session"].as_str().map(str::to_owned))
     }
     fn validate_answer(
         &self,
@@ -761,6 +779,7 @@ mod tests {
             Ok(Connected {
                 session: "session".into(),
                 history: vec![],
+                rewound_from: None,
             })
         }
         fn send(
@@ -814,6 +833,7 @@ mod tests {
                 changed: Condvar::new(),
                 receipts: Mutex::new(HashMap::new()),
                 receipt_bytes: AtomicUsize::new(0),
+                session: Mutex::new(None),
             }),
             fake,
         )

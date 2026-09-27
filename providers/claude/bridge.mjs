@@ -6,8 +6,29 @@ import {TaskPlans} from './tasks.mjs';
 import {Subagents} from './subagents.mjs';
 import {toolContent,toolOutput} from '../tool.mjs';
 import {pathToFileURL} from 'node:url';
-import {accessSync,constants} from 'node:fs';
+import {accessSync,constants,mkdirSync,readFileSync,renameSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
+// A rewind's fork gives kept entries new UUIDs. This record maps them back
+// to the IDs ADE stored, beside ADE's data, so a later resume or rewind of
+// the fork names the same messages. Without ADE_DATA_DIR it lives in memory.
+function aliasFile(session) {
+  if(!process.env.ADE_DATA_DIR||!/^[a-zA-Z0-9_-]{1,128}$/.test(session))return null;
+  return join(process.env.ADE_DATA_DIR,'claude-forks',`${session}.json`);
+}
+function loadAliases(session) {
+  const path=aliasFile(session);
+  if(!path)return new Map();
+  try {return new Map(Object.entries(JSON.parse(readFileSync(path,'utf8')).aliases));}
+  catch(error) {if(error.code==='ENOENT')return new Map();throw new Error(`Claude fork record for ${session} is unreadable: ${error.message}`);}
+}
+function saveAliases(session,forked_from,aliases) {
+  const path=aliasFile(session);
+  if(!path)return;
+  mkdirSync(join(path,'..'),{recursive:true});
+  writeFileSync(`${path}.tmp`,JSON.stringify({forked_from,aliases:Object.fromEntries(aliases)}));
+  renameSync(`${path}.tmp`,path);
+}
 function executable() {
   const requested=process.env.ADE_CLAUDE_BIN??'claude';
   const candidates=requested.includes('/')?[resolve(requested)]:(process.env.PATH??'').split(':').filter(Boolean).map(dir=>join(dir,requested));
@@ -19,7 +40,7 @@ export class Bridge {
   constructor(sdk, emit, cwd=process.cwd()) {
     this.sdk=sdk;this.emit=emit;this.cwd=cwd;this.session=null;this.query=null;this.active=null;
     this.inputs=[];this.wake=null;this.closed=false;this.permissions=new Map();this.partial=new Map();
-    this.todoCalls=new Map();
+    this.todoCalls=new Map();this.aliases=new Map();
     // Each query() reads its own input generator; a rewind starts a new generation.
     this.generation=0;
     this.taskPlans=new TaskPlans();
@@ -94,9 +115,11 @@ export class Bridge {
       if(!info)throw new Error('Claude session is unavailable; original session ID retained');
       const messages=await this.sdk.getSessionMessages(resume,{dir:this.cwd,limit:2001});
       if(messages.length>2000)throw new Error('Claude resume exceeds 2,000 messages; use the CLI for this session');
+      this.aliases=loadAliases(resume);
       let turn=null;
-      for(const message of messages) {
-        if(message.parent_tool_use_id)continue;
+      for(const read of messages) {
+        if(read.parent_tool_use_id)continue;
+        const message={...read,uuid:this.alias(read.uuid)};
         if(message.type==='user'&&(typeof message.message?.content==='string'||message.message?.content?.some(b=>['text','image','document'].includes(b.type))))turn=message.uuid;
         history.push(...this.content(message,turn));
       }
@@ -131,14 +154,6 @@ export class Bridge {
       if(message.session_id&&message.session_id!==this.session)throw new Error('Claude returned a different session ID; refusing session replacement');
       if(message.type==='system'&&message.subtype==='init')continue;
       if(query!==this.query)break;
-      // A truncating resume the CLI refused (resumeDropsTurn) reports a result with no turn.
-      const refusal=message.type==='result'&&!this.active&&[...(message.errors??[]),message.result??''].map(String).find(text=>text.startsWith('Resume rejected'));
-      if(refusal) {
-        // rewind() is still waiting on this query: it reports the refusal to its caller.
-        if(this.rewinding?.query===query) {this.rewinding.refused=refusal;continue;}
-        this.event({type:'error',error:'Claude refused the conversation rewind; the history was kept'});
-        continue;
-      }
       const active=this.active;
       if(message.type==='rate_limit_event') {
         this.event({type:'usage',session:this.session,turn:active?.turn??null,source:'rate_limit_event',report:message.rate_limit_info??null});
@@ -174,8 +189,6 @@ export class Bridge {
         this.event({type:'finished',session:this.session,turn:active.turn,status:active.cancelled?'interrupted':message.is_error?'failed':'completed',error:message.is_error?(message.errors??[message.result??message.subtype]).join('\n'):null});
       }
     }
-    // A refused rewind may end its query; rewind() then resumes plainly.
-    if(this.rewinding?.query===query)return;
     if(!this.closed&&query===this.query)throw new Error('Claude SDK stream closed; resume before continuing');
   }
   async child_transcript({session,child,offset=0,cursor=null}) {
@@ -276,40 +289,70 @@ export class Bridge {
       if(!this.closed)this.event({type:'exited',error:error.message});this.close();
     });
   }
-  // Agent SDK 0.3.281 resumeSessionAt: restart the query from the last chain
-  // entry before the prompt that started `drop_from`, so that turn and every
-  // later one leave the session. Dropping only the last turn also passes
-  // resumeDropsTurn, which the CLI validates. Nothing runs while it restarts.
+  // Conversation rewind (F039), on what the Agent SDK documents:
+  // forkSession(session, {upToMessageId}) copies the transcript up to the
+  // last entry before the prompt that started `drop_from` into a new session
+  // with new message UUIDs, and `resume` continues that fork. The earlier
+  // session stays on disk unchanged. The query restarts on the fork, so the
+  // dropped turns leave Claude's context and every later resume.
+  // The approach follows t3code apps/server/src/provider/Layers/ClaudeAdapter.ts rollbackThread; no code was copied.
   async rewind({session,drop_from}) {
     if(this.closed||!this.query||session!==this.session)throw new Error('Claude session is not connected');
     if(this.active||this.inputs.length)throw new Error('A turn is running; stop it before rewinding the conversation');
     if(typeof drop_from!=='string'||!drop_from)throw new Error('Missing the prompt to rewind before');
     const prompt=m=>m.type==='user'&&(typeof m.message?.content==='string'||m.message?.content?.some(b=>['text','image','document'].includes(b.type)));
-    const chain=(await this.sdk.getSessionMessages(session,{dir:this.cwd,limit:2001})).filter(m=>!m.parent_tool_use_id);
-    const index=chain.findIndex(m=>m.uuid===drop_from);
+    const read=id=>this.sdk.getSessionMessages(id,{dir:this.cwd,limit:2001});
+    const all=await read(session);
+    if(all.length>2000)throw new Error('Claude history exceeds 2,000 messages; nothing was rewound');
+    const chain=all.filter(m=>!m.parent_tool_use_id);
+    const index=chain.findIndex(m=>this.alias(m.uuid)===drop_from);
     if(index<0||!prompt(chain[index]))throw new Error('Claude history has no such prompt; nothing was rewound');
     if(index===0)throw new Error('Claude cannot resume before its first message; nothing was rewound');
-    const single=!chain.slice(index+1).some(prompt);
-    const {sessionId,...kept}=this.options;
-    const plain={...kept,resume:session};
-    const options={...plain,resumeSessionAt:chain[index-1].uuid,...(single?{resumeDropsTurn:drop_from}:{})};
-    const attempt=this.restart(options);
-    this.rewinding=attempt;
-    let failed=null;
-    try {await attempt.query.initializationResult();}
-    catch(error) {failed=error;}
-    // The CLI validates the fork while it boots, before it answers initialize,
-    // so its refusal is already delivered; one event-loop turn lets consume()
-    // read it. A refusal is final (SDK: do not retry the same fork): resume
-    // plainly, keeping the history, and report the rewind as refused.
-    await new Promise(resolve=>setImmediate(resolve));
-    this.rewinding=null;
-    if(attempt.refused||failed) {
-      const refused=this.restart(plain);
-      await refused.query.initializationResult();
-      throw new Error(`Claude refused the conversation rewind; the history was kept: ${attempt.refused??failed.message}`);
+    const at=chain[index-1].uuid;
+    const {sessionId,resume,...kept}=this.options;
+    // Dropping only the last turn: resumeDropsTurn makes the CLI check, at
+    // fork time, that everything after the fork point is that turn's own, so
+    // an entry ADE never showed (an absorbed notification) is not dropped
+    // silently. The check runs on a forking resume, which leaves the session
+    // unchanged; its refusal is final (sdk.d.ts: never retry the same fork).
+    if(!chain.slice(index+1).some(prompt)) {
+      const refusal=await this.check({...kept,resume:session,forkSession:true,resumeSessionAt:at,resumeDropsTurn:chain[index].uuid});
+      if(refusal)throw new Error(`Claude refused the conversation rewind; the history was kept: ${refusal}`);
     }
-    return {};
+    const {sessionId:forked}=await this.sdk.forkSession(session,{dir:this.cwd,upToMessageId:at});
+    // The fork keeps the kept entries in order with their bodies; only UUIDs
+    // change. ADE knows each entry by its original UUID, so the fork's UUIDs
+    // are mapped back and kept beside ADE's data.
+    const copied=await read(forked);
+    const retained=all.slice(0,all.findIndex(m=>m.uuid===at)+1);
+    if(copied.length!==retained.length||copied.some((m,i)=>m.type!==retained[i].type||!isDeepStrictEqual(m.message,retained[i].message))) {
+      await this.sdk.deleteSession?.(forked,{dir:this.cwd}).catch(()=>{});
+      throw new Error('Claude refused the conversation rewind; the history was kept: the fork did not keep the earlier history in order');
+    }
+    const aliases=new Map(copied.map((m,i)=>[m.uuid,this.alias(retained[i].uuid)]));
+    saveAliases(forked,session,aliases);
+    this.aliases=aliases;this.session=forked;
+    const attempt=this.restart({...kept,resume:forked});
+    await attempt.query.initializationResult();
+    return {session:forked,previous:session};
+  }
+  // The ID ADE knows a Claude entry by: its UUID, or, in a fork, the UUID of the entry it was copied from.
+  alias(uuid) {return this.aliases?.get(uuid)??uuid;}
+  // Starts a forking resume only to read its fork-time check, then closes it.
+  async check(options) {
+    const query=this.sdk.query({prompt:(async function*(){})(),options});
+    let refusal=null;
+    const reading=(async()=>{for await(const message of query) {
+      if(message.type==='result')refusal=[...(message.errors??[]),message.result??''].map(String).find(text=>text.startsWith('Resume rejected'))??null;
+    }})().catch(()=>{});
+    try {await query.initializationResult();}
+    catch(error) {refusal??=error.message;}
+    // The CLI refuses while it boots, before it answers initialize; one
+    // event-loop turn lets the reader take that result.
+    await new Promise(resolve=>setImmediate(resolve));
+    query.close();
+    await reading;
+    return refusal;
   }
   // Replaces the running query with one started from `options`. Nothing runs
   // while it restarts; the old query's input generator ends with it.
@@ -320,9 +363,8 @@ export class Bridge {
     this.query=query;
     previous.close();
     this.options={...options};
-    delete this.options.resumeSessionAt;delete this.options.resumeDropsTurn;
     this.usageStream={query_id:randomUUID(),fresh:false,results:0};
-    const attempt={query,refused:null};
+    const attempt={query};
     this.watch(query);
     return attempt;
   }

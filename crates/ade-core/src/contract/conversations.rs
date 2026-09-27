@@ -739,6 +739,13 @@ pub struct ConversationRewindHistory {
     pub state_token: String,
     /// The history epoch: current for a preview, the new one after a rewind.
     pub history_epoch: u64,
+    /// After a rewind the provider performed by forking: the native session
+    /// the Conversation continues in. The earlier one is kept unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_session: Option<String>,
+    /// After a forking rewind: the native session the Conversation left.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_native_session: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]

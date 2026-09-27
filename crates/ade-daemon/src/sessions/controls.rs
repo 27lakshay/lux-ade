@@ -146,6 +146,8 @@ fn history_summary(
         kept_messages: total.saturating_sub(removed.len() as u64),
         state_token: history_state_token(conversation_id, epoch, removed),
         history_epoch: epoch,
+        native_session: None,
+        previous_native_session: None,
     }
 }
 
@@ -789,17 +791,20 @@ impl Sessions {
                 preview.turn_id,
             )
         };
-        if let Err(error) = rpc.rewind(&thread, &turn, &rewind.operation_id) {
-            let Some(reason) = definite_refusal(&error) else {
-                return Err(not_confirmed(error));
-            };
-            return self.settle_control(&refused(
-                &rewind.operation_id,
-                &rewind.conversation_id,
-                control,
-                reason,
-            ));
-        }
+        let forked = match rpc.rewind(&thread, &turn, &rewind.operation_id) {
+            Ok(forked) => forked.filter(|forked| *forked != thread),
+            Err(error) => {
+                let Some(reason) = definite_refusal(&error) else {
+                    return Err(not_confirmed(error));
+                };
+                return self.settle_control(&refused(
+                    &rewind.operation_id,
+                    &rewind.conversation_id,
+                    control,
+                    reason,
+                ));
+            }
+        };
         let mut d = self.data.lock().unwrap();
         let (preview, sequence) = history_preview(&d, &rewind.conversation_id, before)?;
         let mut done = control_reply(
@@ -809,11 +814,19 @@ impl Sessions {
             ControlOutcome::Acknowledged,
         );
         let mut settled = None;
-        d.store
-            .rewind_history(&rewind.conversation_id, sequence, |tx, removed, epoch| {
+        // A forking rewind moves the Conversation to the fork in the same
+        // transaction that removes the messages and settles the receipt.
+        let moved = forked.as_deref().map(|forked| (thread.as_str(), forked));
+        d.store.rewind_history(
+            &rewind.conversation_id,
+            sequence,
+            moved,
+            |tx, removed, epoch| {
                 done.history = Some(ConversationRewindHistory {
                     removed_messages: removed,
                     history_epoch: epoch,
+                    native_session: forked.clone(),
+                    previous_native_session: forked.as_ref().map(|_| thread.clone()),
                     ..preview.clone()
                 });
                 let value = serde_json::to_value(&done)?;
@@ -826,7 +839,8 @@ impl Sessions {
                 )?;
                 settled = Some(value);
                 Ok(())
-            })?;
+            },
+        )?;
         let mut reloaded = d.store.conversation(&rewind.conversation_id)?;
         reloaded.updated_at = now_ms();
         d.store.commit_conversation(&reloaded, &[], &[])?;

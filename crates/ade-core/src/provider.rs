@@ -178,6 +178,10 @@ impl Item {
 pub struct Connected {
     pub session: String,
     pub history: Vec<Item>,
+    /// Set when a rewind forked `session` from this one after the Agent
+    /// opened (F039): a daemon that reattaches may still hold it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewound_from: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

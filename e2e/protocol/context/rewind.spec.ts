@@ -1,7 +1,7 @@
 // F039: conversation and file rewind. Codex's adapter does not rewind its
 // history, so conversation rewind is reported as unavailable, with the reason,
 // and records nothing; Claude's conversation rewind is proved in
-// e2e/protocol/ops3/rewind.spec.ts. File rewind restores an ADE
+// e2e/protocol/accounts-rewind/rewind.spec.ts. File rewind restores an ADE
 // checkpoint for any provider: it is previewed first, refuses a stale preview
 // and unconfirmed overwrites, and reads a lost outcome back after a crash.
 import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile, type ScratchRepo } from '../fixtures'
@@ -132,9 +132,11 @@ test('R001: a file rewind whose reply was lost is read back after a daemon crash
 
 // Gap: Codex 0.157.0 thread/revert rewrites only paginated threads, and ADE's
 // Codex adapter starts legacy threads (thread/rollback was removed), so Codex
-// conversation rewind is honestly unavailable (proved above). ADE's side of a
+// conversation rewind is honestly unavailable (proved above). Codex documents
+// thread/fork with lastTurnId, which could fork before a turn as Claude's
+// adapter does; it stays unwired until the pinned schema is checked. ADE's side of a
 // rewind (dropping messages, invalidating history pages) is built and proved
-// for Claude in e2e/protocol/ops3/rewind.spec.ts.
+// for Claude in e2e/protocol/accounts-rewind/rewind.spec.ts.
 test.fixme('F039: a Codex conversation rewind drops later messages and invalidates stale history pages', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.turn)

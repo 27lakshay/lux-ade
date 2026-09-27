@@ -490,6 +490,7 @@ impl Provider for Adapter {
         Ok(Connected {
             session: id,
             history: vec![],
+            rewound_from: None,
         })
     }
     fn send(

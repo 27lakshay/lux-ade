@@ -166,6 +166,7 @@ impl Adapter {
             return Ok(Connected {
                 session: session.into(),
                 history,
+                rewound_from: None,
             });
         }
         if self.handshake.resume_session {
@@ -177,6 +178,7 @@ impl Adapter {
             return Ok(Connected {
                 session: session.into(),
                 history: vec![],
+                rewound_from: None,
             });
         }
         bail!("This ACP agent did not declare session loading or resuming")
@@ -205,6 +207,7 @@ impl Provider for Adapter {
         Ok(Connected {
             session,
             history: vec![],
+            rewound_from: None,
         })
     }
     fn send(
