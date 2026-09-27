@@ -1,12 +1,16 @@
 use anyhow::{Result, ensure};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Component, Path, PathBuf},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Inlined in schemas: a request's defaults make its required fields differ
+/// from a reply's, so the two cannot share one named definition.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(inline)]
 pub struct Config {
     pub program: String,
     #[serde(default)]
@@ -24,13 +28,13 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<HealthPolicy>,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PeerEndpoint {
     pub service: String,
     pub port_variable: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthPolicy {
     pub port_variable: String,
@@ -150,7 +154,7 @@ impl Config {
         Ok(directory)
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Service {
     /// Durable incarnation; a removed service with the same name gets a new ID.
     #[serde(default)]

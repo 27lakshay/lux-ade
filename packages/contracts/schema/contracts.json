@@ -472,6 +472,195 @@
       ],
       "type": "object"
     },
+    "ExecutionState": {
+      "description": "Whether a service's recorded run is live in the current runtime.",
+      "enum": [
+        "running",
+        "exited",
+        "stopped",
+        "unavailable"
+      ],
+      "type": "string"
+    },
+    "HealthCheckRequest": {
+      "additionalProperties": false,
+      "description": "The HTTP probe `service.inspect` accepts.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "maximum": 2000,
+          "minimum": 50,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "port_variable",
+        "path",
+        "timeout_ms"
+      ],
+      "type": "object"
+    },
+    "HealthPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "interval_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "port_variable",
+        "path",
+        "timeout_ms",
+        "interval_ms"
+      ],
+      "type": "object"
+    },
+    "ListenerFamily": {
+      "enum": [
+        "ipv4",
+        "ipv6"
+      ],
+      "type": "string"
+    },
+    "ListenerInventory": {
+      "description": "The `listener.list` reply.",
+      "properties": {
+        "assignments": {
+          "items": {
+            "$ref": "#/$defs/PortAssignment"
+          },
+          "type": "array"
+        },
+        "coverage": {
+          "description": "The `partial` type tag.",
+          "enum": [
+            "partial"
+          ],
+          "type": "string"
+        },
+        "listeners": {
+          "items": {
+            "$ref": "#/$defs/ListenerRow"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "description": "The `local_host` type tag.",
+          "enum": [
+            "local_host"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "description": "The `listeners` type tag.",
+          "enum": [
+            "listeners"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "scope",
+        "coverage",
+        "listeners",
+        "assignments"
+      ],
+      "type": "object"
+    },
+    "ListenerListRequest": {
+      "additionalProperties": false,
+      "description": "`listener.list`: observe local TCP listeners and service port assignments.",
+      "properties": {
+        "op": {
+          "const": "listener.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ListenerOwnership": {
+      "enum": [
+        "managed_service",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "ListenerRow": {
+      "description": "One observed TCP listener.",
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "family": {
+          "$ref": "#/$defs/ListenerFamily"
+        },
+        "ownership": {
+          "$ref": "#/$defs/ListenerOwnership"
+        },
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "protocol": {
+          "description": "The `tcp` type tag.",
+          "enum": [
+            "tcp"
+          ],
+          "type": "string"
+        },
+        "service_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "description": "Set when the listener belongs to a verified managed service run.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "protocol",
+        "address",
+        "port",
+        "family",
+        "pid",
+        "ownership",
+        "workspace_id",
+        "service_name"
+      ],
+      "type": "object"
+    },
     "Message": {
       "properties": {
         "attachments": {
@@ -531,6 +720,22 @@
       ],
       "type": "object"
     },
+    "PeerEndpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "port_variable": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "port_variable"
+      ],
+      "type": "object"
+    },
     "PendingRequest": {
       "properties": {
         "answer_attempt": {
@@ -580,6 +785,52 @@
       ],
       "type": "object"
     },
+    "PortAssignment": {
+      "description": "One service port assignment and who was seen listening on it.",
+      "properties": {
+        "observation": {
+          "$ref": "#/$defs/PortObservation"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "service_name": {
+          "type": "string"
+        },
+        "variable": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "service_name",
+        "variable",
+        "port",
+        "observation"
+      ],
+      "type": "object"
+    },
+    "PortObservation": {
+      "enum": [
+        "verified_managed",
+        "contested",
+        "observed_other",
+        "unobserved"
+      ],
+      "type": "string"
+    },
+    "ProxyAvailability": {
+      "enum": [
+        "bound",
+        "port_occupied"
+      ],
+      "type": "string"
+    },
     "QueuedPrompt": {
       "properties": {
         "attachments": {
@@ -606,6 +857,1211 @@
         "conversation_id",
         "text",
         "status"
+      ],
+      "type": "object"
+    },
+    "Readiness": {
+      "description": "Port readiness; application readiness is never inferred.",
+      "properties": {
+        "application_ready": {
+          "description": "The `unverified` type tag.",
+          "enum": [
+            "unverified"
+          ],
+          "type": "string"
+        },
+        "basis": {
+          "$ref": "#/$defs/ReadinessBasis"
+        },
+        "observation_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ReadinessState"
+        }
+      },
+      "required": [
+        "state",
+        "basis",
+        "application_ready",
+        "observation_error"
+      ],
+      "type": "object"
+    },
+    "ReadinessBasis": {
+      "enum": [
+        "direct_process_tcp_listener",
+        "execution_state",
+        "identity_changed"
+      ],
+      "type": "string"
+    },
+    "ReadinessState": {
+      "description": "What the daemon could observe about a running service's ports.",
+      "enum": [
+        "stopped",
+        "exited",
+        "unknown",
+        "unknown_no_port_check",
+        "port_conflict",
+        "tcp_listening",
+        "not_observed",
+        "observation_unavailable"
+      ],
+      "type": "string"
+    },
+    "RecoveryStatus": {
+      "enum": [
+        "healthy",
+        "degraded",
+        "corrupt"
+      ],
+      "type": "string"
+    },
+    "Service": {
+      "properties": {
+        "config": {
+          "additionalProperties": false,
+          "description": "Inlined in schemas: a request's defaults make its required fields differ\nfrom a reply's, so the two cannot share one named definition.",
+          "properties": {
+            "args": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "cwd": {
+              "default": ".",
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "health": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HealthPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "peers": {
+              "additionalProperties": {
+                "$ref": "#/$defs/PeerEndpoint"
+              },
+              "description": "Environment variables populated from another managed service in this workspace.",
+              "type": "object"
+            },
+            "ports": {
+              "default": [],
+              "description": "Environment variables that receive stable, host-local TCP ports.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "program",
+            "args",
+            "env",
+            "cwd",
+            "ports"
+          ],
+          "type": "object"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "identity": {
+          "default": "",
+          "description": "Durable incarnation; a removed service with the same name gets a new ID.",
+          "type": "string"
+        },
+        "last_run_transfer_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launch_peers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "URLs placed in the environment of the currently reserved service run.",
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ports": {
+          "additionalProperties": {
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "terminal_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal_owner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalOwner"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity",
+        "terminal_id",
+        "terminal_owner",
+        "workspace_id",
+        "name",
+        "revision",
+        "config",
+        "ports",
+        "hostname"
+      ],
+      "type": "object"
+    },
+    "ServiceChanged": {
+      "description": "The `service_changed` feed frame, sent when a run starts or stops.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "metrics": {
+          "description": "The launched terminal's metrics; present when a run starts."
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "service": {
+          "$ref": "#/$defs/Service"
+        },
+        "type": {
+          "description": "The `service_changed` type tag.",
+          "enum": [
+            "service_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "service",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ServiceConfigureRequest": {
+      "additionalProperties": false,
+      "description": "`service.configure`: create or edit a service recipe.",
+      "properties": {
+        "config": {
+          "additionalProperties": false,
+          "description": "Decoded as a [`Config`] by the handler, so malformed recipes keep the\ndaemon's own validation messages.",
+          "properties": {
+            "args": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "cwd": {
+              "default": ".",
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "health": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HealthPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "peers": {
+              "additionalProperties": {
+                "$ref": "#/$defs/PeerEndpoint"
+              },
+              "description": "Environment variables populated from another managed service in this workspace.",
+              "type": "object"
+            },
+            "ports": {
+              "default": [],
+              "description": "Environment variables that receive stable, host-local TCP ports.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "program"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.configure"
+        },
+        "revision": {
+          "description": "The revision the caller last saw; 0 creates the service.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "revision",
+        "config"
+      ],
+      "type": "object"
+    },
+    "ServiceExecution": {
+      "description": "One service's entry in [`ServiceList::states`].",
+      "properties": {
+        "metrics": {
+          "description": "The runtime terminal metrics, or null when the service has no live terminal."
+        },
+        "state": {
+          "$ref": "#/$defs/ExecutionState"
+        }
+      },
+      "required": [
+        "state",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "ServiceHealthSample": {
+      "description": "The `service.health.sample` reply.",
+      "properties": {
+        "health_monitor": true,
+        "type": {
+          "description": "The `service_health_sample` type tag.",
+          "enum": [
+            "service_health_sample"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "health_monitor"
+      ],
+      "type": "object"
+    },
+    "ServiceHealthSampleRequest": {
+      "additionalProperties": false,
+      "description": "`service.health.sample`: probe the service's configured health policy now.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.health.sample"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ServiceInspectRequest": {
+      "additionalProperties": false,
+      "description": "`service.inspect`: execution, readiness, peers and bounded output of one service.",
+      "properties": {
+        "health_check": {
+          "$ref": "#/$defs/HealthCheckRequest",
+          "description": "A one-off HTTP probe. The handler validates it, so its messages stay\nspecific."
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.inspect"
+        },
+        "tail_bytes": {
+          "description": "Output tail in bytes, 1 to 32768; the daemon uses 8192 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ServiceInspection": {
+      "description": "The `service.inspect` reply.",
+      "properties": {
+        "current_peer_endpoints": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Absent when the service changed during inspection.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "durable_logs": {
+          "description": "The durable run log tail, or `{available: false, reason}`."
+        },
+        "effective_peers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "execution_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "execution_state": {
+          "$ref": "#/$defs/ExecutionState"
+        },
+        "health": {
+          "description": "The requested one-off probe result; present when `health_check` was sent."
+        },
+        "health_monitor": {
+          "description": "The configured policy's latest monitored result."
+        },
+        "logs": {
+          "description": "The live terminal tail, or `{available: false, reason}`."
+        },
+        "peer_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "readiness": {
+          "$ref": "#/$defs/Readiness"
+        },
+        "service": {
+          "$ref": "#/$defs/Service"
+        },
+        "type": {
+          "description": "The `service_inspection` type tag.",
+          "enum": [
+            "service_inspection"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "service",
+        "execution_state",
+        "execution_error",
+        "readiness",
+        "logs",
+        "durable_logs",
+        "effective_peers",
+        "peer_error",
+        "health_monitor"
+      ],
+      "type": "object"
+    },
+    "ServiceList": {
+      "description": "The `service.list` reply.",
+      "properties": {
+        "services": {
+          "items": {
+            "$ref": "#/$defs/Service"
+          },
+          "type": "array"
+        },
+        "states": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ServiceExecution"
+          },
+          "description": "Keyed by service name.",
+          "type": "object"
+        },
+        "type": {
+          "description": "The `services` type tag.",
+          "enum": [
+            "services"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "services",
+        "states"
+      ],
+      "type": "object"
+    },
+    "ServiceListRequest": {
+      "additionalProperties": false,
+      "description": "`service.list`: a workspace's services and their execution state.",
+      "properties": {
+        "op": {
+          "const": "service.list"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "ServiceProxy": {
+      "description": "A stable URL. The `service.proxy.ensure`, `service.proxy.inspect`,\n`service.proxy.remap` and `service.proxy.recovery.retry` reply.",
+      "properties": {
+        "availability": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProxyAvailability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present, as `port_occupied`, only from `service.proxy.inspect` on a blocked route."
+        },
+        "owner": {
+          "description": "The `runtime` type tag.",
+          "enum": [
+            "runtime"
+          ],
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "route_id": {
+          "type": "string"
+        },
+        "scope": {
+          "description": "The `local_private` type tag.",
+          "enum": [
+            "local_private"
+          ],
+          "type": "string"
+        },
+        "service_identity": {
+          "type": "string"
+        },
+        "target_port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `service_proxy` type tag.",
+          "enum": [
+            "service_proxy"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "description": "Null when the route's port is occupied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "url",
+        "port",
+        "scope",
+        "owner",
+        "service_identity",
+        "target_port",
+        "route_id"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyEnsureRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.ensure`: create or reuse the stable URL for one service port.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.proxy.ensure"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "port_variable"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyInspectRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.inspect`: read one stable URL.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.proxy.inspect"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "port_variable"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRecovery": {
+      "description": "The `service.proxy.recovery.inspect` reply.",
+      "properties": {
+        "reason": {
+          "description": "Present when the registry is corrupt.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registry_sha256": {
+          "description": "Present when the registry is corrupt; empty when no bounded digest exists.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routes": {
+          "items": {
+            "$ref": "#/$defs/ServiceProxyRoute"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/RecoveryStatus"
+        },
+        "type": {
+          "description": "The `service_proxy_recovery` type tag.",
+          "enum": [
+            "service_proxy_recovery"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "status",
+        "routes"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRecoveryInspectRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.recovery.inspect`: blocked routes or a corrupt registry.",
+      "properties": {
+        "op": {
+          "const": "service.proxy.recovery.inspect"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRecoveryReset": {
+      "description": "The `service.proxy.recovery.reset` reply.",
+      "properties": {
+        "archive": {
+          "description": "Path of the archived corrupt registry.",
+          "type": "string"
+        },
+        "previous_sha256": {
+          "type": "string"
+        },
+        "status": {
+          "description": "The `reset` type tag.",
+          "enum": [
+            "reset"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "description": "The `service_proxy_recovery_reset` type tag.",
+          "enum": [
+            "service_proxy_recovery_reset"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "status",
+        "previous_sha256",
+        "archive"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRecoveryResetRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.recovery.reset`: archive and reset an inspected corrupt registry.",
+      "properties": {
+        "expected_registry_sha256": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.proxy.recovery.reset"
+        }
+      },
+      "required": [
+        "op",
+        "expected_registry_sha256"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRecoveryRetryRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.recovery.retry`: rebind a blocked route's original port.",
+      "properties": {
+        "expected_proxy_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "expected_route_id": {
+          "type": "string"
+        },
+        "expected_service_identity": {
+          "type": "string"
+        },
+        "expected_target_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.proxy.recovery.retry"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "port_variable",
+        "expected_route_id",
+        "expected_service_identity",
+        "expected_target_port",
+        "expected_proxy_port"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRemapRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.remap`: point a stable URL at the service's current identity\nand port, only if both reviewed targets still match.",
+      "properties": {
+        "expected_route_identity": {
+          "type": "string"
+        },
+        "expected_route_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "expected_service_identity": {
+          "type": "string"
+        },
+        "expected_target_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.proxy.remap"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "port_variable",
+        "expected_service_identity",
+        "expected_target_port",
+        "expected_route_identity",
+        "expected_route_port"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRetireRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.retire`: retire exactly one reviewed stable URL.",
+      "properties": {
+        "expected_proxy_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "expected_route_id": {
+          "type": "string"
+        },
+        "expected_service_identity": {
+          "type": "string"
+        },
+        "expected_target_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.proxy.retire"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "port_variable",
+        "expected_route_id",
+        "expected_service_identity",
+        "expected_target_port",
+        "expected_proxy_port"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRetired": {
+      "description": "The `service.proxy.retire` reply: the route as it was retired.",
+      "properties": {
+        "owner": {
+          "description": "The `runtime` type tag.",
+          "enum": [
+            "runtime"
+          ],
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "route_id": {
+          "type": "string"
+        },
+        "scope": {
+          "description": "The `local_private` type tag.",
+          "enum": [
+            "local_private"
+          ],
+          "type": "string"
+        },
+        "service_identity": {
+          "type": "string"
+        },
+        "target_port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `service_proxy_retired` type tag.",
+          "enum": [
+            "service_proxy_retired"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url",
+        "port",
+        "scope",
+        "owner",
+        "service_identity",
+        "target_port",
+        "route_id"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyRoute": {
+      "description": "One route in [`ServiceProxyRecovery::routes`].",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/ProxyAvailability"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner": {
+          "description": "The `runtime` type tag.",
+          "enum": [
+            "runtime"
+          ],
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the port is unavailable; present when it is occupied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route_id": {
+          "type": "string"
+        },
+        "scope": {
+          "description": "The `local_private` type tag.",
+          "enum": [
+            "local_private"
+          ],
+          "type": "string"
+        },
+        "service_identity": {
+          "type": "string"
+        },
+        "target_port": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `service_proxy` type tag.",
+          "enum": [
+            "service_proxy"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "description": "Null when the route's port is occupied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url",
+        "port",
+        "scope",
+        "owner",
+        "service_identity",
+        "target_port",
+        "route_id",
+        "workspace_id",
+        "name",
+        "port_variable",
+        "availability"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyTarget": {
+      "description": "The `service.proxy.target` reply: the verified service process to forward to.",
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "port": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "transfer_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `service_proxy_target` type tag.",
+          "enum": [
+            "service_proxy_target"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host",
+        "port",
+        "transfer_id",
+        "pid"
+      ],
+      "type": "object"
+    },
+    "ServiceProxyTargetRequest": {
+      "additionalProperties": false,
+      "description": "`service.proxy.target`: the runtime proxy asks the daemon to verify its\ntarget before forwarding one connection.",
+      "properties": {
+        "connected_host": {
+          "description": "`127.0.0.1` or `::1`.",
+          "type": "string"
+        },
+        "expected_port": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.proxy.target"
+        },
+        "port_variable": {
+          "type": "string"
+        },
+        "service_identity": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "port_variable",
+        "expected_port",
+        "service_identity",
+        "connected_host"
+      ],
+      "type": "object"
+    },
+    "ServiceRemoveRequest": {
+      "additionalProperties": false,
+      "description": "`service.remove`: delete a stopped service at the revision the caller saw.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.remove"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ServiceReply": {
+      "description": "The `service.configure`, `service.start` and `service.stop` reply.",
+      "properties": {
+        "effective_peers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Peer URLs placed in the run's environment; present on `service.start`.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "metrics": {
+          "description": "The launched terminal's metrics; present on `service.start`."
+        },
+        "service": {
+          "$ref": "#/$defs/Service"
+        },
+        "terminal_id": {
+          "description": "Present on `service.start`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `service` type tag.",
+          "enum": [
+            "service"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "service"
+      ],
+      "type": "object"
+    },
+    "ServiceStartRequest": {
+      "additionalProperties": false,
+      "description": "`service.start`: launch a configured service, or return its live run.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.start"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ServiceStopRequest": {
+      "additionalProperties": false,
+      "description": "`service.stop`: stop a service and confirm its process exited.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "service.stop"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name"
       ],
       "type": "object"
     },
@@ -689,6 +2145,11 @@
       "domain": "conversations",
       "frame": "ConversationChanged",
       "type": "conversation_changed"
+    },
+    {
+      "domain": "services",
+      "frame": "ServiceChanged",
+      "type": "service_changed"
     }
   ],
   "operations": [
@@ -719,6 +2180,118 @@
       "request": "AgentAnswerRequest",
       "response": "Ack",
       "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.configure",
+      "request": "ServiceConfigureRequest",
+      "response": "ServiceReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.list",
+      "request": "ServiceListRequest",
+      "response": "ServiceList",
+      "tier": "query"
+    },
+    {
+      "domain": "services",
+      "name": "service.inspect",
+      "request": "ServiceInspectRequest",
+      "response": "ServiceInspection",
+      "tier": "query"
+    },
+    {
+      "domain": "services",
+      "name": "service.start",
+      "request": "ServiceStartRequest",
+      "response": "ServiceReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.stop",
+      "request": "ServiceStopRequest",
+      "response": "ServiceReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.remove",
+      "request": "ServiceRemoveRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.health.sample",
+      "request": "ServiceHealthSampleRequest",
+      "response": "ServiceHealthSample",
+      "tier": "query"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.ensure",
+      "request": "ServiceProxyEnsureRequest",
+      "response": "ServiceProxy",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.inspect",
+      "request": "ServiceProxyInspectRequest",
+      "response": "ServiceProxy",
+      "tier": "query"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.target",
+      "request": "ServiceProxyTargetRequest",
+      "response": "ServiceProxyTarget",
+      "tier": "query"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.remap",
+      "request": "ServiceProxyRemapRequest",
+      "response": "ServiceProxy",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.retire",
+      "request": "ServiceProxyRetireRequest",
+      "response": "ServiceProxyRetired",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.recovery.inspect",
+      "request": "ServiceProxyRecoveryInspectRequest",
+      "response": "ServiceProxyRecovery",
+      "tier": "query"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.recovery.retry",
+      "request": "ServiceProxyRecoveryRetryRequest",
+      "response": "ServiceProxy",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "service.proxy.recovery.reset",
+      "request": "ServiceProxyRecoveryResetRequest",
+      "response": "ServiceProxyRecoveryReset",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "services",
+      "name": "listener.list",
+      "request": "ListenerListRequest",
+      "response": "ListenerInventory",
+      "tier": "query"
     }
   ]
 }
