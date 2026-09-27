@@ -314,7 +314,16 @@ impl Sessions {
             if d.unresolved.is_empty() {
                 return Ok(());
             }
-            let claims: Vec<Claim> = d.unresolved.values().map(|u| u.claim.clone()).collect();
+            // Runtime restart reconciliation settles the leases it watches.
+            let claims: Vec<Claim> = d
+                .unresolved
+                .values()
+                .filter(|u| !d.recovery.holds(&u.claim.key))
+                .map(|u| u.claim.clone())
+                .collect();
+            if claims.is_empty() {
+                return Ok(());
+            }
             let needs_agents = claims
                 .iter()
                 .any(|claim| matches!(claim.holder, Holder::Agent { .. }));
@@ -375,6 +384,7 @@ impl Sessions {
     /// Drops an unresolved lease once a control path has settled it.
     pub(super) fn settle_unresolved(&self, d: &mut Data, key: &LeaseKey) {
         d.unresolved.remove(key);
+        self.recovery_lease_settled(d, key);
     }
 }
 

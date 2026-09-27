@@ -28,6 +28,7 @@ import { importUsage, runImportCommand } from './commands/imports.js'
 import { runUsageCommand, usageAnalyticsUsage } from './commands/usage.js'
 import { providerUsage, runProviderCommand } from './commands/providers.js'
 import { retentionUsage, runRetentionCommand } from './commands/retention.js'
+import { recoveryUsage, runRecoveryCommand } from './commands/recovery.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { runSlashCommand, slashCommandUsage } from './commands/slash-commands.js'
@@ -123,6 +124,7 @@ const usage = [
   activityUsage,
   remoteConnectUsage,
   retentionUsage,
+  recoveryUsage,
   deviceUsage,
   resourcesUsage,
   requestUsage,
@@ -271,6 +273,7 @@ const commandAreas = [
   runRunsCommand,
   runDiagnosticsCommand,
   runRetentionCommand,
+  runRecoveryCommand,
   runDeviceCommand,
   runFileCommand,
   runQueueCommand,

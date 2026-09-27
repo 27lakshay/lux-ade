@@ -16939,6 +16939,180 @@
       ],
       "type": "object"
     },
+    "RecoveredAttempt": {
+      "description": "One attempt an old runtime incarnation owned.",
+      "properties": {
+        "attempt": {
+          "description": "The run ID or terminal transfer ID, when recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "classification": {
+          "$ref": "#/$defs/RecoveryClassification"
+        },
+        "key": {
+          "description": "Stable within the report: `agent:<conversation>`,\n`terminal:<workspace>:<terminal>`, `service:<workspace>:<name>` or\n`script:<workspace>:<run>`.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RecoveredAttemptKind"
+        },
+        "outcome_unknown": {
+          "description": "A provider turn was in flight: its effects are unknown and it was not replayed.",
+          "type": "boolean"
+        },
+        "pids": {
+          "description": "Processes observed still running, for a quarantined attempt.",
+          "items": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "description": "The evidence behind the classification, in one sentence.",
+          "type": "string"
+        },
+        "resolution": {
+          "description": "How it was resolved.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolved_at": {
+          "description": "When a later observation or the user resolved a quarantined or unknown attempt.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "runtime_instance": {
+          "description": "The runtime incarnation that owned it, when recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subject": {
+          "description": "The Conversation ID, terminal ID, service name or script run ID.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "workspace_id",
+        "subject",
+        "attempt",
+        "runtime_instance",
+        "classification",
+        "reason",
+        "pids",
+        "outcome_unknown",
+        "resolved_at",
+        "resolution"
+      ],
+      "type": "object"
+    },
+    "RecoveredAttemptKind": {
+      "description": "What kind of execution an old runtime incarnation owned.",
+      "oneOf": [
+        {
+          "const": "provider_turn",
+          "description": "A Conversation's provider run and its turn, if one was in flight.",
+          "type": "string"
+        },
+        {
+          "const": "terminal",
+          "description": "A plain workspace terminal shell.",
+          "type": "string"
+        },
+        {
+          "const": "service",
+          "description": "A reserved service run.",
+          "type": "string"
+        },
+        {
+          "const": "script",
+          "description": "A script run.",
+          "type": "string"
+        }
+      ]
+    },
+    "RecoveryClassification": {
+      "description": "How runtime restart reconciliation classified one attempt.",
+      "oneOf": [
+        {
+          "const": "settled",
+          "description": "Positive evidence that nothing observed from the attempt still runs.",
+          "type": "string"
+        },
+        {
+          "const": "quarantined",
+          "description": "Processes from the attempt still run without an owner. Its resources\nstay reserved until they exit.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "No evidence either way. Its resources stay reserved until evidence\nappears or the user releases it.",
+          "type": "string"
+        }
+      ]
+    },
+    "RecoveryReport": {
+      "description": "One runtime restart reconciliation.",
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/$defs/RecoveredAttempt"
+          },
+          "type": "array"
+        },
+        "current_instance": {
+          "description": "The runtime incarnation the daemon found instead.",
+          "type": "string"
+        },
+        "detected_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "open": {
+          "description": "Attempts still quarantined or unknown and not resolved.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "previous_instances": {
+          "description": "The runtime incarnations that had stopped.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "previous_instances",
+        "current_instance",
+        "detected_at",
+        "attempts",
+        "open"
+      ],
+      "type": "object"
+    },
     "RecoveryStatus": {
       "enum": [
         "healthy",
@@ -19899,6 +20073,99 @@
       "required": [
         "op",
         "boot_id"
+      ],
+      "type": "object"
+    },
+    "RuntimeRecovery": {
+      "description": "The `runtime.recovery` reply.",
+      "properties": {
+        "current_instance": {
+          "type": "string"
+        },
+        "reports": {
+          "items": {
+            "$ref": "#/$defs/RecoveryReport"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `runtime_recovery` type tag.",
+          "enum": [
+            "runtime_recovery"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "current_instance",
+        "reports"
+      ],
+      "type": "object"
+    },
+    "RuntimeRecoveryReleaseRequest": {
+      "additionalProperties": false,
+      "description": "`runtime.recovery.release`: accept an `unknown` attempt as stopped without\nproof, so its workspace can admit new work. An attempt whose processes are\nobserved running is refused. Nothing is replayed. Repeating it after the\nattempt is resolved returns the same report.",
+      "properties": {
+        "attempt_key": {
+          "description": "The attempt's `key` from the report.",
+          "type": "string"
+        },
+        "op": {
+          "const": "runtime.recovery.release"
+        },
+        "report_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "report_id",
+        "attempt_key"
+      ],
+      "type": "object"
+    },
+    "RuntimeRecoveryReleased": {
+      "description": "The `runtime.recovery.release` reply.",
+      "properties": {
+        "attempt_key": {
+          "type": "string"
+        },
+        "report": {
+          "$ref": "#/$defs/RecoveryReport"
+        },
+        "type": {
+          "description": "The `runtime_recovery_released` type tag.",
+          "enum": [
+            "runtime_recovery_released"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "attempt_key",
+        "report"
+      ],
+      "type": "object"
+    },
+    "RuntimeRecoveryRequest": {
+      "additionalProperties": false,
+      "description": "`runtime.recovery`: read the reports the daemon wrote when it found that\nthe runtime restarted under a new incarnation. Newest first.",
+      "properties": {
+        "op": {
+          "const": "runtime.recovery"
+        },
+        "open_only": {
+          "description": "Only reports that still hold a quarantined or unknown attempt.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
       ],
       "type": "object"
     },
@@ -26252,6 +26519,20 @@
       "request": "DiagnosticsExportRequest",
       "response": "DiagnosticsExport",
       "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "runtime.recovery",
+      "request": "RuntimeRecoveryRequest",
+      "response": "RuntimeRecovery",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "runtime.recovery.release",
+      "request": "RuntimeRecoveryReleaseRequest",
+      "response": "RuntimeRecoveryReleased",
+      "tier": "idempotent_command"
     },
     {
       "domain": "activity",

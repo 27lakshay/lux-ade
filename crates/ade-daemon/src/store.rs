@@ -25,6 +25,7 @@ mod bindings;
 pub mod context_nodes;
 mod conversations;
 mod migrations;
+pub mod runtime_recovery;
 mod send_intents;
 mod send_outbox;
 mod snoozes;
