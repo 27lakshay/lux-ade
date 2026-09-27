@@ -6,6 +6,44 @@ Type: delivery record
 Updated: 2026-09-27. Branch: `codex/architecture-proposal`. No Git remote is
 configured. This is a checkpoint, not a claim that the v1 register is complete.
 
+## Parallel build: overnight coordinator log (2026-09-27)
+
+The build now runs as a Claude coordinator plus Workflow workers, following
+the [parallel build map](../parallel-build/README.md). The user was asleep and
+delegated every decision below; the ones that need confirmation are listed first.
+
+**Needs your confirmation**
+
+- The accepted-feature stop condition is replaced by slices merged per round,
+  requirement IDs advanced and minutes per slice, because no feature can meet
+  E2E acceptance while E2E is paused
+  ([ticket 15 amendment](../parallel-build/issues/15-handoff-order.md)).
+- Backup restore now accepts each versioned database one schema behind the
+  current one (`329f27c`). How far back restores should reach is still D15.
+- Browser mutations from the CLI now send `operation_id`. A new CLI needs a
+  daemon from the same build for those commands; the old `request_id` is still
+  accepted by the daemon.
+- Four legacy Rust tests are ignored because their fixtures predate fail-closed
+  path binding or the current schema ladder (`9e10380`).
+
+**Phase 0 (foundation), all merged green under `pnpm check:static`**
+
+| Commit | Change |
+|---|---|
+| `38cae93` | Rules: test policy, ownership rules, reference protocol, operation tiers |
+| `ec7d344` | Removed the GPUI client (about 17,000 Rust lines) at your instruction |
+| `9e10380` | `check:static` gate, worker bootstrap, sccache, 18 legacy tests repaired |
+| `840a4db`–`c4c5833` | Hot files split into per-domain modules: desktop main 1,669 → 243 lines, renderer 1,284 → 317, CLI 1,181 → 239, `sessions.rs` 3,606 → 648, `store.rs` 3,765 → 76 |
+| `1274277`–`9a1d1fa`, `9628aef`, `fe5e5f6` | `window.adeHost` per-domain namespaces and a quit-guard registry; the Schemars → JSON Schema → TS types and Ajv pipeline (`@ade/contracts`, `pnpm contract:check`); the shared receipt module with forward-only transitions |
+
+**Phase 1 (trial round), merged green at `329f27c`**
+
+Ten domain workers typed 102 daemon operations (43 queries, 22 idempotent commands, 37 effect commands) with contract
+types and declared tiers. Pure-receipt tables for worktrees, terminals, Git and
+browser operations moved onto `receipts.rs`. In-process tests grew from 87 to
+153. Wall time: about 23 minutes of worker time, plus about 25 minutes of
+coordinator merging.
+
 ## Scope baseline and daily-use gate
 
 The baseline is commit `cada60a`, where `requirements.md` records exactly 107
