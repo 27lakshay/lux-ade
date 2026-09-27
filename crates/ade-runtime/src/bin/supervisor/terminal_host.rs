@@ -74,6 +74,9 @@ struct State {
     transfer_id: Option<String>,
     session_subscribers: Arc<AtomicUsize>,
     durable_log_error: Option<String>,
+    /// Set by `terminal.stop`. A stopped shell's exit is settled by the
+    /// verdict on its process tree, not by the shell's own status.
+    stop_requested: bool,
 }
 
 impl State {
@@ -635,6 +638,15 @@ fn settle_exit(
     }
     Some(outcome)
 }
+/// Whether a terminal's exit is settled by its process tree's verdict. A
+/// launched program always is. A shell is only after `terminal.stop`: a stop
+/// is proven by an empty tree, while a shell the user exits keeps its jobs.
+fn verifies_tree(launched: bool, stop_requested: bool) -> bool {
+    launched || stop_requested
+}
+/// How long a stopped shell has to exit after its hang-up before its whole
+/// tree is killed.
+const SHELL_STOP_GRACE: Duration = Duration::from_secs(2);
 pub fn spawn_runtime(
     workspace: &WorkspaceRecord,
     launch: Option<&ade_runtime::terminal_launch::Launch>,
@@ -679,8 +691,10 @@ pub fn spawn_runtime(
     let killer = Mutex::new(child.clone_killer());
     // portable-pty starts the child in its own session, so its PID is the
     // group ID. Track the tree from the start so descendants that leave the
-    // group are still known when the program stops.
-    let tree: Option<Tree> = launch.and(child.process_id()).map(|pid| {
+    // group are still known when the program stops. Shells are tracked too:
+    // a stopped shell's background jobs are part of what the stop must end.
+    let launched = launch.is_some();
+    let tree: Option<Tree> = child.process_id().map(|pid| {
         let mut shutdown = ade_runtime::descendants::Shutdown::new(pid);
         shutdown.track();
         Arc::new(Mutex::new(shutdown))
@@ -742,6 +756,7 @@ pub fn spawn_runtime(
         shell_running: true,
         exit_status: None,
         durable_log_error,
+        stop_requested: false,
     }));
     let terminal_state = state.clone();
     let reader_tree = tree.clone();
@@ -767,7 +782,10 @@ pub fn spawn_runtime(
         // require evidence that it has stopped. The tree reaps the child only
         // after the group is empty, so the group ID stays ours while signalled.
         // Lock order is tree, then state; stop() only try-locks the tree.
-        let descendants = reader_tree.as_ref().map(|tree| {
+        // A shell that exits on its own keeps its plain exit status; one that
+        // was stopped is proven by the same verdict as a program.
+        let verify = verifies_tree(launched, terminal_state.lock().unwrap().stop_requested);
+        let descendants = reader_tree.as_ref().filter(|_| verify).map(|tree| {
             let mut shutdown = tree.lock().unwrap_or_else(|poison| poison.into_inner());
             shutdown.stop(&ade_runtime::descendants::Policy::default(), &mut || {
                 let mut s = terminal_state.lock().unwrap();
@@ -875,34 +893,73 @@ impl Runtime {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
-        let state = self.state.lock().unwrap();
-        if state.shell_running {
-            if state.transfer_id.is_some() {
-                // Observe the tree before signalling so descendants outside
-                // the group are killed too. The reader thread then proves the
-                // tree stopped. When the tree is busy (the metrics thread is
-                // tracking it, or the reader is already proving shutdown),
-                // still signal the group so a stop is never dropped.
-                let signalled = match &self.tree {
-                    Some(tree) => match tree.try_lock() {
-                        Ok(mut shutdown) => {
-                            shutdown.kill_now();
-                            true
+        let mut state = self.state.lock().unwrap();
+        if state.shell_running && state.transfer_id.is_none() {
+            // A shell: hang up so it can exit cleanly, then prove the tree.
+            // The reader settles the exit by the tree's verdict; a shell that
+            // outlives the grace period has its whole tree killed.
+            let first = !state.stop_requested;
+            state.stop_requested = true;
+            // Observe the tree before the hang-up, so jobs the shell started
+            // are still known after they are reparented. A busy tree is being
+            // observed by the metrics thread already.
+            if let Some(tree) = &self.tree
+                && let Ok(mut shutdown) = tree.try_lock()
+            {
+                shutdown.track();
+            }
+            self.killer.lock().unwrap().kill()?;
+            if first && let Some(tree) = self.tree.clone() {
+                let state = self.state.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(SHELL_STOP_GRACE);
+                    let shell_pid = {
+                        let s = state.lock().unwrap();
+                        if !s.shell_running {
+                            return;
                         }
-                        Err(_) => false,
-                    },
-                    None => false,
-                };
-                if !signalled && let Some(pid) = state.shell_pid {
-                    let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
-                    if result != 0
-                        && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-                    {
-                        return Err(std::io::Error::last_os_error().into());
+                        s.shell_pid
+                    };
+                    match tree.try_lock() {
+                        Ok(mut shutdown) => shutdown.kill_now(),
+                        // The reader is already proving the tree stopped.
+                        Err(_) => {
+                            if let Some(pid) = shell_pid {
+                                let s = state.lock().unwrap();
+                                if s.shell_running {
+                                    // SAFETY: plain syscall; the shell is unreaped, so its group ID is ours.
+                                    unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+                                }
+                            }
+                        }
                     }
+                });
+            }
+            return Ok(());
+        }
+        if state.shell_running {
+            // A launched program: observe the tree before signalling so
+            // descendants outside the group are killed too. The reader thread
+            // then proves the tree stopped. When the tree is busy (the metrics
+            // thread is tracking it, or the reader is already proving
+            // shutdown), still signal the group so a stop is never dropped.
+            let signalled = match &self.tree {
+                Some(tree) => match tree.try_lock() {
+                    Ok(mut shutdown) => {
+                        shutdown.kill_now();
+                        true
+                    }
+                    Err(_) => false,
+                },
+                None => false,
+            };
+            if !signalled && let Some(pid) = state.shell_pid {
+                let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+                if result != 0
+                    && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+                {
+                    return Err(std::io::Error::last_os_error().into());
                 }
-            } else {
-                self.killer.lock().unwrap().kill()?;
             }
         }
         Ok(())
@@ -983,6 +1040,16 @@ mod tests {
         assert_eq!(unknown["reason"], "wait failed");
     }
     #[test]
+    fn a_stopped_shell_is_settled_by_its_tree_but_an_exited_one_is_not() {
+        // A launched program is always proven by its tree.
+        assert!(verifies_tree(true, false));
+        assert!(verifies_tree(true, true));
+        // terminal.stop on a shell: only an empty tree proves the stop.
+        assert!(verifies_tree(false, true));
+        // A shell the user exits keeps its own status and its jobs.
+        assert!(!verifies_tree(false, false));
+    }
+    #[test]
     fn reply_backpressure_does_not_block_output() {
         let (tx, rx) = mpsc::sync_channel(1);
         tx.send(vec![0]).unwrap();
@@ -1012,6 +1079,7 @@ mod tests {
             shell_running: true,
             exit_status: None,
             durable_log_error: None,
+            stop_requested: false,
         };
         let release = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(500));
@@ -1055,6 +1123,7 @@ mod tests {
             shell_running: true,
             exit_status: None,
             durable_log_error: None,
+            stop_requested: false,
         };
         state.append_terminal(b"\x1b[2J\x1b[HPINNED BEFORE RAW RING");
         let repaint = b"\x1b[2;1Hupdated row, pinned row remains".repeat(10000);
@@ -1112,6 +1181,7 @@ mod tests {
             shell_running: true,
             exit_status: None,
             durable_log_error: None,
+            stop_requested: false,
         };
         let (tx, _rx) = mpsc::sync_channel(1);
         state.clients.insert(
