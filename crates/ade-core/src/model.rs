@@ -33,6 +33,11 @@ pub struct Conversation {
     pub terminal_owner: Option<TerminalOwner>,
     #[serde(default)]
     pub queue_paused: bool,
+    /// The turn that was active when the person resumed the queue. That
+    /// turn's interruption or failure then leaves the queue running, so a
+    /// wake received while an older run cleans up is kept (R003).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_resumed_during: Option<String>,
     #[serde(default)]
     pub runtime_run: Option<String>,
     #[serde(default)]

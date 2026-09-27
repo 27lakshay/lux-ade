@@ -3,6 +3,7 @@
 // shutdown are all observed through the protocol; nothing here sleeps for a
 // fixed time.
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { closeSync, openSync } from 'node:fs'
 import { appendFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -353,7 +354,8 @@ export class ScratchProfile {
     const bootId = this.current?.boot_id ?? (await rpc(this.socket, { op: 'hello' }, 1_000)).boot_id
     await until('runtime.prepare_restart to be accepted', async () => {
       try {
-        await rpc(this.socket, { op: 'runtime.prepare_restart', boot_id: bootId }, 5_000)
+        await rpc(this.socket, { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`,
+          boot_id: bootId }, 5_000)
         return true
       } catch (error) {
         // Admission and in-flight Git work are transient; anything else is a real failure.

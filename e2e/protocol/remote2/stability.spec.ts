@@ -98,5 +98,5 @@ test('a disconnected and then revoked host keeps its work and identity while loc
   const owner = await rpc(alpha.daemon.socket, { op: 'conversation.get', conversation_id: conversation.id })
   expect((owner.conversation as { status: string }).status).toBe('running')
   expect(await remoteTurns(alpha)).toBe(1)
-  await rpc(alpha.daemon.socket, { op: 'agent.cancel', conversation_id: conversation.id })
+  await rpc(alpha.daemon.socket, { op: 'agent.cancel', operation_id: 'cancel-remote-turn', conversation_id: conversation.id })
 })

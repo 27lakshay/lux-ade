@@ -126,6 +126,10 @@ pub struct WorktreeSwitchRequest {
 /// `worktree.adopt`: take ADE removal authority over an existing linked tree.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeAdoptRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub repository_id: String,
     pub path: String,
     /// Must equal the canonical form of `path`. Optional in Rust only so a
@@ -1033,7 +1037,7 @@ mod tests {
         request::<WorktreeGetRequest>("worktree.get", json!({"repository_id": "r"}));
         let adopt: WorktreeAdoptRequest = request(
             "worktree.adopt",
-            json!({"repository_id": "r", "path": "/tmp/t", "confirm_path": "/tmp/t"}),
+            json!({"operation_id": "o", "repository_id": "r", "path": "/tmp/t", "confirm_path": "/tmp/t"}),
         );
         assert_eq!(adopt.confirm_path.as_deref(), Some("/tmp/t"));
         let configure: WorktreeConfigureRequest = request(

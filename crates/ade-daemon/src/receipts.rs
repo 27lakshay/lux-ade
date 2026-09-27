@@ -33,7 +33,14 @@ pub fn side_stores(sessions: &Path) -> Vec<(&'static str, PathBuf)> {
         ),
         ("review", sessions.with_extension("review.sqlite3")),
         ("plugins", sessions.with_extension("plugins.sqlite3")),
+        ("envelope", envelope_store(sessions)),
     ]
+}
+
+/// The receipt store of the effect-command envelope (`crate::envelope`). It is
+/// its own file, so its writes never contend with the profile database's.
+pub fn envelope_store(sessions: &Path) -> PathBuf {
+    sessions.with_extension("envelope.sqlite3")
 }
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, op TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result TEXT, caller TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);";
@@ -259,6 +266,15 @@ pub fn settle(
     Ok(())
 }
 
+/// The reply a settled receipt recorded as `{"reply": ...}`, which a retry of
+/// the same ID must return unchanged. `None` for an open receipt, or one
+/// settled before its handler recorded whole replies.
+pub fn recorded_reply(receipt: &Receipt) -> Option<Value> {
+    (receipt.status == Status::Settled)
+        .then(|| receipt.result.as_ref()?.get("reply").cloned())
+        .flatten()
+}
+
 /// Drops the body of receipts past retention. Each keeps an expired marker so
 /// a reused ID still returns [`Admission::Expired`]. Returns how many expired.
 pub fn prune(connection: &Connection, now: i64) -> Result<usize> {
@@ -383,6 +399,30 @@ mod tests {
             begin(&connection, "op-2", "worktree.remove", &payload, None, 2).unwrap(),
             Admission::New
         );
+    }
+
+    #[test]
+    fn only_a_settled_whole_reply_is_replayed() {
+        let reply = json!({"type": "resources", "claims": []});
+        let settled = |result| Receipt {
+            status: Status::Settled,
+            result,
+        };
+        assert_eq!(
+            recorded_reply(&settled(Some(json!({"reply": reply.clone()})))),
+            Some(reply.clone())
+        );
+        // An older receipt recorded only a summary; the caller rebuilds the reply.
+        assert_eq!(
+            recorded_reply(&settled(Some(json!({"resolved": "c"})))),
+            None
+        );
+        assert_eq!(recorded_reply(&settled(None)), None);
+        let open = Receipt {
+            status: Status::Acknowledged,
+            result: Some(json!({"reply": reply})),
+        };
+        assert_eq!(recorded_reply(&open), None);
     }
 
     #[test]

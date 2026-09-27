@@ -120,6 +120,10 @@ pub struct HealthCheckRequest {
 /// `service.start`: launch a configured service, or return its live run.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ServiceStartRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub name: String,
 }
@@ -127,6 +131,10 @@ pub struct ServiceStartRequest {
 /// `service.stop`: stop a service and confirm its process exited.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ServiceStopRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub name: String,
 }
@@ -134,6 +142,10 @@ pub struct ServiceStopRequest {
 /// `service.remove`: delete a stopped service at the revision the caller saw.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ServiceRemoveRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub name: String,
     pub revision: i64,
@@ -166,6 +178,10 @@ pub struct ServiceProxyInspectRequest {
 /// and port, only if both reviewed targets still match.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ServiceProxyRemapRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub name: String,
     pub port_variable: String,
@@ -180,6 +196,10 @@ pub struct ServiceProxyRemapRequest {
 /// `service.proxy.retire`: retire exactly one reviewed stable URL.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ServiceProxyRetireRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub name: String,
     pub port_variable: String,
@@ -198,6 +218,10 @@ pub struct ServiceProxyRecoveryInspectRequest {}
 /// `service.proxy.recovery.retry`: rebind a blocked route's original port.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ServiceProxyRecoveryRetryRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub name: String,
     pub port_variable: String,
@@ -212,6 +236,10 @@ pub struct ServiceProxyRecoveryRetryRequest {
 /// `service.proxy.recovery.reset`: archive and reset an inspected corrupt registry.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ServiceProxyRecoveryResetRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub expected_registry_sha256: String,
 }
 
@@ -730,11 +758,11 @@ mod tests {
         request::<ServiceInspectRequest>(json!({"op": "service.inspect",
             "workspace_id": "workspace_1", "name": "web", "tail_bytes": 4096,
             "health_check": {"port_variable": "PORT", "path": "/", "timeout_ms": 500}}));
-        request::<ServiceStartRequest>(json!({"op": "service.start",
+        request::<ServiceStartRequest>(json!({"op": "service.start", "operation_id": "o",
             "workspace_id": "workspace_1", "name": "web"}));
-        request::<ServiceStopRequest>(json!({"op": "service.stop",
+        request::<ServiceStopRequest>(json!({"op": "service.stop", "operation_id": "o",
             "workspace_id": "workspace_1", "name": "web"}));
-        request::<ServiceRemoveRequest>(json!({"op": "service.remove",
+        request::<ServiceRemoveRequest>(json!({"op": "service.remove", "operation_id": "o",
             "workspace_id": "workspace_1", "name": "web", "revision": 2}));
         request::<ServiceHealthSampleRequest>(json!({"op": "service.health.sample",
             "workspace_id": "workspace_1", "name": "web"}));
@@ -747,11 +775,13 @@ mod tests {
             "workspace_id": "workspace_1", "name": "web", "port_variable": "PORT"}));
         request::<ServiceProxyInspectRequest>(json!({"op": "service.proxy.inspect",
             "workspace_id": "workspace_1", "name": "web", "port_variable": "PORT"}));
-        request::<ServiceProxyRemapRequest>(json!({"op": "service.proxy.remap",
+        request::<ServiceProxyRemapRequest>(
+            json!({"op": "service.proxy.remap", "operation_id": "o",
             "workspace_id": "workspace_1", "name": "web", "port_variable": "PORT",
             "expected_service_identity": "service_1", "expected_target_port": 20001,
-            "expected_route_identity": "service_0", "expected_route_port": 20000}));
-        let route = json!({"workspace_id": "workspace_1", "name": "web", "port_variable": "PORT",
+            "expected_route_identity": "service_0", "expected_route_port": 20000}),
+        );
+        let route = json!({"operation_id": "o", "workspace_id": "workspace_1", "name": "web", "port_variable": "PORT",
             "expected_route_id": "route_1", "expected_service_identity": "service_1",
             "expected_target_port": 20001, "expected_proxy_port": 41000});
         let mut retire = route.clone();
@@ -763,8 +793,10 @@ mod tests {
         request::<ServiceProxyRecoveryInspectRequest>(
             json!({"op": "service.proxy.recovery.inspect"}),
         );
-        request::<ServiceProxyRecoveryResetRequest>(json!({"op": "service.proxy.recovery.reset",
-            "expected_registry_sha256": "a".repeat(64)}));
+        request::<ServiceProxyRecoveryResetRequest>(
+            json!({"op": "service.proxy.recovery.reset", "operation_id": "o",
+            "expected_registry_sha256": "a".repeat(64)}),
+        );
         // The runtime proxy's own request line.
         request::<ServiceProxyTargetRequest>(json!({"op": "service.proxy.target",
             "workspace_id": "workspace_1", "name": "web", "port_variable": "PORT",

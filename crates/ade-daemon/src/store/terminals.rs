@@ -154,7 +154,10 @@ impl Store {
     /// Adds a terminal to a workspace. With an operation ID, the receipt
     /// commits with the new terminal, and a retry returns the same terminal.
     pub fn create_terminal(&self, id: &str, operation_id: Option<&str>) -> Result<String> {
-        let tx = self.connection.unchecked_transaction()?;
+        // Immediate: a deferred read that later writes fails at once with
+        // "database is locked" when another connection to this database
+        // committed in between; taking the write lock first waits instead.
+        let tx = self.transaction()?;
         let now = now_ms();
         if let Some(operation_id) = operation_id {
             valid_creation_id(operation_id)?;

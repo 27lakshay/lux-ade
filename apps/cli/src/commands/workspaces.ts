@@ -1,5 +1,5 @@
 import { dailyUseCommand, requestDaemon } from '@ade/client'
-import { catalog, CliError, required, type CommandResult } from '../shared.js'
+import { catalog, CliError, effectOperationId, required, type CommandResult } from '../shared.js'
 
 export const workspaceUsage = `  workspace list                        List registered workspaces
   workspace open PATH                   Register a repository or folder
@@ -106,7 +106,8 @@ export async function runWorkspaceCommand(socketPath: string, area: string | und
   if (area === 'worktree' && action === 'adopt') {
     if (rest.length !== 3) throw new CliError('usage', 'worktree adopt requires REPOSITORY_ID PATH CONFIRM_PATH.')
     return dailyUseCommand(socketPath, {
-      op: 'worktree.adopt', repository_id: rest[0], path: rest[1], confirm_path: rest[2],
+      op: 'worktree.adopt', operation_id: effectOperationId(), repository_id: rest[0], path: rest[1],
+      confirm_path: rest[2],
     })
   }
   if (area === 'worktree' && action === 'remove') {

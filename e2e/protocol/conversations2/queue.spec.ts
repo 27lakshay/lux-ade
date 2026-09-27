@@ -96,7 +96,8 @@ test('R002: repeating queue.pause converges and never dispatches a prompt twice,
   expect((await snapshot(profile, conversationId)).conversation.queue_paused).toBe(true)
 
   // An unpause whose reply was lost, a daemon crash, then the same unpause again.
-  await sendAndLoseReply(profile, { op: 'queue.pause', conversation_id: conversationId, paused: false })
+  await sendAndLoseReply(profile, { op: 'queue.pause', operation_id: 'lost-unpause', conversation_id: conversationId,
+    paused: false })
   await expect.poll(async () => (await snapshot(profile, conversationId)).conversation.queue_paused).toBe(false)
   await profile.restartDaemon('kill')
   await profile.call('queue.pause', { conversation_id: conversationId, paused: false })

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { requestDaemon, type DaemonResponse } from '@ade/client'
 
 export type CommandResult = DaemonResponse | Record<string, unknown>
@@ -9,6 +10,31 @@ export class CliError extends Error {
   constructor(public readonly code: ErrorCode, message: string) {
     super(message)
   }
+}
+
+let chosenOperationId: string | undefined
+let sentOperationId: string | undefined
+
+/** Selects the operation ID from the global `--operation-id` option. */
+export function chooseOperationId(id: string): void {
+  if (!id || id.startsWith('--') || Buffer.byteLength(id) > 256) {
+    throw new CliError('usage', '--operation-id requires an ID of 1 to 256 bytes.')
+  }
+  chosenOperationId = id
+}
+
+/**
+ * The operation ID of this invocation's effect command: `--operation-id`, or a
+ * fresh one. Errors report it, so a lost reply can be retried under it.
+ */
+export function effectOperationId(): string {
+  sentOperationId ??= chosenOperationId ?? randomUUID()
+  return sentOperationId
+}
+
+/** The operation ID this invocation sent, if it sent one. */
+export function usedOperationId(): string | undefined {
+  return sentOperationId
 }
 
 export function required(value: string | undefined, label: string): string {

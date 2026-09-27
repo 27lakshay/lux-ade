@@ -1,11 +1,11 @@
 // Typed ADE wire contracts. The Rust types in crates/ade-core/src/contract are
 // the authority; everything under ./generated comes from them.
-import { frames, operations } from './generated/operations.js'
+import { frames, operationIdOperations, operations } from './generated/operations.js'
 import type { FeedFrame, Operation, RequestByOperation, ResponseByOperation } from './generated/types.js'
 import * as generatedValidators from './generated/validators.js'
 
 export type * from './generated/types.js'
-export { frames, operations }
+export { frames, operationIdOperations, operations }
 
 export type Tier = (typeof operations)[Operation]['tier']
 export type Request<O extends Operation = Operation> = RequestByOperation[O]

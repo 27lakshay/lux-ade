@@ -419,6 +419,10 @@ mod tests {
                     "plugins",
                     PathBuf::from("/profile/sessions.plugins.sqlite3")
                 ),
+                (
+                    "envelope",
+                    PathBuf::from("/profile/sessions.envelope.sqlite3")
+                ),
             ]
         );
     }

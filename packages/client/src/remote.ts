@@ -9,9 +9,10 @@ import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  decodeRequest, decodeResponse, type ExecutionHost, type ExecutionHostEntry, type Operation, type PlacementDecision,
-  type Request, type Response,
+  decodeResponse, type ExecutionHost, type ExecutionHostEntry, type Operation, type PlacementDecision,
+  type Response,
 } from '@ade/contracts'
+import { encodeCall, type CallRequest } from './call.js'
 import { AdeClient } from './index.js'
 import { DaemonRequestError, requestDaemon, type DaemonResponse, type RequestOptions } from './request.js'
 import {
@@ -261,10 +262,14 @@ export class RemoteDaemonTransport {
     return previewCapability(entry, url, this.state, this.target)
   }
 
-  /** A typed command with the same contract checks as a local `dailyUseCommand`. */
-  async command<O extends Operation>(request: Request<O>, options: RequestOptions = {}): Promise<Response<O>> {
-    decodeRequest(request)
-    const { op, ...fields } = request
+  /**
+   * A typed command with the same contract checks as a local `dailyUseCommand`;
+   * an effect command without an `operation_id` is sent under a fresh one.
+   */
+  async command<O extends Operation>(request: { op: O } & CallRequest<O>, options: RequestOptions = {}): Promise<Response<O>> {
+    const { op: requested, ...body } = request as unknown as { op: O } & Record<string, unknown>
+    const { fields } = encodeCall(requested, body)
+    const op = requested
     const response = await this.request(op, fields, options)
     try { return decodeResponse(op, response) as Response<O> }
     catch (error) {

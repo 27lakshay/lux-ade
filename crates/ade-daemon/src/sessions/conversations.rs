@@ -615,6 +615,11 @@ impl Sessions {
                 let pause: QueuePauseRequest = decode(request)?;
                 self.queue_change(&pause.conversation_id, |d, c| {
                     c.queue_paused = pause.paused;
+                    c.queue_resumed_during = if pause.paused {
+                        None
+                    } else {
+                        c.active_turn_id.clone()
+                    };
                     ensure!(
                         c.queue_paused || c.terminal_owner.is_none(),
                         "Return this Conversation from its terminal before unpausing"

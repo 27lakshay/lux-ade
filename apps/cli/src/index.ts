@@ -45,7 +45,7 @@ import { attachmentUsage, runAttachmentCommand } from './commands/attachments.js
 import { fileUsage, runFileCommand } from './commands/files.js'
 import { queueUsage, runQueueCommand } from './commands/queue.js'
 import { runRuntimeCommand, runtimeUsage } from './commands/runtime.js'
-import { CliError, object, type CommandResult, type ErrorCode } from './shared.js'
+import { chooseOperationId, CliError, object, usedOperationId, type CommandResult, type ErrorCode } from './shared.js'
 
 const usageHeader = `ADE local command line
 
@@ -53,6 +53,7 @@ Usage: ade --profile ID COMMAND [arguments]
        ade profile list
        ade --socket PATH COMMAND [arguments]
        ADE_SOCKET=PATH ade COMMAND [arguments]
+       ade [--socket PATH] [--operation-id ID] EFFECT_COMMAND [arguments]
 
 Commands:
   profile list                          Discover managed profiles and their IDs
@@ -73,6 +74,10 @@ when the daemon names one and "delivery" for a request that reached the socket.
   14 host_resource_conflict              15 host_resources_unavailable
   16 lifecycle_command_failed, lifecycle_unavailable, lifecycle_invalid_output
   17 restored_send_held
+Commands that change state without their own --request-id take the global
+--operation-id ID. Without it the CLI generates one, and an error names it as
+"operation_id". Retry a lost reply only with that ID and the same command and
+arguments: the daemon returns the recorded outcome and never runs it twice.
 Choose and retain a unique --request-id for each Git or worktree mutation. If
 the reply is lost, inspect its operation with that ID; retry only with the
 same command and arguments.
@@ -156,6 +161,11 @@ function parseArgs(argv: string[]): { socketPath: string | undefined; profileId:
     } else if (word.startsWith('--socket=')) {
       socketPath = word.slice('--socket='.length)
       if (!socketPath) throw new CliError('usage', '--socket requires a path.')
+    } else if (word === '--operation-id' && words.length === 0) {
+      // Global only before the command; some commands take their own --operation-id.
+      chooseOperationId(argv[++index] ?? '')
+    } else if (word.startsWith('--operation-id=') && words.length === 0) {
+      chooseOperationId(word.slice('--operation-id='.length))
     } else if (word === '--profile') {
       if (profileId !== undefined) throw new CliError('usage', '--profile may be supplied only once.')
       profileId = argv[++index]
@@ -338,7 +348,8 @@ async function main(): Promise<void> {
     const daemon = error instanceof DaemonRequestError ? error : null
     process.stderr.write(`${JSON.stringify({ type: 'error', code, message,
       ...(daemon?.recovery ? { recovery: daemon.recovery } : {}),
-      ...(daemon ? { delivery: daemon.delivery } : {}) })}\n`)
+      ...(daemon ? { delivery: daemon.delivery } : {}),
+      ...(daemon && usedOperationId() ? { operation_id: usedOperationId() } : {}) })}\n`)
     // A daemon code without its own exit keeps `daemon`'s; a local failure without one is `protocol`'s.
     process.exitCode = Object.hasOwn(exitCodes, code) ? exitCodes[code as keyof typeof exitCodes]
       : daemon?.replied ? exitCodes.daemon : exitCodes.protocol

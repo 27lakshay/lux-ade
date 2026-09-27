@@ -237,6 +237,10 @@ pub enum Event {
     },
     Error {
         error: String,
+        /// The provider turn the error belongs to, when the provider names
+        /// one. An error for another turn never reaches the active one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<String>,
     },
     Exited {
         error: String,

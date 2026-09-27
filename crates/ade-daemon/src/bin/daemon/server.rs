@@ -516,6 +516,8 @@ struct Host {
     proxy_probe: ProbeBudget,
     admission: RwLock<()>,
     stopping: AtomicBool,
+    /// Receipts for the effect commands whose handlers keep none of their own.
+    envelope: ade_daemon::envelope::Envelope,
 }
 impl Host {
     fn owner_is_current(&self, owner: &BrowserOwner) -> bool {
@@ -790,8 +792,13 @@ impl Host {
         )) {
             return reply;
         }
+        // Outstanding mutations only: settled receipts are kept for replay.
         let held: i64 = admission
-            .query_row("SELECT COUNT(*) FROM operations", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM operations WHERE status IN ('accepted','dispatched','acknowledged','unknown')",
+                [],
+                |row| row.get(0),
+            )
             .unwrap_or(i64::MAX);
         if held > MAX_BROWSER_RECEIPTS {
             return browser_error(
@@ -1602,12 +1609,14 @@ impl Host {
             let TerminalStopRequest {
                 workspace_id,
                 terminal_id,
+                ..
             } = decode_terminal_request(request)?;
             (workspace_id, terminal_id)
         } else {
             let TerminalRetireRequest {
                 workspace_id,
                 terminal_id,
+                ..
             } = decode_terminal_request(request)?;
             (workspace_id, terminal_id)
         };
@@ -1646,11 +1655,108 @@ impl Host {
         })?;
         Ok(serde_json::to_value(Ack::default())?)
     }
+    /// Routes one command to its handler.
+    fn dispatch(&self, op: &str, request: &Value) -> anyhow::Result<Value> {
+        if op == "service.proxy.ensure" || op == "service.proxy.remap" {
+            self.proxy_ensure(request)
+        } else if op == "service.proxy.inspect" {
+            self.proxy_inspect(request)
+        } else if op == "service.proxy.retire" {
+            self.proxy_retire(request)
+        } else if op == "service.proxy.recovery.inspect" {
+            self.proxy_recovery_inspect(request)
+        } else if op == "service.proxy.recovery.retry" {
+            self.proxy_recovery_retry(request)
+        } else if op == "service.proxy.recovery.reset" {
+            self.proxy_recovery_reset(request)
+        } else if op == "service.proxy.target" {
+            self.proxy_target(request)
+        } else if op == "terminal.stop" || op == "terminal.retire" {
+            self.terminal_lifecycle(request)
+        } else if op == "terminal.restart" {
+            self.terminal_restart(request)
+        } else if matches!(
+            op,
+            "browser.owner.register"
+                | "browser.owner.unregister"
+                | "browser.owner.get"
+                | "browser.list"
+                | "browser.inspect"
+                | "browser.open"
+                | "browser.navigate"
+                | "browser.close"
+                | "browser.operation"
+        ) {
+            Ok(self.browser_command(request))
+        } else if browser_context::is_browser_context(op) {
+            Ok(self.browser_context(request))
+        } else if browser_automation::is_automation_effect(op) {
+            Ok(self.browser_automation(request))
+        } else if browser_tools::is_browser_tool(op) {
+            Ok(self.browser_tool(request))
+        } else {
+            self.sessions.command(request)
+        }
+    }
+    /// After a daemon stopped mid-command, reads whether the current state
+    /// proves that the command took effect, and the reply it would have
+    /// given. Only commands whose target state is observable answer; the
+    /// others stay unknown (see `ade_daemon::envelope`).
+    fn observe(&self, op: &str, request: &Value) -> Option<Value> {
+        let ack = || serde_json::to_value(Ack::default()).ok();
+        match op {
+            "terminal.stop" | "terminal.retire" => {
+                let workspace_id = request["workspace_id"].as_str()?;
+                let terminal_id = request["terminal_id"].as_str()?;
+                let workspace = self.sessions.workspace(workspace_id).ok()?;
+                let listed = workspace.terminal_id == terminal_id
+                    || workspace.extra_terminals.iter().any(|id| id == terminal_id);
+                if op == "terminal.retire" {
+                    return (!listed).then(ack).flatten();
+                }
+                let running = self.runtime_terminals().ok()?.iter().any(|entry| {
+                    entry.workspace.id == workspace_id
+                        && entry.workspace.terminal_id == terminal_id
+                        && entry.shell_running()
+                });
+                (listed && !running).then(ack).flatten()
+            }
+            "queue.pause" | "agent.disconnect" => {
+                let snapshot = self
+                    .sessions
+                    .command(&json!({"op": "conversation.get",
+                        "conversation_id": request["conversation_id"], "limit": 1}))
+                    .ok()?;
+                let conversation = &snapshot["conversation"];
+                let proven = if op == "queue.pause" {
+                    conversation["queue_paused"] == request["paused"]
+                } else {
+                    conversation["status"] == "disconnected"
+                };
+                proven.then(ack).flatten()
+            }
+            _ => None,
+        }
+    }
     fn prepare_restart(&self, request: &Value) -> anyhow::Result<Value> {
+        // Refused before admission: nothing is recorded, so the same ID may retry.
         let _gate = self
             .admission
             .try_write()
             .map_err(|_| anyhow::anyhow!("A command is still being admitted; retry shortly"))?;
+        Ok(self.envelope.run(
+            "runtime.prepare_restart",
+            request,
+            || {
+                self.prepare_restart_admitted(request)
+                    .map_err(error_response)
+            },
+            || None,
+        ))
+    }
+    /// `runtime.prepare_restart` once its receipt is admitted; the caller
+    /// holds the admission gate.
+    fn prepare_restart_admitted(&self, request: &Value) -> anyhow::Result<Value> {
         anyhow::ensure!(
             decode::<RuntimePrepareRestartRequest>(request)
                 .is_ok_and(|restart| restart.boot_id == self.sessions.boot_id),
@@ -1834,48 +1940,15 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                     }
                     None => {}
                 }
-                match if op == "service.proxy.ensure" || op == "service.proxy.remap" {
-                    host.proxy_ensure(&request)
-                } else if op == "service.proxy.inspect" {
-                    host.proxy_inspect(&request)
-                } else if op == "service.proxy.retire" {
-                    host.proxy_retire(&request)
-                } else if op == "service.proxy.recovery.inspect" {
-                    host.proxy_recovery_inspect(&request)
-                } else if op == "service.proxy.recovery.retry" {
-                    host.proxy_recovery_retry(&request)
-                } else if op == "service.proxy.recovery.reset" {
-                    host.proxy_recovery_reset(&request)
-                } else if op == "service.proxy.target" {
-                    host.proxy_target(&request)
-                } else if op == "terminal.stop" || op == "terminal.retire" {
-                    host.terminal_lifecycle(&request)
-                } else if op == "terminal.restart" {
-                    host.terminal_restart(&request)
-                } else if matches!(
-                    op,
-                    "browser.owner.register"
-                        | "browser.owner.unregister"
-                        | "browser.owner.get"
-                        | "browser.list"
-                        | "browser.inspect"
-                        | "browser.open"
-                        | "browser.navigate"
-                        | "browser.close"
-                        | "browser.operation"
-                ) {
-                    Ok(host.browser_command(&request))
-                } else if browser_context::is_browser_context(op) {
-                    Ok(host.browser_context(&request))
-                } else if browser_automation::is_automation_effect(op) {
-                    Ok(host.browser_automation(&request))
-                } else if browser_tools::is_browser_tool(op) {
-                    Ok(host.browser_tool(&request))
+                if ade_daemon::envelope::covers(op) {
+                    host.envelope.run(
+                        op,
+                        &request,
+                        || host.dispatch(op, &request).map_err(error_response),
+                        || host.observe(op, &request),
+                    )
                 } else {
-                    host.sessions.command(&request)
-                } {
-                    Ok(value) => value,
-                    Err(error) => error_response(error),
+                    host.dispatch(op, &request).unwrap_or_else(error_response)
                 }
             };
             let write_result = writeln!(stream, "{event}");
@@ -1930,12 +2003,34 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
         return Ok(());
     }
 }
-/// Browser mutation receipts live for one daemon process, as they did before
-/// they moved onto the shared receipt table.
-fn browser_journal() -> anyhow::Result<Connection> {
-    let connection = Connection::open_in_memory()?;
+/// Browser mutation receipts, kept in the profile's data directory so a retry
+/// after a daemon restart replays its recorded reply instead of acting again
+/// (R001, R002). A mutation an earlier daemon dispatched gets no reply now: it
+/// opens as unknown, and `browser.operation` reconciles it with the owner.
+fn browser_journal(directory: &Path) -> anyhow::Result<Connection> {
+    let connection = Connection::open(directory.join("browser-operations.sqlite3"))?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    connection.pragma_update(None, "journal_mode", "WAL")?;
+    connection.pragma_update(None, "synchronous", "FULL")?;
     receipts::ensure(&connection)?;
+    let now = now_ms();
+    receipts::prune(&connection, now)?;
+    abandon_open_browser_receipts(&connection, now)?;
     Ok(connection)
+}
+
+/// Marks every mutation still open from an earlier daemon as unknown.
+fn abandon_open_browser_receipts(connection: &Connection, now: i64) -> anyhow::Result<usize> {
+    Ok(connection.execute(
+        "UPDATE operations SET status=?1,updated_at=?2 WHERE status IN (?3,?4,?5)",
+        rusqlite::params![
+            Status::Unknown.as_str(),
+            now,
+            Status::Accepted.as_str(),
+            Status::Dispatched.as_str(),
+            Status::Acknowledged.as_str()
+        ],
+    )?)
 }
 pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     // Lock the original directory before recovery or supervisor ownership changes.
@@ -2016,7 +2111,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         default_workspace,
         leases: Mutex::new(HashMap::new()),
         browser_owner: Mutex::new(None),
-        browser_receipts: Mutex::new(browser_journal()?),
+        browser_receipts: Mutex::new(browser_journal(&directory)?),
         browser_budget: ProbeBudget {
             active: Mutex::new(0),
             available: Condvar::new(),
@@ -2027,6 +2122,9 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         },
         admission: RwLock::new(()),
         stopping: AtomicBool::new(false),
+        envelope: ade_daemon::envelope::Envelope::open(&ade_daemon::receipts::envelope_store(
+            &directory.join("sessions.sqlite"),
+        ))?,
     });
     host.refresh_leases()?;
     if !selection
@@ -2235,7 +2333,10 @@ mod error_envelope_tests {
     }
     #[test]
     fn browser_receipt_names_its_owner_from_dispatch_to_settlement() {
-        let mut connection = browser_journal().unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("ade-browser-journal-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut connection = browser_journal(&directory).unwrap();
         let payload = browser_payload("browser.close", "fixed", "owner-1", Some("tab_1"), None);
         let admission = connection.transaction().unwrap();
         assert_eq!(
@@ -2254,6 +2355,76 @@ mod error_envelope_tests {
         assert!(receipts::begin(&probe, "op-2", "browser.close", &payload, None, 3).is_ok());
         drop(probe);
         assert!(browser_receipt(&connection, "op-2").is_none());
+        drop(connection);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+    #[test]
+    fn a_browser_mutation_dispatched_by_an_earlier_daemon_opens_as_unknown() {
+        let directory =
+            std::env::temp_dir().join(format!("ade-browser-journal-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let payload = browser_payload(
+            "browser.open",
+            "fixed",
+            "owner-1",
+            None,
+            Some("https://a.test/"),
+        );
+        {
+            let mut connection = browser_journal(&directory).unwrap();
+            let admission = connection.transaction().unwrap();
+            receipts::begin(&admission, "held", "browser.open", &payload, None, now_ms()).unwrap();
+            receipts::settle(
+                &admission,
+                "held",
+                Status::Dispatched,
+                Some(&json!({"owner_id": "owner-1"})),
+                now_ms(),
+            )
+            .unwrap();
+            admission.commit().unwrap();
+            let admission = connection.transaction().unwrap();
+            receipts::begin(&admission, "done", "browser.open", &payload, None, now_ms()).unwrap();
+            receipts::settle(
+                &admission,
+                "done",
+                Status::Settled,
+                Some(&json!({"type": "browser_mutation"})),
+                now_ms(),
+            )
+            .unwrap();
+            admission.commit().unwrap();
+        }
+        // The next daemon: the settled reply replays; the held one is unknown, never in progress.
+        let connection = browser_journal(&directory).unwrap();
+        assert_eq!(
+            browser_receipt(&connection, "held").unwrap().status,
+            Status::Unknown
+        );
+        assert_eq!(
+            browser_receipt(&connection, "held").unwrap().owner_id(),
+            "owner-1"
+        );
+        let replay = browser_replay(receipts::begin(
+            &connection,
+            "done",
+            "browser.open",
+            &payload,
+            None,
+            now_ms(),
+        ));
+        assert_eq!(replay, Some(json!({"type": "browser_mutation"})));
+        let held = browser_replay(receipts::begin(
+            &connection,
+            "held",
+            "browser.open",
+            &payload,
+            None,
+            now_ms(),
+        ));
+        assert_eq!(held.unwrap()["code"], "outcome_unknown");
+        drop(connection);
+        std::fs::remove_dir_all(&directory).unwrap();
     }
     #[test]
     fn unclassified_validation_errors_preserve_compatible_shape() {

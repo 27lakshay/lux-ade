@@ -437,6 +437,15 @@ pub fn may_resolve(claim: &Claim, confirm_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// What `resources.registry.accept` did.
+#[derive(Debug, PartialEq)]
+pub enum AcceptOutcome {
+    /// It ran; `rebound` says the daemon now uses a different registry.
+    Ran { rebound: bool },
+    /// The ID was accepted before; the reply it recorded, if any.
+    Replayed(Option<Value>),
+}
+
 /// Why the registry refuses new claims.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Blocked {
@@ -1410,9 +1419,13 @@ impl HostResources {
                 now_ms(),
             )? {
                 Admission::New => {}
-                Admission::Replay(_) => {
+                Admission::Replay(receipt) => {
                     drop(tx);
                     drop(guard);
+                    // R002: the recorded reply, not the registry as it reads now.
+                    if let Some(reply) = receipts::recorded_reply(&receipt) {
+                        return Ok(reply);
+                    }
                     return Ok(serde_json::to_value(self.inspect(None)?)?);
                 }
                 Admission::Conflict => {
@@ -1425,35 +1438,66 @@ impl HostResources {
             let claim = read_claim(&tx, &request.claim_id)?;
             may_resolve(&claim, &request.confirm_path)?;
             tx.execute("DELETE FROM claims WHERE id=?1", [&claim.id])?;
+            // The claim is gone once this commits; the reply is recorded next.
             receipts::settle(
                 &tx,
                 &request.operation_id,
-                Status::Settled,
+                Status::Acknowledged,
                 Some(&json!({"resolved": claim.id})),
                 now_ms(),
             )?;
             tx.commit()?;
         }
-        Ok(serde_json::to_value(self.inspect(None)?)?)
+        let reply = serde_json::to_value(self.inspect(None)?)?;
+        let guard = self.inner.lock().unwrap();
+        if let Ok(open) = guard.as_ref() {
+            let recorded = receipts::settle(
+                &open.db,
+                &request.operation_id,
+                Status::Settled,
+                Some(&json!({"reply": reply})),
+                now_ms(),
+            );
+            if let Err(error) = recorded {
+                tracing::warn!(
+                    "The reply to {} was not recorded: {error:#}",
+                    request.operation_id
+                );
+            }
+        }
+        Ok(reply)
+    }
+
+    /// Records the reply of an accept that ran, so a retry returns it.
+    pub fn record_accept_reply(profile_db: &Connection, operation_id: &str, reply: &Value) {
+        let recorded = receipts::settle(
+            profile_db,
+            operation_id,
+            Status::Settled,
+            Some(&json!({"reply": reply})),
+            now_ms(),
+        );
+        if let Err(error) = recorded {
+            tracing::warn!("The reply to {operation_id} was not recorded: {error:#}");
+        }
     }
 
     /// `resources.registry.accept`: binds this profile to the registry on
     /// disk, creating one when it is missing and moving an unreadable one
     /// aside. The receipt lives in the profile database that owns the
     /// binding. Returns whether the daemon now uses a different registry, so
-    /// its live claims must be taken again.
+    /// its live claims must be taken again. The caller records its reply with
+    /// [`Self::record_accept_reply`].
     pub fn accept(
         &self,
         profile_db: &Connection,
         request: &ResourcesRegistryAcceptRequest,
-    ) -> Result<bool> {
+    ) -> Result<AcceptOutcome> {
         let registry = self.path();
-        ensure!(
-            request.confirm_registry == registry.to_string_lossy(),
-            "confirm_registry must equal the registry path from resources.inspect"
-        );
         let payload = serde_json::to_value(request)?;
         let tx = Transaction::new_unchecked(profile_db, TransactionBehavior::Immediate)?;
+        // The receipt is read first, so a reused ID with another payload is a
+        // conflict even when that payload would also fail validation.
         match receipts::begin(
             &tx,
             &request.operation_id,
@@ -1463,12 +1507,19 @@ impl HostResources {
             now_ms(),
         )? {
             Admission::New => {}
-            Admission::Replay(_) => return Ok(false),
+            Admission::Replay(receipt) => {
+                return Ok(AcceptOutcome::Replayed(receipts::recorded_reply(&receipt)));
+            }
             Admission::Conflict => bail!("Operation ID was already used for different parameters"),
             Admission::Expired => {
                 bail!("Operation ID is past its 30-day receipt retention; use a new ID")
             }
         }
+        // Returning an error drops the transaction, so a refusal records nothing.
+        ensure!(
+            request.confirm_registry == registry.to_string_lossy(),
+            "confirm_registry must equal the registry path from resources.inspect"
+        );
         let mut guard = self.inner.lock().unwrap();
         let mut rebound = false;
         let blocked = match &*guard {
@@ -1492,12 +1543,12 @@ impl HostResources {
         receipts::settle(
             &tx,
             &request.operation_id,
-            Status::Settled,
+            Status::Acknowledged,
             Some(&json!({"ready": guard.is_ok()})),
             now_ms(),
         )?;
         tx.commit()?;
-        Ok(rebound)
+        Ok(AcceptOutcome::Ran { rebound })
     }
 }
 

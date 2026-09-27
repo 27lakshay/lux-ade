@@ -106,6 +106,10 @@ pub struct RuntimeStatusRequest {}
 /// `runtime.prepare_restart`: drain the daemon so a new build can take over.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct RuntimePrepareRestartRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     /// The `boot_id` from `runtime.status`; a different daemon refuses.
     pub boot_id: String,
 }
@@ -1012,7 +1016,7 @@ mod tests {
         );
         request::<RuntimePrepareRestartRequest>(
             "runtime.prepare_restart",
-            json!({"boot_id": "boot_1"}),
+            json!({"operation_id": "o", "boot_id": "boot_1"}),
         );
         response::<RestartPrepared>(
             "runtime.prepare_restart",

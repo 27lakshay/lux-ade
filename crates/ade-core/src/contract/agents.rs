@@ -42,6 +42,10 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 /// `agent.cancel`: cancel the Conversation's active turn.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AgentCancelRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub conversation_id: String,
     /// The turn the caller saw active. When present, the cancel applies only
     /// while that turn is still the active one, so a late or retried cancel
@@ -54,12 +58,20 @@ pub struct AgentCancelRequest {
 /// `agent.resume`: reconnect the Conversation's Agent.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AgentResumeRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub conversation_id: String,
 }
 
 /// `agent.disconnect`: stop the Conversation's idle Agent.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AgentDisconnectRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub conversation_id: String,
 }
 
@@ -284,7 +296,7 @@ mod tests {
     #[test]
     fn lifecycle_commands_round_trip() {
         for op in ["agent.cancel", "agent.resume", "agent.disconnect"] {
-            let wire = json!({"op": op, "conversation_id": "conversation_1"});
+            let wire = json!({"op": op, "operation_id": "o", "conversation_id": "conversation_1"});
             match op {
                 "agent.cancel" => drop(request::<AgentCancelRequest>(op, wire)),
                 "agent.resume" => drop(request::<AgentResumeRequest>(op, wire)),
@@ -293,10 +305,14 @@ mod tests {
             response::<Ack>(op, json!({"type": "ack"}));
             let (name, _, _) = operation(op);
             assert!(!validator(&name).is_valid(&json!({"op": op})));
+            assert!(
+                !validator(&name).is_valid(&json!({"op": op, "conversation_id": "conversation_1"}))
+            );
         }
         let fenced: AgentCancelRequest = request(
             "agent.cancel",
-            json!({"op": "agent.cancel", "conversation_id": "conversation_1", "turn_id": "turn_1"}),
+            json!({"op": "agent.cancel", "operation_id": "o", "conversation_id": "conversation_1",
+                "turn_id": "turn_1"}),
         );
         assert_eq!(fenced.turn_id.as_deref(), Some("turn_1"));
     }

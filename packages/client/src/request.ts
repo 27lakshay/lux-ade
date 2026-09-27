@@ -28,6 +28,11 @@ export type RequestDelivery = 'not_sent' | 'unknown' | 'rejected'
 
 export class DaemonRequestError extends Error {
   /**
+   * The effect command's operation ID, when `call` sent one. Retrying under
+   * it returns the recorded outcome instead of doing the work again.
+   */
+  operationId?: string
+  /**
    * `code` is the daemon's own code when its error frame carried one, and
    * `recovery` is that frame's recovery hint, if it had one.
    * `replied` is true when the daemon itself sent this error as a reply frame,

@@ -1,5 +1,5 @@
 import { call } from '@ade/client'
-import { CliError, parseWords, positionals, type CommandResult } from '../shared.js'
+import { CliError, effectOperationId, parseWords, positionals, type CommandResult } from '../shared.js'
 
 export const runtimeUsage = `  runtime status                        Read the daemon and runtime supervisor state and boot ID
   runtime prepare-restart BOOT_ID       Drain the daemon so a new build can take over;
@@ -16,7 +16,7 @@ export async function runRuntimeCommand(socketPath: string, area: string | undef
   if (action === 'prepare-restart') {
     const [boot_id] = positionals(parseWords(rest, [], [], 'runtime prepare-restart'), 1,
       'runtime prepare-restart requires BOOT_ID from runtime status')
-    return call(socketPath, 'runtime.prepare_restart', { boot_id })
+    return call(socketPath, 'runtime.prepare_restart', { operation_id: effectOperationId(), boot_id })
   }
   throw new CliError('usage', 'Unknown runtime command. Run ade --help for usage.')
 }

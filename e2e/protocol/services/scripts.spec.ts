@@ -78,7 +78,8 @@ test('scripts are discovered from recipes and package.json and run with their ou
     .rejects.toThrow(/Workspace script is not configured/)
   await expect(profile.call('script.start', { workspace_id: workspace.id, name: '../escape' }))
     .rejects.toThrow(/Invalid script name/)
-  await expect(profile.rpc({ op: 'script.start', workspace_id: workspace.id, name: 'greet', program: '/bin/sh' }))
+  await expect(profile.rpc({ op: 'script.start', operation_id: 'start-greet', workspace_id: workspace.id, name: 'greet',
+    program: '/bin/sh' }))
     .resolves.toMatchObject({ name: 'greet' })
 })
 

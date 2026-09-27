@@ -132,7 +132,7 @@ pub(crate) fn response_session(
 pub(crate) fn sanitize_event(mut event: Event) -> Event {
     use ade_core::error::Failure;
     let (error, fallback) = match &mut event {
-        Event::Error { error } | Event::OperationFailed { error, .. } => {
+        Event::Error { error, .. } | Event::OperationFailed { error, .. } => {
             (Some(error), Failure::Rejected)
         }
         Event::Exited { error } => (Some(error), Failure::ProcessExited),
@@ -161,8 +161,9 @@ mod failure_tests {
         };
         assert_eq!(error, ade_core::error::Failure::Authentication.to_string());
         assert!(!error.contains("secret"));
-        let Event::Error { error } = sanitize_event(Event::Error {
+        let Event::Error { error, .. } = sanitize_event(Event::Error {
             error: "Unexpected response includes prompt secret".into(),
+            turn: None,
         }) else {
             panic!("wrong event");
         };

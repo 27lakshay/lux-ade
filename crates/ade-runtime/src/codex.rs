@@ -518,6 +518,7 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
                     ade_core::error::Failure::Rejected,
                 )
                 .to_string(),
+                turn: p["turnId"].as_str().map(str::to_owned),
             },
             _ => return Ok(None),
         },
@@ -947,6 +948,24 @@ mod tests {
         assert!(is_error);
         assert_eq!(input.unwrap()["cwd"], "/project");
         assert_eq!(output.as_deref(), Some("failed output"));
+    }
+    #[test]
+    fn a_provider_error_keeps_the_turn_it_names() {
+        use super::*;
+        let named = json!({"threadId":"thread", "turnId":"turn-a", "error":{"message":"boom"}});
+        let Some(Event::Error { turn, .. }) =
+            decode(WireEvent::Notification("error".into(), named)).unwrap()
+        else {
+            panic!("Missing error");
+        };
+        assert_eq!(turn.as_deref(), Some("turn-a"));
+        let unnamed = json!({"error":{"message":"boom"}});
+        let Some(Event::Error { turn, .. }) =
+            decode(WireEvent::Notification("error".into(), unnamed)).unwrap()
+        else {
+            panic!("Missing error");
+        };
+        assert_eq!(turn, None);
     }
     #[test]
     fn structured_plan_updates_keep_identity_and_step_status() {

@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { dailyUseCommand, requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import { getClient, getClientGeneration, getProfileState, getSocket, getStartupProfileSelection, isSwitching,
@@ -151,7 +152,8 @@ export function registerConversationIpc(): void {
         || !available.some((item) => item && typeof item === 'object' && 'id' in item && item.id === args.provider)
         || typeof args.title !== 'string' || args.title.length > 256
         || (args.account_id !== undefined && !validId(args.account_id))) throw new Error('Invalid conversation creation')
-      const result = await daemon(endpoint, op, { workspace_id: args.workspace_id, provider: args.provider as string,
+      const result = await daemon(endpoint, op, { operation_id: randomUUID(), workspace_id: args.workspace_id,
+        provider: args.provider as string,
         title: args.title, ...(args.account_id === undefined ? {} : { account_id: args.account_id }) })
       if (getClientGeneration() !== generation || getSocket() !== endpoint) throw new Error('Profile changed during conversation creation')
       return result
