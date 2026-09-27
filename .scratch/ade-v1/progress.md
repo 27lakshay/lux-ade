@@ -1197,6 +1197,6 @@ accepted rows.
   running with `PATH=/usr/bin:/bin` and no developer tools. F071, F073, F078
   and R020 each keep an Electron-only part, so none is accepted.
 
-**Newly accepted (4):** F081, R004, R006 and F043. The register now holds 80
-accepted rows.
+**Newly accepted (3):** F081, R004 and F043; R006 was already accepted in
+round 3. The register now holds 79 accepted rows.
 
