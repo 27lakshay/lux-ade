@@ -1,4 +1,4 @@
-//! Combined history and work search (F041, F043).
+//! Combined history, work search and external session import (F041, F042, F043).
 //!
 //! The search index is a recoverable asynchronous projection (proposed
 //! architecture, section 6). Triggers on `messages` append one row per change
@@ -22,6 +22,7 @@ use std::{
 };
 
 mod core;
+pub mod import;
 use self::core::{IndexState, Step};
 
 /// Messages indexed per transaction, so a writer never waits long on the index.
@@ -61,6 +62,7 @@ impl History {
         db.busy_timeout(Duration::from_secs(5))?;
         let tx = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA)?;
+        import::ensure_table(&tx)?;
         tx.commit()?;
         let history = Arc::new(Self {
             db: Mutex::new(db),
@@ -227,10 +229,13 @@ impl History {
             request.conversation_id.as_deref(),
         )?;
         let mut statement = tx.prepare(
-            "SELECT history_fts.rowid,d.observed_at,m.data,c.data FROM history_fts
+            "SELECT history_fts.rowid,d.observed_at,m.data,c.data,
+                    i.native_session_id,i.source_path,i.native_cwd,i.account_id,i.imported_at
+             FROM history_fts
              JOIN history_docs d ON d.doc=history_fts.rowid
              JOIN messages m ON m.id=d.message_id
              JOIN conversations c ON c.id=m.conversation_id
+             LEFT JOIN history_imports i ON i.conversation_id=c.id
              WHERE history_fts MATCH ?1 AND (?2 IS NULL OR history_fts.rowid<?2)
                AND (?3 IS NULL OR c.workspace_id=?3)
                AND (?4 IS NULL OR json_extract(c.data,'$.provider')=?4)
@@ -263,7 +268,7 @@ impl History {
             results.push(HistoryMatch {
                 has_review_feedback: !notes.is_empty(),
                 observed_at: row.get(1)?,
-                provenance: provenance(&conversation),
+                provenance: provenance(&conversation, import::ImportRow::from_row(row, 4)?),
                 message_id: message.id,
                 role: message.role,
                 kind: message.kind,
@@ -300,8 +305,10 @@ impl History {
         check_filters(&db, request.workspace_id.as_deref(), None)?;
         let mut statement = db.prepare(
             "SELECT c.data,(SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id),
-                    json_extract(c.data,'$.updated_at') AS updated
+                    json_extract(c.data,'$.updated_at') AS updated,
+                    i.native_session_id,i.source_path,i.native_cwd,i.account_id,i.imported_at
              FROM conversations c
+             LEFT JOIN history_imports i ON i.conversation_id=c.id
              WHERE (?1 IS NULL OR c.workspace_id=?1)
                AND (?2 IS NULL OR json_extract(c.data,'$.provider')=?2)
                AND (?3 IS NULL OR updated<?3 OR (updated=?3 AND c.id<?4))
@@ -325,7 +332,7 @@ impl History {
             conversations.push(HistoryConversation {
                 status: conversation.status.clone(),
                 message_count: row.get::<_, i64>(1)?.try_into()?,
-                provenance: provenance(&conversation),
+                provenance: provenance(&conversation, import::ImportRow::from_row(row, 3)?),
             });
         }
         let next_cursor =
@@ -345,15 +352,19 @@ impl History {
     }
 }
 
-fn provenance(conversation: &Conversation) -> HistoryProvenance {
+fn provenance(conversation: &Conversation, import: Option<import::ImportRow>) -> HistoryProvenance {
+    let (imported_id, import) = import
+        .map(|row| (row.native_session_id, row.source))
+        .unzip();
     HistoryProvenance {
         conversation_id: conversation.id.clone(),
         conversation_title: conversation.title.clone(),
         provider: conversation.provider.clone(),
         workspace_id: conversation.workspace_id.clone(),
         account_id: conversation.account_id.clone(),
-        native_session_id: conversation.provider_thread_id.clone(),
+        native_session_id: conversation.provider_thread_id.clone().or(imported_id),
         conversation_updated_at: conversation.updated_at,
+        import,
     }
 }
 

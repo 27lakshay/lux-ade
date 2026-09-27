@@ -1,4 +1,5 @@
-//! Combined history and work search contracts (F041, F043).
+//! Combined history, work search and external session import contracts
+//! (F041, F042, F043).
 //!
 //! Search reads an asynchronous full-text projection of conversation messages
 //! and their review feedback. Every reply states how far that projection lags
@@ -17,6 +18,14 @@ pub fn operations() -> Vec<OperationSpec> {
         ),
         OperationSpec::new::<HistoryIndexRebuildRequest, HistoryIndexReply>(
             "history.index.rebuild",
+            Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<HistoryImportScanRequest, HistoryImportScan>(
+            "history.import.scan",
+            Tier::Query,
+        ),
+        OperationSpec::new::<HistoryImportRequest, HistoryImported>(
+            "history.import.session",
             Tier::IdempotentCommand,
         ),
     ]
@@ -82,6 +91,8 @@ pub struct HistoryIndexRebuildRequest {
 wire_tag!(HistorySearchTag, "history_search");
 wire_tag!(HistoryListTag, "history_list");
 wire_tag!(HistoryIndexTag, "history_index");
+wire_tag!(HistoryImportScanTag, "history_import_scan");
+wire_tag!(HistoryImportedTag, "history_imported");
 
 /// The state of the search index when a reply was read.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
@@ -112,6 +123,10 @@ pub struct HistoryProvenance {
     pub native_session_id: Option<String>,
     /// Milliseconds since the Unix epoch.
     pub conversation_updated_at: i64,
+    /// Present when the conversation is a read-only import of a native
+    /// session rather than one ADE ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<HistoryImportSource>,
 }
 
 /// One message that matched a search.
@@ -168,6 +183,152 @@ pub struct HistoryIndexReply {
     #[serde(rename = "type")]
     pub tag: HistoryIndexTag,
     pub index: HistoryIndexStatus,
+}
+
+/// A provider whose native on-disk sessions ADE can import.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryImportProvider {
+    /// Claude Code transcripts under `<config dir>/projects`.
+    Claude,
+    /// Codex rollouts under `<CODEX_HOME>/sessions` and `archived_sessions`.
+    Codex,
+}
+
+impl HistoryImportProvider {
+    /// The ADE provider ID the imported conversation records.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+}
+
+/// `history.import.scan`: the native sessions one provider store holds, newest
+/// first. It reads the store and changes nothing.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct HistoryImportScanRequest {
+    pub provider: HistoryImportProvider,
+    /// Scan this ADE account's native home. Absent scans the daemon user's
+    /// default store (`CLAUDE_CONFIG_DIR` or `~/.claude`; `CODEX_HOME` or
+    /// `~/.codex`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Keep only sessions whose recorded working directory is this
+    /// workspace's root or lies inside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    /// 1 to 200; the daemon uses 50 when it is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    pub limit: Option<u64>,
+}
+
+/// `history.import.session`: import one native session as a read-only
+/// conversation. Keyed by provider and native session ID: repeating it
+/// returns the same conversation, adds only records appended since, and
+/// refuses when the native history no longer extends what was imported.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct HistoryImportRequest {
+    pub provider: HistoryImportProvider,
+    /// The provider's own session UUID, as `history.import.scan` reports it.
+    pub native_session_id: String,
+    /// The workspace the imported conversation belongs to. A repeat must name
+    /// the same workspace.
+    pub workspace_id: String,
+    /// Read from this ADE account's native home instead of the default store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
+/// The native store a scan read.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct HistoryImportStore {
+    pub provider: HistoryImportProvider,
+    pub account_id: Option<String>,
+    /// The directory scanned.
+    pub root: String,
+    /// False when the store could not be read; `unavailable_reason` says why.
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+/// One native session found by a scan. Metadata comes from the start of the
+/// file; importing reads all of it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct HistoryImportCandidate {
+    pub native_session_id: String,
+    /// The working directory the native session recorded, when it did.
+    pub cwd: Option<String>,
+    /// A native title or the first user prompt, when one was found.
+    pub title: Option<String>,
+    /// When the file last changed, in milliseconds since the Unix epoch.
+    pub modified_at: i64,
+    pub size_bytes: u64,
+    pub source_path: String,
+    /// The conversation an earlier import created, when there is one.
+    pub imported_conversation_id: Option<String>,
+}
+
+/// The `history.import.scan` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct HistoryImportScan {
+    #[serde(rename = "type")]
+    pub tag: HistoryImportScanTag,
+    pub store: HistoryImportStore,
+    pub sessions: Vec<HistoryImportCandidate>,
+    /// True when more matching sessions exist than `limit` allowed.
+    pub more: bool,
+    /// Session files whose metadata could not be read; they are not listed.
+    pub unreadable: u64,
+}
+
+/// Where an imported conversation came from, and what ADE can do with it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct HistoryImportSource {
+    /// The native file the history was read from.
+    pub source_path: String,
+    /// The working directory the native session recorded.
+    pub native_cwd: Option<String>,
+    /// The ADE account whose native home held the session.
+    pub account_id: Option<String>,
+    /// The last import, in milliseconds since the Unix epoch.
+    pub imported_at: i64,
+    /// False while ADE cannot continue this native session. Sending to an
+    /// imported conversation is refused, never silently started fresh.
+    pub resumable: bool,
+    pub resume_unavailable_reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryImportOutcome {
+    /// A new read-only conversation was created.
+    Imported,
+    /// Records the native session gained since the last import were added.
+    Appended,
+    /// The conversation already held every record.
+    Unchanged,
+}
+
+/// The `history.import.session` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct HistoryImported {
+    #[serde(rename = "type")]
+    pub tag: HistoryImportedTag,
+    pub outcome: HistoryImportOutcome,
+    pub conversation: HistoryConversation,
+    pub added_messages: u64,
+    /// Earlier imported messages whose native record gained detail since,
+    /// such as a tool result written after its call.
+    pub updated_messages: u64,
+    /// Native records that could not be parsed and were left out. Records
+    /// ADE does not model, such as private reasoning, are not counted.
+    pub skipped_records: u64,
+    /// True when the file ended in a partly written record, which a later
+    /// import picks up once the provider finishes it.
+    pub incomplete_tail: bool,
 }
 
 #[cfg(test)]
@@ -252,6 +413,22 @@ mod tests {
             "history.index.rebuild",
             json!({"op": "history.index.rebuild", "expected_epoch": 1}),
         );
+        request::<HistoryImportScanRequest>(
+            "history.import.scan",
+            json!({"op": "history.import.scan", "provider": "claude", "workspace_id": "w",
+                "limit": 10}),
+        );
+        request::<HistoryImportRequest>(
+            "history.import.session",
+            json!({"op": "history.import.session", "provider": "codex",
+                "native_session_id": "01a076ee-e1bb-71a1-9a20-d12ac6dc30ea", "workspace_id": "w",
+                "account_id": "account_1"}),
+        );
+        let (name, _) = names("history.import.scan");
+        assert!(!valid(
+            &name,
+            &json!({"op": "history.import.scan", "provider": "omp"})
+        ));
         let (name, _) = names("history.search");
         assert!(!valid(&name, &json!({"op": "history.search"})));
         let (name, _) = names("history.index.rebuild");
@@ -277,6 +454,25 @@ mod tests {
         response::<HistoryIndexReply>(
             "history.index.status",
             json!({"type": "history_index", "index": status()}),
+        );
+        let mut imported = provenance();
+        imported["import"] = json!({"source_path": "/h/.codex/sessions/r.jsonl",
+            "native_cwd": "/repo", "account_id": null, "imported_at": 1_700_000_000_001_i64,
+            "resumable": false, "resume_unavailable_reason": "read-only"});
+        response::<HistoryImported>(
+            "history.import.session",
+            json!({"type": "history_imported", "outcome": "appended", "conversation": {
+                "status": "imported", "message_count": 9, "provenance": imported,
+            }, "added_messages": 2, "updated_messages": 1, "skipped_records": 0, "incomplete_tail": true}),
+        );
+        response::<HistoryImportScan>(
+            "history.import.scan",
+            json!({"type": "history_import_scan", "store": {"provider": "claude",
+                "account_id": null, "root": "/h/.claude/projects", "available": true,
+                "unavailable_reason": null}, "sessions": [{"native_session_id": "s",
+                "cwd": null, "title": "Fix", "modified_at": 1, "size_bytes": 10,
+                "source_path": "/h/.claude/projects/p/s.jsonl",
+                "imported_conversation_id": null}], "more": false, "unreadable": 0}),
         );
     }
 }

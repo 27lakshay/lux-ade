@@ -511,6 +511,7 @@ impl Sessions {
                 field(request, "text", Value::as_str, "Missing prompt text")?;
                 let enqueue: QueueEnqueueRequest = decode(request)?;
                 self.queue_change(&enqueue.conversation_id, |d, c| {
+                    Self::ensure_not_imported(c)?;
                     d.store.enqueue_content(
                         &c.id,
                         non_empty("request_id", &enqueue.request_id)?,
