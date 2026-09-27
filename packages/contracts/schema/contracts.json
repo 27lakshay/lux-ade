@@ -5307,12 +5307,12 @@
         },
         {
           "const": "dispatched",
-          "description": "The effect was handed to Git; its outcome is not yet known.",
+          "description": "The effect was handed to Git, or a service launch was handed to the\nruntime; its outcome is not yet known.",
           "type": "string"
         },
         {
           "const": "bound",
-          "description": "A created path is bound to its filesystem identity.",
+          "description": "A created path is bound to its filesystem identity, or a port claim is\nbound to the service's verified listener.",
           "type": "string"
         },
         {
@@ -5326,7 +5326,7 @@
       "oneOf": [
         {
           "const": "use",
-          "description": "A terminal, Agent, service or script works in the checkout.",
+          "description": "A terminal, Agent, service or script works in the checkout, a service\nrun owns a port, or a run or device effect uses a device.",
           "type": "string"
         },
         {
@@ -11611,7 +11611,7 @@
         "resources": {
           "description": "The resource kinds a placement may target on this host.",
           "items": {
-            "$ref": "#/$defs/ResourceKind"
+            "$ref": "#/$defs/ResourceKind2"
           },
           "type": "array"
         }
@@ -13219,7 +13219,7 @@
           "const": "placement.check"
         },
         "resource": {
-          "$ref": "#/$defs/ResourceKind"
+          "$ref": "#/$defs/ResourceKind2"
         },
         "workspace_id": {
           "description": "For anything but a workspace: the workspace the work belongs to. Its\nhost must be `host`.",
@@ -13258,7 +13258,7 @@
           "type": "boolean"
         },
         "resource": {
-          "$ref": "#/$defs/ResourceKind"
+          "$ref": "#/$defs/ResourceKind2"
         },
         "type": {
           "description": "The `placement_decision` type tag.",
@@ -17428,8 +17428,22 @@
         "device": {
           "type": "string"
         },
+        "device_id": {
+          "description": "The claimed device, for a device claim.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "generation": {
           "type": "string"
+        },
+        "holder": {
+          "description": "Who inside the owning profile holds the claim: a service run\n(`service:<workspace>/<name>#<identity>`) or a device hold's run.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "host_id": {
           "type": "string"
@@ -17439,6 +17453,15 @@
         },
         "inode": {
           "type": "string"
+        },
+        "listener_pid": {
+          "description": "The listener PID a port claim was bound to once ADE verified that the\nservice's own process tree listens on the port.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "mine": {
           "description": "Whether this daemon incarnation owns the claim.",
@@ -17470,11 +17493,20 @@
           "type": "string"
         },
         "path": {
-          "description": "The canonical path when the claim was taken; informational only.",
+          "description": "For a checkout, the canonical path when the claim was taken\n(informational only). For a port, `tcp:<port>`; for a device, its\ndevice ID. `resources.claim.resolve` confirms this value.",
           "type": "string"
         },
         "phase": {
           "$ref": "#/$defs/ClaimPhase"
+        },
+        "port": {
+          "description": "The claimed TCP port, for a port claim.",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "purpose": {
           "$ref": "#/$defs/ClaimPurpose"
@@ -17485,6 +17517,10 @@
             "string",
             "null"
           ]
+        },
+        "resource": {
+          "$ref": "#/$defs/ResourceKind",
+          "default": "checkout"
         },
         "state": {
           "$ref": "#/$defs/ClaimState"
@@ -17505,6 +17541,7 @@
       "required": [
         "id",
         "host_id",
+        "resource",
         "path",
         "device",
         "inode",
@@ -17527,6 +17564,26 @@
       "type": "object"
     },
     "ResourceKind": {
+      "description": "What a claim is on.",
+      "oneOf": [
+        {
+          "const": "checkout",
+          "description": "A checkout directory, keyed by filesystem identity.",
+          "type": "string"
+        },
+        {
+          "const": "port",
+          "description": "A TCP port on this host, whatever the address.",
+          "type": "string"
+        },
+        {
+          "const": "device",
+          "description": "A simulator or emulator, keyed by its ADE device ID.",
+          "type": "string"
+        }
+      ]
+    },
+    "ResourceKind2": {
       "description": "The kinds of work that carry an execution host.",
       "enum": [
         "workspace",
@@ -17600,9 +17657,53 @@
       ],
       "type": "object"
     },
+    "ResourcesDeviceHoldRequest": {
+      "additionalProperties": false,
+      "description": "`resources.device.hold`: claim a simulator or emulator exclusively for one\nrun of this profile. Repeating the hold with the same `holder` returns the\nsame claim. Other profiles' device effects and holds, and other runs'\nholds, are refused while it is held; this profile's own device effects are\nadmitted.",
+      "properties": {
+        "device_id": {
+          "description": "An ADE device ID from `device.list`, such as `ios-sim:<udid>`.",
+          "type": "string"
+        },
+        "holder": {
+          "description": "The caller's run identity, 1 to 128 printable ASCII characters.",
+          "type": "string"
+        },
+        "op": {
+          "const": "resources.device.hold"
+        }
+      },
+      "required": [
+        "op",
+        "device_id",
+        "holder"
+      ],
+      "type": "object"
+    },
+    "ResourcesDeviceReleaseRequest": {
+      "additionalProperties": false,
+      "description": "`resources.device.release`: end this daemon's hold for `holder` on the\ndevice. Releasing a hold that is already gone converges. A quarantined hold\nis refused and needs `resources.claim.resolve`.",
+      "properties": {
+        "device_id": {
+          "type": "string"
+        },
+        "holder": {
+          "type": "string"
+        },
+        "op": {
+          "const": "resources.device.release"
+        }
+      },
+      "required": [
+        "op",
+        "device_id",
+        "holder"
+      ],
+      "type": "object"
+    },
     "ResourcesInspectRequest": {
       "additionalProperties": false,
-      "description": "`resources.inspect`: read the registry status and its claims. With `path`,\nonly claims on that path, inside it, or containing it are listed.",
+      "description": "`resources.inspect`: read the registry status and its claims. With `path`,\nonly checkout claims on that path, inside it, or containing it are listed.\nWith `resource`, only claims of that kind are listed.",
       "properties": {
         "op": {
           "const": "resources.inspect"
@@ -17611,6 +17712,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceKind"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -25753,6 +25864,20 @@
       "request": "ResourcesRegistryAcceptRequest",
       "response": "HostResourcesState",
       "tier": "effect_command"
+    },
+    {
+      "domain": "resources",
+      "name": "resources.device.hold",
+      "request": "ResourcesDeviceHoldRequest",
+      "response": "HostResourcesState",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "resources",
+      "name": "resources.device.release",
+      "request": "ResourcesDeviceReleaseRequest",
+      "response": "HostResourcesState",
+      "tier": "idempotent_command"
     },
     {
       "domain": "checkpoints",

@@ -1120,6 +1120,10 @@ impl Worktrees {
     pub fn lease(self: &Arc<Self>, root: &str) -> Result<Lease> {
         self.acquire_lease(root, false)
     }
+    /// The host claim registry, for port and device claims.
+    pub fn host_resources(&self) -> &HostResources {
+        &self.resources
+    }
     /// Agent admission and removal protection are decided under the same lock.
     /// Shells can still open an unprepared checkout to diagnose or repair setup.
     pub fn agent_lease(self: &Arc<Self>, root: &str) -> Result<Lease> {
@@ -1229,7 +1233,14 @@ impl Worktrees {
                 if let Some(path) = &inspect.path {
                     valid("path", path)?;
                 }
-                reply(&self.resources.inspect(inspect.path.as_deref())?)
+                reply(
+                    &self
+                        .resources
+                        .inspect_kind(inspect.path.as_deref(), inspect.resource)?,
+                )
+            }
+            op @ ("resources.device.hold" | "resources.device.release") => {
+                reply(&self.resources.device_command(op, request)?)
             }
             "resources.claim.resolve" => {
                 let resolve: ResourcesClaimResolveRequest = decode(request)?;

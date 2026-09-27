@@ -767,6 +767,58 @@ impl Drop for Claim {
     }
 }
 
+/// The host-wide exclusive claim on a simulator or emulator for one effect,
+/// so another profile cannot boot, install to or launch on it meanwhile. It
+/// settles by the effect's receipt when dropped: an outcome that was not
+/// observed leaves the claim quarantined. Take it after [`Claim`], so it is
+/// dropped first.
+struct HostClaim<'a> {
+    sessions: &'a Sessions,
+    claim: Option<String>,
+    operation_id: String,
+}
+
+impl<'a> HostClaim<'a> {
+    fn acquire(sessions: &'a Sessions, device_id: &str, operation_id: &str) -> Result<Self> {
+        let claim = match crate::host_resources::device_claim_id(device_id)? {
+            Some(device) => Some(sessions.worktrees.host_resources().claim_device(
+                &device,
+                None,
+                Some(operation_id),
+            )?),
+            None => None,
+        };
+        Ok(Self {
+            sessions,
+            claim,
+            operation_id: operation_id.to_owned(),
+        })
+    }
+}
+
+impl Drop for HostClaim<'_> {
+    fn drop(&mut self) {
+        let Some(claim) = &self.claim else { return };
+        let status = self.sessions.device_db(false, |db| {
+            let status: Option<String> = rusqlite::OptionalExtension::optional(db.query_row(
+                "SELECT status FROM operations WHERE id=?1",
+                [&self.operation_id],
+                |row| row.get(0),
+            ))?;
+            status.map(|status| Status::parse(&status)).transpose()
+        });
+        let settlement = match status {
+            Ok(status) => crate::host_resources::settle_effect(status),
+            // An unreadable receipt proves nothing about the device.
+            Err(_) => crate::host_resources::Settlement::Quarantine("receipt_unreadable"),
+        };
+        self.sessions
+            .worktrees
+            .host_resources()
+            .settle(claim, settlement);
+    }
+}
+
 fn operation_id(value: &str) -> Result<&str> {
     ensure!(
         !value.is_empty() && value.len() <= 512,
@@ -944,6 +996,7 @@ impl Sessions {
         let id = operation_id(&boot.operation_id)?;
         let timeout = Duration::from_millis(core::boot_timeout(boot.timeout_ms)?);
         let _claim = Claim::acquire(&boot.device_id, id)?;
+        let _host = HostClaim::acquire(self, &boot.device_id, id)?;
         let (target, probed) = locate(&boot.host_id, &boot.device_id)?;
         let booted = |already_booted: bool, serial: Option<String>| {
             reply(&DeviceBooted {
@@ -1031,6 +1084,7 @@ impl Sessions {
         let install: DeviceAppInstallRequest = decode(request)?;
         let id = operation_id(&install.operation_id)?;
         let _claim = Claim::acquire(&install.device_id, id)?;
+        let _host = HostClaim::acquire(self, &install.device_id, id)?;
         let (target, probed) = locate(&install.host_id, &install.device_id)?;
         let tools = probed.android.clone().unwrap_or_default();
         let installed = |app_id: String, version: String| {
@@ -1165,6 +1219,7 @@ impl Sessions {
         let launch: DeviceAppLaunchRequest = decode(request)?;
         let id = operation_id(&launch.operation_id)?;
         let _claim = Claim::acquire(&launch.device_id, id)?;
+        let _host = HostClaim::acquire(self, &launch.device_id, id)?;
         let admission = self.device_peek(id, OP, request)?;
         if admission != Admission::New {
             // Whether an interrupted launch happened is not observable.

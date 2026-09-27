@@ -179,6 +179,8 @@ export const operations = {
   "resources.inspect": { tier: "query", domain: "resources", request: "ResourcesInspectRequest", response: "HostResourcesState" },
   "resources.claim.resolve": { tier: "effect_command", domain: "resources", request: "ResourcesClaimResolveRequest", response: "HostResourcesState" },
   "resources.registry.accept": { tier: "effect_command", domain: "resources", request: "ResourcesRegistryAcceptRequest", response: "HostResourcesState" },
+  "resources.device.hold": { tier: "idempotent_command", domain: "resources", request: "ResourcesDeviceHoldRequest", response: "HostResourcesState" },
+  "resources.device.release": { tier: "idempotent_command", domain: "resources", request: "ResourcesDeviceReleaseRequest", response: "HostResourcesState" },
   "checkpoint.create": { tier: "effect_command", domain: "checkpoints", request: "CheckpointCreateRequest", response: "CheckpointCreated" },
   "checkpoint.list": { tier: "query", domain: "checkpoints", request: "CheckpointListRequest", response: "CheckpointList" },
   "checkpoint.restore.preview": { tier: "query", domain: "checkpoints", request: "CheckpointRestorePreviewRequest", response: "CheckpointRestorePreview" },

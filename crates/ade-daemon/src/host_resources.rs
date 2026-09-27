@@ -20,14 +20,27 @@
 //! - A registry that is missing, replaced or unreadable blocks new lifecycle
 //!   claims until explicit recovery; it is never silently recreated empty.
 //!
+//! Beyond checkouts, the registry holds two more kinds of claim, stored in the
+//! same table with an empty identity chain (which older daemons read as a key
+//! that nests with nothing):
+//! - A service port. A service run reserves each assigned TCP port before
+//!   launch, commits `dispatched` before the launch, binds the claim to the
+//!   listener once the run's own process tree is verified listening, and
+//!   releases it only after a verified stop that also observes no listener
+//!   left on the port.
+//! - A device. Each device effect (boot, install, launch) holds its simulator
+//!   or emulator exclusively for the effect and settles by its receipt: an
+//!   effect whose outcome is unknown leaves the claim quarantined. A run can
+//!   also hold a device for longer with `resources.device.hold`.
+//!
 //! The registry is local cooperation between ADE daemons. External programs
 //! that ignore it remain outside the guarantee.
 use crate::model::{new_id, now_ms};
 use crate::receipts::{self, Admission, Status};
 use ade_core::contract::resources::{
     ClaimMode, ClaimPhase, ClaimPurpose, ClaimState, HostResourcesState, RegistryScope,
-    RegistryState, RegistryStatus, ResourceClaim, ResourcesClaimResolveRequest,
-    ResourcesRegistryAcceptRequest,
+    RegistryState, RegistryStatus, ResourceClaim, ResourceKind, ResourcesClaimResolveRequest,
+    ResourcesDeviceHoldRequest, ResourcesDeviceReleaseRequest, ResourcesRegistryAcceptRequest,
 };
 use ade_core::error::{HostResourceConflict, HostResourcesUnavailable};
 use anyhow::{Context, Result, bail, ensure};
@@ -173,6 +186,210 @@ pub fn superseded_by(
         && old.owner_profile == profile
         && old.owner_incarnation != incarnation
         && old.key == *key
+}
+
+/// What a claim is on. A checkout's identity is its [`Key`] chain; a port or
+/// device claim carries its identity here and an empty chain.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Resource {
+    #[default]
+    Checkout,
+    /// A TCP port on this host, whatever the address.
+    Port { port: u16 },
+    /// A simulator or emulator by its ADE device ID.
+    Device { device_id: String },
+}
+
+impl Resource {
+    fn kind(&self) -> ResourceKind {
+        match self {
+            Self::Checkout => ResourceKind::Checkout,
+            Self::Port { .. } => ResourceKind::Port,
+            Self::Device { .. } => ResourceKind::Device,
+        }
+    }
+
+    /// The value a claim records as its `path`, which resolution confirms.
+    pub fn label(&self) -> Option<String> {
+        match self {
+            Self::Checkout => None,
+            Self::Port { port } => Some(format!("tcp:{port}")),
+            Self::Device { device_id } => Some(device_id.clone()),
+        }
+    }
+}
+
+/// A claim someone wants to take, as the compatibility decisions see it.
+#[derive(Clone, Copy, Debug)]
+pub struct Wanted<'a> {
+    pub key: &'a Key,
+    pub resource: &'a Resource,
+    pub mode: ClaimMode,
+    pub purpose: ClaimPurpose,
+    pub holder: Option<&'a str>,
+    pub operation_id: Option<&'a str>,
+    pub profile: &'a str,
+    pub incarnation: &'a str,
+    /// The caller verified that nothing it manages uses the resource now: for
+    /// a port, the profile's catalogue records no run of the holder and a
+    /// bind probe found the port free.
+    pub verified_idle: bool,
+}
+
+/// Two claims on one TCP port always conflict, whatever their mode, owner or
+/// holder: a port has one listener set per host, and a second run that binds
+/// it either fails or silently shares traffic. Quarantine does not weaken
+/// this.
+pub fn port_conflicts(held: u16, wanted: u16) -> bool {
+    held == wanted
+}
+
+/// Whether a held device claim refuses a wanted one on the same device.
+/// - A quarantined claim refuses everything until reconciled or resolved.
+/// - Within one daemon incarnation, device effects are serialized in process,
+///   and a run's hold admits this profile's own effects; only two different
+///   runs' holds conflict.
+/// - Across profiles or incarnations, anything but shared-with-shared
+///   conflicts.
+pub fn device_conflicts(held: &Claim, wanted: &Wanted) -> bool {
+    if held.state == ClaimState::Quarantined {
+        return true;
+    }
+    if held.owner_incarnation == wanted.incarnation {
+        return match (held.holder.as_deref(), wanted.holder) {
+            (Some(a), Some(b)) => a != b,
+            _ => false,
+        };
+    }
+    !(held.mode == ClaimMode::Shared && wanted.mode == ClaimMode::Shared)
+}
+
+/// Whether a held claim refuses a wanted one, for every kind of resource.
+/// Claims on different hosts or different kinds never conflict.
+pub fn claim_conflicts(held: &Claim, wanted: &Wanted) -> bool {
+    if held.key.host != wanted.key.host {
+        return false;
+    }
+    match (&held.resource, wanted.resource) {
+        (Resource::Checkout, Resource::Checkout) => {
+            conflicts((&held.key, held.mode), (wanted.key, wanted.mode))
+        }
+        (Resource::Port { port: a }, Resource::Port { port: b }) => port_conflicts(*a, *b),
+        (Resource::Device { device_id: a }, Resource::Device { device_id: b }) => {
+            a == b && device_conflicts(held, wanted)
+        }
+        _ => false,
+    }
+}
+
+/// Whether taking `wanted` is the reconciliation that retires a quarantined
+/// claim of this profile, which the new claim then protects throughout.
+/// - Checkout: [`superseded_by`].
+/// - Port: the same holder (service run identity) takes the same port again
+///   after verifying it idle. This also retires this daemon's own claim left
+///   active when a verified stop could not settle it, since the catalogue
+///   then records no run.
+/// - Device: a replay of the same operation ID, whose receipt reconciliation
+///   observes the device, or the same run's hold taken again.
+pub fn supersedes(old: &Claim, wanted: &Wanted) -> bool {
+    if old.owner_profile != wanted.profile || old.resource != *wanted.resource {
+        return false;
+    }
+    let quarantined = old.state == ClaimState::Quarantined;
+    let same = |a: Option<&str>, b: Option<&str>| a.is_some() && a == b;
+    match wanted.resource {
+        Resource::Checkout => superseded_by(
+            old,
+            wanted.key,
+            wanted.purpose,
+            wanted.profile,
+            wanted.incarnation,
+        ),
+        Resource::Port { .. } => {
+            wanted.verified_idle
+                && same(old.holder.as_deref(), wanted.holder)
+                && (quarantined || old.owner_incarnation == wanted.incarnation)
+        }
+        Resource::Device { .. } => {
+            quarantined
+                && (same(old.operation_id.as_deref(), wanted.operation_id)
+                    || (old.operation_id.is_none() && same(old.holder.as_deref(), wanted.holder)))
+        }
+    }
+}
+
+/// How a device effect's claim settles, from its receipt after the effect
+/// returned. No receipt, or one never dispatched, means no effect started. A
+/// settled receipt means the outcome was observed. Anything else (dispatched,
+/// acknowledged, unknown) may still be changing the device.
+pub fn settle_effect(receipt: Option<Status>) -> Settlement {
+    match receipt {
+        None | Some(Status::Accepted) | Some(Status::Settled) => Settlement::Release,
+        Some(Status::Dispatched | Status::Acknowledged | Status::Unknown) => {
+            Settlement::Quarantine("outcome_unknown")
+        }
+    }
+}
+
+/// How a service port claim settles after the service's run was verified
+/// stopped. `listening` is the set of TCP ports observed listening on the host
+/// afterwards, or `None` when observation failed. A listener left on the port
+/// may be an escaped descendant of the run, so it is not proof of release.
+pub fn settle_port_after_stop(port: u16, listening: Option<&[u16]>) -> Settlement {
+    match listening {
+        None => Settlement::Quarantine("listener_observation_unavailable"),
+        Some(ports) if ports.contains(&port) => {
+            Settlement::Quarantine("listener_remains_after_stop")
+        }
+        Some(_) => Settlement::Release,
+    }
+}
+
+/// Whether this daemon may settle a claim for `holder` after verifying that
+/// the holder stopped: the claim is this profile's, names the holder, and its
+/// owning incarnation is this one or has lost its liveness lock.
+pub fn settled_by_holder(
+    claim: &Claim,
+    holder: &str,
+    profile: &str,
+    incarnation: &str,
+    owner_live: bool,
+) -> bool {
+    claim.owner_profile == profile
+        && claim.holder.as_deref() == Some(holder)
+        && (claim.owner_incarnation == incarnation || !owner_live)
+}
+
+/// The canonical claim identity for a device ID, so case variants of one
+/// simulator collide. Displays are not claimed: they are observed, never
+/// booted or installed to, and are not simulators or emulators.
+pub fn device_claim_id(device_id: &str) -> Result<Option<String>> {
+    let target = crate::devices::Target::parse(device_id)?;
+    Ok(match target {
+        crate::devices::Target::Display(_) => None,
+        other => Some(other.id()),
+    })
+}
+
+/// The phase a new claim starts in. A port claim is `reserved` until its
+/// launch is dispatched, so losing the owner before launch releases it. A
+/// device claim is taken immediately around its use, so it starts `active`
+/// and owner loss quarantines it. Checkout use is `active`; checkout
+/// lifecycle claims are `reserved`.
+pub fn initial_phase(resource: &Resource, purpose: ClaimPurpose) -> ClaimPhase {
+    match (resource, purpose) {
+        (Resource::Port { .. }, _) => ClaimPhase::Reserved,
+        (Resource::Device { .. }, _) | (Resource::Checkout, ClaimPurpose::Use) => {
+            ClaimPhase::Active
+        }
+        (Resource::Checkout, _) => ClaimPhase::Reserved,
+    }
+}
+
+/// A run identity or other holder: 1 to 128 printable ASCII characters.
+pub fn valid_holder(holder: &str) -> bool {
+    !holder.is_empty() && holder.len() <= 128 && holder.bytes().all(|b| b.is_ascii_graphic())
 }
 
 /// Explicit recovery may release only a quarantined claim, and only when the
@@ -327,6 +544,13 @@ pub struct Claim {
     pub reason: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Absent in claims written before ports and devices were claimable.
+    #[serde(default)]
+    pub resource: Resource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener_pid: Option<u32>,
 }
 
 /// What a claim is taken on.
@@ -335,6 +559,13 @@ pub enum Target<'a> {
     Existing(&'a Path),
     /// A path that does not exist yet and will be created.
     Unborn(&'a Path),
+}
+
+/// A claim being taken: a checkout resolved from the filesystem, or a port
+/// or device named by its identity.
+enum Taking<'a> {
+    Checkout(Target<'a>),
+    Other(Resource),
 }
 
 fn node(path: &Path) -> Result<Node> {
@@ -586,8 +817,8 @@ impl HostResources {
         HostResourcesUnavailable(blocked.message()).into()
     }
 
-    /// Takes a claim. Shared use starts `active`; lifecycle claims start
-    /// `reserved` and must be advanced before their effect.
+    /// Takes a checkout claim. Shared use starts `active`; lifecycle claims
+    /// start `reserved` and must be advanced before their effect.
     pub fn acquire(
         &self,
         target: Target,
@@ -595,23 +826,109 @@ impl HostResources {
         purpose: ClaimPurpose,
         operation_id: Option<&str>,
     ) -> Result<String> {
+        self.take(
+            Taking::Checkout(target),
+            mode,
+            purpose,
+            None,
+            operation_id,
+            false,
+        )
+    }
+
+    /// Reserves a TCP port for a service run before launch. The claim starts
+    /// `reserved`; commit [`HostResources::dispatch`] before the launch.
+    /// `verified_idle` says the caller found no run of `holder` in its
+    /// catalogue and the port free, which retires this profile's quarantined
+    /// claim for the same holder and port.
+    pub fn reserve_port(&self, port: u16, holder: &str, verified_idle: bool) -> Result<String> {
+        self.take(
+            Taking::Other(Resource::Port { port }),
+            ClaimMode::Exclusive,
+            ClaimPurpose::Use,
+            Some(holder),
+            None,
+            verified_idle,
+        )
+    }
+
+    /// Claims a device exclusively for one effect (`operation_id`) or one
+    /// run's hold (`holder`). The claim starts `active`, so owner loss
+    /// quarantines it. Repeating a hold for the same holder returns its claim.
+    pub fn claim_device(
+        &self,
+        device_id: &str,
+        holder: Option<&str>,
+        operation_id: Option<&str>,
+    ) -> Result<String> {
+        self.take(
+            Taking::Other(Resource::Device {
+                device_id: device_id.into(),
+            }),
+            ClaimMode::Exclusive,
+            ClaimPurpose::Use,
+            holder,
+            operation_id,
+            false,
+        )
+    }
+
+    fn take(
+        &self,
+        taking: Taking,
+        mode: ClaimMode,
+        purpose: ClaimPurpose,
+        holder: Option<&str>,
+        operation_id: Option<&str>,
+        verified_idle: bool,
+    ) -> Result<String> {
         let guard = self.inner.lock().unwrap();
         let open = guard.as_ref().map_err(Self::unavailable)?;
-        let (path, key) = resolve(&open.host, &target)?;
+        let (path, key, resource) = match taking {
+            Taking::Checkout(target) => {
+                let (path, key) = resolve(&open.host, &target)?;
+                (path, key, Resource::Checkout)
+            }
+            Taking::Other(resource) => {
+                let key = Key {
+                    host: open.host.clone(),
+                    chain: Vec::new(),
+                    unborn: None,
+                };
+                (resource.label().unwrap_or_default(), key, resource)
+            }
+        };
+        let wanted = Wanted {
+            key: &key,
+            resource: &resource,
+            mode,
+            purpose,
+            holder,
+            operation_id,
+            profile: &self.location.profile,
+            incarnation: &self.incarnation,
+            verified_idle,
+        };
         let tx = Transaction::new_unchecked(&open.db, TransactionBehavior::Immediate)?;
         self.sweep_in(&tx)?;
         for held in read_claims(&tx)? {
-            if superseded_by(
-                &held,
-                &key,
-                purpose,
-                &self.location.profile,
-                &self.incarnation,
-            ) {
+            // A repeated hold by the same run converges on its claim.
+            if matches!(resource, Resource::Device { .. })
+                && holder.is_some()
+                && held.holder.as_deref() == holder
+                && held.resource == resource
+                && held.owner_incarnation == self.incarnation
+                && held.state == ClaimState::Active
+                && operation_id.is_none()
+                && held.operation_id.is_none()
+            {
+                return Ok(held.id);
+            }
+            if supersedes(&held, &wanted) {
                 tx.execute("DELETE FROM claims WHERE id=?1", [&held.id])?;
                 continue;
             }
-            if conflicts((&held.key, held.mode), (&key, mode)) {
+            if claim_conflicts(&held, &wanted) {
                 let whose = if held.owner_profile == self.location.profile {
                     "this profile".to_owned()
                 } else {
@@ -635,11 +952,7 @@ impl HostResources {
             path,
             mode,
             purpose,
-            phase: if purpose == ClaimPurpose::Use {
-                ClaimPhase::Active
-            } else {
-                ClaimPhase::Reserved
-            },
+            phase: initial_phase(&resource, purpose),
             state: ClaimState::Active,
             owner_profile: self.location.profile.clone(),
             owner_incarnation: self.incarnation.clone(),
@@ -648,6 +961,9 @@ impl HostResources {
             reason: None,
             created_at: now,
             updated_at: now,
+            resource,
+            holder: holder.map(str::to_owned),
+            listener_pid: None,
         };
         write_claim(&tx, &claim)?;
         tx.commit()?;
@@ -745,8 +1061,150 @@ impl HostResources {
         }
     }
 
+    /// Binds this incarnation's launched port claim for `holder` to the
+    /// listener verified in the service's own process tree. Writes nothing
+    /// when the claim is already bound to that listener.
+    pub fn bind_listener(&self, holder: &str, port: u16, pid: u32) -> Result<()> {
+        let guard = self.inner.lock().unwrap();
+        let open = guard.as_ref().map_err(Self::unavailable)?;
+        let tx = Transaction::new_unchecked(&open.db, TransactionBehavior::Immediate)?;
+        let mut changed = false;
+        for mut claim in read_claims(&tx)? {
+            if claim.owner_incarnation != self.incarnation
+                || claim.holder.as_deref() != Some(holder)
+                || claim.resource != (Resource::Port { port })
+                || claim.state != ClaimState::Active
+                || !matches!(claim.phase, ClaimPhase::Dispatched | ClaimPhase::Bound)
+                || (claim.phase == ClaimPhase::Bound && claim.listener_pid == Some(pid))
+            {
+                continue;
+            }
+            claim.phase = ClaimPhase::Bound;
+            claim.listener_pid = Some(pid);
+            claim.updated_at = now_ms();
+            write_claim(&tx, &claim)?;
+            changed = true;
+        }
+        if changed {
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    /// Settles every claim `holder` has in this profile after the caller
+    /// verified that the holder stopped. `decide` returns the settlement for
+    /// one claim, or `None` to leave it. Claims of an earlier incarnation are
+    /// included only once it lost its liveness lock ([`settled_by_holder`]).
+    /// Returns how many claims were released.
+    pub fn settle_holder(
+        &self,
+        holder: &str,
+        decide: impl Fn(&Claim) -> Option<Settlement>,
+    ) -> Result<usize> {
+        let guard = self.inner.lock().unwrap();
+        let open = guard.as_ref().map_err(Self::unavailable)?;
+        let tx = Transaction::new_unchecked(&open.db, TransactionBehavior::Immediate)?;
+        let mut released = 0;
+        for mut claim in read_claims(&tx)? {
+            let owner_live = self.live(&claim.owner_incarnation);
+            if !settled_by_holder(
+                &claim,
+                holder,
+                &self.location.profile,
+                &self.incarnation,
+                owner_live,
+            ) {
+                continue;
+            }
+            match decide(&claim) {
+                None => {}
+                Some(Settlement::Release) => {
+                    tx.execute("DELETE FROM claims WHERE id=?1", [&claim.id])?;
+                    released += 1;
+                }
+                Some(Settlement::Quarantine(reason)) => {
+                    claim.state = ClaimState::Quarantined;
+                    claim.reason = Some(reason.into());
+                    claim.updated_at = now_ms();
+                    write_claim(&tx, &claim)?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(released)
+    }
+
+    /// `resources.device.hold` and `resources.device.release`.
+    pub fn device_command(&self, op: &str, request: &Value) -> Result<HostResourcesState> {
+        match op {
+            "resources.device.hold" => {
+                let hold: ResourcesDeviceHoldRequest = serde_json::from_value(request.clone())?;
+                ensure!(
+                    valid_holder(&hold.holder),
+                    "holder must be 1 to 128 printable ASCII characters"
+                );
+                let device = device_claim_id(&hold.device_id)?.context(
+                    "Displays are observed, not held; hold a simulator, emulator or Android device",
+                )?;
+                self.claim_device(&device, Some(&hold.holder), None)?;
+            }
+            "resources.device.release" => {
+                let release: ResourcesDeviceReleaseRequest =
+                    serde_json::from_value(request.clone())?;
+                ensure!(
+                    valid_holder(&release.holder),
+                    "holder must be 1 to 128 printable ASCII characters"
+                );
+                let device = device_claim_id(&release.device_id)?
+                    .context("Displays are observed, not held")?;
+                self.release_hold(&device, &release.holder)?;
+            }
+            _ => bail!("Unknown resources operation"),
+        }
+        self.inspect_kind(None, Some(ResourceKind::Device))
+    }
+
+    /// Releases this incarnation's active hold. A quarantined hold of this
+    /// profile for the same run is refused rather than reported released.
+    fn release_hold(&self, device_id: &str, holder: &str) -> Result<()> {
+        let guard = self.inner.lock().unwrap();
+        let open = guard.as_ref().map_err(Self::unavailable)?;
+        let tx = Transaction::new_unchecked(&open.db, TransactionBehavior::Immediate)?;
+        let resource = Resource::Device {
+            device_id: device_id.into(),
+        };
+        for claim in read_claims(&tx)? {
+            if claim.resource != resource
+                || claim.holder.as_deref() != Some(holder)
+                || claim.operation_id.is_some()
+                || claim.owner_profile != self.location.profile
+            {
+                continue;
+            }
+            ensure!(
+                claim.state == ClaimState::Active && claim.owner_incarnation == self.incarnation,
+                "The hold on {device_id} for {holder} is quarantined ({}); inspect the device, then release it with resources.claim.resolve (claim {})",
+                claim.reason.as_deref().unwrap_or("owner lost"),
+                claim.id
+            );
+            tx.execute("DELETE FROM claims WHERE id=?1", [&claim.id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// The registry status and its claims, optionally narrowed to one path.
     pub fn inspect(&self, path: Option<&str>) -> Result<HostResourcesState> {
+        self.inspect_kind(path, None)
+    }
+
+    /// The registry status and its claims, optionally narrowed to one
+    /// checkout path and to one kind of resource.
+    pub fn inspect_kind(
+        &self,
+        path: Option<&str>,
+        kind: Option<ResourceKind>,
+    ) -> Result<HostResourcesState> {
         let _ = self.sweep();
         let guard = self.inner.lock().unwrap();
         let (host, blocked, claims) = match &*guard {
@@ -768,9 +1226,11 @@ impl HostResources {
         let claims = claims
             .into_iter()
             .filter(|claim| {
-                filter
-                    .as_ref()
-                    .is_none_or(|key| key.within(&claim.key) || claim.key.within(key))
+                kind.is_none_or(|kind| claim.resource.kind() == kind)
+                    && filter.as_ref().is_none_or(|key| {
+                        claim.resource == Resource::Checkout
+                            && (key.within(&claim.key) || claim.key.within(key))
+                    })
             })
             .map(|claim| self.view(claim))
             .collect();
@@ -799,12 +1259,22 @@ impl HostResources {
             inode: String::new(),
             generation: String::new(),
         });
+        let (port, device_id) = match &claim.resource {
+            Resource::Checkout => (None, None),
+            Resource::Port { port } => (Some(*port), None),
+            Resource::Device { device_id } => (None, Some(device_id.clone())),
+        };
         ResourceClaim {
             owner_live: self.live(&claim.owner_incarnation),
             mine: claim.owner_incarnation == self.incarnation,
             id: claim.id,
             host_id: claim.key.host,
+            resource: claim.resource.kind(),
             path: claim.path,
+            port,
+            device_id,
+            holder: claim.holder,
+            listener_pid: claim.listener_pid,
             device: identity.device,
             inode: identity.inode,
             generation: identity.generation,
@@ -928,6 +1398,74 @@ impl HostResources {
         )?;
         tx.commit()?;
         Ok(rebound)
+    }
+}
+
+/// The holder name of a service run's port claims. The service identity
+/// changes when a service is removed and defined again, so a new definition
+/// never inherits an old one's claims.
+pub fn service_holder(workspace_id: &str, name: &str, identity: &str) -> String {
+    format!("service:{workspace_id}/{name}#{identity}")
+}
+
+/// A service run's port claims from reservation through launch. Dropped
+/// before [`PortReservation::launched`], it settles by [`settle_lifecycle`]:
+/// released when the launch was never dispatched, quarantined when it was.
+pub struct PortReservation<'a> {
+    resources: &'a HostResources,
+    claims: Vec<String>,
+    dispatched: bool,
+    launched: bool,
+}
+
+impl<'a> PortReservation<'a> {
+    /// Reserves every port, or none: a conflict releases what was taken.
+    pub fn reserve(
+        resources: &'a HostResources,
+        ports: impl IntoIterator<Item = u16>,
+        holder: &str,
+        verified_idle: bool,
+    ) -> Result<Self> {
+        let mut reservation = Self {
+            resources,
+            claims: Vec::new(),
+            dispatched: false,
+            launched: false,
+        };
+        let ports: std::collections::BTreeSet<u16> = ports.into_iter().collect();
+        for port in ports {
+            let claim = resources.reserve_port(port, holder, verified_idle)?;
+            reservation.claims.push(claim);
+        }
+        Ok(reservation)
+    }
+
+    /// Commits `dispatched` on every claim. An error means the launch must
+    /// not start; the claims are then released on drop.
+    pub fn dispatch(&mut self) -> Result<()> {
+        for claim in &self.claims {
+            self.resources.dispatch(claim)?;
+        }
+        self.dispatched = true;
+        Ok(())
+    }
+
+    /// The runtime accepted the launch. The claims stay `dispatched` until
+    /// a listener is verified, and are released by a verified stop.
+    pub fn launched(mut self) {
+        self.launched = true;
+    }
+}
+
+impl Drop for PortReservation<'_> {
+    fn drop(&mut self) {
+        if self.launched {
+            return;
+        }
+        let settlement = settle_lifecycle(self.dispatched, false);
+        for claim in &self.claims {
+            self.resources.settle(claim, settlement);
+        }
     }
 }
 
@@ -1183,7 +1721,350 @@ mod tests {
             reason: None,
             created_at: 0,
             updated_at: 0,
+            resource: Resource::Checkout,
+            holder: None,
+            listener_pid: None,
         }
+    }
+
+    fn other_key() -> Key {
+        Key {
+            host: "host".into(),
+            chain: Vec::new(),
+            unborn: None,
+        }
+    }
+
+    fn port(port: u16) -> Resource {
+        Resource::Port { port }
+    }
+
+    fn device(id: &str) -> Resource {
+        Resource::Device {
+            device_id: id.into(),
+        }
+    }
+
+    /// A held non-checkout claim owned by `profile`/`incarnation`.
+    fn held(resource: Resource, profile: &str, incarnation: &str) -> Claim {
+        Claim {
+            key: other_key(),
+            path: resource.label().unwrap_or_default(),
+            mode: Exclusive,
+            owner_profile: profile.into(),
+            owner_incarnation: incarnation.into(),
+            resource,
+            ..claim(ClaimState::Active, ClaimPurpose::Use, incarnation)
+        }
+    }
+
+    fn wanted<'a>(key: &'a Key, resource: &'a Resource, profile: &'a str) -> Wanted<'a> {
+        Wanted {
+            key,
+            resource,
+            mode: Exclusive,
+            purpose: ClaimPurpose::Use,
+            holder: None,
+            operation_id: None,
+            profile,
+            incarnation: "mine",
+            verified_idle: false,
+        }
+    }
+
+    #[test]
+    fn a_port_is_one_claim_per_host_whatever_the_owner_mode_or_state() {
+        let empty = other_key();
+        let p5173 = port(5173);
+        let want = wanted(&empty, &p5173, "a");
+        for (profile, incarnation) in [("b", "theirs"), ("a", "mine"), ("a", "old")] {
+            let mut claim = held(port(5173), profile, incarnation);
+            assert!(claim_conflicts(&claim, &want), "{profile}/{incarnation}");
+            claim.mode = Shared;
+            claim.state = ClaimState::Quarantined;
+            assert!(claim_conflicts(&claim, &want));
+        }
+        assert!(!claim_conflicts(&held(port(5174), "b", "theirs"), &want));
+        let mut elsewhere = held(port(5173), "b", "theirs");
+        elsewhere.key.host = "other-host".into();
+        assert!(!claim_conflicts(&elsewhere, &want));
+        // Different kinds never collide, even when their labels could.
+        assert!(!claim_conflicts(&held(device("tcp:5173"), "b", "t"), &want));
+        let tree = key(&["tree", "root"]);
+        assert!(!claim_conflicts(
+            &claim(ClaimState::Active, ClaimPurpose::Use, "t"),
+            &wanted(&empty, &p5173, "a")
+        ));
+        let checkout = Resource::Checkout;
+        assert!(!claim_conflicts(
+            &held(port(5173), "b", "t"),
+            &wanted(&tree, &checkout, "a")
+        ));
+    }
+
+    #[test]
+    fn a_device_is_exclusive_across_profiles_and_between_runs() {
+        let key = other_key();
+        let sim = device("ios-sim:A");
+        let effect = wanted(&key, &sim, "a");
+        // Another profile's effect or hold refuses this profile's effect.
+        assert!(claim_conflicts(
+            &held(device("ios-sim:A"), "b", "theirs"),
+            &effect
+        ));
+        assert!(!claim_conflicts(
+            &held(device("ios-sim:B"), "b", "theirs"),
+            &effect
+        ));
+        // An earlier incarnation of this profile is not this daemon.
+        assert!(claim_conflicts(
+            &held(device("ios-sim:A"), "a", "old"),
+            &effect
+        ));
+        // This daemon's own hold admits its own effects...
+        let mut hold = held(device("ios-sim:A"), "a", "mine");
+        hold.holder = Some("run-1".into());
+        assert!(!claim_conflicts(&hold, &effect));
+        // ...but another run of this profile cannot hold it too.
+        let other_run = Wanted {
+            holder: Some("run-2"),
+            ..effect
+        };
+        assert!(claim_conflicts(&hold, &other_run));
+        // Quarantine refuses everyone, this daemon included.
+        hold.state = ClaimState::Quarantined;
+        assert!(claim_conflicts(&hold, &effect));
+        // Shared use by two profiles is compatible; nothing else is.
+        let mut shared = held(device("ios-sim:A"), "b", "theirs");
+        shared.mode = Shared;
+        assert!(!claim_conflicts(
+            &shared,
+            &Wanted {
+                mode: Shared,
+                ..effect
+            }
+        ));
+        assert!(claim_conflicts(&shared, &effect));
+    }
+
+    #[test]
+    fn only_the_owning_profiles_reconciliation_retires_a_quarantined_port_or_device() {
+        let key = other_key();
+        let p = port(3000);
+        let mut old = held(port(3000), "a", "old");
+        old.state = ClaimState::Quarantined;
+        old.holder = Some("service:w/web#1".into());
+        let restart = Wanted {
+            holder: Some("service:w/web#1"),
+            verified_idle: true,
+            ..wanted(&key, &p, "a")
+        };
+        assert!(supersedes(&old, &restart));
+        assert!(!supersedes(
+            &old,
+            &Wanted {
+                verified_idle: false,
+                ..restart
+            }
+        ));
+        assert!(!supersedes(
+            &old,
+            &Wanted {
+                holder: Some("service:w/web#2"),
+                ..restart
+            }
+        ));
+        assert!(!supersedes(
+            &old,
+            &Wanted {
+                profile: "b",
+                ..restart
+            }
+        ));
+        let p2 = port(3001);
+        assert!(!supersedes(
+            &old,
+            &Wanted {
+                resource: &p2,
+                ..restart
+            }
+        ));
+        // Another live incarnation's active claim is never retired; this
+        // daemon's own stale one is, once the catalogue shows no run.
+        let mut active = old.clone();
+        active.state = ClaimState::Active;
+        assert!(!supersedes(&active, &restart));
+        active.owner_incarnation = "mine".into();
+        assert!(supersedes(&active, &restart));
+        assert!(!supersedes(
+            &active,
+            &Wanted {
+                verified_idle: false,
+                ..restart
+            }
+        ));
+
+        let sim = device("ios-sim:A");
+        let mut effect = held(device("ios-sim:A"), "a", "mine");
+        effect.state = ClaimState::Quarantined;
+        effect.operation_id = Some("op-1".into());
+        let replay = Wanted {
+            operation_id: Some("op-1"),
+            ..wanted(&key, &sim, "a")
+        };
+        assert!(supersedes(&effect, &replay));
+        assert!(!supersedes(
+            &effect,
+            &Wanted {
+                operation_id: Some("op-2"),
+                ..replay
+            }
+        ));
+        assert!(!supersedes(
+            &effect,
+            &Wanted {
+                operation_id: None,
+                ..replay
+            }
+        ));
+        let mut hold = held(device("ios-sim:A"), "a", "old");
+        hold.state = ClaimState::Quarantined;
+        hold.holder = Some("run-1".into());
+        let again = Wanted {
+            holder: Some("run-1"),
+            ..wanted(&key, &sim, "a")
+        };
+        assert!(supersedes(&hold, &again));
+        assert!(!supersedes(
+            &hold,
+            &Wanted {
+                holder: Some("run-2"),
+                ..again
+            }
+        ));
+    }
+
+    #[test]
+    fn device_effects_settle_by_their_receipt() {
+        assert_eq!(settle_effect(None), Settlement::Release);
+        assert_eq!(settle_effect(Some(Status::Accepted)), Settlement::Release);
+        assert_eq!(settle_effect(Some(Status::Settled)), Settlement::Release);
+        for status in [Status::Dispatched, Status::Acknowledged, Status::Unknown] {
+            assert_eq!(
+                settle_effect(Some(status)),
+                Settlement::Quarantine("outcome_unknown")
+            );
+        }
+    }
+
+    #[test]
+    fn a_stopped_services_port_is_released_only_when_observed_free() {
+        assert_eq!(
+            settle_port_after_stop(3000, Some(&[8080])),
+            Settlement::Release
+        );
+        assert_eq!(settle_port_after_stop(3000, Some(&[])), Settlement::Release);
+        assert_eq!(
+            settle_port_after_stop(3000, Some(&[3000])),
+            Settlement::Quarantine("listener_remains_after_stop")
+        );
+        assert_eq!(
+            settle_port_after_stop(3000, None),
+            Settlement::Quarantine("listener_observation_unavailable")
+        );
+    }
+
+    #[test]
+    fn a_verified_stop_settles_only_this_profiles_claims_for_that_holder() {
+        let mut claim = held(port(3000), "a", "mine");
+        claim.holder = Some("h".into());
+        assert!(settled_by_holder(&claim, "h", "a", "mine", true));
+        assert!(!settled_by_holder(&claim, "other", "a", "mine", true));
+        assert!(!settled_by_holder(&claim, "h", "b", "mine", true));
+        claim.owner_incarnation = "old".into();
+        assert!(!settled_by_holder(&claim, "h", "a", "mine", true));
+        assert!(settled_by_holder(&claim, "h", "a", "mine", false));
+        claim.holder = None;
+        assert!(!settled_by_holder(&claim, "h", "a", "mine", false));
+    }
+
+    #[test]
+    fn owner_loss_releases_a_port_only_before_launch_and_quarantines_devices() {
+        assert_eq!(
+            initial_phase(&port(1), ClaimPurpose::Use),
+            ClaimPhase::Reserved
+        );
+        assert_eq!(
+            initial_phase(&device("x"), ClaimPurpose::Use),
+            ClaimPhase::Active
+        );
+        assert_eq!(
+            initial_phase(&Resource::Checkout, ClaimPurpose::Use),
+            ClaimPhase::Active
+        );
+        assert_eq!(
+            initial_phase(&Resource::Checkout, ClaimPurpose::Remove),
+            ClaimPhase::Reserved
+        );
+        // Through the shared owner-loss rule: reserved releases; dispatched,
+        // bound and active quarantine.
+        assert_eq!(
+            on_owner_lost(
+                initial_phase(&port(1), ClaimPurpose::Use),
+                ClaimState::Active
+            ),
+            OwnerLoss::Release
+        );
+        assert_eq!(
+            on_owner_lost(
+                initial_phase(&device("x"), ClaimPurpose::Use),
+                ClaimState::Active
+            ),
+            OwnerLoss::Quarantine("owner_lost_during_use")
+        );
+    }
+
+    #[test]
+    fn device_claims_use_the_canonical_id_and_skip_displays() {
+        let udid = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        assert_eq!(
+            device_claim_id(&format!("ios-sim:{udid}")).unwrap(),
+            Some(format!("ios-sim:{}", udid.to_uppercase()))
+        );
+        assert_eq!(
+            device_claim_id("android-avd:Pixel_9").unwrap(),
+            Some("android-avd:Pixel_9".into())
+        );
+        assert_eq!(device_claim_id(&format!("display:{udid}")).unwrap(), None);
+        assert!(device_claim_id("ios-sim:nope").is_err());
+        assert!(valid_holder("run_1"));
+        assert!(!valid_holder(""));
+        assert!(!valid_holder("has space"));
+        assert!(!valid_holder(&"x".repeat(129)));
+    }
+
+    #[test]
+    fn port_and_device_claims_stay_readable_and_inert_for_older_daemons() {
+        // A claim written before this change reads as a checkout.
+        let mut old =
+            serde_json::to_value(claim(ClaimState::Active, ClaimPurpose::Use, "i")).unwrap();
+        let object = old.as_object_mut().unwrap();
+        object.remove("resource");
+        let read: Claim = serde_json::from_value(old).unwrap();
+        assert_eq!(read.resource, Resource::Checkout);
+        // A port claim's empty chain nests with no checkout key either way,
+        // which is how an older daemon's `conflicts` sees it.
+        let port_key = other_key();
+        let tree = key(&["tree", "root"]);
+        assert!(!port_key.within(&tree));
+        assert!(!tree.within(&port_key));
+        assert!(!conflicts((&port_key, Exclusive), (&tree, Exclusive)));
+        let wire = serde_json::to_value(held(port(3000), "a", "i")).unwrap();
+        assert_eq!(
+            wire["resource"],
+            serde_json::json!({"kind": "port", "port": 3000})
+        );
+        assert_eq!(wire["path"], "tcp:3000");
     }
 
     #[test]

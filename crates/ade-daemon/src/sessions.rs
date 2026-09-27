@@ -746,9 +746,7 @@ impl Sessions {
             | "repository.rebind"
             | "workspace.rebind" => self.workspace_command(request),
             "terminal.create" | "terminal.operation" => self.terminal_command(request),
-            "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" => {
-                self.worktrees.resources_command(request)
-            }
+            op if op.starts_with("resources.") => self.worktrees.resources_command(request),
             "activity.list"
             | "activity.mark"
             | "notification.delivery.claim"

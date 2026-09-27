@@ -14,6 +14,7 @@ import { contextUsage, runContextCommand } from './commands/context.js'
 import { conversationControlUsage, runConversationControlCommand } from './commands/conversation-controls.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { deviceUsage, runDeviceCommand } from './commands/devices.js'
+import { resourcesUsage, runResourcesCommand } from './commands/resources.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { repositoryUsage, runRepositoryCommand } from './commands/repository.js'
 import { placementUsage, runPlacementCommand } from './commands/placement.js'
@@ -40,7 +41,6 @@ import { activityUsage, runActivityCommand } from './commands/activity.js'
 import { attachmentUsage, runAttachmentCommand } from './commands/attachments.js'
 import { fileUsage, runFileCommand } from './commands/files.js'
 import { queueUsage, runQueueCommand } from './commands/queue.js'
-import { resourceUsage, runResourceCommand } from './commands/resources.js'
 import { runRuntimeCommand, runtimeUsage } from './commands/runtime.js'
 import { CliError, object, type CommandResult, type ErrorCode } from './shared.js'
 
@@ -87,7 +87,6 @@ const usage = [
   usageHeader,
   workspaceUsage,
   worktreeLifecycleUsage,
-  resourceUsage,
   fileUsage,
   conversationUsage,
   conversationControlUsage,
@@ -123,6 +122,7 @@ const usage = [
   remoteConnectUsage,
   retentionUsage,
   deviceUsage,
+  resourcesUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -269,13 +269,13 @@ const commandAreas = [
   runDiagnosticsCommand,
   runRetentionCommand,
   runDeviceCommand,
-  runResourceCommand,
   runFileCommand,
   runQueueCommand,
   runAttachmentCommand,
   runRuntimeCommand,
   runActivityCommand,
   runRequestCommand,
+  runResourcesCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {
