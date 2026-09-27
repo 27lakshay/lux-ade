@@ -173,16 +173,57 @@ impl BrowserOwner {
     }
 }
 
+/// The browser storage profile the desktop owner of a fixed-socket daemon
+/// keeps its tabs in. Every fixed-socket owner uses this one name and keeps
+/// its storage apart by directory (`apps/desktop/src/main/index.ts`).
+const FIXED_BROWSER_STORAGE: &str = "fixed";
+
+/// This daemon's browser identity: the ADE profile ID an owner registers and
+/// is addressed by (`profile_id`), and the browser storage profile that owner
+/// reports on every tab record (`profileId`).
+///
+/// A managed profile's owner stores its tabs under the profile's own ID, so
+/// the two are equal. The fixed-socket owner registers as `fixed-<hash>`,
+/// where the hash names the daemon socket, and stores its tabs under `fixed`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrowserIdentity {
+    profile_id: String,
+    storage_profile: String,
+}
+
+impl BrowserIdentity {
+    fn managed(profile_id: String) -> Self {
+        Self {
+            storage_profile: profile_id.clone(),
+            profile_id,
+        }
+    }
+
+    fn fixed(socket_hash: &str) -> Self {
+        Self {
+            profile_id: format!("fixed-{socket_hash}"),
+            storage_profile: FIXED_BROWSER_STORAGE.into(),
+        }
+    }
+}
+
 /// Whether an owner's `browser.list` or `browser.inspect` reply describes only
-/// the browser profile and tab the daemon asked for. The owner reports each
-/// tab's storage profile (`profileId`), and it is the requested profile; a
-/// popup, another tab or another profile's tab is never relayed as the
-/// requested one. An error reply carries no records.
-fn browser_records_match(op: &str, profile_id: &str, tab_id: &Value, response: &Value) -> bool {
+/// the browser profile and tab the daemon asked for. Each tab record, and a
+/// list's top-level `profileId`, names the owner's browser storage profile,
+/// and it must be the storage profile of this daemon's ADE profile (see
+/// [`BrowserIdentity`]). A popup, another tab or another storage profile's
+/// tab is never relayed as the requested one. An error reply carries no
+/// records.
+fn browser_records_match(
+    op: &str,
+    storage_profile: &str,
+    tab_id: &Value,
+    response: &Value,
+) -> bool {
     if response["type"] == "error" {
         return true;
     }
-    let tab_matches = |tab: &Value| tab["profileId"] == profile_id;
+    let tab_matches = |tab: &Value| tab["profileId"] == storage_profile;
     match op {
         "browser.inspect" => {
             response["tab_id"] == *tab_id
@@ -190,7 +231,7 @@ fn browser_records_match(op: &str, profile_id: &str, tab_id: &Value, response: &
                 && tab_matches(&response["tab"])
         }
         "browser.list" => {
-            response["profileId"] == profile_id
+            response["profileId"] == storage_profile
                 && response["tabs"]
                     .as_array()
                     .is_some_and(|tabs| tabs.iter().all(tab_matches))
@@ -358,7 +399,7 @@ fn browser_request_id(value: &Value) -> anyhow::Result<String> {
     Ok(id.to_owned())
 }
 
-fn daemon_browser_profile(socket: &str) -> anyhow::Result<String> {
+fn daemon_browser_profile(socket: &str) -> anyhow::Result<BrowserIdentity> {
     if let Some(home) = std::env::var_os("ADE_RUNTIME_HOME") {
         let path = Path::new(&home);
         anyhow::ensure!(
@@ -370,7 +411,7 @@ fn daemon_browser_profile(socket: &str) -> anyhow::Result<String> {
             .and_then(|parent| parent.file_name())
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow::anyhow!("Managed browser profile has no identity"))?;
-        return browser_id(&json!({"profile_id":id}), "profile_id");
+        return browser_id(&json!({"profile_id":id}), "profile_id").map(BrowserIdentity::managed);
     }
     let endpoint = Path::new(socket);
     let absolute = if endpoint.is_absolute() {
@@ -378,12 +419,16 @@ fn daemon_browser_profile(socket: &str) -> anyhow::Result<String> {
     } else {
         std::env::current_dir()?.join(endpoint)
     };
-    let digest = Sha256::digest(absolute.to_string_lossy().as_bytes());
-    let suffix: String = digest[..16]
+    Ok(BrowserIdentity::fixed(&fixed_socket_hash(&absolute)))
+}
+
+/// The first 32 hex digits of sha256 over a fixed daemon socket's absolute
+/// path. The desktop app computes the same value to name its owner.
+fn fixed_socket_hash(absolute: &Path) -> String {
+    Sha256::digest(absolute.to_string_lossy().as_bytes())[..16]
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect();
-    Ok(format!("fixed-{suffix}"))
+        .collect()
 }
 
 fn browser_socket(path: &Path) -> anyhow::Result<(u64, u64)> {
@@ -458,6 +503,8 @@ struct Host {
     /// The profile's durable state directory.
     directory: PathBuf,
     profile_id: String,
+    /// The browser storage profile this profile's owner reports on its tabs.
+    browser_storage_profile: String,
     sessions: Arc<Sessions>,
     runtime: Arc<Supervisor>,
     default_workspace: String,
@@ -1017,7 +1064,12 @@ impl Host {
             || !response["type"].is_string()
             || response["profile_id"] != owner.profile_id
             || response["owner_id"] != owner.owner_id
-            || !browser_records_match(op, &owner.profile_id, &request["tab_id"], &response)
+            || !browser_records_match(
+                op,
+                &self.browser_storage_profile,
+                &request["tab_id"],
+                &response,
+            )
         {
             return browser_error(
                 "unavailable",
@@ -1950,10 +2002,12 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         }
     };
 
+    let browser_identity = daemon_browser_profile(&socket)?;
     let host = Arc::new(Host {
         socket: PathBuf::from(&socket),
         directory: directory.clone(),
-        profile_id: daemon_browser_profile(&socket)?,
+        profile_id: browser_identity.profile_id,
+        browser_storage_profile: browser_identity.storage_profile,
         sessions,
         runtime,
         default_workspace,
@@ -2099,6 +2153,44 @@ mod error_envelope_tests {
             "p",
             &wanted,
             &json!({"type": "error"})
+        ));
+    }
+
+    #[test]
+    fn browser_identity_names_the_owner_storage_profile() {
+        // A managed owner stores tabs under its ADE profile ID.
+        let managed = BrowserIdentity::managed("2f1c".into());
+        assert_eq!(managed.profile_id, "2f1c");
+        assert_eq!(managed.storage_profile, "2f1c");
+        // The fixed-socket owner registers as fixed-<hash> and stores tabs
+        // under `fixed`, as apps/desktop/src/main/index.ts sets it up. The hash
+        // is the first 32 hex digits of sha256 over the absolute socket path.
+        let hash = fixed_socket_hash(Path::new("/tmp/ade.sock"));
+        assert_eq!(hash, "17105fbc93a760a585c54145d923457a");
+        let fixed = BrowserIdentity::fixed(&hash);
+        assert_eq!(fixed.profile_id, format!("fixed-{hash}"));
+        assert_eq!(fixed.storage_profile, "fixed");
+        let tab = json!({"id": "t1", "profileId": "fixed"});
+        let inspect = json!({"type": "browser_tab", "tab_id": "t1", "tab": tab});
+        assert!(browser_records_match(
+            "browser.inspect",
+            &fixed.storage_profile,
+            &json!("t1"),
+            &inspect
+        ));
+        // The daemon's ADE profile ID is never the storage profile of a fixed owner.
+        assert!(!browser_records_match(
+            "browser.inspect",
+            &fixed.profile_id,
+            &json!("t1"),
+            &inspect
+        ));
+        let list = json!({"type": "browser_tabs", "profileId": "fixed", "tabs": [tab]});
+        assert!(browser_records_match(
+            "browser.list",
+            &fixed.storage_profile,
+            &Value::Null,
+            &list
         ));
     }
 

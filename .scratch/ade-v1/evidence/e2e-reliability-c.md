@@ -2,15 +2,15 @@
 
 Status: returned
 Type: slice evidence
-Branch: claude/wf_317b0f50-41b-4
-Worker: ADE parallel build, E2E round 3, slice reliability-c
+Branch: claude/wf_317b0f50-41b-4, finished on claude/wf_c51346dc-a4d-2
+Worker: ADE parallel build, E2E round 3, slice reliability-c; review blocker fixed in round 4
 Requirements: R007, R013, R015, R018 (full register acceptance passes); R016, R019 (partial)
 
 ## Outcome
 
 Headless specs in `e2e/protocol/reliability-c/` prove six shared reliability
 requirements against real daemons and runtimes through the SDK, the CLI and the
-raw protocol. 10 tests pass and none is `test.fixme`. The specs exposed five
+raw protocol. 12 tests pass and none is `test.fixme`. The specs exposed five
 product bugs in this area, and all five are fixed:
 
 - **R007.** `resources.registry.accept` replaced a corrupted or missing
@@ -77,6 +77,8 @@ browser tabs and no large searchable history.
 | No cross-profile data: links into another profile's HOME and database, `..` and absolute paths are refused; listings show links as links; a FIFO fails at once; the other profile's daemon does not serve this profile's workspace | same | pass |
 | Adversarial page and popup content through the browser relay: page text is inert; a reply for a popup or another tab, another profile or owner, or another browser profile is refused; a reply outside the contract is refused; only the request's own fields reach the owner | `reliability-c/preview.spec.ts` › browser page content… | pass after fix 4 |
 | Another profile cannot answer for or take over this profile's browser owner; non-private or linked owner sockets are refused | same | pass |
+| Storage profile naming: a fixed-socket owner registered as `fixed-<hash>` reports tabs under `fixed` and is relayed; the same replies naming `fixed-<hash>`, `fixed-other` or another socket's profile are refused | `reliability-c/preview.spec.ts` › a fixed-socket owner reports tabs under its fixed storage profile… | pass after review fix |
+| Storage profile naming: a managed profile's owner reports tabs under the profile ID itself and is relayed; `fixed` is refused | `reliability-c/preview.spec.ts` › a managed profile owner reports tabs under the profile ID itself | pass after review fix |
 | Frames, popups and the renderer bridge in the Electron viewer | none: Electron E2E is paused until the UI phase | not covered |
 
 ### R018: understand failures without exposing secrets
@@ -133,10 +135,27 @@ latency is excluded. These are one run's numbers, not a supported-machine claim.
    the plugin is refused with `conflict`. That rule already has pure tests.
 4. `crates/ade-daemon/src/bin/daemon/server.rs`: new pure
    `browser_records_match`. An inspect reply must name the requested tab in
-   `tab_id` and `tab.id`. Every tab record in an inspect or list reply must
-   carry the requested browser profile in `profileId`, which the desktop owner
-   always sets. Pure test:
+   `tab_id` and `tab.id`. Every tab record in an inspect or list reply, and a
+   list's top-level `profileId`, must name the owner's browser storage
+   profile. Pure test:
    `browser_replies_describe_only_the_requested_profile_and_tab`.
+
+   Review fix (round 4). The round 3 version compared `profileId` with the
+   daemon's ADE profile ID. The real Electron owner fills `profileId` with its
+   browser storage profile, and in fixed-socket mode that is `fixed` while
+   the daemon profile is `fixed-<hash>` (`apps/desktop/src/main/index.ts`), so
+   every real fixed-socket `browser.list` and `browser.inspect` would have been
+   refused. The daemon now derives a `BrowserIdentity` at start: a managed
+   profile (`ADE_RUNTIME_HOME` set) has storage profile equal to its profile
+   ID; a fixed-socket daemon has profile ID `fixed-<first 32 hex of
+   sha256(absolute socket)>` and storage profile `fixed`. The relay matches on
+   the storage profile (`Host::browser_storage_profile`). The owner identity
+   check on the reply's `profile_id` is unchanged. Pure test:
+   `browser_identity_names_the_owner_storage_profile`, which also pins the
+   socket hash against a value computed outside Rust. The scripted owner in
+   `e2e/protocol/fixtures/browser-owner.ts` now reports storage profiles as
+   Electron does (`ownerStorageProfile`) and can register as a managed
+   profile ID.
 5. `crates/ade-daemon/src/sessions/workspaces.rs` `with_live_catalog`: only a
    change to the workspaces or their binding claims invalidates the probe.
    Conversations and windows are read again under the final lock, so the
@@ -161,6 +180,19 @@ No operation was added and no tier changed. `plugin.install` and
 `browser.inspect` relays gained identity checks. The wire contract is unchanged.
 
 ## Checks
+
+Round 4 (review fix), on `claude/wf_c51346dc-a4d-2`:
+
+- `pnpm build:backend && pnpm build`: pass.
+- `ADE_E2E_WORKERS=2 pnpm test:e2e:protocol:only reliability-c`: 12 passed.
+- `ADE_E2E_WORKERS=2 pnpm test:e2e:protocol:only context` (the other users of
+  the browser owner fixture): 27 passed, 1 skipped.
+- `pnpm check:static`: pass.
+- Machine safety: no spec in this area calls the Security framework, the
+  `security` tool or `hdiutil`. After the runs, `pgrep` found no `ade-daemon`,
+  `ade-runtime` or `security` process from this worktree.
+
+Round 3:
 
 - `pnpm check:static`: pass.
 - `ADE_E2E_WORKERS=2 pnpm test:e2e:protocol:only e2e/protocol/reliability-c`:
@@ -188,6 +220,7 @@ No operation was added and no tier changed. `plugin.install` and
 | Implementation | Review | Checks | Integration |
 |---|---|---|---|
 | 120 | 10 | 30 | 0 |
+| Round 4 review fix: 25 | 5 | 15 | 5 |
 
 ## References
 

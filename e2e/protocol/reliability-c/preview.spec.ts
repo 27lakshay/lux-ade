@@ -2,15 +2,19 @@
 // application authority. Arbitrary files are previewed as inert, bounded data
 // that never leaves the workspace, and a browser owner's page content reaches
 // clients only as data for the exact profile, owner and tab that was asked
-// for. The Electron viewer itself (frames, popups, the renderer bridge) is for
-// the UI phase.
+// for. Tab records name the owner's browser storage profile: `fixed` for a
+// fixed-socket owner registered as `fixed-<hash>`, and the profile ID itself
+// for a managed profile. The Electron viewer itself (frames, popups, the
+// renderer bridge) is for the UI phase.
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test, type ScratchProfile } from '../fixtures'
-import { fixedBrowserProfile, onePixelPng, startBrowserOwner, type BrowserOwnerCommand } from '../fixtures/browser-owner'
+import { fixedBrowserProfile, onePixelPng, ownerStorageProfile, startBrowserOwner, type BrowserOwnerCommand } from '../fixtures/browser-owner'
+import { managedRuntimeHome } from '../fixtures/host-profiles'
 import { rawReply } from '../fixtures/raw-reply'
 
 const run = promisify(execFile)
@@ -100,10 +104,13 @@ test('browser page content reaches clients only as data for the exact profile, o
   const inspect = (tabId: string, extra: Record<string, unknown> = {}) => rawReply(profile,
     { op: 'browser.inspect', profile_id: browserProfile, owner_id: owner.ownerId, tab_id: tabId, ...extra })
   const identity = (command: BrowserOwnerCommand) => ({ profile_id: command.profile_id, owner_id: command.owner_id })
+  // Like the real fixed-socket owner, this one stores its tabs under `fixed`.
+  const storage = ownerStorageProfile(browserProfile)
+  expect(storage).toBe('fixed')
 
   // Adversarial page text is relayed as inert string fields of one typed reply.
   answer = (command) => ({ type: 'browser_tab', ...identity(command), tab_id: command.tab_id,
-    tab: tab(String(command.profile_id), String(command.tab_id)) })
+    tab: tab(storage, String(command.tab_id)) })
   const good = await inspect('tab-1')
   expect(good).toMatchObject({ type: 'browser_tab', tab_id: 'tab-1', tab: { id: 'tab-1', title: expect.stringContaining('<script>') } })
   // The daemon relays the owner only the fields of the request's own contract.
@@ -116,10 +123,10 @@ test('browser page content reaches clients only as data for the exact profile, o
 
   // A reply for a popup or another tab than the one asked for is refused, never relayed as the requested tab.
   answer = (command) => ({ type: 'browser_tab', ...identity(command), tab_id: 'popup-7',
-    tab: tab(String(command.profile_id), 'popup-7') })
+    tab: tab(storage, 'popup-7') })
   expect(await inspect('tab-1')).toMatchObject({ type: 'error', code: 'unavailable' })
   answer = (command) => ({ type: 'browser_tab', ...identity(command), tab_id: command.tab_id,
-    tab: tab(String(command.profile_id), 'popup-7') })
+    tab: tab(storage, 'popup-7') })
   expect(await inspect('tab-1')).toMatchObject({ type: 'error', code: 'unavailable' })
   // A reply naming another profile or owner is refused.
   answer = (command) => ({ type: 'browser_tab', profile_id: 'fixed-other', owner_id: command.owner_id,
@@ -129,13 +136,13 @@ test('browser page content reaches clients only as data for the exact profile, o
   answer = (command) => ({ type: 'browser_tab', ...identity(command), tab_id: command.tab_id,
     tab: tab('fixed-other', String(command.tab_id)) })
   expect(await inspect('tab-1')).toMatchObject({ type: 'error', code: 'unavailable' })
-  answer = (command) => ({ type: 'browser_tabs', ...identity(command), profileId: command.profile_id, selectedId: 'tab-1',
-    tabs: [tab(String(command.profile_id), 'tab-1'), tab('fixed-other', 'foreign-tab')] })
+  answer = (command) => ({ type: 'browser_tabs', ...identity(command), profileId: storage, selectedId: 'tab-1',
+    tabs: [tab(storage, 'tab-1'), tab('fixed-other', 'foreign-tab')] })
   expect(await rawReply(profile, { op: 'browser.list', profile_id: browserProfile, owner_id: owner.ownerId }))
     .toMatchObject({ type: 'error', code: 'unavailable' })
   // A reply outside the contract is refused.
   answer = (command) => ({ type: 'browser_tab', ...identity(command), tab_id: command.tab_id,
-    tab: { id: command.tab_id, profileId: command.profile_id, title: 7 } })
+    tab: { id: command.tab_id, profileId: storage, title: 7 } })
   expect(await inspect('tab-1')).toMatchObject({ type: 'error', code: 'protocol' })
 
   // Another profile's daemon never answers for this browser profile, and cannot take over its owner.
@@ -162,7 +169,60 @@ test('browser page content reaches clients only as data for the exact profile, o
   }
   // The registered owner is unchanged and still serves this profile only.
   answer = (command) => ({ type: 'browser_tab', ...identity(command), tab_id: command.tab_id,
-    tab: tab(String(command.profile_id), String(command.tab_id)) })
+    tab: tab(storage, String(command.tab_id)) })
   expect(await inspect('tab-2')).toMatchObject({ type: 'browser_tab', owner_id: owner.ownerId, tab_id: 'tab-2' })
+  await owner.close()
+})
+
+/** A scripted owner that answers `browser.list` and `browser.inspect` with one tab in the storage profile `storage()`. */
+function tabsOwner(storage: () => string): Answer {
+  return (command) => {
+    const identity = { profile_id: command.profile_id, owner_id: command.owner_id }
+    if (command.op === 'browser.list') {
+      return { type: 'browser_tabs', ...identity, profileId: storage(), selectedId: 'tab-1', tabs: [tab(storage(), 'tab-1')] }
+    }
+    return { type: 'browser_tab', ...identity, tab_id: command.tab_id, tab: tab(storage(), String(command.tab_id)) }
+  }
+}
+
+test('a fixed-socket owner reports tabs under its fixed storage profile, not the daemon profile ID', async ({ profile }) => {
+  // The real Electron owner in fixed-socket mode registers as fixed-<hash> and
+  // keeps every tab in the browser storage profile `fixed`.
+  let storage = 'fixed'
+  const owner = await startBrowserOwner(profile, tabsOwner(() => storage))
+  expect(owner.profileId).toMatch(/^fixed-[0-9a-f]{32}$/)
+  const request = { profile_id: owner.profileId, owner_id: owner.ownerId }
+  expect(await rawReply(profile, { op: 'browser.list', ...request })).toMatchObject({ type: 'browser_tabs',
+    profile_id: owner.profileId, profileId: 'fixed', tabs: [{ id: 'tab-1', profileId: 'fixed' }] })
+  expect(await rawReply(profile, { op: 'browser.inspect', ...request, tab_id: 'tab-1' })).toMatchObject({
+    type: 'browser_tab', profile_id: owner.profileId, tab_id: 'tab-1', tab: { profileId: 'fixed' } })
+  // The daemon's own profile ID, or any other name, is not this owner's storage profile.
+  for (const wrong of [owner.profileId, 'fixed-other', fixedBrowserProfile('/elsewhere.sock')]) {
+    storage = wrong
+    expect(await rawReply(profile, { op: 'browser.list', ...request }), wrong).toMatchObject({ type: 'error', code: 'unavailable' })
+    expect(await rawReply(profile, { op: 'browser.inspect', ...request, tab_id: 'tab-1' }), wrong)
+      .toMatchObject({ type: 'error', code: 'unavailable' })
+  }
+  await owner.close()
+})
+
+test('a managed profile owner reports tabs under the profile ID itself', async ({ ade }) => {
+  const id = randomUUID()
+  const runtimeHome = managedRuntimeHome(join(ade.root, 'host'), id)
+  await mkdir(runtimeHome, { recursive: true, mode: 0o700 })
+  const profile = await ade.profile({ env: { ADE_RUNTIME_HOME: runtimeHome } })
+  let storage: string = id
+  const owner = await startBrowserOwner(profile, tabsOwner(() => storage), 'e2e-owner', id)
+  expect(ownerStorageProfile(id)).toBe(id)
+  const request = { profile_id: id, owner_id: owner.ownerId }
+  expect(await rawReply(profile, { op: 'browser.list', ...request })).toMatchObject({ type: 'browser_tabs',
+    profile_id: id, profileId: id, tabs: [{ id: 'tab-1', profileId: id }] })
+  expect(await rawReply(profile, { op: 'browser.inspect', ...request, tab_id: 'tab-1' })).toMatchObject({
+    type: 'browser_tab', tab: { profileId: id } })
+  // A managed owner never reports the fixed-socket storage profile.
+  storage = 'fixed'
+  expect(await rawReply(profile, { op: 'browser.list', ...request })).toMatchObject({ type: 'error', code: 'unavailable' })
+  expect(await rawReply(profile, { op: 'browser.inspect', ...request, tab_id: 'tab-1' }))
+    .toMatchObject({ type: 'error', code: 'unavailable' })
   await owner.close()
 })
