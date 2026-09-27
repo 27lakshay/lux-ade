@@ -18,13 +18,25 @@ export function fakeSdk(directory) {
       const session=options.resume??options.sessionId;
       const history=options.resume?JSON.parse(readFileSync(file(session),'utf8')):[];
       const messages=[];let wake=null,closed=false,current=null;
+      // Cumulative per query() call, as the SDK reports modelUsage and total_cost_usd.
+      const usage={inputTokens:0,outputTokens:0,cacheReadInputTokens:0,cacheCreationInputTokens:0,costUSD:0};
       const save=()=>writeFileSync(file(session),JSON.stringify(history));
       const emit=value=>{messages.push({...value,session_id:session});wake?.();wake=null;};
       const finish=failed=>{
         if(!current||closed)return;
         const item={type:'assistant',uuid:randomUUID(),message:{id:current.answer,content:[{type:'text',text:current.output??'Hello Claude'}]}};
+        const text=current.text;
         history.push(item);save();emit(item);current=null;
-        emit({type:'result',is_error:failed,errors:failed?['Interrupted']:[],subtype:failed?'error_during_execution':'success'});
+        const result={type:'result',is_error:failed,errors:failed?['Interrupted']:[],subtype:failed?'error_during_execution':'success'};
+        // 'usage' and 'usage-unpriced' report fixture figures; other prompts report none.
+        if(['usage','usage-unpriced'].includes(text)) {
+          for(const [key,add] of Object.entries({inputTokens:10,outputTokens:5,cacheReadInputTokens:100,cacheCreationInputTokens:20,costUSD:0.5}))usage[key]+=add;
+          Object.assign(result,{usage:{input_tokens:10,output_tokens:5,cache_read_input_tokens:100,cache_creation_input_tokens:20},
+            modelUsage:{'claude-fixture':{...usage,webSearchRequests:0,contextWindow:200000,maxOutputTokens:32000,
+              ...(text==='usage-unpriced'?{costBasis:'unknown'}:{})}},total_cost_usd:usage.costUSD});
+          emit({type:'rate_limit_event',rate_limit_info:{status:'allowed_warning',rateLimitType:'five_hour',utilization:0.25,resetsAt:4102444800}});
+        }
+        emit(result);
       };
       const query={options,closed:false,
         async initializationResult(){return {};},

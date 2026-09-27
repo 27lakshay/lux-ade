@@ -15,6 +15,7 @@ thread = None
 active = None
 pending = {}
 deferred_reply = None
+usage_totals = {}
 send_lock = threading.Lock()
 
 def send(value):
@@ -200,6 +201,13 @@ output.write_text('tool completed once')
         elif text in ("hold", "hold-late"):
             save()
         else:
+            if text == "usage":
+                # Thread running total plus the newest response, then a sparse account-wide limit update.
+                last = {"totalTokens": 150, "inputTokens": 120, "cachedInputTokens": 20, "outputTokens": 30, "reasoningOutputTokens": 5}
+                total = usage_totals.setdefault(thread["id"], {key: 0 for key in last})
+                for key, value in last.items(): total[key] += value
+                note("thread/tokenUsage/updated", {**base, "tokenUsage": {"total": dict(total), "last": last, "modelContextWindow": 200000}})
+                note("account/rateLimits/updated", {"rateLimits": {"limitId": None, "planType": "pro", "primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 4102444800}, "secondary": None}})
             note("item/completed", {**base, "item": answer})
             finish()
         if text in ("late-response", "late-error"):
