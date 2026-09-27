@@ -4,7 +4,9 @@
 //!
 //! Filesystem reads happen before the database lock and never inside a
 //! transaction. Bundle blobs and the catalog row that references them commit
-//! in one transaction, with the effect receipt. Only `skill.place` writes
+//! in one transaction, with the effect receipt. Removing or replacing a
+//! bundle drops only its catalog row; the blobs it leaves unreferenced stay
+//! until `retention.apply` removes them under a previewed generation (F138). Only `skill.place` writes
 //! outside the database, into an absent or catalog-owned provider path, and
 //! only after its dispatched receipt is recorded.
 //!
@@ -42,6 +44,7 @@ CREATE TABLE IF NOT EXISTS skill_bundles(name TEXT PRIMARY KEY, content_hash TEX
 CREATE TABLE IF NOT EXISTS skill_blobs(content_hash TEXT NOT NULL, path TEXT NOT NULL, sha256 TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(content_hash, path));
 CREATE TABLE IF NOT EXISTS skill_adoptions(path TEXT PRIMARY KEY, name TEXT NOT NULL, content_hash TEXT NOT NULL, adopted_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS skill_references(scope_key TEXT NOT NULL, provider TEXT NOT NULL, path TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(scope_key, provider, path));
+CREATE TABLE IF NOT EXISTS skill_blob_releases(id INTEGER PRIMARY KEY AUTOINCREMENT, content_hash TEXT NOT NULL UNIQUE, released_at INTEGER NOT NULL);
 ";
 
 /// Creates the catalog tables in the profile database if they are missing.
@@ -400,6 +403,16 @@ fn write_bundle(
     now: i64,
 ) -> Result<SkillProvenance> {
     let manifest = &read.bundle.manifest;
+    // Blobs a removed bundle of this hash left for retention are rewritten
+    // from the bytes just read, so a damaged leftover never blocks an install.
+    tx.execute(
+        "DELETE FROM skill_blobs WHERE content_hash=?1 AND NOT EXISTS(SELECT 1 FROM skill_bundles WHERE content_hash=?1)",
+        [&manifest.content_hash],
+    )?;
+    tx.execute(
+        "DELETE FROM skill_blob_releases WHERE content_hash=?1",
+        [&manifest.content_hash],
+    )?;
     // Blobs first; the catalog row that references them commits with them.
     for (file, data) in manifest.files.iter().zip(&read.bundle.data) {
         tx.execute(
@@ -429,17 +442,21 @@ fn write_bundle(
         ],
     )?;
     if let Some(previous) = previous {
-        release_blobs(tx, &previous)?;
+        release_blobs(tx, &previous, now)?;
     }
     verify_blobs(tx, manifest)?;
     Ok(provenance)
 }
 
-/// Drops a bundle's blobs once no catalog row references its hash.
-fn release_blobs(tx: &Transaction, content_hash: &str) -> Result<()> {
+/// Leaves a bundle's blobs for retention once no catalog row references its
+/// hash. Each release gets an ID never used before, so retention names this
+/// release apart from any earlier one of the same content: an apply that
+/// completed for an earlier release never replays over this one.
+fn release_blobs(tx: &Transaction, content_hash: &str, now: i64) -> Result<()> {
     tx.execute(
-        "DELETE FROM skill_blobs WHERE content_hash=?1 AND NOT EXISTS(SELECT 1 FROM skill_bundles WHERE content_hash=?1)",
-        [content_hash],
+        "INSERT OR REPLACE INTO skill_blob_releases(content_hash,released_at)
+         SELECT ?1,?2 WHERE NOT EXISTS(SELECT 1 FROM skill_bundles WHERE content_hash=?1)",
+        params![content_hash, now],
     )?;
     Ok(())
 }
@@ -575,8 +592,9 @@ pub fn adopt(
     })
 }
 
-/// `skill.remove`: drops the bundle and its blobs and releases adopted paths.
-/// Files at those paths stay where they are.
+/// `skill.remove`: drops the bundle and releases adopted paths. Files at
+/// those paths stay where they are. The bundle's blobs stay, unreferenced,
+/// until retention removes them.
 pub fn remove(
     connection: &Connection,
     request: &Value,
@@ -590,7 +608,7 @@ pub fn remove(
         let released = adopted_paths(tx, name)?;
         tx.execute("DELETE FROM skill_adoptions WHERE name=?1", [name])?;
         tx.execute("DELETE FROM skill_bundles WHERE name=?1", [name])?;
-        release_blobs(tx, expected)?;
+        release_blobs(tx, expected, now)?;
         Ok(serde_json::to_value(SkillRemoved {
             tag: Default::default(),
             name: name.into(),

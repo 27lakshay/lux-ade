@@ -209,30 +209,52 @@ fn attachments(store: &Store, now: i64, entries: &mut Vec<Entry>) -> Result<Opti
         .then(|| format!("{unchecked} attachments failed their integrity check and were kept")))
 }
 
+/// A skill hash's files: hash, count, bytes, whether an installed skill
+/// references it, and the release ID and time when one was recorded.
+type SkillBlobRow = (String, i64, i64, bool, Option<i64>, Option<i64>);
+
+/// What must still hold when apply removes a skill hash's files: their count
+/// and size, and the release that left them unreferenced. The release ID is
+/// never reused, so content orphaned again is a new item, not a replay.
+fn skill_blob_fingerprint(files: i64, bytes: i64, release: Option<i64>) -> String {
+    format!("{files}:{bytes}:{}", release.unwrap_or(0))
+}
+
 fn skill_blobs(connection: &Connection, entries: &mut Vec<Entry>) -> Result<()> {
     if !has_table(connection, "skill_blobs")? || !has_table(connection, "skill_bundles")? {
         return Ok(());
     }
-    let rows: Vec<(String, i64, i64, bool)> = connection
+    // A catalog written before releases were recorded gains the table here.
+    crate::skills::ensure_tables(connection)?;
+    let rows: Vec<SkillBlobRow> = connection
         .prepare(
-            "SELECT s.content_hash,COUNT(*),COALESCE(SUM(length(s.data)),0),EXISTS(SELECT 1 FROM skill_bundles b WHERE b.content_hash=s.content_hash) FROM skill_blobs s GROUP BY s.content_hash",
+            "SELECT s.content_hash,COUNT(*),COALESCE(SUM(length(s.data)),0),EXISTS(SELECT 1 FROM skill_bundles b WHERE b.content_hash=s.content_hash),r.id,r.released_at FROM skill_blobs s LEFT JOIN skill_blob_releases r ON r.content_hash=s.content_hash GROUP BY s.content_hash",
         )?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?
         .collect::<rusqlite::Result<_>>()?;
-    for (hash, files, bytes, referenced) in rows {
+    for (hash, files, bytes, referenced, release, released_at) in rows {
         if let Verdict::Remove(reason) = rules::skill_blob(referenced) {
             entries.push(Entry {
                 selected: Selected {
                     kind: RetentionKind::SkillBlob,
                     id: hash.clone(),
-                    fingerprint: format!("{files}:{bytes}"),
+                    fingerprint: skill_blob_fingerprint(files, bytes, release),
                 },
                 candidate: RetentionCandidate {
                     kind: RetentionKind::SkillBlob,
                     id: hash,
                     scope: None,
                     bytes: bytes.max(0) as u64,
-                    last_activity_at: None,
+                    last_activity_at: released_at,
                     reason: reason.into(),
                 },
                 action: Action::SkillBlob,
@@ -450,14 +472,14 @@ fn remove_files(files: &[FileId]) -> Result<u64> {
 
 fn remove_skill_blob(connection: &Connection, hash: &str, fingerprint: &str) -> Result<u64> {
     let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    let (files, bytes, referenced): (i64, i64, bool) = tx.query_row(
-        "SELECT COUNT(*),COALESCE(SUM(length(data)),0),EXISTS(SELECT 1 FROM skill_bundles WHERE content_hash=?1) FROM skill_blobs WHERE content_hash=?1",
+    let (files, bytes, referenced, release): (i64, i64, bool, Option<i64>) = tx.query_row(
+        "SELECT COUNT(*),COALESCE(SUM(length(data)),0),EXISTS(SELECT 1 FROM skill_bundles WHERE content_hash=?1),(SELECT id FROM skill_blob_releases WHERE content_hash=?1) FROM skill_blobs WHERE content_hash=?1",
         [hash],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
     ensure!(!referenced, "An installed skill references it again");
     ensure!(
-        format!("{files}:{bytes}") == fingerprint,
+        skill_blob_fingerprint(files, bytes, release) == fingerprint,
         "The skill files changed since the preview"
     );
     let deleted = tx.execute(
@@ -468,6 +490,10 @@ fn remove_skill_blob(connection: &Connection, hash: &str, fingerprint: &str) -> 
         deleted as i64 == files,
         "The skill files changed during removal"
     );
+    tx.execute(
+        "DELETE FROM skill_blob_releases WHERE content_hash=?1",
+        [hash],
+    )?;
     tx.commit()?;
     Ok(bytes.max(0) as u64)
 }
