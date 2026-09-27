@@ -63,6 +63,12 @@ pub trait Provider: Send + Sync {
     fn compact(&self, _session: &str, _operation: &str) -> Result<()> {
         bail!("This provider adapter does not support context compaction")
     }
+    /// Returns the provider's history to before `turn` (F039): `turn` and
+    /// every later turn leave the provider's history. `operation` identifies
+    /// the request so a retry is not delivered twice.
+    fn rewind(&self, _session: &str, _turn: &str, _operation: &str) -> Result<()> {
+        bail!("This provider adapter does not support rewinding the conversation")
+    }
     fn prepare_submission(&self) -> Option<String> {
         None
     }

@@ -433,6 +433,7 @@ impl Run {
                     Ok(json!({"type":"steered","turn":turn}))
                 }
                 "compact" => { self.adapter.compact(string("session")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
+                "rewind" => { self.adapter.rewind(string("session")?, string("turn")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
                 "answer" => {
                     let p: PendingRequest = serde_json::from_value(request["request"].clone())?;
                     ensure!(p.run_id == self.spec.run && p.conversation_id == self.spec.conversation, "Interaction belongs to another Agent run");
@@ -466,7 +467,7 @@ impl Run {
                 // A refused or uncertain answer is not proof that the turn
                 // failed. Retain the live request and its once-only receipt.
                 self.append(Event::Error { error });
-            } else if matches!(method, "steer" | "compact") {
+            } else if matches!(method, "steer" | "compact" | "rewind") {
                 // A refused control leaves the turn and the run as they were;
                 // its caller reads the error from this receipt.
             } else {
@@ -648,6 +649,15 @@ impl Provider for Remote {
             json!({"session":session,"operation":operation}),
         )?;
         ensure!(result["type"] == "ack", "Invalid compaction receipt");
+        Ok(())
+    }
+    fn rewind(&self, session: &str, turn: &str, operation: &str) -> Result<()> {
+        let result = self.call(
+            "rewind",
+            format!("rewind:{operation}"),
+            json!({"session":session,"turn":turn,"operation":operation}),
+        )?;
+        ensure!(result["type"] == "ack", "Invalid rewind receipt");
         Ok(())
     }
     fn validate_answer(

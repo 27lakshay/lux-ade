@@ -109,6 +109,14 @@ impl Provider for Adapter {
             .request("cancel", json!({"session":session,"turn":turn}))?;
         Ok(())
     }
+    /// Agent SDK 0.3.281: the bridge restarts its query with `resume` and
+    /// `resumeSessionAt` set to the last chain entry before `turn`, the
+    /// prompt UUID that started it.
+    fn rewind(&self, session: &str, turn: &str, _operation: &str) -> Result<()> {
+        self.rpc
+            .request("rewind", json!({"session":session,"drop_from":turn}))?;
+        Ok(())
+    }
     fn prepare_submission(&self) -> Option<String> {
         Some(uuid::Uuid::new_v4().to_string())
     }

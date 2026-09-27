@@ -218,6 +218,7 @@ export type ContractDefinition =
   | ConversationCreateRequest
   | ConversationCreated
   | ConversationGetRequest
+  | ConversationRewindHistory
   | ConversationRewindPreview
   | ConversationRewindPreviewRequest
   | ConversationRewindRequest
@@ -5044,6 +5045,10 @@ export interface ConversationControlReply {
    * The checkpoint restore result of a file rewind.
    */
   files: CheckpointRestored | null
+  /**
+   * What a Conversation rewind removed, and the new history epoch.
+   */
+  history?: ConversationRewindHistory | null
   operation_id: string
   outcome: ControlOutcome
   reason: string | null
@@ -5055,6 +5060,31 @@ export interface ConversationControlReply {
    * The `conversation_control` type tag.
    */
   type: 'conversation_control'
+  [k: string]: unknown
+}
+/**
+ * What a Conversation rewind removes, or removed.
+ */
+export interface ConversationRewindHistory {
+  /**
+   * The first removed message: the user message that started `turn_id`.
+   */
+  before_message_id: string
+  /**
+   * The history epoch: current for a preview, the new one after a rewind.
+   */
+  history_epoch: number
+  kept_messages: number
+  removed_messages: number
+  removed_turns: number
+  /**
+   * Names the previewed history; a rewind refuses a history that changed.
+   */
+  state_token: string
+  /**
+   * The provider turn the rewind returns to before.
+   */
+  turn_id: string
   [k: string]: unknown
 }
 export interface ConversationControls {
@@ -5142,6 +5172,12 @@ export interface ConversationGetRequest {
   before?: number
   conversation_id: string
   /**
+   * The `history_epoch` of the snapshot the caller is paging from. An
+   * older page (`before` set) is refused once a rewind replaced history,
+   * so a client never splices pages of two histories together.
+   */
+  history_epoch?: number
+  /**
    * Page size; the daemon uses 50 when it is absent.
    */
   limit?: number
@@ -5154,6 +5190,10 @@ export interface ConversationRewindPreview {
    * The checkpoint restore preview; present for an available file rewind.
    */
   files: CheckpointRestorePreview | null
+  /**
+   * What an available Conversation rewind would remove.
+   */
+  history?: ConversationRewindHistory | null
   scope: RewindScope
   /**
    * The `conversation_rewind_preview` type tag.
@@ -5167,6 +5207,11 @@ export interface ConversationRewindPreview {
  */
 export interface ConversationRewindPreviewRequest {
   /**
+   * The user message a Conversation rewind removes, with every later
+   * message; required for `conversation`.
+   */
+  before_message_id?: string | null
+  /**
    * The checkpoint a file rewind restores; required for `files`.
    */
   checkpoint_id?: string | null
@@ -5179,6 +5224,10 @@ export interface ConversationRewindPreviewRequest {
  */
 export interface ConversationRewindRequest {
   /**
+   * Required for `conversation`: the user message to remove with every later message.
+   */
+  before_message_id?: string | null
+  /**
    * Required for `files`.
    */
   checkpoint_id?: string | null
@@ -5188,7 +5237,7 @@ export interface ConversationRewindRequest {
   confirm_overwrite?: boolean
   conversation_id: string
   /**
-   * The preview's `state_token`; required for `files`.
+   * The preview's `state_token` (of `files` or `history`); required for both scopes.
    */
   expected_state?: string | null
   op: 'conversation.rewind'
@@ -5201,6 +5250,10 @@ export interface ConversationRewindRequest {
 export interface ConversationSnapshot {
   boot_id: string
   conversation: Conversation
+  /**
+   * Durable; grows each time a rewind replaces this Conversation's history.
+   */
+  history_epoch: number
   messages: Message[]
   queued: QueuedPrompt[]
   requests: PendingRequest[]

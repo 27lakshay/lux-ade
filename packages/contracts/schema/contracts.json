@@ -7322,6 +7322,17 @@
           ],
           "description": "The checkpoint restore result of a file rewind."
         },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationRewindHistory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a Conversation rewind removed, and the new history epoch."
+        },
         "operation_id": {
           "type": "string"
         },
@@ -7489,6 +7500,12 @@
         "conversation_id": {
           "type": "string"
         },
+        "history_epoch": {
+          "description": "The `history_epoch` of the snapshot the caller is paging from. An\nolder page (`before` set) is refused once a rewind replaced history,\nso a client never splices pages of two histories together.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "limit": {
           "description": "Page size; the daemon uses 50 when it is absent.",
           "maximum": 9007199254740991,
@@ -7502,6 +7519,54 @@
       "required": [
         "op",
         "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationRewindHistory": {
+      "description": "What a Conversation rewind removes, or removed.",
+      "properties": {
+        "before_message_id": {
+          "description": "The first removed message: the user message that started `turn_id`.",
+          "type": "string"
+        },
+        "history_epoch": {
+          "description": "The history epoch: current for a preview, the new one after a rewind.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kept_messages": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed_messages": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed_turns": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state_token": {
+          "description": "Names the previewed history; a rewind refuses a history that changed.",
+          "type": "string"
+        },
+        "turn_id": {
+          "description": "The provider turn the rewind returns to before.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "before_message_id",
+        "turn_id",
+        "removed_messages",
+        "removed_turns",
+        "kept_messages",
+        "state_token",
+        "history_epoch"
       ],
       "type": "object"
     },
@@ -7523,6 +7588,17 @@
             }
           ],
           "description": "The checkpoint restore preview; present for an available file rewind."
+        },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationRewindHistory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What an available Conversation rewind would remove."
         },
         "scope": {
           "$ref": "#/$defs/RewindScope"
@@ -7548,6 +7624,13 @@
       "additionalProperties": false,
       "description": "`conversation.rewind.preview`: whether a rewind may run, and what a file\nrewind would change.",
       "properties": {
+        "before_message_id": {
+          "description": "The user message a Conversation rewind removes, with every later\nmessage; required for `conversation`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "checkpoint_id": {
           "description": "The checkpoint a file rewind restores; required for `files`.",
           "type": [
@@ -7576,6 +7659,13 @@
       "additionalProperties": false,
       "description": "`conversation.rewind`: perform a previewed rewind.",
       "properties": {
+        "before_message_id": {
+          "description": "Required for `conversation`: the user message to remove with every later message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "checkpoint_id": {
           "description": "Required for `files`.",
           "type": [
@@ -7592,7 +7682,7 @@
           "type": "string"
         },
         "expected_state": {
-          "description": "The preview's `state_token`; required for `files`.",
+          "description": "The preview's `state_token` (of `files` or `history`); required for both scopes.",
           "type": [
             "string",
             "null"
@@ -7624,6 +7714,13 @@
         },
         "conversation": {
           "$ref": "#/$defs/Conversation"
+        },
+        "history_epoch": {
+          "default": 0,
+          "description": "Durable; grows each time a rewind replaces this Conversation's history.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
         },
         "messages": {
           "items": {
@@ -7663,7 +7760,8 @@
         "requests",
         "queued",
         "boot_id",
-        "revision"
+        "revision",
+        "history_epoch"
       ],
       "type": "object"
     },

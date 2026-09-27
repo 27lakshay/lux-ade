@@ -7,10 +7,12 @@ export const conversationControlUsage = `  conversation controls ID             
                                         Add input to the running turn natively; never queues it
   conversation compact ID --request-id ID
                                         Ask the provider to compact its context
-  conversation rewind-preview ID files CHECKPOINT | ID conversation
+  conversation rewind-preview ID files CHECKPOINT | ID conversation [MESSAGE_ID]
                                         Show whether a rewind may run and what it would change
   conversation rewind ID files CHECKPOINT STATE_TOKEN --request-id ID [--confirm-overwrite]
                                         Restore the workspace files from a checkpoint
+  conversation rewind ID conversation MESSAGE_ID STATE_TOKEN --request-id ID
+                                        Remove MESSAGE_ID's turn and every later one from the provider and ADE
   conversation snooze ID WHEN           Defer attention until WHEN: +30m, +2h, +1d, an ISO time
                                         with a zone, or epoch milliseconds; agent work continues
   conversation unsnooze ID              End a snooze now
@@ -54,9 +56,9 @@ export async function runConversationControlCommand(socketPath: string, area: st
   }
   if (action === 'rewind-preview') {
     const scope = rest[1]
-    if (scope === 'conversation' && rest.length === 2) {
+    if (scope === 'conversation' && (rest.length === 2 || rest.length === 3)) {
       return dailyUseCommand(socketPath, { op: 'conversation.rewind.preview', conversation_id: rest[0],
-        scope: 'conversation' })
+        scope: 'conversation', ...(rest[2] ? { before_message_id: rest[2] } : {}) })
     }
     const { args } = split(rest, 3, [], 'rewind-preview')
     if (scope !== 'files') throw new CliError('usage', 'Rewind scope must be files or conversation.')
@@ -68,10 +70,12 @@ export async function runConversationControlCommand(socketPath: string, area: st
     if (confirm.length > 1) throw new CliError('usage', '--confirm-overwrite may be supplied only once.')
     const words = rest.filter((word) => word !== '--confirm-overwrite')
     if (words[1] === 'conversation') {
-      const { args, options } = split(words, 2, ['--request-id'], 'rewind')
+      const positional = words.length > 2 && !words[2]!.startsWith('--') ? 4 : 2
+      const { args, options } = split(words, positional, ['--request-id'], 'rewind')
       return settled(await dailyUseCommand<'conversation.rewind'>(socketPath, { op: 'conversation.rewind',
         operation_id: required(options['--request-id'], '--request-id'), conversation_id: args[0],
-        scope: 'conversation', confirm_overwrite: false }))
+        scope: 'conversation', confirm_overwrite: false,
+        ...(positional === 4 ? { before_message_id: args[2], expected_state: args[3] } : {}) }))
     }
     const { args, options } = split(words, 4, ['--request-id'], 'rewind')
     if (args[1] !== 'files') throw new CliError('usage', 'Rewind scope must be files or conversation.')
