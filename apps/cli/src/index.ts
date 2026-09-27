@@ -9,6 +9,7 @@ import { adapterUsage, runAdapterCommand } from './commands/adapters.js'
 import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
+import { conversationControlUsage, runConversationControlCommand } from './commands/conversation-controls.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { repositoryUsage, runRepositoryCommand } from './commands/repository.js'
@@ -78,6 +79,7 @@ const usage = [
   workspaceUsage,
   worktreeLifecycleUsage,
   conversationUsage,
+  conversationControlUsage,
   historyUsage,
   importUsage,
   usageAnalyticsUsage,
@@ -219,6 +221,7 @@ const commandAreas = [
   runWorkspaceCommand,
   runWorktreeLifecycleCommand,
   runConversationCommand,
+  runConversationControlCommand,
   runHistoryCommand,
   runImportCommand,
   runUsageCommand,

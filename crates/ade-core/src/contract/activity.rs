@@ -55,6 +55,8 @@ pub enum ActivityKind {
     QuestionRequested,
     /// The daemon lost a running turn; its outcome is unknown.
     OperationUnknown,
+    /// A snoozed Conversation reached its wake time (F046).
+    SnoozeEnded,
 }
 
 /// The read state of an activity. It only moves forward.

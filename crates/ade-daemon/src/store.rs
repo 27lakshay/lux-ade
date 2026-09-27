@@ -25,6 +25,7 @@ mod conversations;
 mod migrations;
 mod send_intents;
 mod send_outbox;
+mod snoozes;
 mod terminals;
 #[cfg(test)]
 mod tests;

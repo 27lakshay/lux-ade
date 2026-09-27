@@ -519,6 +519,11 @@
           "const": "operation_unknown",
           "description": "The daemon lost a running turn; its outcome is unknown.",
           "type": "string"
+        },
+        {
+          "const": "snooze_ended",
+          "description": "A snoozed Conversation reached its wake time (F046).",
+          "type": "string"
         }
       ]
     },
@@ -4659,6 +4664,73 @@
       ],
       "type": "object"
     },
+    "ControlAvailability": {
+      "description": "Whether one control may run on a Conversation now.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "control": {
+          "$ref": "#/$defs/ConversationControl"
+        },
+        "mechanism": {
+          "description": "What performs the control: a native provider method such as\n`turn/steer`, or `ade.checkpoints` for file rewind. Absent when nothing does.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why the control is unavailable; absent when it is available.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "control",
+        "available",
+        "mechanism",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ControlOutcome": {
+      "description": "How a control request ended.",
+      "oneOf": [
+        {
+          "const": "unavailable",
+          "description": "Not attempted; `reason` says why. No receipt was recorded.",
+          "type": "string"
+        },
+        {
+          "const": "acknowledged",
+          "description": "The provider natively acknowledged the request. For compaction this\nmeans it started; the transcript shows when it finishes.",
+          "type": "string"
+        },
+        {
+          "const": "restored",
+          "description": "Files were written and verified against the checkpoint.",
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "The workspace already matched the checkpoint.",
+          "type": "string"
+        },
+        {
+          "const": "partial",
+          "description": "Some files were written but the result does not match the checkpoint.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "ADE cannot prove whether the effect happened. It is never retried\nautomatically; inspect the Conversation or workspace.",
+          "type": "string"
+        }
+      ]
+    },
     "Conversation": {
       "properties": {
         "account_context": {
@@ -4879,6 +4951,170 @@
       ],
       "type": "object"
     },
+    "ConversationCompactRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.compact`: ask the provider to compact its context now.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.compact"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationControl": {
+      "description": "A control whose support depends on the provider or on ADE's checkpoints.",
+      "oneOf": [
+        {
+          "const": "steer",
+          "description": "Add input to the running turn (F035).",
+          "type": "string"
+        },
+        {
+          "const": "compact",
+          "description": "Compact the provider's context (F040).",
+          "type": "string"
+        },
+        {
+          "const": "rewind_conversation",
+          "description": "Return the provider's history to an earlier point (F039).",
+          "type": "string"
+        },
+        {
+          "const": "rewind_files",
+          "description": "Return the workspace files to a checkpoint (F039).",
+          "type": "string"
+        }
+      ]
+    },
+    "ConversationControlReply": {
+      "description": "The reply to `conversation.steer`, `conversation.compact` and `conversation.rewind`.",
+      "properties": {
+        "control": {
+          "$ref": "#/$defs/ConversationControl"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "files": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckpointRestored"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The checkpoint restore result of a file rewind."
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ControlOutcome"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "description": "The turn the provider accepted steered input into.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `conversation_control` type tag.",
+          "enum": [
+            "conversation_control"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "conversation_id",
+        "control",
+        "outcome",
+        "reason",
+        "turn_id",
+        "files"
+      ],
+      "type": "object"
+    },
+    "ConversationControls": {
+      "properties": {
+        "controls": {
+          "items": {
+            "$ref": "#/$defs/ControlAvailability"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "snooze": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationSnooze"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The active snooze, if any."
+        },
+        "type": {
+          "description": "The `conversation_controls` type tag.",
+          "enum": [
+            "conversation_controls"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "provider",
+        "controls",
+        "snooze"
+      ],
+      "type": "object"
+    },
+    "ConversationControlsRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.controls`: which controls the Conversation supports now.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.controls"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
     "ConversationCreateRequest": {
       "additionalProperties": false,
       "description": "`conversation.create`: make a Conversation in a workspace.",
@@ -4960,6 +5196,117 @@
       ],
       "type": "object"
     },
+    "ConversationRewindPreview": {
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/ControlAvailability"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "files": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckpointRestorePreview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The checkpoint restore preview; present for an available file rewind."
+        },
+        "scope": {
+          "$ref": "#/$defs/RewindScope"
+        },
+        "type": {
+          "description": "The `conversation_rewind_preview` type tag.",
+          "enum": [
+            "conversation_rewind_preview"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "scope",
+        "availability",
+        "files"
+      ],
+      "type": "object"
+    },
+    "ConversationRewindPreviewRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.rewind.preview`: whether a rewind may run, and what a file\nrewind would change.",
+      "properties": {
+        "checkpoint_id": {
+          "description": "The checkpoint a file rewind restores; required for `files`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.rewind.preview"
+        },
+        "scope": {
+          "$ref": "#/$defs/RewindScope"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "ConversationRewindRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.rewind`: perform a previewed rewind.",
+      "properties": {
+        "checkpoint_id": {
+          "description": "Required for `files`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confirm_overwrite": {
+          "default": false,
+          "description": "Required when the preview listed uncommitted work it would overwrite.",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "expected_state": {
+          "description": "The preview's `state_token`; required for `files`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "conversation.rewind"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/RewindScope"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id",
+        "scope"
+      ],
+      "type": "object"
+    },
     "ConversationSnapshot": {
       "description": "The `conversation.get` reply.",
       "properties": {
@@ -5008,6 +5355,179 @@
         "queued",
         "boot_id",
         "revision"
+      ],
+      "type": "object"
+    },
+    "ConversationSnooze": {
+      "description": "A durable snooze: attention to the Conversation is deferred until `until`.\nIt never stops or starts agent work.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "snoozed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "until": {
+          "description": "Wake time, milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "until",
+        "snoozed_at"
+      ],
+      "type": "object"
+    },
+    "ConversationSnoozeList": {
+      "properties": {
+        "snoozes": {
+          "items": {
+            "$ref": "#/$defs/ConversationSnooze"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `conversation_snooze_list` type tag.",
+          "enum": [
+            "conversation_snooze_list"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "snoozes"
+      ],
+      "type": "object"
+    },
+    "ConversationSnoozeListRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.snooze.list`: active snoozes, soonest wake first.",
+      "properties": {
+        "limit": {
+          "description": "Page size, at most 500; the daemon uses 100 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "conversation.snooze.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ConversationSnoozeReply": {
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "snooze": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationSnooze"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The snooze after the command; absent when none is active."
+        },
+        "type": {
+          "description": "The `conversation_snooze` type tag.",
+          "enum": [
+            "conversation_snooze"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "snooze"
+      ],
+      "type": "object"
+    },
+    "ConversationSnoozeRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.snooze`: defer attention until a future time, at most 366 days ahead.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.snooze"
+        },
+        "until": {
+          "description": "Wake time, milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "until"
+      ],
+      "type": "object"
+    },
+    "ConversationSteerRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.steer`: add input to the running turn. The provider must\naccept it into `turn_id`; it is never queued as a new prompt.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.steer"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; it also becomes the steered message's ID.",
+          "type": "string"
+        },
+        "text": {
+          "description": "At most 1 MiB.",
+          "type": "string"
+        },
+        "turn_id": {
+          "description": "The turn the caller saw running. Steering refuses when another turn is active.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id",
+        "turn_id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "ConversationUnsnoozeRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.unsnooze`: end a snooze now without recording a wake.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.unsnooze"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
       ],
       "type": "object"
     },
@@ -14931,6 +15451,21 @@
       ],
       "type": "object"
     },
+    "RewindScope": {
+      "description": "What a rewind returns to an earlier point.",
+      "oneOf": [
+        {
+          "const": "conversation",
+          "description": "The provider's conversation history.",
+          "type": "string"
+        },
+        {
+          "const": "files",
+          "description": "The workspace's working tree and index, from an ADE checkpoint.",
+          "type": "string"
+        }
+      ]
+    },
     "RunChanges": {
       "description": "A run's Git changes, or why they could not be read.",
       "oneOf": [
@@ -20768,6 +21303,62 @@
       "request": "AttachmentReclaimApplyRequest",
       "response": "AttachmentReclaim",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.controls",
+      "request": "ConversationControlsRequest",
+      "response": "ConversationControls",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.steer",
+      "request": "ConversationSteerRequest",
+      "response": "ConversationControlReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.compact",
+      "request": "ConversationCompactRequest",
+      "response": "ConversationControlReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.rewind.preview",
+      "request": "ConversationRewindPreviewRequest",
+      "response": "ConversationRewindPreview",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.rewind",
+      "request": "ConversationRewindRequest",
+      "response": "ConversationControlReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.snooze",
+      "request": "ConversationSnoozeRequest",
+      "response": "ConversationSnoozeReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.unsnooze",
+      "request": "ConversationUnsnoozeRequest",
+      "response": "ConversationSnoozeReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.snooze.list",
+      "request": "ConversationSnoozeListRequest",
+      "response": "ConversationSnoozeList",
+      "tier": "query"
     },
     {
       "domain": "agents",

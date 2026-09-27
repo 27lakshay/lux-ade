@@ -66,6 +66,42 @@ pub fn operations() -> Vec<OperationSpec> {
             "attachment.reclaim.apply",
             Tier::IdempotentCommand,
         ),
+        OperationSpec::new::<ConversationControlsRequest, ConversationControls>(
+            "conversation.controls",
+            Tier::Query,
+        ),
+        // Adds user input to a running provider turn; a retry must not add it twice.
+        OperationSpec::new::<ConversationSteerRequest, ConversationControlReply>(
+            "conversation.steer",
+            Tier::EffectCommand,
+        ),
+        // Asks the provider to compact its context; a retry must not compact twice.
+        OperationSpec::new::<ConversationCompactRequest, ConversationControlReply>(
+            "conversation.compact",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<ConversationRewindPreviewRequest, ConversationRewindPreview>(
+            "conversation.rewind.preview",
+            Tier::Query,
+        ),
+        // Rewrites files or history; a retry must not rewind twice.
+        OperationSpec::new::<ConversationRewindRequest, ConversationControlReply>(
+            "conversation.rewind",
+            Tier::EffectCommand,
+        ),
+        // Setting the same wake time again converges; a new time replaces the old one.
+        OperationSpec::new::<ConversationSnoozeRequest, ConversationSnoozeReply>(
+            "conversation.snooze",
+            Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<ConversationUnsnoozeRequest, ConversationSnoozeReply>(
+            "conversation.unsnooze",
+            Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<ConversationSnoozeListRequest, ConversationSnoozeList>(
+            "conversation.snooze.list",
+            Tier::Query,
+        ),
     ]
 }
 
@@ -552,6 +588,216 @@ pub struct AttachmentReclaim {
     pub scope: ExplicitSingleAttachment,
 }
 
+// Conversation controls (F035, F039, F040) and snoozing (F046).
+//
+// A control is available only when the Conversation's provider adapter
+// performs it natively, or, for file rewind, when ADE's checkpoints do. An
+// unavailable control is reported with its reason and never emulated: a steer
+// is never turned into a queued message, and compaction never reports a new
+// context state that the provider did not report.
+
+wire_tag!(ConversationControlsTag, "conversation_controls");
+wire_tag!(ConversationControlReplyTag, "conversation_control");
+wire_tag!(ConversationRewindPreviewTag, "conversation_rewind_preview");
+wire_tag!(ConversationSnoozeReplyTag, "conversation_snooze");
+wire_tag!(ConversationSnoozeListTag, "conversation_snooze_list");
+
+/// A control whose support depends on the provider or on ADE's checkpoints.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationControl {
+    /// Add input to the running turn (F035).
+    Steer,
+    /// Compact the provider's context (F040).
+    Compact,
+    /// Return the provider's history to an earlier point (F039).
+    RewindConversation,
+    /// Return the workspace files to a checkpoint (F039).
+    RewindFiles,
+}
+
+/// Whether one control may run on a Conversation now.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ControlAvailability {
+    pub control: ConversationControl,
+    pub available: bool,
+    /// What performs the control: a native provider method such as
+    /// `turn/steer`, or `ade.checkpoints` for file rewind. Absent when nothing does.
+    pub mechanism: Option<String>,
+    /// Why the control is unavailable; absent when it is available.
+    pub reason: Option<String>,
+}
+
+/// `conversation.controls`: which controls the Conversation supports now.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationControlsRequest {
+    pub conversation_id: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationControls {
+    #[serde(rename = "type")]
+    pub tag: ConversationControlsTag,
+    pub conversation_id: String,
+    pub provider: String,
+    pub controls: Vec<ControlAvailability>,
+    /// The active snooze, if any.
+    pub snooze: Option<ConversationSnooze>,
+}
+
+/// `conversation.steer`: add input to the running turn. The provider must
+/// accept it into `turn_id`; it is never queued as a new prompt.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationSteerRequest {
+    /// Caller-owned operation ID; it also becomes the steered message's ID.
+    pub operation_id: String,
+    pub conversation_id: String,
+    /// The turn the caller saw running. Steering refuses when another turn is active.
+    pub turn_id: String,
+    /// At most 1 MiB.
+    pub text: String,
+}
+
+/// `conversation.compact`: ask the provider to compact its context now.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationCompactRequest {
+    pub operation_id: String,
+    pub conversation_id: String,
+}
+
+/// What a rewind returns to an earlier point.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RewindScope {
+    /// The provider's conversation history.
+    Conversation,
+    /// The workspace's working tree and index, from an ADE checkpoint.
+    Files,
+}
+
+/// `conversation.rewind.preview`: whether a rewind may run, and what a file
+/// rewind would change.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationRewindPreviewRequest {
+    pub conversation_id: String,
+    pub scope: RewindScope,
+    /// The checkpoint a file rewind restores; required for `files`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationRewindPreview {
+    #[serde(rename = "type")]
+    pub tag: ConversationRewindPreviewTag,
+    pub conversation_id: String,
+    pub scope: RewindScope,
+    pub availability: ControlAvailability,
+    /// The checkpoint restore preview; present for an available file rewind.
+    pub files: Option<super::checkpoints::CheckpointRestorePreview>,
+}
+
+/// `conversation.rewind`: perform a previewed rewind.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationRewindRequest {
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub scope: RewindScope,
+    /// Required for `files`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_id: Option<String>,
+    /// The preview's `state_token`; required for `files`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_state: Option<String>,
+    /// Required when the preview listed uncommitted work it would overwrite.
+    #[serde(default)]
+    pub confirm_overwrite: bool,
+}
+
+/// How a control request ended.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlOutcome {
+    /// Not attempted; `reason` says why. No receipt was recorded.
+    Unavailable,
+    /// The provider natively acknowledged the request. For compaction this
+    /// means it started; the transcript shows when it finishes.
+    Acknowledged,
+    /// Files were written and verified against the checkpoint.
+    Restored,
+    /// The workspace already matched the checkpoint.
+    Unchanged,
+    /// Some files were written but the result does not match the checkpoint.
+    Partial,
+    /// ADE cannot prove whether the effect happened. It is never retried
+    /// automatically; inspect the Conversation or workspace.
+    Unknown,
+}
+
+/// The reply to `conversation.steer`, `conversation.compact` and `conversation.rewind`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ConversationControlReply {
+    #[serde(rename = "type")]
+    pub tag: ConversationControlReplyTag,
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub control: ConversationControl,
+    pub outcome: ControlOutcome,
+    pub reason: Option<String>,
+    /// The turn the provider accepted steered input into.
+    pub turn_id: Option<String>,
+    /// The checkpoint restore result of a file rewind.
+    pub files: Option<super::checkpoints::CheckpointRestored>,
+}
+
+/// A durable snooze: attention to the Conversation is deferred until `until`.
+/// It never stops or starts agent work.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ConversationSnooze {
+    pub conversation_id: String,
+    /// Wake time, milliseconds since the Unix epoch.
+    pub until: i64,
+    pub snoozed_at: i64,
+}
+
+/// `conversation.snooze`: defer attention until a future time, at most 366 days ahead.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationSnoozeRequest {
+    pub conversation_id: String,
+    /// Wake time, milliseconds since the Unix epoch.
+    pub until: i64,
+}
+
+/// `conversation.unsnooze`: end a snooze now without recording a wake.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationUnsnoozeRequest {
+    pub conversation_id: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationSnoozeReply {
+    #[serde(rename = "type")]
+    pub tag: ConversationSnoozeReplyTag,
+    pub conversation_id: String,
+    /// The snooze after the command; absent when none is active.
+    pub snooze: Option<ConversationSnooze>,
+}
+
+/// `conversation.snooze.list`: active snoozes, soonest wake first.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationSnoozeListRequest {
+    /// Page size, at most 500; the daemon uses 100 when it is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationSnoozeList {
+    #[serde(rename = "type")]
+    pub tag: ConversationSnoozeListTag,
+    pub snoozes: Vec<ConversationSnooze>,
+}
+
 #[cfg(test)]
 mod tests {
     //! Schema round trips for this domain's draft, queue, window and attachment types.
@@ -671,9 +917,70 @@ mod tests {
             ("attachment.inspect", "query"),
             ("attachment.reclaim.preview", "query"),
             ("attachment.reclaim.apply", "idempotent_command"),
+            ("conversation.controls", "query"),
+            ("conversation.steer", "effect_command"),
+            ("conversation.compact", "effect_command"),
+            ("conversation.rewind.preview", "query"),
+            ("conversation.rewind", "effect_command"),
+            ("conversation.snooze", "idempotent_command"),
+            ("conversation.unsnooze", "idempotent_command"),
+            ("conversation.snooze.list", "query"),
         ] {
             assert_eq!(tier(op), expected, "{op}");
         }
+    }
+
+    #[test]
+    fn conversation_controls_round_trip() {
+        let steer: ConversationSteerRequest = request(
+            "conversation.steer",
+            json!({"op": "conversation.steer", "operation_id": "op_1",
+                "conversation_id": "conversation_1", "turn_id": "turn_1", "text": "also check tests"}),
+        );
+        assert_eq!(steer.turn_id, "turn_1");
+        request::<ConversationRewindRequest>(
+            "conversation.rewind",
+            json!({"op": "conversation.rewind", "operation_id": "op_2",
+                "conversation_id": "conversation_1", "scope": "files", "checkpoint_id": "c",
+                "expected_state": "token", "confirm_overwrite": false}),
+        );
+        request::<ConversationSnoozeRequest>(
+            "conversation.snooze",
+            json!({"op": "conversation.snooze", "conversation_id": "conversation_1", "until": 5}),
+        );
+        response(
+            "conversation.steer",
+            &ConversationControlReply {
+                tag: Default::default(),
+                operation_id: "op_1".into(),
+                conversation_id: "conversation_1".into(),
+                control: ConversationControl::Steer,
+                outcome: ControlOutcome::Unavailable,
+                reason: Some("Claude Code: not supported".into()),
+                turn_id: None,
+                files: None,
+            },
+            json!({"type": "conversation_control", "operation_id": "op_1",
+                "conversation_id": "conversation_1", "control": "steer", "outcome": "unavailable",
+                "reason": "Claude Code: not supported", "turn_id": null, "files": null}),
+        );
+        response(
+            "conversation.snooze",
+            &ConversationSnoozeReply {
+                tag: Default::default(),
+                conversation_id: "conversation_1".into(),
+                snooze: Some(ConversationSnooze {
+                    conversation_id: "conversation_1".into(),
+                    until: 10,
+                    snoozed_at: 5,
+                }),
+            },
+            json!({"type": "conversation_snooze", "conversation_id": "conversation_1",
+                "snooze": {"conversation_id": "conversation_1", "until": 10, "snoozed_at": 5}}),
+        );
+        assert!(!validator("ConversationRewindRequest").is_valid(&json!({
+            "op": "conversation.rewind", "operation_id": "o", "conversation_id": "c", "scope": "all",
+        })));
     }
 
     #[test]

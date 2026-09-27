@@ -6,7 +6,8 @@
   "bin": { "ade": "./dist/index.js" },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/commands/wake-time.test.mjs"
   },
   "dependencies": {
     "@ade/client": "workspace:*"

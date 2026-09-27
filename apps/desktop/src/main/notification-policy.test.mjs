@@ -33,6 +33,7 @@ test('failures carry their bounded detail; other kinds do not', () => {
   assert.equal(failed.body, `Turn failed: ${'x'.repeat(200)}`)
   const approval = decideNotification(activity({ kind: 'approval_requested', detail: 'item/x/requestApproval' }), context())
   assert.equal(approval.body, 'Approval needed')
+  assert.equal(decideNotification(activity({ kind: 'snooze_ended' }), context()).body, 'Snooze ended')
   assert.equal(decideNotification(activity({ title: '  ' }), context()).title, 'ADE')
 })
 

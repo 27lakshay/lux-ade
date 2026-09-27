@@ -346,6 +346,11 @@ impl Run {
                     Ok(json!({"type":"sent","turn":turn}))
                 }
                 "cancel" => { self.adapter.cancel(string("session")?, string("turn")?)?; Ok(json!({"type":"ack"})) }
+                "steer" => {
+                    let turn = self.adapter.steer(string("session")?, string("turn")?, string("message_id")?, &serde_json::from_value(request["prompt"].clone())?)?;
+                    Ok(json!({"type":"steered","turn":turn}))
+                }
+                "compact" => { self.adapter.compact(string("session")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
                 "answer" => {
                     let p: PendingRequest = serde_json::from_value(request["request"].clone())?;
                     ensure!(p.run_id == self.spec.run && p.conversation_id == self.spec.conversation, "Interaction belongs to another Agent run");
@@ -379,6 +384,9 @@ impl Run {
                 // A refused or uncertain answer is not proof that the turn
                 // failed. Retain the live request and its once-only receipt.
                 self.append(Event::Error { error });
+            } else if matches!(method, "steer" | "compact") {
+                // A refused control leaves the turn and the run as they were;
+                // its caller reads the error from this receipt.
             } else {
                 self.append(Event::OperationFailed {
                     submission: request["submission"].as_str().map(str::to_owned),
@@ -530,6 +538,31 @@ impl Provider for Remote {
             format!("cancel:{turn}"),
             json!({"session":session,"turn":turn}),
         )?;
+        Ok(())
+    }
+    fn steer(
+        &self,
+        session: &str,
+        turn: &str,
+        message_id: &str,
+        prompt: &crate::prompt::Prompt,
+    ) -> Result<String> {
+        Ok(self.call(
+            "steer",
+            format!("steer:{message_id}"),
+            json!({"session":session,"turn":turn,"message_id":message_id,"prompt":prompt}),
+        )?["turn"]
+            .as_str()
+            .context("Missing steered turn")?
+            .into())
+    }
+    fn compact(&self, session: &str, operation: &str) -> Result<()> {
+        let result = self.call(
+            "compact",
+            format!("compact:{operation}"),
+            json!({"session":session,"operation":operation}),
+        )?;
+        ensure!(result["type"] == "ack", "Invalid compaction receipt");
         Ok(())
     }
     fn validate_answer(
