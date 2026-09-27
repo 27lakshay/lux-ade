@@ -7124,7 +7124,7 @@
       "name": "queue.pause",
       "request": "QueuePauseRequest",
       "response": "Ack",
-      "tier": "idempotent_command"
+      "tier": "effect_command"
     },
     {
       "domain": "conversations",

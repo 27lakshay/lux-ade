@@ -37,7 +37,7 @@ pub fn operations() -> Vec<OperationSpec> {
         // The queue delivers each queued prompt to the provider when it drains.
         OperationSpec::new::<QueueEnqueueRequest, Ack>("queue.enqueue", Tier::EffectCommand),
         OperationSpec::new::<QueueCancelRequest, Ack>("queue.cancel", Tier::IdempotentCommand),
-        OperationSpec::new::<QueuePauseRequest, Ack>("queue.pause", Tier::IdempotentCommand),
+        OperationSpec::new::<QueuePauseRequest, Ack>("queue.pause", Tier::EffectCommand),
         OperationSpec::new::<WindowSaveRequest, Ack>("window.save", Tier::IdempotentCommand),
         OperationSpec::new::<WindowCloseRequest, Ack>("window.close", Tier::IdempotentCommand),
         OperationSpec::new::<AttachmentPutRequest, AttachmentReply>(
@@ -571,7 +571,7 @@ mod tests {
             ("draft.send.abort", "idempotent_command"),
             ("queue.enqueue", "effect_command"),
             ("queue.cancel", "idempotent_command"),
-            ("queue.pause", "idempotent_command"),
+            ("queue.pause", "effect_command"),
             ("window.save", "idempotent_command"),
             ("window.close", "idempotent_command"),
             ("attachment.put", "idempotent_command"),

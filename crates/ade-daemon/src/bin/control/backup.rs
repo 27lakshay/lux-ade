@@ -79,8 +79,10 @@ fn schema(path: &Path, name: &str) -> Result<i64> {
         .find(|(entry, _, _)| *entry == name)
         .context("Unknown database")?
         .2;
+    // A versioned database may also be one schema behind; the daemon migrates it
+    // when it opens. How much further back restore reaches is decision D15.
     ensure!(
-        version == expected,
+        version == expected || (expected > 0 && version == expected - 1),
         "Unsupported {name} schema version {version}"
     );
     let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
@@ -334,9 +336,12 @@ fn fence(data: &Path, final_data: &Path) -> Result<()> {
             Ok(())
         })?;
         tx.execute("DELETE FROM owned", [])?;
-        // Schema 4 keeps the lifecycle ledger in `jobs`; `operations` holds receipts,
-        // which the daemon reconciles to the ledger when it opens.
-        rewrite(&tx, "jobs", |_id, record| {
+        // Schema 4 keeps the lifecycle ledger in `jobs` and gives `operations` to
+        // receipts, which the daemon reconciles when it opens. Schema 3 kept the
+        // ledger in `operations`.
+        let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let ledger = if version >= 4 { "jobs" } else { "operations" };
+        rewrite(&tx, ledger, |_id, record| {
             if record["status"] == "running" {
                 record["status"] = json!("interrupted");
                 record["code"] = json!("restored_without_runtime_owner");

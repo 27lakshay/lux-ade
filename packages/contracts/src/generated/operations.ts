@@ -20,7 +20,7 @@ export const operations = {
   "draft.send.abort": { tier: "idempotent_command", domain: "conversations", request: "DraftSendAbortRequest", response: "DraftReply" },
   "queue.enqueue": { tier: "effect_command", domain: "conversations", request: "QueueEnqueueRequest", response: "Ack" },
   "queue.cancel": { tier: "idempotent_command", domain: "conversations", request: "QueueCancelRequest", response: "Ack" },
-  "queue.pause": { tier: "idempotent_command", domain: "conversations", request: "QueuePauseRequest", response: "Ack" },
+  "queue.pause": { tier: "effect_command", domain: "conversations", request: "QueuePauseRequest", response: "Ack" },
   "window.save": { tier: "idempotent_command", domain: "conversations", request: "WindowSaveRequest", response: "Ack" },
   "window.close": { tier: "idempotent_command", domain: "conversations", request: "WindowCloseRequest", response: "Ack" },
   "attachment.put": { tier: "idempotent_command", domain: "conversations", request: "AttachmentPutRequest", response: "AttachmentReply" },
