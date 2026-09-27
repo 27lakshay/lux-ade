@@ -34,8 +34,17 @@ macro_rules! wire_tag {
     };
 }
 
+pub mod accounts;
+pub mod agents;
 pub mod conversations;
+pub mod daemon;
+pub mod files;
+pub mod review;
+pub mod scripts;
+pub mod services;
+pub mod terminals;
 pub mod workspaces;
+pub mod worktrees;
 
 /// Every domain that declares contracts, in bundle order.
 pub const DOMAINS: &[Domain] = &[
@@ -48,6 +57,51 @@ pub const DOMAINS: &[Domain] = &[
         name: "conversations",
         operations: conversations::operations,
         frames: conversations::frames,
+    },
+    Domain {
+        name: "agents",
+        operations: agents::operations,
+        frames: agents::frames,
+    },
+    Domain {
+        name: "accounts",
+        operations: accounts::operations,
+        frames: accounts::frames,
+    },
+    Domain {
+        name: "terminals",
+        operations: terminals::operations,
+        frames: terminals::frames,
+    },
+    Domain {
+        name: "services",
+        operations: services::operations,
+        frames: services::frames,
+    },
+    Domain {
+        name: "review",
+        operations: review::operations,
+        frames: review::frames,
+    },
+    Domain {
+        name: "worktrees",
+        operations: worktrees::operations,
+        frames: worktrees::frames,
+    },
+    Domain {
+        name: "scripts",
+        operations: scripts::operations,
+        frames: scripts::frames,
+    },
+    Domain {
+        name: "files",
+        operations: files::operations,
+        frames: files::frames,
+    },
+    Domain {
+        name: "daemon",
+        operations: daemon::operations,
+        frames: daemon::frames,
     },
 ];
 

@@ -44,6 +44,11 @@ The build runs as one coordinator plus up to 10 workers; see the
   `AGENTS.md`, `.scratch/ade-v1/progress.md`, `.scratch/ade-v1/decisions.md` and
   `THIRD-PARTY-NOTICES.md`. A worker that needs a change there says so in its
   result.
+- Contracts: a slice adds its operations' typed request and response types to
+  `crates/ade-core/src/contract/<domain>.rs` with a declared tier, then runs
+  `pnpm contract:generate`. Generated files in `packages/contracts` are never
+  edited by hand; on a merge conflict the coordinator regenerates them.
+  Effect commands use `crates/ade-daemon/src/receipts.rs`.
 - Each slice writes `.scratch/ade-v1/evidence/<slice>.md` from
   [the template](.scratch/ade-v1/evidence/TEMPLATE.md). It records the time spent,
   the checks run and a `References:` block.
