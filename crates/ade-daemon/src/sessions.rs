@@ -36,6 +36,7 @@ mod checkpoints;
 mod controls;
 mod conversations;
 mod hooks;
+mod devices;
 mod imports;
 mod inspection;
 mod leases;
@@ -785,6 +786,7 @@ impl Sessions {
             op if op.starts_with("provider.") || op.starts_with("preset.") => {
                 self.capability_command(request)
             }
+            op if op.starts_with("device.") => self.device_command(request),
             _ => bail!("Unknown session operation"),
         }
     }

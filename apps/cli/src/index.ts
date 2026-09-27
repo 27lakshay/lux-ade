@@ -11,6 +11,7 @@ import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { conversationControlUsage, runConversationControlCommand } from './commands/conversation-controls.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
+import { deviceUsage, runDeviceCommand } from './commands/devices.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { repositoryUsage, runRepositoryCommand } from './commands/repository.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
@@ -103,6 +104,7 @@ const usage = [
   diagnosticsUsage,
   remoteConnectUsage,
   retentionUsage,
+  deviceUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -244,6 +246,7 @@ const commandAreas = [
   runRunsCommand,
   runDiagnosticsCommand,
   runRetentionCommand,
+  runDeviceCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {

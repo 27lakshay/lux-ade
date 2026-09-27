@@ -225,6 +225,11 @@ export const operations = {
   "adapter.put": { tier: "idempotent_command", domain: "providers", request: "AdapterPutRequest", response: "AdapterPut" },
   "adapter.remove": { tier: "idempotent_command", domain: "providers", request: "AdapterRemoveRequest", response: "AdapterRemoved" },
   "adapter.probe": { tier: "idempotent_command", domain: "providers", request: "AdapterProbeRequest", response: "AdapterProbed" },
+  "device.list": { tier: "query", domain: "devices", request: "DeviceListRequest", response: "DeviceInventory" },
+  "device.screenshot": { tier: "query", domain: "devices", request: "DeviceScreenshotRequest", response: "DeviceScreenshot" },
+  "device.boot": { tier: "effect_command", domain: "devices", request: "DeviceBootRequest", response: "DeviceBooted" },
+  "device.app.install": { tier: "effect_command", domain: "devices", request: "DeviceAppInstallRequest", response: "DeviceAppInstalled" },
+  "device.app.launch": { tier: "effect_command", domain: "devices", request: "DeviceAppLaunchRequest", response: "DeviceAppLaunched" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */
