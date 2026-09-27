@@ -138,7 +138,10 @@ fn every_operation_declares_a_tier_and_named_types() {
         .iter()
         .map(|spec| spec["type"].as_str().unwrap())
         .collect();
-    assert_eq!(kinds, ["catalog", "conversation_changed"]);
+    // Each domain module checks its own frames.
+    for expected in ["catalog", "conversation_changed"] {
+        assert!(kinds.contains(&expected), "{expected}");
+    }
 }
 
 #[test]

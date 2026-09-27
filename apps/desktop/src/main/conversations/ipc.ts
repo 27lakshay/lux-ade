@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { isAbsolute } from 'node:path'
-import { requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
+import { dailyUseCommand, requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import { getClient, getClientGeneration, getProfileState, getSocket, getStartupProfileSelection, isSwitching,
   launcher, managedProfiles, setSwitching, type Profile } from '../profile-connection'
 import { activeReviewContext, assertReviewContext, reviewBatchPrompt, reviewPrompt, sameReviewAnchor,
@@ -151,7 +151,11 @@ export function registerConversationIpc(): void {
     }
     if (op === 'conversation.get') return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
     if (op === 'agent.cancel' || op === 'agent.resume') {
-      const result = await requestDaemon(endpoint, op, { conversation_id: args.conversation_id })
+      // The contract check rejects a non-string ID before it reaches the daemon.
+      const conversationId = args.conversation_id as string
+      const result = op === 'agent.cancel'
+        ? await dailyUseCommand(endpoint, { op, conversation_id: conversationId })
+        : await dailyUseCommand(endpoint, { op, conversation_id: conversationId })
       if (getClientGeneration() !== generation || getSocket() !== endpoint) {
         throw new Error('Profile changed during agent request; inspect the original profile before retrying')
       }

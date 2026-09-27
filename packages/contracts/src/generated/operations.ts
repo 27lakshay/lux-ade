@@ -23,6 +23,13 @@ export const operations = {
   "attachment.inspect": { tier: "query", domain: "conversations", request: "AttachmentInspectRequest", response: "AttachmentInspection" },
   "attachment.reclaim.preview": { tier: "query", domain: "conversations", request: "AttachmentReclaimPreviewRequest", response: "AttachmentReclaimPreviewReply" },
   "attachment.reclaim.apply": { tier: "idempotent_command", domain: "conversations", request: "AttachmentReclaimApplyRequest", response: "AttachmentReclaim" },
+  "agent.cancel": { tier: "effect_command", domain: "agents", request: "AgentCancelRequest", response: "Ack" },
+  "agent.resume": { tier: "effect_command", domain: "agents", request: "AgentResumeRequest", response: "Ack" },
+  "agent.disconnect": { tier: "effect_command", domain: "agents", request: "AgentDisconnectRequest", response: "Ack" },
+  "agent.send_review": { tier: "effect_command", domain: "agents", request: "AgentSendReviewRequest", response: "Ack" },
+  "agent.child_transcript": { tier: "query", domain: "agents", request: "AgentChildTranscriptRequest", response: "ChildTranscriptPage" },
+  "agent.list": { tier: "query", domain: "agents", request: "AgentListRequest", response: "AgentList" },
+  "agent.account_inspect": { tier: "query", domain: "agents", request: "AgentAccountInspectRequest", response: "AgentAccountInspection" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

@@ -16,6 +16,54 @@
       ],
       "type": "object"
     },
+    "AgentAccountInspectRequest": {
+      "additionalProperties": false,
+      "description": "`agent.account_inspect`: probe a provider account's native status. The\nprofile daemon sends it on the runtime socket; `token` is its owner token.",
+      "properties": {
+        "account": {
+          "description": "The account execution context (`ade_core::model::AccountExecution`)."
+        },
+        "op": {
+          "const": "agent.account_inspect"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "token",
+        "account"
+      ],
+      "type": "object"
+    },
+    "AgentAccountInspection": {
+      "description": "The `agent.account_inspect` reply: an untagged account inspection.",
+      "properties": {
+        "identity": {
+          "description": "The provider-specific identity, when the account is ready."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "version",
+        "identity"
+      ],
+      "type": "object"
+    },
     "AgentAnswerRequest": {
       "additionalProperties": false,
       "description": "`agent.answer`: answer a pending provider request by its ID.",
@@ -44,6 +92,192 @@
       ],
       "type": "object"
     },
+    "AgentCancelRequest": {
+      "additionalProperties": false,
+      "description": "`agent.cancel`: cancel the Conversation's active turn.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "agent.cancel"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "AgentChildTranscriptRequest": {
+      "additionalProperties": false,
+      "description": "`agent.child_transcript`: one page of a provider child agent's transcript.",
+      "properties": {
+        "child_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "cursor": {
+          "description": "Provider page cursor, at most 4096 bytes.",
+          "type": "string"
+        },
+        "message_id": {
+          "description": "The parent message that records the child agents.",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Item offset; the daemon uses 0 when it is absent and allows at most 100000.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "agent.child_transcript"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "message_id",
+        "child_id"
+      ],
+      "type": "object"
+    },
+    "AgentDisconnectRequest": {
+      "additionalProperties": false,
+      "description": "`agent.disconnect`: stop the Conversation's idle Agent.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "agent.disconnect"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "AgentList": {
+      "description": "The `agent.list` reply.",
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/AgentRun"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `agents` type tag.",
+          "enum": [
+            "agents"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "agents"
+      ],
+      "type": "object"
+    },
+    "AgentListRequest": {
+      "additionalProperties": false,
+      "description": "`agent.list`: the runtime supervisor's live Agent runs. The profile daemon\nsends it on the runtime socket; `token` is the daemon's owner token.",
+      "properties": {
+        "op": {
+          "const": "agent.list"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "token"
+      ],
+      "type": "object"
+    },
+    "AgentResumeRequest": {
+      "additionalProperties": false,
+      "description": "`agent.resume`: reconnect the Conversation's Agent.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "agent.resume"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "AgentRun": {
+      "description": "One live Agent run in the runtime supervisor.",
+      "properties": {
+        "commands": {
+          "description": "Command keys the run holds receipts for.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pid": {
+          "description": "The provider process ID, when the adapter has one.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "spec": {
+          "$ref": "#/$defs/AgentRunSpec"
+        }
+      },
+      "required": [
+        "spec",
+        "pid",
+        "commands"
+      ],
+      "type": "object"
+    },
+    "AgentRunSpec": {
+      "description": "The identity an Agent run was created with.",
+      "properties": {
+        "account": {
+          "default": null,
+          "description": "The pinned account execution context, or null for ambient credentials."
+        },
+        "conversation": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "run": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation",
+        "run",
+        "provider",
+        "root",
+        "account"
+      ],
+      "type": "object"
+    },
     "AgentSendRequest": {
       "additionalProperties": false,
       "description": "`agent.send`: submit a prompt. `request_id` is the caller-owned operation ID.",
@@ -62,6 +296,44 @@
         },
         "request_id": {
           "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "request_id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "AgentSendReviewRequest": {
+      "additionalProperties": false,
+      "description": "`agent.send_review`: submit a prompt that carries review feedback.\n`request_id` is the caller-owned send identity shared with the draft send\nintent. Exactly one of `review_anchor` and `review_feedback` is present.",
+      "properties": {
+        "attachments": {
+          "description": "Review prompts reject attachments; an empty list is accepted.",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "agent.send_review"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "review_anchor": {
+          "description": "One review anchor."
+        },
+        "review_feedback": {
+          "description": "A review feedback batch."
         },
         "text": {
           "type": "string"
@@ -483,6 +755,46 @@
         "workspaces",
         "conversations",
         "windows"
+      ],
+      "type": "object"
+    },
+    "ChildTranscriptPage": {
+      "description": "The `agent.child_transcript` reply, passed through from the provider bridge.\nOffset-paged providers send `next_offset` (null on the last page); cursor-paged\nproviders send `next_cursor` instead.",
+      "properties": {
+        "child_id": {
+          "type": "string"
+        },
+        "items": {
+          "description": "Provider-projected transcript items.",
+          "items": true,
+          "type": "array"
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `child_transcript` type tag.",
+          "enum": [
+            "child_transcript"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "child_id",
+        "items"
       ],
       "type": "object"
     },
@@ -1643,6 +1955,55 @@
       "request": "AttachmentReclaimApplyRequest",
       "response": "AttachmentReclaim",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.cancel",
+      "request": "AgentCancelRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.resume",
+      "request": "AgentResumeRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.disconnect",
+      "request": "AgentDisconnectRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.send_review",
+      "request": "AgentSendReviewRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.child_transcript",
+      "request": "AgentChildTranscriptRequest",
+      "response": "ChildTranscriptPage",
+      "tier": "query"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.list",
+      "request": "AgentListRequest",
+      "response": "AgentList",
+      "tier": "query"
+    },
+    {
+      "domain": "agents",
+      "name": "agent.account_inspect",
+      "request": "AgentAccountInspectRequest",
+      "response": "AgentAccountInspection",
+      "tier": "query"
     }
   ]
 }
