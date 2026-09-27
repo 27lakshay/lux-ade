@@ -1727,7 +1727,16 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
             });
             drop(admission);
             while let Ok(event) = rx.recv() {
-                if writeln!(stream, "{event}").is_err() {
+                if let Err(error) = writeln!(stream, "{event}") {
+                    // A subscriber that stops reading blocks the write until its
+                    // timeout; that drops its queued frames as surely as a full
+                    // queue does, so it counts as an eviction.
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) {
+                        host.sessions.evict_stalled(&id);
+                    }
                     break;
                 }
             }

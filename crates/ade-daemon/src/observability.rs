@@ -4,6 +4,7 @@
 //! never takes a store's writer lock and never creates tables. A store that
 //! cannot be read is reported as unavailable, never as empty.
 
+pub mod processes;
 pub mod redact;
 
 use crate::receipts::{self, Status};
@@ -170,11 +171,15 @@ pub fn session_queues(connection: &Connection) -> Result<SessionQueues> {
     })
 }
 
-/// Conversations whose turn an interruption left unproven.
+/// Conversations whose turn an interruption left unproven. Every loss path
+/// (a daemon restart, a runtime loss, an unconfirmed provider stop or an
+/// unconfirmed prompt delivery) records why in `error`. A turn the provider
+/// itself reported interrupted, as after a user's cancel, has no such error
+/// and a known outcome, so it is not unknown execution.
 pub fn interrupted_conversations(connection: &Connection) -> Result<Vec<DiagnosticUnknown>> {
     Ok(connection
         .prepare(
-            "SELECT id, workspace_id, json_extract(data, '$.updated_at') FROM conversations WHERE json_extract(data, '$.status') = 'interrupted' ORDER BY json_extract(data, '$.updated_at') DESC LIMIT ?1",
+            "SELECT id, workspace_id, json_extract(data, '$.updated_at') FROM conversations WHERE json_extract(data, '$.status') = 'interrupted' AND json_extract(data, '$.error') IS NOT NULL ORDER BY json_extract(data, '$.updated_at') DESC LIMIT ?1",
         )?
         .query_map([UNKNOWN_LIMIT as i64], |row| {
             Ok(DiagnosticUnknown {
@@ -438,6 +443,39 @@ mod tests {
         assert_eq!(unknown.len(), 1);
         assert_eq!(unknown[0].subject, "op_1");
         assert_eq!(unknown[0].scope.as_deref(), Some("plugins"));
+    }
+
+    #[test]
+    fn only_an_interruption_with_a_recorded_loss_is_unknown() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE conversations(id TEXT, workspace_id TEXT, data TEXT)")
+            .unwrap();
+        for (id, data) in [
+            (
+                "lost",
+                json!({"status": "interrupted", "error": "The daemon restarted during this turn.", "updated_at": 2}),
+            ),
+            (
+                "cancelled",
+                json!({"status": "interrupted", "error": null, "updated_at": 3}),
+            ),
+            (
+                "idle",
+                json!({"status": "ready", "error": "old", "updated_at": 4}),
+            ),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO conversations VALUES(?1, 'w', ?2)",
+                    params![id, data.to_string()],
+                )
+                .unwrap();
+        }
+        let unknown = interrupted_conversations(&connection).unwrap();
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0].subject, "lost");
+        assert_eq!(unknown[0].since, Some(2));
     }
 
     #[test]

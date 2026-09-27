@@ -263,13 +263,17 @@ export type ContractDefinition =
   | DiagnosticClaims
   | DiagnosticCounter
   | DiagnosticCounterKind
+  | DiagnosticHost
   | DiagnosticIdentity
   | DiagnosticLive
   | DiagnosticLogs
+  | DiagnosticProcessGroup
+  | DiagnosticProcessKind
   | DiagnosticProvenance
   | DiagnosticQueue
   | DiagnosticReceipts
   | DiagnosticRedaction
+  | DiagnosticResources
   | DiagnosticRetention
   | DiagnosticRun
   | DiagnosticService
@@ -1289,6 +1293,10 @@ export type DiagnosticProvenance = 'exact' | 'approximate' | 'unavailable'
  * The window a counter covers.
  */
 export type DiagnosticWindow = 'daemon_boot' | 'live_incarnations'
+/**
+ * What a measured process group is rooted at.
+ */
+export type DiagnosticProcessKind = ('daemon' | 'runtime') | 'agent' | 'terminal'
 /**
  * The unit a queue gauge counts.
  */
@@ -5625,6 +5633,18 @@ export interface DiagnosticCounter {
   [k: string]: unknown
 }
 /**
+ * Host capacity at `observed_at`.
+ */
+export interface DiagnosticHost {
+  /**
+   * The one-minute load average times 1000 (1.5 is 1500).
+   */
+  load_average_milli: number | null
+  logical_cpus: number | null
+  memory_bytes: number | null
+  [k: string]: unknown
+}
+/**
  * The identities a report correlates.
  */
 export interface DiagnosticIdentity {
@@ -5747,6 +5767,41 @@ export interface DiagnosticLogs {
   [k: string]: unknown
 }
 /**
+ * One process and its descendants, measured once at `observed_at`.
+ */
+export interface DiagnosticProcessGroup {
+  /**
+   * Summed user and system CPU time of `pids` since each started.
+   */
+  cpu_time_ms: number | null
+  /**
+   * Summed physical footprint of `pids`, or `null` when none could be read.
+   */
+  footprint_bytes: number | null
+  /**
+   * The Agent run or terminal incarnation, when there is one.
+   */
+  incarnation: string | null
+  kind: DiagnosticProcessKind
+  note: string
+  /**
+   * Every process counted in this group: the root and its descendants.
+   * Groups nest (the runtime's tree holds its Agents and terminals), so a
+   * process can appear in more than one group.
+   */
+  pids: number[]
+  /**
+   * How far a reported number can be trusted.
+   */
+  provenance: 'exact' | 'approximate' | 'unavailable'
+  root_pid: number
+  /**
+   * The daemon boot, runtime incarnation, Conversation or terminal.
+   */
+  subject: string
+  [k: string]: unknown
+}
+/**
  * The depth of one queue or spool.
  */
 export interface DiagnosticQueue {
@@ -5824,6 +5879,38 @@ export interface DiagnosticRedaction {
    * Strings, arrays, objects or nesting cut to their bounds.
    */
   truncations: number
+  [k: string]: unknown
+}
+/**
+ * Measured process and host resources (F136).
+ */
+export interface DiagnosticResources {
+  groups: DiagnosticProcessGroup[]
+  host: DiagnosticHost
+  /**
+   * How memory was measured, such as `phys_footprint`, which leaves out
+   * memory shared with other processes.
+   */
+  method: string
+  /**
+   * False when the process table could not be read; every group is then
+   * `unavailable` and the totals are `null`.
+   */
+  observed: boolean
+  /**
+   * When the measurement was taken, in Unix milliseconds. A client shows
+   * the values as stale once this is old.
+   */
+  observed_at: number
+  total_cpu_time_ms: number | null
+  /**
+   * Footprint of the distinct processes, each counted once.
+   */
+  total_footprint_bytes: number | null
+  /**
+   * Distinct processes across all groups; nested groups are counted once.
+   */
+  total_processes: number
   [k: string]: unknown
 }
 /**
@@ -5919,6 +6006,7 @@ export interface DiagnosticsStatus {
   live: DiagnosticLive
   queues: DiagnosticQueue[]
   receipts: DiagnosticReceipts[]
+  resources: DiagnosticResources
   retention: DiagnosticRetention
   /**
    * The `diagnostics_status` type tag.
