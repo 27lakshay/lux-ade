@@ -23,13 +23,13 @@ type Caller = DailyUseRequest<'orchestration.delegate'>['caller']
 const POLL_MS = 500
 const WORKTREE_TIMEOUT_MS = 300_000
 
-function operationId(value: string | undefined): string {
+export function operationId(value: string | undefined): string {
   if (value === undefined) return randomUUID()
   if (value.length < 1 || value.length > 256) throw new CliError('usage', '--operation-id requires 1 to 256 characters.')
   return value
 }
 
-function caller(agent: string | undefined): Caller {
+export function caller(agent: string | undefined): Caller {
   return agent === undefined ? { kind: 'user' } : { kind: 'agent', conversation_id: agent }
 }
 
@@ -43,13 +43,13 @@ function timeout(value: string | undefined): number {
 }
 
 /** A typed request; the reply is checked against its contract. */
-async function command<O extends DailyUseOperation>(socketPath: string, op: O,
+export async function command<O extends DailyUseOperation>(socketPath: string, op: O,
   fields: Omit<DailyUseRequest<O>, 'op'>): Promise<DailyUseResponse<O>> {
   return dailyUseCommand<O>(socketPath, { op, ...fields } as DailyUseRequest<O>)
 }
 
 /** Create BRANCH in a new worktree, wait for the lifecycle operation, and open it as a workspace. */
-async function newWorktree(socketPath: string, repositoryId: string, branch: string,
+export async function newWorktree(socketPath: string, repositoryId: string, branch: string,
   worktreeOperationId: string): Promise<{ workspace_id: string, repository_id: string, worktree_operation_id: string }> {
   await command(socketPath, 'worktree.switch', { repository_id: repositoryId,
     operation_id: worktreeOperationId, target: branch, create: true })

@@ -1,4 +1,4 @@
-//! Delegation and orchestration contracts (F104, F106, F107).
+//! Delegation and orchestration contracts (F104, F105, F106, F107).
 //!
 //! A parent Conversation delegates work to a new child Conversation. The
 //! daemon records the parent and child link durably, independent of either
@@ -6,6 +6,10 @@
 //! durable prompt queue. A wait is a non-blocking query: the daemon answers at
 //! once with the child's outcome or a pending state, and the caller repeats it
 //! until the returned deadline.
+//!
+//! A parallel run group starts one task as several sibling children, one per
+//! provider or account, under one group identity. Comparing a group reads
+//! each run's Git state; it never merges or moves anything.
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,6 +30,17 @@ pub fn operations() -> Vec<OperationSpec> {
             Tier::EffectCommand,
         ),
         OperationSpec::new::<ChildWaitRequest, ChildWait>("orchestration.child.wait", Tier::Query),
+        // Creates every run's Conversation and queues its task; a retry must not create them again.
+        OperationSpec::new::<GroupStartRequest, GroupStarted>(
+            "orchestration.group.start",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<GroupsRequest, GroupList>("orchestration.groups", Tier::Query),
+        OperationSpec::new::<GroupGetRequest, GroupReply>("orchestration.group.get", Tier::Query),
+        OperationSpec::new::<GroupCompareRequest, GroupComparison>(
+            "orchestration.group.compare",
+            Tier::Query,
+        ),
     ]
 }
 
@@ -277,6 +292,232 @@ pub struct ChildWait {
     pub deadline_ms: i64,
 }
 
+/// One run of a parallel group: a provider, its account and its workspace,
+/// each stated explicitly.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RunSpec {
+    pub provider: String,
+    pub account: AccountChoice,
+    /// Each `new_worktree` run needs its own workspace. Runs in the same
+    /// workspace share its files, and their changes cannot be told apart.
+    pub workspace: WorkspaceChoice,
+    /// Provider settings; the daemon validates them for the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Value")]
+    pub provider_config: Option<Value>,
+}
+
+/// `orchestration.group.start`: start one task as sibling children of a parent.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupStartRequest {
+    /// Caller-owned operation ID; a retry with the same payload returns the same group.
+    pub operation_id: String,
+    pub parent_conversation_id: String,
+    pub caller: Caller,
+    /// The first prompt of every run; at most 64 KiB.
+    pub task: String,
+    /// Every run's title. Defaults to the task's first line, cut to 45 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub title: Option<String>,
+    /// From 2 to 8 runs, in the order the group reports them.
+    pub runs: Vec<RunSpec>,
+}
+
+/// `orchestration.groups`: the parallel groups a Conversation started, oldest first.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupsRequest {
+    pub parent_conversation_id: String,
+}
+
+/// `orchestration.group.get`: one group and its runs' status.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupGetRequest {
+    pub group_id: String,
+}
+
+/// `orchestration.group.compare`: each run's outcome and Git changes.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupCompareRequest {
+    pub group_id: String,
+}
+
+wire_tag!(GroupStartedTag, "group_started");
+wire_tag!(GroupListTag, "group_list");
+wire_tag!(GroupTag, "group");
+wire_tag!(GroupComparisonTag, "group_comparison");
+
+/// Where a group stands as a whole.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupState {
+    /// A run asks a question, needs approval or is blocked.
+    NeedsAttention,
+    /// No run needs attention and at least one is still pending.
+    Running,
+    /// Every run completed.
+    Completed,
+    /// Every run ended, and at least one did not provably complete.
+    Ended,
+}
+
+/// Counts of the group's runs by their newest message's state. A timed-out
+/// observation counts as pending.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct GroupSummary {
+    pub state: GroupState,
+    pub runs: u32,
+    pub pending: u32,
+    pub needs_input: u32,
+    pub blocked: u32,
+    pub completed: u32,
+    pub failed: u32,
+    pub interrupted: u32,
+    /// Ended without evidence of how.
+    pub unknown: u32,
+    /// The run's Conversation no longer exists.
+    pub unavailable: u32,
+}
+
+/// One run of a group and where its newest message stands.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct RunRecord {
+    /// The run's position in the start request, from 0.
+    pub index: u32,
+    /// The run's child link. Its `operation_id` is `<group ID>/<index>`.
+    pub child: ChildRecord,
+    /// The child's newest task or message.
+    pub message_id: String,
+    pub progress: WaitState,
+    /// The workspace HEAD when the group started; null when it had none.
+    pub base_commit: Option<String>,
+}
+
+/// A group and its runs.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct GroupRecord {
+    pub group_id: String,
+    pub parent_conversation_id: String,
+    /// The `orchestration.group.start` operation that created the group.
+    pub operation_id: String,
+    /// `user`, or `agent:` followed by the starting Conversation ID.
+    pub attribution: String,
+    pub title: String,
+    pub created_at: i64,
+    pub summary: GroupSummary,
+    pub runs: Vec<RunRecord>,
+}
+
+/// The `orchestration.group.start` reply: every run is admitted and its task
+/// is queued. It says nothing about completion.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupStarted {
+    #[serde(rename = "type")]
+    pub tag: GroupStartedTag,
+    pub group: GroupRecord,
+}
+
+/// The `orchestration.groups` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupList {
+    #[serde(rename = "type")]
+    pub tag: GroupListTag,
+    pub parent_conversation_id: String,
+    pub groups: Vec<GroupRecord>,
+}
+
+/// The `orchestration.group.get` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupReply {
+    #[serde(rename = "type")]
+    pub tag: GroupTag,
+    pub group: GroupRecord,
+}
+
+/// A file a run committed since the group started.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct CommittedFile {
+    /// The literal repository-relative path.
+    pub path: String,
+    /// The `git diff --name-status` letter, such as A, M, D or T.
+    pub code: String,
+}
+
+/// What a run committed between the group's start and its current HEAD.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum CommittedChanges {
+    Known {
+        base_commit: String,
+        /// Commits reachable from HEAD and not from the base.
+        commits: u64,
+        files: Vec<CommittedFile>,
+        /// More files changed than the reply carries (2 000).
+        truncated: bool,
+    },
+    /// ADE cannot prove what was committed, for example without a base commit.
+    Unknown { reason: String },
+}
+
+/// A run's Git changes, or why they could not be read.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum RunChanges {
+    Available {
+        /// The branch name, or `(detached)`.
+        branch: String,
+        /// The HEAD commit, or `(initial)` before the first commit.
+        head: String,
+        /// The workspace's `review.status` revision at the time of the read.
+        revision: String,
+        conflicts: u64,
+        /// Staged, unstaged and untracked changes, as `review.status` reports them.
+        uncommitted: Vec<super::review::ReviewFile>,
+        committed: CommittedChanges,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+/// One run's outcome and changes.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RunComparison {
+    pub index: u32,
+    pub child_conversation_id: String,
+    pub provider: String,
+    pub account_id: Option<String>,
+    pub workspace_id: String,
+    pub workspace_mode: WorkspaceMode,
+    pub progress: WaitState,
+    /// The workspace is the parent's or another run's, so its changes are
+    /// not this run's alone.
+    pub shared_workspace: bool,
+    pub changes: RunChanges,
+}
+
+/// A path that runs in different workspaces both changed. ADE merges nothing;
+/// the person chooses.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct PathOverlap {
+    pub path: String,
+    /// Every run whose workspace changed the path.
+    pub runs: Vec<u32>,
+}
+
+/// The `orchestration.group.compare` reply. It reads Git and changes nothing.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GroupComparison {
+    #[serde(rename = "type")]
+    pub tag: GroupComparisonTag,
+    pub group_id: String,
+    pub summary: GroupSummary,
+    pub runs: Vec<RunComparison>,
+    /// Paths changed in more than one workspace, sorted by path.
+    pub overlaps: Vec<PathOverlap>,
+    pub compared_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,5 +674,90 @@ mod tests {
                 .extend(state.as_object().unwrap().clone());
             response::<ChildWait>("orchestration.child.wait", wire);
         }
+    }
+
+    fn group() -> Value {
+        json!({"group_id": "g", "parent_conversation_id": "c1", "operation_id": "op",
+            "attribution": "user", "title": "Try", "created_at": 5,
+            "summary": {"state": "running", "runs": 2, "pending": 1, "needs_input": 0,
+                "blocked": 0, "completed": 1, "failed": 0, "interrupted": 0, "unknown": 0,
+                "unavailable": 0},
+            "runs": [{"index": 0, "child": child(), "message_id": "m",
+                "progress": {"state": "pending", "phase": "queued"}, "base_commit": "abc"}]})
+    }
+
+    #[test]
+    fn group_requests_round_trip_and_need_explicit_runs() {
+        request::<GroupStartRequest>(
+            "orchestration.group.start",
+            json!({"op": "orchestration.group.start", "operation_id": "op",
+                "parent_conversation_id": "c1", "caller": {"kind": "user"}, "task": "do it",
+                "runs": [
+                    {"provider": "codex", "account": {"mode": "ambient"},
+                        "workspace": {"mode": "new_worktree", "workspace_id": "w2",
+                            "repository_id": "r", "worktree_operation_id": "wop"}},
+                    {"provider": "claude", "account": {"mode": "managed", "account_id": "a"},
+                        "workspace": {"mode": "same"}, "provider_config": {}}]}),
+        );
+        request::<GroupsRequest>(
+            "orchestration.groups",
+            json!({"op": "orchestration.groups", "parent_conversation_id": "c1"}),
+        );
+        request::<GroupGetRequest>(
+            "orchestration.group.get",
+            json!({"op": "orchestration.group.get", "group_id": "g"}),
+        );
+        request::<GroupCompareRequest>(
+            "orchestration.group.compare",
+            json!({"op": "orchestration.group.compare", "group_id": "g"}),
+        );
+        let (name, _) = names("orchestration.group.start");
+        // A run never implies its workspace.
+        assert!(!valid(
+            &name,
+            &json!({"op": "orchestration.group.start", "operation_id": "op",
+                "parent_conversation_id": "c1", "caller": {"kind": "user"}, "task": "t",
+                "runs": [{"provider": "codex", "account": {"mode": "ambient"}}]})
+        ));
+    }
+
+    #[test]
+    fn group_replies_round_trip_in_the_daemon_shape() {
+        response::<GroupStarted>(
+            "orchestration.group.start",
+            json!({"type": "group_started", "group": group()}),
+        );
+        response::<GroupList>(
+            "orchestration.groups",
+            json!({"type": "group_list", "parent_conversation_id": "c1", "groups": [group()]}),
+        );
+        response::<GroupReply>(
+            "orchestration.group.get",
+            json!({"type": "group", "group": group()}),
+        );
+        let summary = group()["summary"].clone();
+        response::<GroupComparison>(
+            "orchestration.group.compare",
+            json!({"type": "group_comparison", "group_id": "g", "summary": summary,
+                "compared_at": 9,
+                "overlaps": [{"path": "a.rs", "runs": [0, 1]}],
+                "runs": [
+                    {"index": 0, "child_conversation_id": "c2", "provider": "codex",
+                        "account_id": null, "workspace_id": "w2", "workspace_mode": "new_worktree",
+                        "progress": {"state": "settled", "outcome": "completed", "error": null},
+                        "shared_workspace": false,
+                        "changes": {"state": "available", "branch": "b", "head": "h",
+                            "revision": "r", "conflicts": 0,
+                            "uncommitted": [{"path": "a.rs", "code": ".M", "staged": false,
+                                "unstaged": true, "conflict": false, "untracked": false,
+                                "submodule": false}],
+                            "committed": {"state": "known", "base_commit": "abc", "commits": 1,
+                                "files": [{"path": "b.rs", "code": "A"}], "truncated": false}}},
+                    {"index": 1, "child_conversation_id": "c3", "provider": "claude",
+                        "account_id": "a", "workspace_id": "w", "workspace_mode": "same",
+                        "progress": {"state": "unavailable", "reason": "gone"},
+                        "shared_workspace": true,
+                        "changes": {"state": "unavailable", "reason": "Workspace moved"}}]}),
+        );
     }
 }

@@ -18,6 +18,8 @@ use ade_core::contract::orchestration::{
 use ade_core::contract::worktrees::WorktreeOperationReply;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod group_policy;
+mod groups;
 mod policy;
 
 const DELEGATE: &str = "orchestration.delegate";
@@ -109,6 +111,116 @@ fn enqueue(connection: &Connection, conversation: &str, id: &str, text: &str) ->
     Ok(())
 }
 
+/// A child to create inside the caller's transaction.
+struct NewChild<'a> {
+    parent_id: &'a str,
+    /// The operation recorded on the link and the task message.
+    operation_id: &'a str,
+    attribution: &'a str,
+    depth: u32,
+    provider: &'a str,
+    provider_config: crate::provider::Config,
+    account: Option<&'a str>,
+    workspace_id: &'a str,
+    /// `same` or `new_worktree`.
+    mode: &'a str,
+    worktree_operation: Option<&'a str>,
+    title: &'a str,
+    task: &'a str,
+    now: i64,
+}
+
+/// Creates the child Conversation, queues its task and records the link, all
+/// in the caller's transaction on the store's connection.
+fn insert_child(tx: &Connection, store: &Store, child: NewChild) -> Result<Conversation> {
+    let created = store.create_with_account(
+        child.workspace_id,
+        child.title,
+        child.provider,
+        child.provider_config,
+        child.account,
+    )?;
+    let task = new_id("message");
+    enqueue(tx, &created.id, &task, child.task)?;
+    tx.execute(
+        &format!("INSERT INTO orchestration_children({CHILD_COLUMNS}) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
+        params![created.id, child.parent_id, child.operation_id, child.attribution, child.depth,
+            child.provider, child.account, child.workspace_id, child.mode, child.worktree_operation,
+            task, child.now],
+    )?;
+    tx.execute(
+        "INSERT INTO orchestration_messages(id,child_id,operation_id,attribution,created_at) VALUES(?1,?2,?3,?4,?5)",
+        params![task, created.id, child.operation_id, child.attribution, child.now],
+    )?;
+    Ok(created)
+}
+
+/// The child's newest task or message.
+fn newest_message(connection: &Connection, child: &str) -> Result<String> {
+    Ok(connection.query_row(
+        "SELECT id FROM orchestration_messages WHERE child_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT 1",
+        [child],
+        |row| row.get(0),
+    )?)
+}
+
+/// Where one message to a child stands, resolved against `deadline`.
+fn observe(
+    store: &Store,
+    child_id: &str,
+    message_id: &str,
+    now: i64,
+    deadline: i64,
+) -> Result<(ade_core::contract::orchestration::WaitState, bool)> {
+    let db = &store.connection;
+    let Some(child) = conversation(db, child_id)? else {
+        return Ok(policy::resolve_wait(
+            message_id,
+            policy::Progress::Missing,
+            None,
+            now,
+            deadline,
+        ));
+    };
+    let submitted = store
+        .message(message_id)?
+        .is_some_and(|message| message.conversation_id == child.id);
+    let queued: Option<String> = db
+        .query_row(
+            "SELECT status FROM queued_prompts WHERE id=?1 AND conversation_id=?2",
+            params![message_id, child.id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let progress = match (submitted, queued.as_deref()) {
+        (true, _) => policy::Progress::Submitted,
+        (false, Some("queued")) => policy::Progress::Queued,
+        (false, Some("cancelled")) => policy::Progress::Cancelled,
+        _ => policy::Progress::Missing,
+    };
+    let pending_requests = store
+        .pending(&child.id)?
+        .into_iter()
+        .filter(|request| request.status == "pending")
+        .map(|request| request.id)
+        .collect();
+    let view = policy::ChildView {
+        status: &child.status,
+        current_submission: child.runtime_submission.as_deref(),
+        queue_paused: child.queue_paused,
+        error: child.error.as_deref(),
+        terminal_owned: child.terminal_owner.is_some(),
+        pending_requests,
+    };
+    Ok(policy::resolve_wait(
+        message_id,
+        progress,
+        Some(&view),
+        now,
+        deadline,
+    ))
+}
+
 /// The stored reply for a repeated operation ID, or `None` for a new one.
 /// A receipt that never settled has no provable outcome, so it is an error.
 fn replay(admission: Admission, what: &str) -> Result<Option<Value>> {
@@ -188,6 +300,10 @@ impl Sessions {
             }
             CHILD_SEND => self.child_send(decode(request)?),
             "orchestration.child.wait" => self.child_wait(decode(request)?),
+            groups::START => self.group_start(decode(request)?),
+            "orchestration.groups" => self.groups(decode(request)?),
+            "orchestration.group.get" => self.group_get(decode(request)?),
+            "orchestration.group.compare" => self.group_compare(decode(request)?),
             _ => bail!("Unknown session operation"),
         }
     }
@@ -285,23 +401,24 @@ impl Sessions {
                 &parent.provider,
                 parent.account_id.as_deref(),
             )?;
-            let child = d.store.create_with_account(
-                &workspace_id,
-                &title,
-                &delegate.provider,
-                provider_config,
-                account.as_deref(),
-            )?;
-            let task = new_id("message");
-            enqueue(&tx, &child.id, &task, &delegate.task)?;
-            tx.execute(
-                &format!("INSERT INTO orchestration_children({CHILD_COLUMNS}) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
-                params![child.id, parent_id, operation_id, attribution, depth, delegate.provider,
-                    account, workspace_id, mode, worktree_operation, task, now],
-            )?;
-            tx.execute(
-                "INSERT INTO orchestration_messages(id,child_id,operation_id,attribution,created_at) VALUES(?1,?2,?3,?4,?5)",
-                params![task, child.id, operation_id, attribution, now],
+            let child = insert_child(
+                &tx,
+                &d.store,
+                NewChild {
+                    parent_id,
+                    operation_id,
+                    attribution: &attribution,
+                    depth,
+                    provider: &delegate.provider,
+                    provider_config,
+                    account: account.as_deref(),
+                    workspace_id: &workspace_id,
+                    mode,
+                    worktree_operation: worktree_operation.as_deref(),
+                    title: &title,
+                    task: &delegate.task,
+                    now,
+                },
             )?;
             let record = with_state(
                 &tx,
@@ -436,53 +553,9 @@ impl Sessions {
                 )
                 .optional()?
                 .context("Message is not a task or message sent to this child")?,
-            None => db.query_row(
-                "SELECT id FROM orchestration_messages WHERE child_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT 1",
-                [child_id],
-                |row| row.get(0),
-            )?,
+            None => newest_message(db, child_id)?,
         };
-        let child = conversation(db, child_id)?;
-        let (state, done) = match &child {
-            None => {
-                policy::resolve_wait(&message_id, policy::Progress::Missing, None, now, deadline)
-            }
-            Some(child) => {
-                let submitted = d
-                    .store
-                    .message(&message_id)?
-                    .is_some_and(|message| message.conversation_id == child.id);
-                let queued: Option<String> = db
-                    .query_row(
-                        "SELECT status FROM queued_prompts WHERE id=?1 AND conversation_id=?2",
-                        params![message_id, child.id],
-                        |row| row.get(0),
-                    )
-                    .optional()?;
-                let progress = match (submitted, queued.as_deref()) {
-                    (true, _) => policy::Progress::Submitted,
-                    (false, Some("queued")) => policy::Progress::Queued,
-                    (false, Some("cancelled")) => policy::Progress::Cancelled,
-                    _ => policy::Progress::Missing,
-                };
-                let pending_requests = d
-                    .store
-                    .pending(&child.id)?
-                    .into_iter()
-                    .filter(|request| request.status == "pending")
-                    .map(|request| request.id)
-                    .collect();
-                let view = policy::ChildView {
-                    status: &child.status,
-                    current_submission: child.runtime_submission.as_deref(),
-                    queue_paused: child.queue_paused,
-                    error: child.error.as_deref(),
-                    terminal_owned: child.terminal_owner.is_some(),
-                    pending_requests,
-                };
-                policy::resolve_wait(&message_id, progress, Some(&view), now, deadline)
-            }
-        };
+        let (state, done) = observe(&d.store, child_id, &message_id, now, deadline)?;
         reply(&ChildWait {
             tag: Default::default(),
             child_conversation_id: child_id.to_owned(),

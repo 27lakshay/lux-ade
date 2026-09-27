@@ -14,6 +14,7 @@ import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { remoteConnectUsage, runRemoteConnectCommand } from './commands/remote-connect.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
+import { runRunsCommand, runsUsage } from './commands/runs.js'
 import { historyUsage, runHistoryCommand } from './commands/history.js'
 import { importUsage, runImportCommand } from './commands/imports.js'
 import { runUsageCommand, usageAnalyticsUsage } from './commands/usage.js'
@@ -88,6 +89,7 @@ const usage = [
   skillUsage,
   pluginUsage,
   orchestrationUsage,
+  runsUsage,
   diagnosticsUsage,
   remoteConnectUsage,
   retentionUsage,
@@ -224,6 +226,7 @@ const commandAreas = [
   runSkillCommand,
   runPluginCommand,
   runOrchestrationCommand,
+  runRunsCommand,
   runDiagnosticsCommand,
   runRetentionCommand,
 ] as const
