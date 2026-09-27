@@ -106,6 +106,8 @@ struct Data {
     /// Leases a restart could not resolve; they refuse conflicting admission.
     unresolved: HashMap<leases::LeaseKey, leases::Unresolved>,
     stopping_services: HashSet<(String, String)>,
+    /// Services between `service.start` admission and the runtime launch.
+    starting_services: HashSet<(String, String)>,
     health_samples: HashMap<(String, String), HealthSample>,
     health_attempts: HashMap<(String, String), HealthAttempt>,
     active_health_samples: usize,
@@ -182,6 +184,7 @@ impl Sessions {
                 terminal_leases: HashMap::new(),
                 unresolved: HashMap::new(),
                 stopping_services: HashSet::new(),
+                starting_services: HashSet::new(),
                 health_samples: HashMap::new(),
                 health_attempts: HashMap::new(),
                 active_health_samples: 0,
@@ -716,17 +719,18 @@ impl Sessions {
                 Ok(())
             };
             let retire = |run_id: &str| -> Result<()> {
+                let key = leases::LeaseKey::Script {
+                    workspace_id: workspace.id.clone(),
+                    run_id: run_id.to_owned(),
+                };
+                // A run from a replaced runtime is absent from this one; that
+                // absence is not proof of exit, so observe it again first.
+                let resolution = self.recovery_control_release(&key)?;
                 let mut d = self.data.lock().unwrap();
                 ensure!(!d.draining, "Application daemon is restarting");
                 d.store.retire_script_run(&workspace.id, run_id)?;
                 d.terminal_leases.remove(run_id);
-                self.settle_unresolved(
-                    &mut d,
-                    &leases::LeaseKey::Script {
-                        workspace_id: workspace.id.clone(),
-                        run_id: run_id.to_owned(),
-                    },
-                );
+                self.settle_unresolved(&mut d, &key, resolution);
                 Ok(())
             };
             return crate::scripts::command(

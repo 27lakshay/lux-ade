@@ -247,6 +247,56 @@ impl Drop for ServiceStopGuard<'_> {
             .remove(&self.key);
     }
 }
+pub(super) struct ServiceStartGuard<'a> {
+    sessions: &'a Sessions,
+    key: (String, String),
+}
+impl Drop for ServiceStartGuard<'_> {
+    fn drop(&mut self) {
+        self.sessions
+            .data
+            .lock()
+            .unwrap()
+            .starting_services
+            .remove(&self.key);
+    }
+}
+
+/// Decides whether a start admitted from `before` may still reserve its run
+/// once the checks it ran without the data lock finish. The service, its
+/// workspace root and each peer must be unchanged, no peer may be stopping,
+/// and no other run may hold the service. Each peer is the service seen at
+/// admission, the service now (`None` once removed) and whether it is stopping.
+pub(super) fn start_still_admitted(
+    before: &Service,
+    current: &Service,
+    root_before: &str,
+    root_now: &str,
+    peers: &[(&Service, Option<Service>, bool)],
+) -> Result<()> {
+    ensure!(
+        current.terminal_owner.is_none(),
+        "Service run is already reserved"
+    );
+    ensure!(
+        current == before,
+        "Service changed while it was starting; retry start"
+    );
+    ensure!(
+        root_before == root_now,
+        "Workspace root changed while the service was starting; retry start"
+    );
+    for (seen, now, stopping) in peers {
+        ensure!(!stopping, "Peer service {} is stopping", seen.name);
+        ensure!(
+            now.as_ref() == Some(*seen),
+            "Peer service {} changed while this service was starting; retry start",
+            seen.name
+        );
+    }
+    Ok(())
+}
+
 pub(super) struct HealthSampleGuard<'a>(&'a Sessions);
 impl Drop for HealthSampleGuard<'_> {
     fn drop(&mut self) {
@@ -1155,18 +1205,35 @@ impl Sessions {
     }
 
     pub(super) fn start_service(&self, workspace: &str, name: &str) -> Result<ServiceReply> {
-        let mut d = self.data.lock().unwrap();
-        ensure!(!d.draining, "Application daemon is restarting");
-        Self::ensure_lease_resolved(
-            &d,
-            &super::leases::LeaseKey::Service {
-                workspace_id: workspace.to_owned(),
-                name: name.to_owned(),
-            },
-        )?;
-        d.store.ensure_workspace_bound(workspace)?;
-        let mut w = d.store.workspace(workspace)?;
-        let before = d.store.service(workspace, name)?;
+        let lease_key = super::leases::LeaseKey::Service {
+            workspace_id: workspace.to_owned(),
+            name: name.to_owned(),
+        };
+        let key = (workspace.to_owned(), name.to_owned());
+        // Phase 1, under the data lock: validate and read. Runtime calls,
+        // listener observation, the worktree lease and the host registry run
+        // outside it, so a slow lsof, registry or launch stalls no other
+        // session. The start fence keeps a concurrent start or stop out.
+        let (w, before, targets) = {
+            let mut d = self.data.lock().unwrap();
+            ensure!(!d.draining, "Application daemon is restarting");
+            ensure!(
+                !d.starting_services.contains(&key),
+                "Service start is already in progress"
+            );
+            Self::ensure_lease_resolved(&d, &lease_key)?;
+            d.store.ensure_workspace_bound(workspace)?;
+            let w = d.store.workspace(workspace)?;
+            let before = d.store.service(workspace, name)?;
+            let targets = if before.terminal_owner.is_none() {
+                let targets = Self::peer_targets(&d, &before)?;
+                d.starting_services.insert(key.clone());
+                targets
+            } else {
+                Vec::new()
+            };
+            (w, before, targets)
+        };
         if let Some(owner) = &before.terminal_owner {
             ensure!(
                 owner.runtime_instance == self.runtime.instance,
@@ -1196,22 +1263,24 @@ impl Sessions {
                 ..ServiceReply::service(before.clone())
             });
         }
-        let targets = Self::peer_targets(&d, &before)?;
+        let _start_guard = ServiceStartGuard {
+            sessions: self,
+            key: key.clone(),
+        };
+        // Phase 2, without the lock: observe peers, lease the worktree and
+        // reserve the ports host-wide, so another profile's run cannot launch
+        // onto them. The catalogue shows no run and the probe found them free,
+        // which retires this service's own quarantined claims.
         let peer_endpoints = self.resolve_peer_targets(&targets)?;
         let lease = self.worktrees.agent_lease(&w.root)?;
-        if before.terminal_owner.is_none() {
-            before.config.directory(&w.root)?;
-            before.check_ports()?;
-            if let Some(terminal) = &before.terminal_id {
-                self.runtime.command(TerminalCommand::Retire {
-                    workspace_id: workspace.to_string(),
-                    terminal_id: terminal.to_string(),
-                })?;
-            }
+        before.config.directory(&w.root)?;
+        before.check_ports()?;
+        if let Some(terminal) = &before.terminal_id {
+            self.runtime.command(TerminalCommand::Retire {
+                workspace_id: workspace.to_string(),
+                terminal_id: terminal.to_string(),
+            })?;
         }
-        // Reserve the ports host-wide before launch, so another profile's run
-        // cannot launch onto them. The catalogue shows no run and the probe
-        // found them free, which retires this service's own quarantined claims.
         let holder = crate::host_resources::service_holder(workspace, name, &before.identity);
         let mut ports = crate::host_resources::PortReservation::reserve(
             self.worktrees.host_resources(),
@@ -1219,20 +1288,47 @@ impl Sessions {
             &holder,
             true,
         )?;
-        let service =
-            d.store
-                .reserve_service(workspace, name, &self.runtime.instance, &peer_endpoints)?;
-        d.health_samples
-            .remove(&(workspace.to_owned(), name.to_owned()));
-        d.health_attempts
-            .remove(&(workspace.to_owned(), name.to_owned()));
-        let owner = service.terminal_owner.as_ref().unwrap().clone();
-        ensure!(
-            owner.runtime_instance == self.runtime.instance,
-            "Service supervisor was replaced; stop the service before starting a new run"
-        );
-        d.terminal_leases.insert(owner.terminal_id.clone(), lease);
-        self.catalog_changed(&mut d)?;
+        // Phase 3, under the lock: re-check what phase 1 read, then commit the
+        // durable reservation. It fences editing, removal and replacement runs
+        // while the launch below runs without the lock.
+        let (service, owner, mut w) = {
+            let mut d = self.data.lock().unwrap();
+            ensure!(!d.draining, "Application daemon is restarting");
+            Self::ensure_lease_resolved(&d, &lease_key)?;
+            d.store.ensure_workspace_bound(workspace)?;
+            let current = d.store.service(workspace, name)?;
+            let current_workspace = d.store.workspace(workspace)?;
+            let peers: Vec<_> = targets
+                .iter()
+                .map(|target| {
+                    let peer = &target.service;
+                    (
+                        peer,
+                        d.store.service(workspace, &peer.name).ok(),
+                        d.stopping_services
+                            .contains(&(workspace.to_owned(), peer.name.clone())),
+                    )
+                })
+                .collect();
+            start_still_admitted(&before, &current, &w.root, &current_workspace.root, &peers)?;
+            let service = d.store.reserve_service(
+                workspace,
+                name,
+                &self.runtime.instance,
+                &peer_endpoints,
+            )?;
+            d.health_samples.remove(&key);
+            d.health_attempts.remove(&key);
+            let owner = service.terminal_owner.as_ref().unwrap().clone();
+            ensure!(
+                owner.runtime_instance == self.runtime.instance,
+                "Service supervisor was replaced; stop the service before starting a new run"
+            );
+            d.terminal_leases.insert(owner.terminal_id.clone(), lease);
+            self.catalog_changed(&mut d)?;
+            (service, owner, d.store.workspace(workspace)?)
+        };
+        // Phase 4, without the lock: launch under the durable reservation.
         let launch = service.launch(&w.root, &peer_endpoints)?;
         w.terminal_id = owner.terminal_id.clone();
         ports.dispatch()?;
@@ -1247,6 +1343,7 @@ impl Sessions {
             result["metrics"]["transfer_id"] == owner.transfer_id,
             "Service launch returned another transfer identity"
         );
+        let mut d = self.data.lock().unwrap();
         let changed = self.service_changed(&d, &service, Some(result["metrics"].clone()));
         self.publish(&mut d, changed);
         Ok(ServiceReply {
@@ -1265,6 +1362,13 @@ impl Sessions {
             let Some(owner) = service.terminal_owner else {
                 return Ok(ServiceReply::service(service));
             };
+            // A start launches without the lock under its durable reservation;
+            // a stop now could release that reservation before the launch lands.
+            ensure!(
+                !d.starting_services
+                    .contains(&(workspace.to_owned(), name.to_owned())),
+                "Service start is in progress; retry stop after it finishes"
+            );
             ensure!(
                 d.stopping_services
                     .insert((workspace.to_owned(), name.to_owned())),
@@ -1315,6 +1419,14 @@ impl Sessions {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        // A run from a replaced runtime is absent from this one, and that
+        // absence is not proof of exit. When restart reconciliation watches
+        // the run, observe its recorded tree again before anything is released.
+        let lease_key = super::leases::LeaseKey::Service {
+            workspace_id: workspace.to_owned(),
+            name: name.to_owned(),
+        };
+        let resolution = self.recovery_control_release(&lease_key)?;
         self.settle_service_ports(&holder);
         let mut d = self.data.lock().unwrap();
         ensure!(
@@ -1331,13 +1443,7 @@ impl Sessions {
         d.health_attempts
             .remove(&(workspace.to_owned(), name.to_owned()));
         d.terminal_leases.remove(&owner.terminal_id);
-        self.settle_unresolved(
-            &mut d,
-            &super::leases::LeaseKey::Service {
-                workspace_id: workspace.to_owned(),
-                name: name.to_owned(),
-            },
-        );
+        self.settle_unresolved(&mut d, &lease_key, resolution);
         let changed = self.service_changed(&d, &service, None);
         self.publish(&mut d, changed);
         Ok(ServiceReply::service(service))
@@ -1352,5 +1458,53 @@ impl Sessions {
             boot_id: self.boot_id.clone(),
             revision: d.revision,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn service(name: &str, revision: i64) -> Service {
+        serde_json::from_value(json!({
+            "identity": format!("{name}-identity"),
+            "workspace_id": "w",
+            "name": name,
+            "revision": revision,
+            "config": {"program": "serve"},
+            "ports": {"PORT": 4100},
+            "hostname": format!("{name}.localhost"),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_start_reserves_only_what_it_admitted_before_releasing_the_lock() {
+        let web = service("web", 1);
+        let api = service("api", 3);
+        let peers = |now: Option<Service>, stopping| vec![(&api, now, stopping)];
+        start_still_admitted(&web, &web, "/r", "/r", &peers(Some(api.clone()), false)).unwrap();
+        // The service was edited while peers, ports and the lease were checked.
+        let edited = service("web", 2);
+        assert!(start_still_admitted(&web, &edited, "/r", "/r", &[]).is_err());
+        // Another run reserved the service in the meantime.
+        let mut reserved = web.clone();
+        reserved.terminal_owner = Some(ade_core::model::TerminalOwner {
+            terminal_id: "t".into(),
+            transfer_id: "run".into(),
+            runtime_instance: "runtime".into(),
+        });
+        let error = start_still_admitted(&web, &reserved, "/r", "/r", &[]).unwrap_err();
+        assert!(error.to_string().contains("already reserved"));
+        // The workspace moved to another root.
+        assert!(start_still_admitted(&web, &web, "/r", "/other", &[]).is_err());
+        // A peer began stopping, was edited or was removed.
+        for (now, stopping) in [
+            (Some(api.clone()), true),
+            (Some(service("api", 4)), false),
+            (None, false),
+        ] {
+            assert!(start_still_admitted(&web, &web, "/r", "/r", &peers(now, stopping)).is_err());
+        }
     }
 }
