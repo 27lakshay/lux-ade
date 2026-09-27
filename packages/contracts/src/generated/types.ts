@@ -12,6 +12,16 @@ export type ContractDefinition =
   | AccountVerifyRequest
   | AccountsReply
   | Ack
+  | Activity
+  | ActivityChanged
+  | ActivityKind
+  | ActivityList
+  | ActivityListRequest
+  | ActivityMark
+  | ActivityMarkRequest
+  | ActivityMarked
+  | ActivityState
+  | ActivityTarget
   | AgentAccountInspectRequest
   | AgentAccountInspection
   | AgentAnswerRequest
@@ -72,6 +82,9 @@ export type ContractDefinition =
   | ConversationGetRequest
   | ConversationSnapshot
   | DaemonHello
+  | DeliveryChannel
+  | DeliveryOutcome
+  | DeliveryStatus
   | Descriptor
   | Draft
   | DraftGetRequest
@@ -105,6 +118,13 @@ export type ContractDefinition =
   | ListenerOwnership
   | ListenerRow
   | Message
+  | NotificationDeliveries
+  | NotificationDelivery
+  | NotificationDeliveryClaim
+  | NotificationDeliveryClaimRequest
+  | NotificationDeliveryListRequest
+  | NotificationDeliveryReply
+  | NotificationDeliveryReportRequest
   | OmpIdentity
   | OutputCoverage
   | OutputCoverageReason
@@ -255,6 +275,24 @@ export type ContractDefinition =
   | WorktreeState
   | WorktreeSwitchRequest
 /**
+ * What an activity records.
+ */
+export type ActivityKind =
+  | 'turn_completed'
+  | 'turn_failed'
+  | 'turn_interrupted'
+  | 'approval_requested'
+  | 'question_requested'
+  | 'operation_unknown'
+/**
+ * The read state of an activity. It only moves forward.
+ */
+export type ActivityState = 'unread' | 'read' | 'dismissed'
+/**
+ * The mark an `activity.mark` request applies.
+ */
+export type ActivityMark = 'read' | 'dismissed'
+/**
  * What `worktree.remove` does with the removed tree's branch.
  */
 export type BranchPolicy = 'keep' | 'merged'
@@ -272,6 +310,18 @@ export type ClaimMode = 'shared' | 'exclusive'
 export type ClaimPhase = 'reserved' | 'dispatched' | 'bound' | 'active'
 export type ClaimPurpose = 'use' | 'create' | 'remove'
 export type ClaimState = 'active' | 'quarantined'
+/**
+ * Where a notification is presented. Push is a later channel.
+ */
+export type DeliveryChannel = 'desktop'
+/**
+ * The outcome a claim holder reports.
+ */
+export type DeliveryOutcome = 'shown' | 'failed' | 'suppressed'
+/**
+ * Where one activity's delivery on one channel stands.
+ */
+export type DeliveryStatus = 'claimed' | 'shown' | 'failed' | 'suppressed'
 /**
  * Whether a service's recorded run is live in the current runtime.
  */
@@ -526,6 +576,129 @@ export interface Ack {
    * The `ack` type tag.
    */
   type: 'ack'
+  [k: string]: unknown
+}
+/**
+ * One durable activity record.
+ */
+export interface Activity {
+  created_at: number
+  /**
+   * A bounded detail such as the recorded error or request method.
+   */
+  detail: string | null
+  dismissed_at: number | null
+  /**
+   * Stable identity; notification deliveries are keyed by it.
+   */
+  id: string
+  kind: ActivityKind
+  read_at: number | null
+  /**
+   * Monotonic position in the profile's feed; the list cursor.
+   */
+  sequence: number
+  state: ActivityState
+  target: ActivityTarget
+  /**
+   * The Conversation title when the activity was recorded.
+   */
+  title: string
+  [k: string]: unknown
+}
+/**
+ * The resource an activity points at. Its fields stay readable after the
+ * resource is removed; navigation must check that it still exists.
+ */
+export interface ActivityTarget {
+  conversation_id: string
+  /**
+   * The pending request, for approval and question activity.
+   */
+  request_id: string | null
+  /**
+   * The turn, when the daemon knew it.
+   */
+  turn_id: string | null
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * A `session.subscribe` frame: an activity was recorded or changed state.
+ */
+export interface ActivityChanged {
+  activity: Activity
+  boot_id: string
+  revision: number
+  /**
+   * The `activity_changed` type tag.
+   */
+  type: 'activity_changed'
+  [k: string]: unknown
+}
+/**
+ * The `activity.list` reply.
+ */
+export interface ActivityList {
+  activities: Activity[]
+  /**
+   * The largest sequence the profile has recorded; 0 when none.
+   */
+  latest_sequence: number
+  /**
+   * Pass as `after` or `before` (matching the request) for the next page;
+   * null when this page is the last.
+   */
+  next_cursor: number | null
+  /**
+   * The `activity_list` type tag.
+   */
+  type: 'activity_list'
+  [k: string]: unknown
+}
+/**
+ * `activity.list`: newest first, or oldest first after a cursor.
+ */
+export interface ActivityListRequest {
+  /**
+   * Return activity with a larger sequence, oldest first, to catch up.
+   */
+  after?: number | null
+  /**
+   * Return activity with a smaller sequence, newest first, to page back.
+   */
+  before?: number | null
+  /**
+   * Include dismissed activity; excluded by default.
+   */
+  include_dismissed?: boolean | null
+  /**
+   * 1 to 200; defaults to 50.
+   */
+  limit?: number | null
+  op: 'activity.list'
+  /**
+   * Only unread activity.
+   */
+  unread_only?: boolean | null
+}
+/**
+ * `activity.mark`: mark 1 to 100 activities read or dismissed.
+ */
+export interface ActivityMarkRequest {
+  activity_ids: string[]
+  mark: ActivityMark
+  op: 'activity.mark'
+}
+/**
+ * The `activity.mark` reply: every named activity in its current state.
+ */
+export interface ActivityMarked {
+  activities: Activity[]
+  /**
+   * The `activity_marked` type tag.
+   */
+  type: 'activity_marked'
   [k: string]: unknown
 }
 /**
@@ -1735,6 +1908,97 @@ export interface ListenerRow {
  */
 export interface ListenerListRequest {
   op: 'listener.list'
+}
+/**
+ * The `notification.delivery.list` reply.
+ */
+export interface NotificationDeliveries {
+  deliveries: NotificationDelivery[]
+  /**
+   * The `notification_deliveries` type tag.
+   */
+  type: 'notification_deliveries'
+  [k: string]: unknown
+}
+/**
+ * Delivery bookkeeping for one activity on one channel.
+ */
+export interface NotificationDelivery {
+  activity_id: string
+  channel: DeliveryChannel
+  claimed_at: number
+  /**
+   * The client that claimed the delivery.
+   */
+  client_id: string
+  /**
+   * Why a delivery failed or was suppressed.
+   */
+  reason: string | null
+  status: DeliveryStatus
+  updated_at: number
+  [k: string]: unknown
+}
+/**
+ * The `notification.delivery.claim` reply. `granted` is false when another
+ * client or an earlier outcome already holds the delivery.
+ */
+export interface NotificationDeliveryClaim {
+  delivery: NotificationDelivery
+  granted: boolean
+  /**
+   * The `notification_delivery_claim` type tag.
+   */
+  type: 'notification_delivery_claim'
+  [k: string]: unknown
+}
+/**
+ * `notification.delivery.claim`: reserve one activity's delivery.
+ */
+export interface NotificationDeliveryClaimRequest {
+  activity_id: string
+  channel: DeliveryChannel
+  /**
+   * Unique per client process; 1 to 128 characters.
+   */
+  client_id: string
+  op: 'notification.delivery.claim'
+}
+/**
+ * `notification.delivery.list`: newest deliveries first, to inspect failures.
+ */
+export interface NotificationDeliveryListRequest {
+  /**
+   * 1 to 200; defaults to 50.
+   */
+  limit?: number | null
+  op: 'notification.delivery.list'
+  status?: DeliveryStatus | null
+}
+/**
+ * The `notification.delivery.report` reply.
+ */
+export interface NotificationDeliveryReply {
+  delivery: NotificationDelivery
+  /**
+   * The `notification_delivery` type tag.
+   */
+  type: 'notification_delivery'
+  [k: string]: unknown
+}
+/**
+ * `notification.delivery.report`: record what happened to a claimed delivery.
+ */
+export interface NotificationDeliveryReportRequest {
+  activity_id: string
+  channel: DeliveryChannel
+  client_id: string
+  op: 'notification.delivery.report'
+  outcome: DeliveryOutcome
+  /**
+   * Required for failed and suppressed; up to 500 characters.
+   */
+  reason?: string | null
 }
 /**
  * How much of a run's output the durable spool holds and the reply returns.
@@ -3486,7 +3750,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -3595,6 +3859,11 @@ export interface RequestByOperation {
   "browser.navigate": BrowserNavigateRequest
   "browser.close": BrowserCloseRequest
   "browser.operation": BrowserOperationRequest
+  "activity.list": ActivityListRequest
+  "activity.mark": ActivityMarkRequest
+  "notification.delivery.claim": NotificationDeliveryClaimRequest
+  "notification.delivery.report": NotificationDeliveryReportRequest
+  "notification.delivery.list": NotificationDeliveryListRequest
   "resources.inspect": ResourcesInspectRequest
   "resources.claim.resolve": ResourcesClaimResolveRequest
   "resources.registry.accept": ResourcesRegistryAcceptRequest
@@ -3707,9 +3976,14 @@ export interface ResponseByOperation {
   "browser.navigate": BrowserMutation
   "browser.close": BrowserMutation
   "browser.operation": BrowserOperation
+  "activity.list": ActivityList
+  "activity.mark": ActivityMarked
+  "notification.delivery.claim": NotificationDeliveryClaim
+  "notification.delivery.report": NotificationDeliveryReply
+  "notification.delivery.list": NotificationDeliveries
   "resources.inspect": HostResourcesState
   "resources.claim.resolve": HostResourcesState
   "resources.registry.accept": HostResourcesState
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged
+export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

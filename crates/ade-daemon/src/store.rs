@@ -18,6 +18,7 @@ pub struct Store {
 }
 
 mod accounts;
+mod activity;
 mod attachments;
 mod bindings;
 mod conversations;

@@ -274,6 +274,330 @@
       ],
       "type": "object"
     },
+    "Activity": {
+      "description": "One durable activity record.",
+      "properties": {
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "detail": {
+          "description": "A bounded detail such as the recorded error or request method.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dismissed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Stable identity; notification deliveries are keyed by it.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActivityKind"
+        },
+        "read_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sequence": {
+          "description": "Monotonic position in the profile's feed; the list cursor.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/ActivityState"
+        },
+        "target": {
+          "$ref": "#/$defs/ActivityTarget"
+        },
+        "title": {
+          "description": "The Conversation title when the activity was recorded.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "sequence",
+        "kind",
+        "state",
+        "target",
+        "title",
+        "detail",
+        "created_at",
+        "read_at",
+        "dismissed_at"
+      ],
+      "type": "object"
+    },
+    "ActivityChanged": {
+      "description": "A `session.subscribe` frame: an activity was recorded or changed state.",
+      "properties": {
+        "activity": {
+          "$ref": "#/$defs/Activity"
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `activity_changed` type tag.",
+          "enum": [
+            "activity_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "activity",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ActivityKind": {
+      "description": "What an activity records.",
+      "oneOf": [
+        {
+          "const": "turn_completed",
+          "description": "A turn finished normally.",
+          "type": "string"
+        },
+        {
+          "const": "turn_failed",
+          "description": "A turn or its Agent failed.",
+          "type": "string"
+        },
+        {
+          "const": "turn_interrupted",
+          "description": "The provider interrupted a turn the user did not cancel.",
+          "type": "string"
+        },
+        {
+          "const": "approval_requested",
+          "description": "An Agent asked for an approval.",
+          "type": "string"
+        },
+        {
+          "const": "question_requested",
+          "description": "An Agent asked the user a question.",
+          "type": "string"
+        },
+        {
+          "const": "operation_unknown",
+          "description": "The daemon lost a running turn; its outcome is unknown.",
+          "type": "string"
+        }
+      ]
+    },
+    "ActivityList": {
+      "description": "The `activity.list` reply.",
+      "properties": {
+        "activities": {
+          "items": {
+            "$ref": "#/$defs/Activity"
+          },
+          "type": "array"
+        },
+        "latest_sequence": {
+          "description": "The largest sequence the profile has recorded; 0 when none.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "next_cursor": {
+          "description": "Pass as `after` or `before` (matching the request) for the next page;\nnull when this page is the last.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `activity_list` type tag.",
+          "enum": [
+            "activity_list"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "activities",
+        "next_cursor",
+        "latest_sequence"
+      ],
+      "type": "object"
+    },
+    "ActivityListRequest": {
+      "additionalProperties": false,
+      "description": "`activity.list`: newest first, or oldest first after a cursor.",
+      "properties": {
+        "after": {
+          "description": "Return activity with a larger sequence, oldest first, to catch up.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "before": {
+          "description": "Return activity with a smaller sequence, newest first, to page back.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "include_dismissed": {
+          "description": "Include dismissed activity; excluded by default.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "1 to 200; defaults to 50.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "activity.list"
+        },
+        "unread_only": {
+          "description": "Only unread activity.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ActivityMark": {
+      "description": "The mark an `activity.mark` request applies.",
+      "enum": [
+        "read",
+        "dismissed"
+      ],
+      "type": "string"
+    },
+    "ActivityMarkRequest": {
+      "additionalProperties": false,
+      "description": "`activity.mark`: mark 1 to 100 activities read or dismissed.",
+      "properties": {
+        "activity_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mark": {
+          "$ref": "#/$defs/ActivityMark"
+        },
+        "op": {
+          "const": "activity.mark"
+        }
+      },
+      "required": [
+        "op",
+        "activity_ids",
+        "mark"
+      ],
+      "type": "object"
+    },
+    "ActivityMarked": {
+      "description": "The `activity.mark` reply: every named activity in its current state.",
+      "properties": {
+        "activities": {
+          "items": {
+            "$ref": "#/$defs/Activity"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `activity_marked` type tag.",
+          "enum": [
+            "activity_marked"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "activities"
+      ],
+      "type": "object"
+    },
+    "ActivityState": {
+      "description": "The read state of an activity. It only moves forward.",
+      "enum": [
+        "unread",
+        "read",
+        "dismissed"
+      ],
+      "type": "string"
+    },
+    "ActivityTarget": {
+      "description": "The resource an activity points at. Its fields stay readable after the\nresource is removed; navigation must check that it still exists.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "description": "The pending request, for approval and question activity.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "description": "The turn, when the daemon knew it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "conversation_id",
+        "request_id",
+        "turn_id"
+      ],
+      "type": "object"
+    },
     "AgentAccountInspectRequest": {
       "additionalProperties": false,
       "description": "`agent.account_inspect`: probe a provider account's native status. The\nprofile daemon sends it on the runtime socket; `token` is its owner token.",
@@ -2091,6 +2415,47 @@
       ],
       "type": "object"
     },
+    "DeliveryChannel": {
+      "description": "Where a notification is presented. Push is a later channel.",
+      "enum": [
+        "desktop"
+      ],
+      "type": "string"
+    },
+    "DeliveryOutcome": {
+      "description": "The outcome a claim holder reports.",
+      "enum": [
+        "shown",
+        "failed",
+        "suppressed"
+      ],
+      "type": "string"
+    },
+    "DeliveryStatus": {
+      "description": "Where one activity's delivery on one channel stands.",
+      "oneOf": [
+        {
+          "const": "claimed",
+          "description": "A client holds the delivery and has not reported; the outcome is unknown.",
+          "type": "string"
+        },
+        {
+          "const": "shown",
+          "description": "The OS reported that it showed the notification.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The OS refused, failed or is unsupported; `reason` says why.",
+          "type": "string"
+        },
+        {
+          "const": "suppressed",
+          "description": "The client deliberately did not present it; `reason` says why.",
+          "type": "string"
+        }
+      ]
+    },
     "Descriptor": {
       "description": "The daemon advertises the same contract it uses to validate configuration.\nClients consume descriptors; they do not infer support from a provider name.",
       "properties": {
@@ -3079,6 +3444,212 @@
         "turn_id",
         "provider_item_id",
         "sequence"
+      ],
+      "type": "object"
+    },
+    "NotificationDeliveries": {
+      "description": "The `notification.delivery.list` reply.",
+      "properties": {
+        "deliveries": {
+          "items": {
+            "$ref": "#/$defs/NotificationDelivery"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `notification_deliveries` type tag.",
+          "enum": [
+            "notification_deliveries"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "deliveries"
+      ],
+      "type": "object"
+    },
+    "NotificationDelivery": {
+      "description": "Delivery bookkeeping for one activity on one channel.",
+      "properties": {
+        "activity_id": {
+          "type": "string"
+        },
+        "channel": {
+          "$ref": "#/$defs/DeliveryChannel"
+        },
+        "claimed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "client_id": {
+          "description": "The client that claimed the delivery.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why a delivery failed or was suppressed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/DeliveryStatus"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "activity_id",
+        "channel",
+        "status",
+        "client_id",
+        "reason",
+        "claimed_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "NotificationDeliveryClaim": {
+      "description": "The `notification.delivery.claim` reply. `granted` is false when another\nclient or an earlier outcome already holds the delivery.",
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/NotificationDelivery"
+        },
+        "granted": {
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `notification_delivery_claim` type tag.",
+          "enum": [
+            "notification_delivery_claim"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "granted",
+        "delivery"
+      ],
+      "type": "object"
+    },
+    "NotificationDeliveryClaimRequest": {
+      "additionalProperties": false,
+      "description": "`notification.delivery.claim`: reserve one activity's delivery.",
+      "properties": {
+        "activity_id": {
+          "type": "string"
+        },
+        "channel": {
+          "$ref": "#/$defs/DeliveryChannel"
+        },
+        "client_id": {
+          "description": "Unique per client process; 1 to 128 characters.",
+          "type": "string"
+        },
+        "op": {
+          "const": "notification.delivery.claim"
+        }
+      },
+      "required": [
+        "op",
+        "activity_id",
+        "channel",
+        "client_id"
+      ],
+      "type": "object"
+    },
+    "NotificationDeliveryListRequest": {
+      "additionalProperties": false,
+      "description": "`notification.delivery.list`: newest deliveries first, to inspect failures.",
+      "properties": {
+        "limit": {
+          "description": "1 to 200; defaults to 50.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "notification.delivery.list"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeliveryStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "NotificationDeliveryReply": {
+      "description": "The `notification.delivery.report` reply.",
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/NotificationDelivery"
+        },
+        "type": {
+          "description": "The `notification_delivery` type tag.",
+          "enum": [
+            "notification_delivery"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "delivery"
+      ],
+      "type": "object"
+    },
+    "NotificationDeliveryReportRequest": {
+      "additionalProperties": false,
+      "description": "`notification.delivery.report`: record what happened to a claimed delivery.",
+      "properties": {
+        "activity_id": {
+          "type": "string"
+        },
+        "channel": {
+          "$ref": "#/$defs/DeliveryChannel"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "notification.delivery.report"
+        },
+        "outcome": {
+          "$ref": "#/$defs/DeliveryOutcome"
+        },
+        "reason": {
+          "description": "Required for failed and suppressed; up to 500 characters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "activity_id",
+        "channel",
+        "client_id",
+        "outcome"
       ],
       "type": "object"
     },
@@ -7649,6 +8220,11 @@
       "domain": "services",
       "frame": "ServiceChanged",
       "type": "service_changed"
+    },
+    {
+      "domain": "activity",
+      "frame": "ActivityChanged",
+      "type": "activity_changed"
     }
   ],
   "operations": [
@@ -8392,6 +8968,41 @@
       "name": "browser.operation",
       "request": "BrowserOperationRequest",
       "response": "BrowserOperation",
+      "tier": "query"
+    },
+    {
+      "domain": "activity",
+      "name": "activity.list",
+      "request": "ActivityListRequest",
+      "response": "ActivityList",
+      "tier": "query"
+    },
+    {
+      "domain": "activity",
+      "name": "activity.mark",
+      "request": "ActivityMarkRequest",
+      "response": "ActivityMarked",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "activity",
+      "name": "notification.delivery.claim",
+      "request": "NotificationDeliveryClaimRequest",
+      "response": "NotificationDeliveryClaim",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "activity",
+      "name": "notification.delivery.report",
+      "request": "NotificationDeliveryReportRequest",
+      "response": "NotificationDeliveryReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "activity",
+      "name": "notification.delivery.list",
+      "request": "NotificationDeliveryListRequest",
+      "response": "NotificationDeliveries",
       "tier": "query"
     },
     {
