@@ -228,6 +228,7 @@ export type ContractDefinition =
   | ConversationDeletedFrame
   | ConversationDeletion
   | ConversationGetRequest
+  | ConversationReloadFrame
   | ConversationRewindHistory
   | ConversationRewindPreview
   | ConversationRewindPreviewRequest
@@ -5562,6 +5563,21 @@ export interface ConversationGetRequest {
    */
   limit?: number
   op: 'conversation.get'
+}
+/**
+ * The `conversation_reload` feed frame: the Conversation's messages changed
+ * in a way a delta cannot carry (a rewind, or an Agent run replacing its
+ * history). A client holding its messages reads a new snapshot.
+ */
+export interface ConversationReloadFrame {
+  boot_id: string
+  conversation: Conversation
+  revision: number
+  /**
+   * The `conversation_reload` type tag.
+   */
+  type: 'conversation_reload'
+  [k: string]: unknown
 }
 export interface ConversationRewindPreview {
   availability: ControlAvailability
@@ -14314,6 +14330,6 @@ export interface ResponseByOperation {
   "context.plan": ContextPlan
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ServiceChanged | ActivityChanged
+export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | ServiceChanged | ActivityChanged
 
 export type TerminalStreamFrame = TerminalSnapshotFrame | TerminalOutputFrame | TerminalResizeFrame | TerminalViewportFrame | TerminalMetricsFrame | TerminalDetachedFrame | TerminalWarningFrame | TerminalErrorFrame | TerminalConversationFrame | Ack

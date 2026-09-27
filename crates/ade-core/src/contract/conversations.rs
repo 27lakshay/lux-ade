@@ -120,6 +120,7 @@ pub fn frames() -> Vec<FrameSpec> {
     vec![
         FrameSpec::new::<ConversationChanged>("conversation_changed"),
         FrameSpec::new::<ConversationDeletedFrame>("conversation_deleted"),
+        FrameSpec::new::<ConversationReloadFrame>("conversation_reload"),
     ]
 }
 
@@ -857,6 +858,7 @@ pub struct ConversationDeleteRequest {
 }
 
 wire_tag!(ConversationDeletedTag, "conversation_deleted");
+wire_tag!(ConversationReloadTag, "conversation_reload");
 
 /// What one deletion removed.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq, Eq)]
@@ -898,6 +900,18 @@ pub struct ConversationDeletedFrame {
     pub conversation_id: String,
     pub workspace_id: String,
     pub deleted_at: i64,
+    pub boot_id: String,
+    pub revision: u64,
+}
+
+/// The `conversation_reload` feed frame: the Conversation's messages changed
+/// in a way a delta cannot carry (a rewind, or an Agent run replacing its
+/// history). A client holding its messages reads a new snapshot.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationReloadFrame {
+    #[serde(rename = "type")]
+    pub tag: ConversationReloadTag,
+    pub conversation: Conversation,
     pub boot_id: String,
     pub revision: u64,
 }

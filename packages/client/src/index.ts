@@ -116,7 +116,8 @@ export interface ClientState {
 }
 
 type Listener = (state: ClientState) => void
-export type FeedFrame = Record<string, unknown> & { type: string; boot_id: string; revision: number }
+/** A `session.subscribe` frame, checked against its contract as it arrives. */
+export type FeedFrame = DailyUseFeedFrame
 type FeedListener = (frame: FeedFrame) => void
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -251,20 +252,10 @@ export class AdeClient {
     }
   }
 
-  /** Selected generated frames. Reconnect starts with a new catalog snapshot. */
+  /** Catalog and conversation changes only. Reconnect starts with a new catalog snapshot. */
   subscribeDailyUseFeed(listener: (frame: DailyUseFeedFrame) => void): () => void {
     return this.subscribeFeed((frame) => {
-      if (frame.type === 'catalog' || frame.type === 'conversation_changed') {
-        let selected: DailyUseFeedFrame
-        try {
-          selected = decodeDailyUseFeedFrame(frame)
-        } catch (error) {
-          this.publish({ status: 'incompatible', detail: `Daemon daily-use contract is invalid: ${String(error)}` })
-          this.stop()
-          return
-        }
-        listener(selected)
-      }
+      if (frame.type === 'catalog' || frame.type === 'conversation_changed') listener(frame)
     })
   }
 
@@ -393,13 +384,21 @@ export class AdeClient {
           }
           return fail(requiredString(frame.message) ?? 'Daemon returned an error.')
         }
-        const previousPhase = phase
+        // After the handshake every frame is a feed frame; each is checked against its contract.
+        let feedFrame: FeedFrame | null = null
+        if (phase !== 'hello') {
+          try {
+            feedFrame = decodeDailyUseFeedFrame(frame)
+          } catch (error) {
+            this.publish({ status: 'incompatible', detail: `Daemon feed frame failed its contract: ${String(error)}` })
+            this.stop()
+            return
+          }
+        }
         const result = this.applyFrame(frame, phase, socket)
         if (result === 'invalid') return fail('Daemon sent an invalid or discontinuous state frame.')
         phase = result
-        if (previousPhase !== 'hello' && typeof frame.type === 'string') {
-          for (const listener of this.feedListeners) listener(frame as FeedFrame)
-        }
+        if (feedFrame) for (const listener of this.feedListeners) listener(feedFrame)
       }
     })
     socket.on('error', (error: NodeJS.ErrnoException) => {

@@ -370,6 +370,7 @@ export const frames = {
   "catalog": { domain: "workspaces", frame: "CatalogFrame" },
   "conversation_changed": { domain: "conversations", frame: "ConversationChanged" },
   "conversation_deleted": { domain: "conversations", frame: "ConversationDeletedFrame" },
+  "conversation_reload": { domain: "conversations", frame: "ConversationReloadFrame" },
   "service_changed": { domain: "services", frame: "ServiceChanged" },
   "activity_changed": { domain: "activity", frame: "ActivityChanged" },
 } as const

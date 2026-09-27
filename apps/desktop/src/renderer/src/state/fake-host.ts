@@ -12,7 +12,8 @@ type Request = (op: ConversationOperation, fields: unknown) => Promise<unknown>
 export interface FakeHost {
   host: Pick<AdeHost, 'profiles' | 'conversations'>
   pushClientState(state: ClientState): void
-  pushFrame(frame: FeedFrame): void
+  /** Delivers a feed frame. Tests may push partial frames, so frames are not checked here. */
+  pushFrame(frame: unknown): void
   setClientState(state: ClientState): void
   requests: { op: ConversationOperation; fields: unknown }[]
 }
@@ -64,7 +65,8 @@ export function createFakeHost(respond: Request = async () => ({})): FakeHost {
       for (const listener of clientListeners) listener(state)
     },
     pushFrame: (frame) => {
-      for (const listener of feedListeners) listener(frame)
+      // Like the stream bridge, the fake trusts the frame; the SDK checks real ones.
+      for (const listener of feedListeners) listener(frame as FeedFrame)
     },
     setClientState: (state) => {
       current = state

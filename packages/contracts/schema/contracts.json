@@ -7922,6 +7922,36 @@
       ],
       "type": "object"
     },
+    "ConversationReloadFrame": {
+      "description": "The `conversation_reload` feed frame: the Conversation's messages changed\nin a way a delta cannot carry (a rewind, or an Agent run replacing its\nhistory). A client holding its messages reads a new snapshot.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "conversation": {
+          "$ref": "#/$defs/Conversation"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `conversation_reload` type tag.",
+          "enum": [
+            "conversation_reload"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
     "ConversationRewindHistory": {
       "description": "What a Conversation rewind removes, or removed.",
       "properties": {
@@ -29054,6 +29084,11 @@
       "domain": "conversations",
       "frame": "ConversationDeletedFrame",
       "type": "conversation_deleted"
+    },
+    {
+      "domain": "conversations",
+      "frame": "ConversationReloadFrame",
+      "type": "conversation_reload"
     },
     {
       "domain": "services",

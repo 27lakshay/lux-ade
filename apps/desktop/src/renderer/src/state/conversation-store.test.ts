@@ -1,4 +1,3 @@
-import type { FeedFrame } from '@ade/client'
 import { describe, expect, test } from 'vitest'
 import { createConversationStore, selectMessage, selectMessageIds } from './conversation-store'
 import { createFakeHost, nextFrame } from './fake-host'
@@ -11,7 +10,7 @@ const snapshot = (revision: number, messages: { id: string; sequence: number; te
   boot_id: 'boot-1',
 })
 
-const changed = (revision: number, messages: { id: string; sequence: number; text: string }[]): FeedFrame => ({
+const changed = (revision: number, messages: { id: string; sequence: number; text: string }[]) => ({
   type: 'conversation_changed',
   boot_id: 'boot-1',
   revision,
