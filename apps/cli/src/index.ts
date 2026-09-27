@@ -27,6 +27,7 @@ import { providerUsage, runProviderCommand } from './commands/providers.js'
 import { retentionUsage, runRetentionCommand } from './commands/retention.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
+import { runSlashCommand, slashCommandUsage } from './commands/slash-commands.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
 import { hookUsage, runHookCommand } from './commands/hooks.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
@@ -99,6 +100,7 @@ const usage = [
   remoteUsage,
   placementUsage,
   skillUsage,
+  slashCommandUsage,
   pluginUsage,
   hookUsage,
   orchestrationUsage,
@@ -243,6 +245,7 @@ const commandAreas = [
   runRemoteCommand,
   runPlacementCommand,
   runSkillCommand,
+  runSlashCommand,
   runPluginCommand,
   runHookCommand,
   runOrchestrationCommand,

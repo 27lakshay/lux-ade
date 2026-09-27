@@ -163,6 +163,16 @@ export type ContractDefinition =
   | ClaudeIdentity
   | CleanupBlocker
   | CodexIdentity
+  | CommandEntry
+  | CommandInvokeOutcome
+  | CommandInvokeRequest
+  | CommandInvoked
+  | CommandKind
+  | CommandList
+  | CommandListRequest
+  | CommandNativeCatalog
+  | CommandProvenance
+  | CommandSource
   | CommittedChanges
   | CommittedFile
   | Config
@@ -976,6 +986,22 @@ export type CleanupBlocker =
   | 'teardown_incomplete'
   | 'not_listed'
 /**
+ * Whether an entry is a slash command or a skill.
+ */
+export type CommandKind = 'command' | 'skill'
+/**
+ * Whether a provider root belongs to the user or to one workspace.
+ */
+export type SkillScope = 'global' | 'workspace'
+/**
+ * Where an entry was found.
+ */
+export type CommandSource = 'provider_file' | 'provider_skill' | 'ade_catalog'
+/**
+ * How an invocation ended.
+ */
+export type CommandInvokeOutcome = 'queued' | 'unavailable' | 'unknown'
+/**
  * What a run committed between the group's start and its current HEAD.
  */
 export type CommittedChanges =
@@ -1520,10 +1546,6 @@ export type SendResolution = 'completed' | 'aborted'
  * Whether a tree is ready for an Agent, from its latest `worktree.switch`.
  */
 export type SetupState = 'ready' | 'preparing' | 'interrupted' | 'failed'
-/**
- * Whether a provider root belongs to the user or to one workspace.
- */
-export type SkillScope = 'global' | 'workspace'
 /**
  * What discovery found at one entry of a provider skill root.
  */
@@ -3900,6 +3922,143 @@ export interface ChildWaitRequest {
 export interface ChildrenRequest {
   op: 'orchestration.children'
   parent_conversation_id: string
+}
+/**
+ * One command or skill and whether ADE can hand it to the provider.
+ */
+export interface CommandEntry {
+  /**
+   * The provider's argument hint, such as `<file>`.
+   */
+  argument_hint: string | null
+  description: string | null
+  invocable: boolean
+  /**
+   * The native text the provider receives without arguments, such as `/review`.
+   */
+  invocation: string | null
+  kind: CommandKind
+  /**
+   * The native path ADE uses, such as `claude.prompt_slash`.
+   */
+  mechanism: string | null
+  name: string
+  provenance: CommandProvenance
+  /**
+   * Why the entry cannot be invoked, or a caveat when it can.
+   */
+  reason: string | null
+  [k: string]: unknown
+}
+/**
+ * Where an entry came from.
+ */
+export interface CommandProvenance {
+  /**
+   * The ADE catalog bundle with the same content, if any.
+   */
+  catalog_name: string | null
+  /**
+   * The skill bundle content hash, when the entry is a valid skill.
+   */
+  content_hash: string | null
+  /**
+   * The file or directory ADE read.
+   */
+  path: string | null
+  /**
+   * Absent for catalog-only bundles.
+   */
+  scope: SkillScope | null
+  source: CommandSource
+  [k: string]: unknown
+}
+/**
+ * `command.invoke`: hand a listed command or skill to the Conversation's
+ * provider in its native form. The invocation joins the Conversation's
+ * prompt queue under the derived queue ID `<operation_id>:command`.
+ */
+export interface CommandInvokeRequest {
+  /**
+   * Free text passed after the command, as the provider's own input would.
+   */
+  arguments?: string
+  conversation_id: string
+  kind: CommandKind
+  /**
+   * The entry name as `command.list` reported it, without a leading slash.
+   */
+  name: string
+  op: 'command.invoke'
+  operation_id: string
+}
+/**
+ * The `command.invoke` reply.
+ */
+export interface CommandInvoked {
+  conversation_id: string
+  kind: CommandKind
+  mechanism: string | null
+  name: string
+  /**
+   * The exact text queued for the provider.
+   */
+  native_text: string | null
+  operation_id: string
+  outcome: CommandInvokeOutcome
+  /**
+   * The queued prompt's ID.
+   */
+  queue_id: string | null
+  reason: string | null
+  /**
+   * The `command_invoked` type tag.
+   */
+  type: 'command_invoked'
+  [k: string]: unknown
+}
+/**
+ * The `command.list` reply.
+ */
+export interface CommandList {
+  conversation_id: string
+  /**
+   * Sorted by kind, then name, then path.
+   */
+  entries: CommandEntry[]
+  native_catalog: CommandNativeCatalog
+  provider: string
+  /**
+   * Provider paths or scopes this listing did not read, and why.
+   */
+  skipped: string[]
+  /**
+   * The `command_list` type tag.
+   */
+  type: 'command_list'
+  [k: string]: unknown
+}
+/**
+ * What the provider itself reports about its commands. ADE does not yet ask
+ * a live provider session for its list, so built-in and plugin commands are
+ * not shown and cannot be invoked through ADE.
+ */
+export interface CommandNativeCatalog {
+  /**
+   * The provider method that would list them, when one exists.
+   */
+  method: string | null
+  queried: boolean
+  reason: string
+  [k: string]: unknown
+}
+/**
+ * `command.list`: the commands and skills available to one Conversation.
+ * Reads provider paths and the skill catalog; writes nothing.
+ */
+export interface CommandListRequest {
+  conversation_id: string
+  op: 'command.list'
 }
 /**
  * A file a run committed since the group started.
@@ -10737,7 +10896,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -10974,6 +11133,8 @@ export interface RequestByOperation {
   "placement.resolve": PlacementResolveRequest
   "placement.list": PlacementListRequest
   "placement.release": PlacementReleaseRequest
+  "command.list": CommandListRequest
+  "command.invoke": CommandInvokeRequest
 }
 
 export interface ResponseByOperation {
@@ -11211,6 +11372,8 @@ export interface ResponseByOperation {
   "placement.resolve": PlacementReply
   "placement.list": Placements
   "placement.release": PlacementReleased
+  "command.list": CommandList
+  "command.invoke": CommandInvoked
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

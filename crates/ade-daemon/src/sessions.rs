@@ -33,6 +33,7 @@ mod activity;
 mod agents;
 mod capabilities;
 mod checkpoints;
+mod commands;
 mod controls;
 mod conversations;
 mod devices;
@@ -755,6 +756,7 @@ impl Sessions {
             op if op.starts_with("remote.") => self.remote_command(request),
             op if op.starts_with("repository.") => self.repository_command(request),
             op if controls::handles(op) => self.control_command(request),
+            op if op.starts_with("command.") => self.commands_command(request),
             op if op.starts_with("placement.") => self.placement_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
