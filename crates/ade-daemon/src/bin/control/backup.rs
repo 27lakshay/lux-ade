@@ -193,6 +193,47 @@ fn exclude_projection(path: &Path) -> Result<()> {
     sync(path)?;
     projection_excluded(path)
 }
+/// Replaces every secret service environment value in a copied profile
+/// database with the redaction placeholder (D15: a bundle holds no secret).
+/// The restored service refuses to start until its secrets are sent again.
+fn withhold_secrets(path: &Path) -> Result<()> {
+    let mut db = Connection::open(path)?;
+    if !tables(&db)?.iter().any(|name| name == "services") {
+        return Ok(());
+    }
+    db.pragma_update(None, "secure_delete", "ON")?;
+    let tx = db.transaction()?;
+    let rows = {
+        let mut query = tx.prepare("SELECT rowid,data FROM services")?;
+        query
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (row, data) in rows {
+        let mut record: Value =
+            serde_json::from_str(&data).context("Profile holds an unreadable service record")?;
+        ade_core::services::withhold_secret_values(&mut record)?;
+        tx.execute(
+            "UPDATE services SET data=?1 WHERE rowid=?2",
+            params![record.to_string(), row],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+fn secrets_withheld(path: &Path) -> Result<()> {
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    if !tables(&db)?.iter().any(|name| name == "services") {
+        return Ok(());
+    }
+    let mut query = db.prepare("SELECT data FROM services")?;
+    let records = query
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    coverage::secrets_verdict(records.iter().map(String::as_str))
+}
 fn projection_excluded(path: &Path) -> Result<()> {
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let names = tables(&db)?;
@@ -401,7 +442,11 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
         drop(writer);
         sync(target)?;
         if name == "sessions.sqlite" {
+            // Withhold secrets first: the projection step's VACUUM then
+            // rewrites the file, so no freed page keeps an old value.
+            withhold_secrets(target)?;
             exclude_projection(target)?;
+            secrets_withheld(target)?;
         }
         Some(schema(target, name)?)
     } else {
@@ -745,6 +790,9 @@ fn validate(source: &Path) -> Result<(Value, Plan)> {
     }
     if plan.format >= coverage::PROJECTION_EXCLUDED_SINCE {
         projection_excluded(&source.join("sessions.sqlite"))?;
+    }
+    if plan.format >= coverage::SECRETS_WITHHELD_SINCE {
+        secrets_withheld(&source.join("sessions.sqlite"))?;
     }
     if plan.has(PLUGINS_DB) {
         plugin_artifacts(&source.join(PLUGINS_DB), plan.artifact_files())?;

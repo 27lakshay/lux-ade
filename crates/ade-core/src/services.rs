@@ -180,9 +180,27 @@ impl Config {
                 .filter(|stored| stored.secret_env.contains(key))
                 .and_then(|stored| stored.env.get(key))
             {
+                Some(kept) if kept == REDACTED => {
+                    bail!("Secret {key} was withheld from a backup; send its value")
+                }
                 Some(kept) => value.clone_from(kept),
                 None => bail!("Secret {key} has no stored value; send its value"),
             }
+        }
+        Ok(())
+    }
+    /// Refuses a launch while any secret value is withheld. A backup stores
+    /// [`REDACTED`] in place of each secret value, so a restored service has
+    /// no value to give its process until its secrets are configured again.
+    pub fn ensure_secrets_present(&self) -> Result<()> {
+        if let Some(key) = self
+            .secret_env
+            .iter()
+            .find(|key| self.env.get(*key).is_some_and(|value| value == REDACTED))
+        {
+            bail!(
+                "Secret {key} was withheld from a backup; configure its value before starting the service"
+            );
         }
         Ok(())
     }
@@ -226,6 +244,63 @@ impl Service {
             ..self.clone()
         }
     }
+}
+
+/// The secret names of a stored service record and its `config.env`. A
+/// malformed record is refused, so a caller never treats an unreadable secret
+/// list as "no secrets".
+type StoredEnv<'a> = Option<&'a mut serde_json::Map<String, serde_json::Value>>;
+fn stored_secrets(record: &mut serde_json::Value) -> Result<(Vec<String>, StoredEnv<'_>)> {
+    let config = record
+        .get_mut("config")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| anyhow::anyhow!("Stored service has no configuration"))?;
+    let names = match config.get("secret_env") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| anyhow::anyhow!("Stored service secret names are invalid"))?,
+        Some(_) => bail!("Stored service secret names are invalid"),
+    };
+    let env = match config.get_mut("env") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Object(env)) => Some(env),
+        Some(_) => bail!("Stored service environment is invalid"),
+    };
+    Ok((names, env))
+}
+
+/// Replaces each secret value in a stored service record (the JSON a profile
+/// database holds) with [`REDACTED`]. A backup applies it to its copy, so a
+/// bundle never carries a secret; every other field is left as stored.
+pub fn withhold_secret_values(record: &mut serde_json::Value) -> Result<()> {
+    let (names, env) = stored_secrets(record)?;
+    if let Some(env) = env {
+        for name in names {
+            if let Some(value) = env.get_mut(&name) {
+                *value = serde_json::Value::String(REDACTED.into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a stored service record still holds a secret value, that is a
+/// secret whose value is anything but [`REDACTED`]. A malformed record counts
+/// as holding one.
+pub fn holds_secret_values(record: &serde_json::Value) -> bool {
+    let mut record = record.clone();
+    let Ok((names, env)) = stored_secrets(&mut record) else {
+        return true;
+    };
+    let Some(env) = env else {
+        return false;
+    };
+    names
+        .iter()
+        .any(|name| env.get(name).is_some_and(|value| value != REDACTED))
 }
 
 #[cfg(test)]
@@ -272,5 +347,46 @@ mod tests {
         assert!(shown.clone().keep_secrets(Some(&plain)).is_err());
         // A secret name must be a configured variable.
         assert!(config(&[], &["TOKEN"]).validate().is_err());
+    }
+
+    #[test]
+    fn a_backup_copy_withholds_every_secret_value_and_a_restored_service_cannot_start_until_resent()
+    {
+        let stored = config(&[("TOKEN", "s3cret"), ("MODE", "dev")], &["TOKEN"]);
+        let mut record = serde_json::json!({"name": "api", "revision": 3, "config": stored});
+        assert!(holds_secret_values(&record));
+        withhold_secret_values(&mut record).unwrap();
+        assert!(!holds_secret_values(&record));
+        assert!(!record.to_string().contains("s3cret"));
+        assert_eq!(record["config"]["env"]["MODE"], "dev");
+        assert_eq!(record["revision"], 3);
+
+        // The restored service reads back, refuses to start, and refuses a
+        // re-save that would keep the withheld placeholder.
+        let restored: Config = serde_json::from_value(record["config"].clone()).unwrap();
+        let error = restored.ensure_secrets_present().unwrap_err().to_string();
+        assert!(error.contains("Secret TOKEN was withheld"), "{error}");
+        let error = restored
+            .redacted()
+            .keep_secrets(Some(&restored))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Secret TOKEN was withheld"), "{error}");
+        // Sending the value again makes it launchable.
+        let mut resent = config(&[("TOKEN", "n3w"), ("MODE", "dev")], &["TOKEN"]);
+        resent.keep_secrets(Some(&restored)).unwrap();
+        resent.ensure_secrets_present().unwrap();
+        stored.ensure_secrets_present().unwrap();
+
+        // A service without secrets is unchanged; a malformed secret list
+        // is refused rather than read as "no secrets".
+        let mut plain = serde_json::json!({"config": config(&[("MODE", "dev")], &[])});
+        let before = plain.clone();
+        withhold_secret_values(&mut plain).unwrap();
+        assert_eq!(plain, before);
+        assert!(!holds_secret_values(&plain));
+        let mut malformed = serde_json::json!({"config": {"env": {"T": "x"}, "secret_env": "T"}});
+        assert!(withhold_secret_values(&mut malformed).is_err());
+        assert!(holds_secret_values(&malformed));
     }
 }

@@ -36,7 +36,7 @@ test('backs up a live profile during writes and restores conversations, attachme
   const inspected = await control(ade, ['backup', 'inspect', '--backup', bundle])
   expect(inspected.code, inspected.stderr).toBe(0)
   const manifest = inspected.json!.manifest as Awaited<ReturnType<typeof readManifest>>
-  expect(manifest.format_version).toBe(4)
+  expect(manifest.format_version).toBe(5)
   expect(manifest.entries.map((entry) => entry.path)).toEqual(expect.arrayContaining([
     'sessions.sqlite', 'sessions.plugins.sqlite3', 'sessions.plugins/artifacts']))
   expect(manifest.excluded.join('\n')).toMatch(/provider-native homes and credentials/)
