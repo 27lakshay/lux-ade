@@ -9,6 +9,7 @@ import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
+import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
@@ -71,6 +72,7 @@ const usage = [
   mcpUsage,
   skillUsage,
   pluginUsage,
+  orchestrationUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -197,6 +199,7 @@ const commandAreas = [
   runMcpCommand,
   runSkillCommand,
   runPluginCommand,
+  runOrchestrationCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {
