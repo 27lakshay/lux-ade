@@ -2,12 +2,18 @@
 //! the runtime's existing service spool. The public run ID is also the runtime
 //! terminal key, so a daemon handoff can inspect and stop the same process.
 use ade_core::{
+    contract::scripts::{
+        OutputCoverage, OutputCoverageReason, OutputCoverageStatus, ScriptInspectRequest,
+        ScriptInspection, ScriptList, ScriptListRequest, ScriptRetireRequest, ScriptRetired,
+        ScriptRun, ScriptRunState, ScriptRunStatus, ScriptRuns, ScriptRunsRequest,
+        ScriptStartRequest, ScriptStopRequest,
+    },
     model::{WorkspaceRecord, new_id},
     scripts::{self, Script, run_name},
     terminal_launch::Launch,
 };
 use ade_runtime::runtime::Supervisor;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
 use std::{
     path::Path,
@@ -25,51 +31,90 @@ fn terminal<'a>(catalogue: &'a Value, workspace_id: &str, run_id: &str) -> Resul
         .context("Script run is unavailable")
 }
 
-fn run_state(terminal: &Value, run_id: &str) -> Value {
-    let metrics = &terminal["metrics"];
-    let state = match metrics["exit_status"]["kind"].as_str() {
-        Some("success" | "failure" | "signaled") => "exited",
-        Some("unknown") => "unknown",
-        _ if metrics["shell_running"] == true => "running",
-        _ => "unknown",
-    };
-    let mut run = json!({"run_id":run_id,"name":run_name(run_id).unwrap_or(""),
-        "state":state,"metrics":metrics});
-    if let Some(outcome) = metrics.get("exit_status") {
-        run["exit_status"] = outcome.clone();
-    }
-    run
+/// Deserializes a request into its contract type. A missing field reports the
+/// handler's existing message for it; other shape errors name the request.
+pub(crate) fn decode<T: serde::de::DeserializeOwned>(
+    request: &Value,
+    missing: &[(&str, &str)],
+) -> Result<T> {
+    T::deserialize(request).map_err(|error| {
+        let text = error.to_string();
+        let field = text
+            .strip_prefix("missing field `")
+            .and_then(|rest| rest.split('`').next());
+        match field {
+            Some(field) => match missing.iter().find(|(name, _)| *name == field) {
+                Some((_, message)) => anyhow!("{message}"),
+                None => anyhow!("Missing {field}"),
+            },
+            None => anyhow!("Invalid request: {text}"),
+        }
+    })
 }
 
-fn output_coverage(metrics: &Value, durable: &Value) -> Value {
+const MISSING_RUN_ID: &[(&str, &str)] = &[("run_id", "Missing script run ID")];
+
+fn run_state(terminal: &Value, run_id: &str) -> ScriptRunState {
+    let metrics = &terminal["metrics"];
+    let state = match metrics["exit_status"]["kind"].as_str() {
+        Some("success" | "failure" | "signaled") => ScriptRunStatus::Exited,
+        Some("unknown") => ScriptRunStatus::Unknown,
+        _ if metrics["shell_running"] == true => ScriptRunStatus::Running,
+        _ => ScriptRunStatus::Unknown,
+    };
+    ScriptRunState {
+        run_id: run_id.to_owned(),
+        name: run_name(run_id).unwrap_or("").to_owned(),
+        state,
+        metrics: metrics.clone(),
+        exit_status: metrics.get("exit_status").cloned(),
+    }
+}
+
+fn script_run(workspace_id: &str, run: ScriptRunState, toolchain: Option<Value>) -> Result<Value> {
+    Ok(serde_json::to_value(ScriptRun {
+        tag: Default::default(),
+        workspace_id: workspace_id.to_owned(),
+        run,
+        toolchain,
+    })?)
+}
+
+fn output_coverage(metrics: &Value, durable: &Value) -> OutputCoverage {
+    use OutputCoverageReason::*;
+    use OutputCoverageStatus::*;
     let produced = metrics["terminal_bytes"].as_u64();
     let returned_start = durable["start_offset"].as_u64();
     let captured_through = durable["through_offset"].as_u64();
     let (status, reason) = if metrics["durable_log_error"].as_str().is_some() {
-        ("incomplete", "capture_error")
+        (Incomplete, Some(CaptureError))
     } else if durable["available"] != true {
-        ("incomplete", "durable_output_unavailable")
+        (Incomplete, Some(DurableOutputUnavailable))
     } else if durable["retention_overflow"] == true {
-        ("incomplete", "retention_overflow")
+        (Incomplete, Some(RetentionOverflow))
     } else if durable["segment_gap"] == true {
-        ("incomplete", "segment_gap")
+        (Incomplete, Some(SegmentGap))
     } else if metrics["shell_running"] == true {
-        ("pending", "process_running")
+        (Pending, Some(ProcessRunning))
     } else if !matches!(
         metrics["exit_status"]["kind"].as_str(),
         Some("success" | "failure" | "signaled")
     ) {
-        ("incomplete", "exit_unknown")
+        (Incomplete, Some(ExitUnknown))
     } else if produced.is_none() || captured_through != produced {
-        ("incomplete", "capture_gap")
+        (Incomplete, Some(CaptureGap))
     } else if durable["truncated"] == true || returned_start != Some(0) {
-        ("incomplete", "tail_limited")
+        (Incomplete, Some(TailLimited))
     } else {
-        ("complete", "")
+        (Complete, None)
     };
-    json!({"status":status,"reason":if reason.is_empty() {Value::Null} else {json!(reason)},
-        "produced_bytes":produced,"captured_through_offset":captured_through,
-        "returned_start_offset":returned_start})
+    OutputCoverage {
+        status,
+        reason,
+        produced_bytes: produced,
+        captured_through_offset: captured_through,
+        returned_start_offset: returned_start,
+    }
 }
 
 pub fn command(
@@ -83,10 +128,15 @@ pub fn command(
     let root = Path::new(&workspace.root);
     match request["op"].as_str().unwrap_or("") {
         "script.list" => {
-            let scripts = scripts::discover(root)?;
-            Ok(json!({"type":"scripts","workspace_id":workspace.id,"scripts":scripts}))
+            let _: ScriptListRequest = decode(request, &[])?;
+            Ok(serde_json::to_value(ScriptList {
+                tag: Default::default(),
+                workspace_id: workspace.id,
+                scripts: scripts::discover(root)?,
+            })?)
         }
         "script.runs" => {
+            let _: ScriptRunsRequest = decode(request, &[])?;
             let catalogue = runtime.command(json!({"op":"terminal.list"}))?;
             let runs = catalogue["terminals"]
                 .as_array()
@@ -100,10 +150,15 @@ pub fn command(
                     .then(|| run_state(terminal, run_id))
                 })
                 .collect::<Vec<_>>();
-            Ok(json!({"type":"script_runs","workspace_id":workspace.id,"runs":runs}))
+            Ok(serde_json::to_value(ScriptRuns {
+                tag: Default::default(),
+                workspace_id: workspace.id,
+                runs,
+            })?)
         }
         "script.start" => {
-            let name = request["name"].as_str().context("Missing script name")?;
+            let start: ScriptStartRequest = decode(request, &[("name", "Missing script name")])?;
+            let name = start.name.as_str();
             ensure!(scripts::valid_name(name), "Invalid script name");
             let configured: Script = scripts::discover(root)?
                 .into_iter()
@@ -181,31 +236,25 @@ pub fn command(
                 result["metrics"]["transfer_id"] == transfer_id,
                 "Script launch returned another transfer identity"
             );
-            let mut run = run_state(&json!({"metrics":result["metrics"]}), &run_id);
-            run["type"] = json!("script_run");
-            run["workspace_id"] = json!(workspace.id);
-            if let Some(toolchain) = toolchain {
-                run["toolchain"] = toolchain;
-            }
-            Ok(run)
+            let run = run_state(&json!({"metrics":result["metrics"]}), &run_id);
+            script_run(&workspace.id, run, toolchain)
         }
         "script.inspect" => {
-            let run_id = request["run_id"]
-                .as_str()
-                .context("Missing script run ID")?;
+            let inspect: ScriptInspectRequest = decode(request, MISSING_RUN_ID)?;
+            let run_id = inspect.run_id.as_str();
             run_name(run_id)?;
             ensure!(
                 workspace.extra_terminals.iter().any(|id| id == run_id),
                 "Script run is unavailable"
             );
-            let limit = request["tail_bytes"].as_u64().unwrap_or(8192);
+            let limit = inspect.tail_bytes.unwrap_or(8192);
             ensure!(
                 (1..=32768).contains(&limit),
                 "Tail limit must be 1 to 32768 bytes"
             );
             let catalogue = runtime.command(json!({"op":"terminal.list"}))?;
             let item = terminal(&catalogue, &workspace.id, run_id)?;
-            let mut result = run_state(item, run_id);
+            let run = run_state(item, run_id);
             let transfer_id = item["metrics"]["transfer_id"]
                 .as_str()
                 .context("Script transfer identity is unavailable")?;
@@ -215,7 +264,6 @@ pub fn command(
                 tail["transfer_id"] == transfer_id,
                 "Script run changed during inspection"
             );
-            result["output"] = tail;
             let durable = ade_runtime::service_logs::tail(
                 runtime.data_directory(),
                 &workspace.id,
@@ -223,16 +271,18 @@ pub fn command(
                 transfer_id,
                 limit as usize,
             );
-            result["output_coverage"] = output_coverage(&item["metrics"], &durable);
-            result["durable_output"] = durable;
-            result["type"] = json!("script_run");
-            result["workspace_id"] = json!(workspace.id);
-            Ok(result)
+            Ok(serde_json::to_value(ScriptInspection {
+                tag: Default::default(),
+                workspace_id: workspace.id.clone(),
+                run,
+                output: tail,
+                output_coverage: output_coverage(&item["metrics"], &durable),
+                durable_output: durable,
+            })?)
         }
         "script.stop" => {
-            let run_id = request["run_id"]
-                .as_str()
-                .context("Missing script run ID")?;
+            let stop: ScriptStopRequest = decode(request, MISSING_RUN_ID)?;
+            let run_id = stop.run_id.as_str();
             run_name(run_id)?;
             ensure!(
                 workspace.extra_terminals.iter().any(|id| id == run_id),
@@ -245,10 +295,7 @@ pub fn command(
                 .context("Script transfer identity is unavailable")?
                 .to_owned();
             if item["metrics"]["exit_status"]["kind"] == "unknown" {
-                let mut result = run_state(item, run_id);
-                result["type"] = json!("script_run");
-                result["workspace_id"] = json!(workspace.id);
-                return Ok(result);
+                return script_run(&workspace.id, run_state(item, run_id), None);
             }
             if item["metrics"]["shell_running"] == true {
                 runtime.command(json!({"op":"terminal.stop","workspace_id":workspace.id,
@@ -262,17 +309,10 @@ pub fn command(
                     item["metrics"]["transfer_id"] == transfer_id,
                     "Script run changed during stop"
                 );
-                if item["metrics"]["shell_running"] == false {
-                    let mut result = run_state(item, run_id);
-                    result["type"] = json!("script_run");
-                    result["workspace_id"] = json!(workspace.id);
-                    return Ok(result);
-                }
-                if item["metrics"]["exit_status"]["kind"] == "unknown" {
-                    let mut result = run_state(item, run_id);
-                    result["type"] = json!("script_run");
-                    result["workspace_id"] = json!(workspace.id);
-                    return Ok(result);
+                if item["metrics"]["shell_running"] == false
+                    || item["metrics"]["exit_status"]["kind"] == "unknown"
+                {
+                    return script_run(&workspace.id, run_state(item, run_id), None);
                 }
                 if Instant::now() >= deadline {
                     bail!("Script has not exited; retry stop to confirm cleanup");
@@ -281,9 +321,8 @@ pub fn command(
             }
         }
         "script.retire" => {
-            let run_id = request["run_id"]
-                .as_str()
-                .context("Missing script run ID")?;
+            let retire_request: ScriptRetireRequest = decode(request, MISSING_RUN_ID)?;
+            let run_id = retire_request.run_id.as_str();
             run_name(run_id)?;
             ensure!(
                 workspace.extra_terminals.iter().any(|id| id == run_id),
@@ -311,7 +350,11 @@ pub fn command(
                 pause_retirement_for_e2e(run_id)?;
             }
             retire(run_id)?;
-            Ok(json!({"type":"ack","workspace_id":workspace.id,"run_id":run_id}))
+            Ok(serde_json::to_value(ScriptRetired {
+                tag: Default::default(),
+                workspace_id: workspace.id,
+                run_id: run_id.to_owned(),
+            })?)
         }
         _ => bail!("Unknown script operation"),
     }

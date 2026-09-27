@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron'
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand, requestDaemon, type DailyUseRequest } from '@ade/client'
 import { getClient, getClientGeneration, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
 
 const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'service.proxy.retire', 'service.proxy.recovery.inspect', 'service.proxy.recovery.retry', 'service.proxy.recovery.reset', 'listener.list'])
-const scriptOps = new Set(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
+type ScriptOp = 'script.list' | 'script.runs' | 'script.start' | 'script.inspect' | 'script.stop' | 'script.retire'
+const scriptOps = new Set<string>(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
 export function registerServiceIpc(): void {
   ipcMain.handle('ade:script-request', async (_event, op: unknown, fields: unknown) => {
     if (typeof op !== 'string' || !scriptOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
@@ -45,7 +46,7 @@ export function registerServiceIpc(): void {
       keys.add('tail_bytes')
     }
     if (Object.keys(args).some((key) => !keys.has(key))) throw new Error('Unknown script request field')
-    const result = await requestDaemon(endpoint, op, request)
+    const result = await dailyUseCommand(endpoint, { ...request, op } as DailyUseRequest<ScriptOp>)
     if (generation !== getClientGeneration() || getSocket() !== endpoint) {
       throw new Error('Profile changed while the script request completed; inspect the original profile before retrying')
     }

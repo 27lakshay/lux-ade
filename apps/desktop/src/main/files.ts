@@ -1,8 +1,9 @@
 import { ipcMain } from 'electron'
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand, type DailyUseRequest } from '@ade/client'
 import { activeReviewContext, assertReviewContext, reviewPath } from './review'
 
-const fileOps = new Set(['file.list', 'file.search', 'file.preview'])
+type FileOp = 'file.list' | 'file.search' | 'file.preview'
+const fileOps = new Set<string>(['file.list', 'file.search', 'file.preview'])
 export function registerFileIpc(): void {
   ipcMain.handle('ade:file-request', async (event, op: unknown, fields: unknown) => {
     if (typeof op !== 'string' || !fileOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
@@ -33,7 +34,7 @@ export function registerFileIpc(): void {
         request.limit = args.limit
       } else request.limit = 100
     }
-    const response = await requestDaemon(context.endpoint, op, request)
+    const response = await dailyUseCommand(context.endpoint, { ...request, op } as DailyUseRequest<FileOp>)
     assertReviewContext(context, workspaceId)
     if (JSON.stringify(response).length > 1_000_000) throw new Error('File result exceeds the display limit')
     const expectedType = op.replace('.', '_')
