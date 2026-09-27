@@ -553,11 +553,15 @@ impl Sessions {
                 "HTTP health port variable is not configured for this service"
             );
         }
+        let mut shell_pid = None;
         let (state, execution_error, durable_capture_error) = match self
             .command(&json!({"op":"service.list","workspace_id":workspace}))
         {
             Ok(listed) => {
                 let metrics = &listed["states"][name]["metrics"];
+                shell_pid = metrics["shell_pid"]
+                    .as_u64()
+                    .and_then(|pid| u32::try_from(pid).ok());
                 (
                     <ExecutionState as serde::Deserialize>::deserialize(
                         &listed["states"][name]["state"],
@@ -579,6 +583,28 @@ impl Sessions {
         } else {
             None
         };
+        // The service's own listeners: rows attributed to this run's process tree.
+        let own_rows = |inventory: &ListenerInventory| {
+            inventory
+                .listeners
+                .iter()
+                .filter(|row| {
+                    row.workspace_id.as_deref() == Some(workspace)
+                        && row.service_name.as_deref() == Some(name)
+                })
+                .map(|row| (row.port, row.pid))
+                .collect::<Vec<_>>()
+        };
+        // True when the tree listens on a port it was not assigned.
+        let listens_elsewhere = observations
+            .as_ref()
+            .and_then(|result| result.as_ref().ok())
+            .is_some_and(|inventory| {
+                own_rows(inventory)
+                    .iter()
+                    .any(|(port, _)| !service.ports.values().any(|assigned| assigned == port))
+            });
+        let mut through_descendant = false;
         let (readiness_state, observation_error) = match &observations {
             None => (
                 match state {
@@ -595,24 +621,13 @@ impl Sessions {
                     .filter(|item| item.workspace_id == workspace && item.service_name == name)
                     .map(|item| item.observation)
                     .collect::<Vec<_>>();
-                let readiness = if ports.is_empty() {
-                    ReadinessState::UnknownNoPortCheck
-                } else if ports.iter().any(|item| {
-                    matches!(
-                        item,
-                        PortObservation::ObservedOther | PortObservation::Contested
-                    )
-                }) {
-                    ReadinessState::PortConflict
-                } else if ports
+                through_descendant = own_rows(inventory)
                     .iter()
-                    .all(|item| *item == PortObservation::VerifiedManaged)
-                {
-                    ReadinessState::TcpListening
-                } else {
-                    ReadinessState::NotObserved
-                };
-                (readiness, None)
+                    .any(|(_, pid)| Some(*pid) != shell_pid);
+                (
+                    listeners::readiness_verdict(&ports, listens_elsewhere),
+                    None,
+                )
             }
             Some(Err(error)) => (
                 ReadinessState::ObservationUnavailable,
@@ -635,13 +650,8 @@ impl Sessions {
                                 && item.variable == check.port_variable
                         })
                     });
-                if assignment
-                    .is_none_or(|item| item.observation != PortObservation::VerifiedManaged)
-                {
-                    json!({"state":"unknown","basis":"managed_listener_unverified"})
-                } else {
-                    check.probe(service.ports[&check.port_variable])
-                }
+                listeners::health_gate(assignment.map(|item| item.observation), listens_elsewhere)
+                    .unwrap_or_else(|| check.probe(service.ports[&check.port_variable]))
             };
             let mut result = result;
             result["port_variable"] = json!(check.port_variable);
@@ -773,7 +783,9 @@ impl Sessions {
             execution_error,
             readiness: Readiness {
                 state: readiness_state,
-                basis: if running {
+                basis: if running && through_descendant {
+                    ReadinessBasis::ProcessTreeTcpListener
+                } else if running {
                     ReadinessBasis::DirectProcessTcpListener
                 } else {
                     ReadinessBasis::ExecutionState
@@ -853,10 +865,20 @@ impl Sessions {
             }
         }
         managed.retain(|_, (workspace, _)| !workspace.is_empty());
+        // Attribute each listener to the one run whose process tree holds it,
+        // so `pnpm dev` counts through the node child that actually binds.
+        let roots = managed.keys().copied().collect::<HashSet<u32>>();
+        let mut owner_of = HashMap::<u32, Option<(String, String)>>::new();
+        for listener in &observed {
+            owner_of.entry(listener.pid).or_insert_with(|| {
+                listeners::live_owning_root(listener.pid, &roots)
+                    .and_then(|root| managed.get(&root).cloned())
+            });
+        }
         let listener_rows = observed
             .iter()
             .map(|listener| {
-                let owner = managed.get(&listener.pid);
+                let owner = owner_of.get(&listener.pid).and_then(Option::as_ref);
                 ListenerRow {
                     protocol: Default::default(),
                     address: listener.address.clone(),
@@ -883,7 +905,7 @@ impl Sessions {
                     let mut own = false;
                     let mut other = false;
                     for listener in observed.iter().filter(|item| item.port == *port) {
-                        if managed.get(&listener.pid)
+                        if owner_of.get(&listener.pid).and_then(Option::as_ref)
                             == Some(&(service.workspace_id.clone(), service.name.clone()))
                         {
                             own = true;
@@ -891,12 +913,7 @@ impl Sessions {
                             other = true;
                         }
                     }
-                    let observation = match (own, other) {
-                        (true, false) => PortObservation::VerifiedManaged,
-                        (true, true) => PortObservation::Contested,
-                        (false, true) => PortObservation::ObservedOther,
-                        (false, false) => PortObservation::Unobserved,
-                    };
+                    let observation = listeners::port_observation(own, other);
                     PortAssignment {
                         workspace_id: service.workspace_id.clone(),
                         service_name: service.name.clone(),
@@ -1002,12 +1019,13 @@ impl Sessions {
             ]
             .into_iter()
             .find_map(|(family, address)| {
-                let own = listeners.iter().any(|entry| {
-                    entry.pid == pid && entry.port == port && reachable(entry, family)
-                });
-                let other = listeners.iter().any(|entry| {
-                    entry.pid != pid && entry.port == port && reachable(entry, family)
-                });
+                let on_port = listeners
+                    .iter()
+                    .filter(|entry| entry.port == port && reachable(entry, family))
+                    .map(|entry| listeners::in_service_tree(pid, entry.pid))
+                    .collect::<Vec<_>>();
+                let own = on_port.iter().any(|owned| *owned);
+                let other = on_port.iter().any(|owned| !*owned);
                 (own && !other).then_some(address)
             })
             .with_context(|| {

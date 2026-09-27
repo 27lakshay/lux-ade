@@ -3338,26 +3338,48 @@
       "type": "object"
     },
     "ReadinessBasis": {
-      "enum": [
-        "direct_process_tcp_listener",
-        "execution_state",
-        "identity_changed"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "execution_state",
+            "identity_changed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "direct_process_tcp_listener",
+          "description": "Every verified listener is the service's direct process.",
+          "type": "string"
+        },
+        {
+          "const": "process_tree_tcp_listener",
+          "description": "At least one verified listener is a descendant of the direct process.",
+          "type": "string"
+        }
+      ]
     },
     "ReadinessState": {
       "description": "What the daemon could observe about a running service's ports.",
-      "enum": [
-        "stopped",
-        "exited",
-        "unknown",
-        "unknown_no_port_check",
-        "port_conflict",
-        "tcp_listening",
-        "not_observed",
-        "observation_unavailable"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "stopped",
+            "exited",
+            "unknown",
+            "unknown_no_port_check",
+            "port_conflict",
+            "tcp_listening",
+            "not_observed",
+            "observation_unavailable"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "bound_unassigned_port",
+          "description": "The service's process tree listens, but not on every assigned port: it\nmost likely lost the bind and chose another port. Not ready, not wired.",
+          "type": "string"
+        }
+      ]
     },
     "RecoveryStatus": {
       "enum": [

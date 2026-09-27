@@ -1144,20 +1144,17 @@ impl Host {
             "ipv4" => matches!(address, "127.0.0.1" | "0.0.0.0" | "*"),
             _ => matches!(address, "::1" | "::" | "*"),
         };
-        let own = rows.iter().any(|row| {
+        // `listener.list` attributes a row to this service only when its PID
+        // is in the current run's process tree, so a child that binds for a
+        // wrapper (`pnpm dev` -> node) is wired and any other holder is not.
+        let owned = |row: &Value| row["workspace_id"] == workspace && row["service_name"] == name;
+        let on_port = |row: &&Value| {
             row["family"] == family
                 && row["port"] == port
-                && row["pid"] == pid
-                && row["workspace_id"] == workspace
-                && row["service_name"] == name
                 && row["address"].as_str().is_some_and(covers_loopback)
-        });
-        let contested = rows.iter().any(|row| {
-            row["family"] == family
-                && row["port"] == port
-                && row["pid"] != pid
-                && row["address"].as_str().is_some_and(covers_loopback)
-        });
+        };
+        let own = rows.iter().filter(on_port).any(owned);
+        let contested = rows.iter().filter(on_port).any(|row| !owned(row));
         anyhow::ensure!(
             own && !contested,
             "Service has no verified loopback listener"

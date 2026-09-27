@@ -274,19 +274,23 @@ export type OutputCoverageReason =
  */
 export type OutputCoverageStatus = 'complete' | 'pending' | 'incomplete'
 export type ProxyAvailability = 'bound' | 'port_occupied'
-export type ReadinessBasis = 'direct_process_tcp_listener' | 'execution_state' | 'identity_changed'
+export type ReadinessBasis =
+  ('execution_state' | 'identity_changed') | 'direct_process_tcp_listener' | 'process_tree_tcp_listener'
 /**
  * What the daemon could observe about a running service's ports.
  */
 export type ReadinessState =
-  | 'stopped'
-  | 'exited'
-  | 'unknown'
-  | 'unknown_no_port_check'
-  | 'port_conflict'
-  | 'tcp_listening'
-  | 'not_observed'
-  | 'observation_unavailable'
+  | (
+      | 'stopped'
+      | 'exited'
+      | 'unknown'
+      | 'unknown_no_port_check'
+      | 'port_conflict'
+      | 'tcp_listening'
+      | 'not_observed'
+      | 'observation_unavailable'
+    )
+  | 'bound_unassigned_port'
 export type RecoveryStatus = 'healthy' | 'degraded' | 'corrupt'
 /**
  * What one diff line is.
