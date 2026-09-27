@@ -26,6 +26,10 @@ export function registerTerminalIpc(): void {
     }
     const key = terminalKey(event.sender.id, connectionId)
     terminals.get(key)?.dispose()
+    // Frames go to the renderer unchanged and in order, including a
+    // mid-stream `resync: true` snapshot, which the renderer's TerminalFeed
+    // applies as a reset and replay. The SDK closes the attachment on an
+    // output gap, so the renderer never receives non-contiguous output.
     const terminal = openTerminalConnection(socket, workspaceId, terminalId,
       (frame) => {
         if (!event.sender.isDestroyed()) event.sender.send('ade:terminal-frame', connectionId, frame)

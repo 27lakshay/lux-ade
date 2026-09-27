@@ -22,10 +22,82 @@ const XTERM_REPLAY_LIMIT: usize = 4 * 1024 * 1024;
 const CONVERSATION: usize = 64 * 1024;
 const MAX_REQUEST: u64 = 128 * 1024;
 
+/// Live frames one attachment may have queued before it is resynchronized:
+/// at most this many bytes and this many frames (architecture section 6).
+const VIEWER_QUEUE_BYTES: usize = 4 * 1024 * 1024;
+const VIEWER_QUEUE_FRAMES: usize = 1024;
+
+/// One line for an attachment's writer thread.
+enum Out {
+    /// A reply or snapshot; not counted against the live-frame budget.
+    Line(String),
+    /// A broadcast frame, counted in [`Outbox::queued`] until written.
+    Live(String),
+    /// Wakes the writer so it can resynchronize a lagging attachment.
+    Wake,
+}
+
+/// The live-frame budget one attachment shares with its writer thread.
+///
+/// A viewer that falls a whole budget behind is not closed. Broadcasts stop
+/// queueing for it, and once its writer has drained every queued frame it
+/// sends a fresh snapshot and live output resumes after it, in order.
+#[derive(Default)]
+struct Outbox {
+    queued: AtomicUsize,
+    lagging: AtomicBool,
+}
+
+impl Outbox {
+    /// Queue one live frame, or mark the attachment lagging when the frame
+    /// would exceed its budget. `false` means the writer is gone.
+    fn offer(&self, tx: &SyncSender<Out>, line: &str) -> bool {
+        if self.lagging.load(Ordering::Acquire) {
+            return true;
+        }
+        let len = line.len();
+        if self.queued.load(Ordering::Acquire) + len > VIEWER_QUEUE_BYTES {
+            return self.lag(tx);
+        }
+        self.queued.fetch_add(len, Ordering::AcqRel);
+        match tx.try_send(Out::Live(line.to_string())) {
+            Ok(()) => true,
+            Err(mpsc::TrySendError::Full(_)) => {
+                self.queued.fetch_sub(len, Ordering::AcqRel);
+                self.lag(tx)
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => false,
+        }
+    }
+    fn lag(&self, tx: &SyncSender<Out>) -> bool {
+        self.lagging.store(true, Ordering::Release);
+        // A full queue wakes the writer anyway; an empty one needs the nudge.
+        !matches!(
+            tx.try_send(Out::Wake),
+            Err(mpsc::TrySendError::Disconnected(_))
+        )
+    }
+    /// The writer has drained every live frame queued before the lag.
+    fn needs_resync(&self) -> bool {
+        self.lagging.load(Ordering::Acquire) && self.queued.load(Ordering::Acquire) == 0
+    }
+}
+
+/// The snapshot an attachment asked for when it subscribed; a resync sends
+/// the same kind again.
+#[derive(Clone, Copy)]
+enum SnapshotKind {
+    XtermReplay,
+    Binary { base64: bool },
+    Plain { terminal: bool },
+}
+
 struct Subscriber {
-    tx: SyncSender<String>,
+    tx: SyncSender<Out>,
     terminal: bool,
     disconnect: Option<UnixStream>,
+    outbox: Arc<Outbox>,
+    kind: SnapshotKind,
 }
 
 enum ReplayEvent {
@@ -77,6 +149,8 @@ struct State {
     /// Set by `terminal.stop`. A stopped shell's exit is settled by the
     /// verdict on its process tree, not by the shell's own status.
     stop_requested: bool,
+    /// Fresh snapshots sent to attachments that fell a whole budget behind.
+    viewer_resyncs: u64,
 }
 
 impl State {
@@ -84,7 +158,8 @@ impl State {
         let mut metrics = json!({"pid":std::process::id(),"uptime_ms":self.started.elapsed().as_millis() as u64,
             "clients":self.clients.len()+self.session_subscribers.load(Ordering::Relaxed),
             "workspace_id":self.workspace_id,"terminal_id":self.terminal_id,"run_id":self.run_id,"transfer_id":self.transfer_id,"terminal_bytes":self.bytes,"events":self.events,
-            "reply_dropped_bytes":self.reply_dropped_bytes,"pixel_size":self.pixel_size,"scrollback_bytes":self.terminal.len(),"resize_owner":self.viewports.owner(),
+            "reply_dropped_bytes":self.reply_dropped_bytes,"viewer_resyncs":self.viewer_resyncs,
+            "viewer_queue_limit_bytes":VIEWER_QUEUE_BYTES,"pixel_size":self.pixel_size,"scrollback_bytes":self.terminal.len(),"resize_owner":self.viewports.owner(),
             "shell_pid":self.shell_pid,"shell_running":self.shell_running,
             "durable_log_error":self.durable_log_error});
         if let Some(outcome) = &self.exit_status {
@@ -165,13 +240,14 @@ impl State {
     fn broadcast(&mut self, event: Value) {
         self.events += 1;
         let line = event.to_string();
-        // A slow client reconnects from a snapshot; it cannot stall the PTY producer.
+        // A slow client is resynchronized from a fresh snapshot; it cannot
+        // stall the PTY producer. Only a client whose writer is gone is dropped.
         let terminal = event["type"] == "terminal" || event["type"] == "terminal_resize";
         self.clients.retain(|_, client| {
             if terminal && !client.terminal {
                 return true;
             }
-            if client.tx.try_send(line.clone()).is_ok() {
+            if client.outbox.offer(&client.tx, &line) {
                 return true;
             }
             if let Some(socket) = &client.disconnect {
@@ -179,6 +255,35 @@ impl State {
             }
             false
         });
+    }
+    /// The snapshot an attachment of this kind starts from.
+    fn attachment_snapshot(&self, kind: SnapshotKind, id: u64) -> Result<Value, String> {
+        let mut snapshot = match kind {
+            SnapshotKind::XtermReplay => self.xterm_snapshot(),
+            SnapshotKind::Binary { base64 } => self.binary_snapshot(base64)?,
+            SnapshotKind::Plain { terminal } => self.snapshot_for(terminal, false),
+        };
+        snapshot["run_id"] = json!(self.run_id);
+        snapshot["attachment"] = json!(id);
+        Ok(snapshot)
+    }
+    /// A fresh snapshot for a lagging attachment whose queue has drained.
+    /// It is built and the lag cleared under the state lock, so the next
+    /// broadcast frame follows the snapshot with no gap. `None` when the
+    /// attachment is gone or not lagging.
+    fn resync(&mut self, id: u64) -> Option<Result<Value, String>> {
+        let client = self.clients.get(&id)?;
+        if !client.outbox.needs_resync() {
+            return None;
+        }
+        let (kind, outbox) = (client.kind, client.outbox.clone());
+        let snapshot = self.attachment_snapshot(kind, id).map(|mut snapshot| {
+            snapshot["resync"] = json!(true);
+            snapshot
+        });
+        outbox.lagging.store(false, Ordering::Release);
+        self.viewer_resyncs += 1;
+        Some(snapshot)
     }
     fn flush_replies(&mut self) {
         let bytes = self.screen.take_replies();
@@ -232,6 +337,16 @@ impl State {
 }
 
 type Shared = Arc<Mutex<State>>;
+
+/// An attachment's queue as its request loop sees it: replies go in as
+/// uncounted lines.
+struct Reply(SyncSender<Out>);
+
+impl Reply {
+    fn try_send(&self, line: String) -> Result<(), mpsc::TrySendError<Out>> {
+        self.0.try_send(Out::Line(line))
+    }
+}
 
 fn start_simulation(state: Shared, prompt: String) -> Result<(), &'static str> {
     {
@@ -325,8 +440,9 @@ fn settle(
             {
                 let frame = json!({"type":"viewport","owner":owner,"attachment":attachment,
                     "run_id":state.run_id});
-                // A full queue evicts the client on the next broadcast.
-                let _ = client.tx.try_send(frame.to_string());
+                // A full queue drops the notice; the resync snapshot's
+                // metrics name the owner.
+                let _ = client.tx.try_send(Out::Line(frame.to_string()));
             }
         }
     }
@@ -363,16 +479,47 @@ fn handle_client(
         s.next_client += 1;
         s.next_client
     };
-    let (tx, rx) = mpsc::sync_channel::<String>(64);
+    let (tx, rx) = mpsc::sync_channel::<Out>(VIEWER_QUEUE_FRAMES);
+    let outbox = Arc::new(Outbox::default());
     let mut writer_stream = stream.try_clone()?;
+    let writer_state = state.clone();
+    let writer_outbox = outbox.clone();
     std::thread::spawn(move || {
-        while let Ok(line) = rx.recv() {
-            if writeln!(writer_stream, "{line}").is_err() {
+        while let Ok(out) = rx.recv() {
+            let written = match out {
+                Out::Line(line) => writeln!(writer_stream, "{line}"),
+                Out::Live(line) => {
+                    let written = writeln!(writer_stream, "{line}");
+                    writer_outbox.queued.fetch_sub(line.len(), Ordering::AcqRel);
+                    written
+                }
+                Out::Wake => Ok(()),
+            };
+            if written.is_err() {
+                // The 2 s write timeout: a viewer that reads nothing is closed.
                 break;
+            }
+            if !writer_outbox.needs_resync() {
+                continue;
+            }
+            let resync = writer_state.lock().unwrap().resync(id);
+            match resync {
+                None => {}
+                Some(Ok(snapshot)) => {
+                    if writeln!(writer_stream, "{snapshot}").is_err() {
+                        break;
+                    }
+                }
+                Some(Err(error)) => {
+                    // No live output can follow a failed restore.
+                    let _ = writeln!(writer_stream, "{}", json!({"type":"error","message":error}));
+                    break;
+                }
             }
         }
         let _ = writer_stream.shutdown(std::net::Shutdown::Both);
     });
+    let tx = Reply(tx);
     let mut subscribed = false;
     let outcome = (|| -> io::Result<()> {
         loop {
@@ -433,33 +580,36 @@ fn handle_client(
                     if !subscribed {
                         // Snapshot and registration share a lock so no output falls in between.
                         let terminal = request["terminal"].as_bool().unwrap_or(true);
-                        let snapshot =
-                            if terminal && request["snapshot_format"] == "xterm-replay-v1" {
-                                s.xterm_snapshot()
-                            } else if terminal && request["snapshot_format"] == "binary" {
-                                match s.binary_snapshot(request["snapshot_encoding"] == "base64") {
-                                    Ok(snapshot) => snapshot,
-                                    Err(error) => {
-                                        let _ = tx.try_send(
-                                            json!({"type":"error","message":error}).to_string(),
-                                        );
-                                        // No live output can follow a failed restore.
-                                        continue;
-                                    }
-                                }
-                            } else {
-                                s.snapshot_for(terminal, false)
-                            };
-                        let mut snapshot = snapshot;
-                        snapshot["run_id"] = json!(s.run_id);
-                        snapshot["attachment"] = json!(id);
+                        let kind = if terminal && request["snapshot_format"] == "xterm-replay-v1" {
+                            SnapshotKind::XtermReplay
+                        } else if terminal && request["snapshot_format"] == "binary" {
+                            SnapshotKind::Binary {
+                                base64: request["snapshot_encoding"] == "base64",
+                            }
+                        } else {
+                            SnapshotKind::Plain { terminal }
+                        };
+                        let snapshot = match s.attachment_snapshot(kind, id) {
+                            Ok(snapshot) => snapshot,
+                            Err(error) => {
+                                let _ = tx
+                                    .try_send(json!({"type":"error","message":error}).to_string());
+                                // No live output can follow a failed restore.
+                                continue;
+                            }
+                        };
+                        // The snapshot is not counted against the live-frame
+                        // budget, so a large one cannot cost the attachment
+                        // the frames that follow it.
                         let _ = tx.try_send(snapshot.to_string());
                         s.clients.insert(
                             id,
                             Subscriber {
-                                tx: tx.clone(),
+                                tx: tx.0.clone(),
                                 terminal,
                                 disconnect: Some(stream.try_clone()?),
+                                outbox: outbox.clone(),
+                                kind,
                             },
                         );
                         subscribed = true;
@@ -757,6 +907,7 @@ pub fn spawn_runtime(
         exit_status: None,
         durable_log_error,
         stop_requested: false,
+        viewer_resyncs: 0,
     }));
     let terminal_state = state.clone();
     let reader_tree = tree.clone();
@@ -1080,6 +1231,7 @@ mod tests {
             exit_status: None,
             durable_log_error: None,
             stop_requested: false,
+            viewer_resyncs: 0,
         };
         let release = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(500));
@@ -1124,6 +1276,7 @@ mod tests {
             exit_status: None,
             durable_log_error: None,
             stop_requested: false,
+            viewer_resyncs: 0,
         };
         state.append_terminal(b"\x1b[2J\x1b[HPINNED BEFORE RAW RING");
         let repaint = b"\x1b[2;1Hupdated row, pinned row remains".repeat(10000);
@@ -1154,7 +1307,7 @@ mod tests {
         assert_eq!(state.screen.info()[3], 1);
     }
     #[test]
-    fn history_is_bounded_and_slow_subscriber_is_removed() {
+    fn history_is_bounded_and_a_slow_subscriber_is_resynchronized_not_removed() {
         let mut state = State {
             workspace_id: String::new(),
             terminal_id: String::new(),
@@ -1182,26 +1335,61 @@ mod tests {
             exit_status: None,
             durable_log_error: None,
             stop_requested: false,
+            viewer_resyncs: 0,
         };
-        let (tx, _rx) = mpsc::sync_channel(1);
+        let (tx, rx) = mpsc::sync_channel(1);
+        let outbox = Arc::new(Outbox::default());
         state.clients.insert(
             1,
             Subscriber {
                 tx,
                 terminal: true,
                 disconnect: None,
+                outbox: outbox.clone(),
+                kind: SnapshotKind::XtermReplay,
             },
         );
         state.append_terminal(&vec![b'a'; SCROLLBACK + 10]);
         state.append_terminal(b"end");
         assert_eq!(state.terminal.len(), SCROLLBACK);
-        assert!(state.clients.is_empty());
+        // The queue filled: the viewer is kept, marked lagging, and gets no
+        // more live frames until its queue drains.
+        assert_eq!(state.clients.len(), 1);
+        assert!(outbox.lagging.load(Ordering::Acquire));
         assert_eq!(state.bytes, (SCROLLBACK + 13) as u64);
+        // Nothing is resent while a frame queued before the lag is unwritten.
+        assert!(state.resync(1).is_none());
+        let Ok(Out::Live(line)) = rx.try_recv() else {
+            panic!("the first frame stays queued");
+        };
+        outbox.queued.fetch_sub(line.len(), Ordering::AcqRel);
+        assert!(rx.try_recv().is_err());
+        // Drained: a fresh snapshot through the latest offset, then live again.
+        let snapshot = state.resync(1).unwrap().unwrap();
+        assert_eq!(snapshot["resync"], true);
+        assert_eq!(snapshot["attachment"], 1);
+        assert_eq!(
+            snapshot["terminal_recovery"]["through_offset"],
+            (SCROLLBACK + 13) as u64
+        );
+        assert!(!outbox.lagging.load(Ordering::Acquire));
+        assert_eq!(state.viewer_resyncs, 1);
+        state.append_terminal(b"next");
+        let Ok(Out::Live(line)) = rx.try_recv() else {
+            panic!("live output resumes after the snapshot");
+        };
+        let frame: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(frame["offset"], (SCROLLBACK + 13) as u64);
+        // Only a viewer whose writer is gone is removed.
+        drop(rx);
+        outbox.queued.store(0, Ordering::Release);
+        state.append_terminal(b"gone");
+        assert!(state.clients.is_empty());
         assert!(
             state.snapshot()["terminal"]
                 .as_str()
                 .unwrap()
-                .ends_with("end")
+                .ends_with("endnextgone")
         );
     }
 }

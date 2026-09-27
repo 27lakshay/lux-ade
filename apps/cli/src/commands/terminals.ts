@@ -170,7 +170,12 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
         fail('daemon', typeof frame.message === 'string' ? frame.message : 'Terminal rejected the command.')
         return
       }
-      if (frame.type === 'snapshot' && !ready) {
+      if (frame.type === 'snapshot') {
+        // A snapshot after the first is a resync: this attachment fell a whole
+        // budget behind, the runtime skipped the output it could not queue,
+        // and live output resumes at this snapshot's offset. Reset the TTY and
+        // restore from the snapshot, as a fresh attach would.
+        const resync = ready
         if (frame.terminal_snapshot_format !== 'xterm-replay-v1') {
           fail('incompatible', 'Terminal recovery format is incompatible with this CLI.')
           return
@@ -180,11 +185,13 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
           fail('protocol', 'Terminal recovery metadata is invalid.')
           return
         }
+        if (resync) write(Buffer.from('\x1bc'))
         if (recovery.complete === true) {
           if (!Array.isArray(recovery.events)) {
             fail('protocol', 'Terminal replay events are invalid.')
             return
           }
+          offset = 0
           for (const event of recovery.events as Array<Record<string, unknown>>) {
             if (event.offset !== offset) {
               fail('protocol', 'Terminal replay has a byte gap.')
@@ -207,8 +214,12 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
         } else {
           offset = Number(recovery.through_offset)
           process.stderr.write(`${JSON.stringify({ type: 'warning', code: 'replay_limit_exceeded',
-            message: 'Terminal history is incomplete; live output remains available.' })}\n`)
+            ...(resync ? { resync: true } : {}),
+            message: resync
+              ? 'Terminal fell behind and its history is too large to restore; live output continues.'
+              : 'Terminal history is incomplete; live output remains available.' })}\n`)
         }
+        if (resync) return
         ready = true
         clearTimeout(timer)
         process.stdin.setRawMode(true)
