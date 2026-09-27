@@ -16,7 +16,7 @@ export const binaries = {
 
 // Inherited names that select a profile, a data directory, a provider home or a
 // credential, or that retarget Git at another repository.
-const leakedPrefixes = ['ADE_', 'CODEX_', 'CLAUDE_', 'ANTHROPIC_', 'OPENAI_', 'OMP_', 'GIT_']
+const leakedPrefixes = ['ADE_', 'CODEX_', 'CLAUDE_', 'ANTHROPIC_', 'OPENAI_', 'OMP_', 'GIT_', 'ANDROID_', 'GH_', 'GITHUB_', 'AWS_', 'SSH_AUTH_SOCK']
 
 let interpreterPath: string | null = null
 
