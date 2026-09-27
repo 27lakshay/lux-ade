@@ -721,15 +721,19 @@ impl Sessions {
             d.store.update_recovery_report(&report)?;
         }
         if let Some(lease) = &watch.lease
-            && d.unresolved.remove(lease).is_some()
-            && let LeaseKey::Script {
+            && let Some(unresolved) = d.unresolved.remove(lease)
+        {
+            // A service's durable reservation stays, and keeps its worktree lease.
+            Self::keep_settled_lease(d, unresolved, false);
+            if let LeaseKey::Script {
                 workspace_id,
                 run_id,
             } = lease
-        {
-            // The new runtime never held this run; its durable membership goes.
-            d.store.retire_script_run(workspace_id, run_id)?;
-            self.catalog_changed(d)?;
+            {
+                // The new runtime never held this run; its durable membership goes.
+                d.store.retire_script_run(workspace_id, run_id)?;
+                self.catalog_changed(d)?;
+            }
         }
         Ok(())
     }

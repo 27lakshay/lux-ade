@@ -271,6 +271,17 @@ pub(super) fn observe_agents(catalogue: &Value) -> Result<Vec<(ObservedAgent, Sp
         .collect()
 }
 
+/// The terminal that keeps a settled lease's worktree lease, if any. A live
+/// terminal keeps it. A service keeps it whether or not it runs, because its
+/// durable reservation stays until `service.stop` releases both.
+pub(super) fn settled_lease_keeper(claim: &Claim, live: bool) -> Option<&str> {
+    match (&claim.key, &claim.holder) {
+        (LeaseKey::Service { .. }, Holder::Terminal { terminal_id, .. }) => Some(terminal_id),
+        (_, Holder::Terminal { terminal_id, .. }) if live => Some(terminal_id),
+        _ => None,
+    }
+}
+
 /// A lease the daemon could not resolve. It keeps its worktree lease.
 pub(super) struct Unresolved {
     pub claim: Claim,
@@ -378,17 +389,24 @@ impl Sessions {
                     d.store.retire_script_run(workspace_id, run_id)?;
                     self.catalog_changed(&mut d)?;
                 }
-                (_, Holder::Terminal { terminal_id, .. }, Verdict::Live) => {
-                    if let Some(lease) = unresolved.lease {
-                        d.terminal_leases.insert(terminal_id.clone(), lease);
-                    }
+                // An exited Agent was already marked interrupted.
+                (_, _, verdict) => {
+                    Self::keep_settled_lease(&mut d, unresolved, verdict == Verdict::Live)
                 }
-                // A service keeps its durable reservation until service.stop
-                // releases it; an exited Agent was already marked interrupted.
-                _ => {}
             }
         }
         Ok(())
+    }
+
+    /// Moves a settled lease's worktree lease to the terminal that keeps it,
+    /// or drops it when nothing does.
+    pub(super) fn keep_settled_lease(d: &mut Data, unresolved: Unresolved, live: bool) {
+        if let (Some(keeper), Some(lease)) = (
+            settled_lease_keeper(&unresolved.claim, live),
+            unresolved.lease,
+        ) {
+            d.terminal_leases.insert(keeper.to_owned(), lease);
+        }
     }
 
     /// Drops an unresolved lease once a control path has settled it. A lease
@@ -558,6 +576,17 @@ mod tests {
             decide(&agent_claim(Some("run_1")), &gone),
             Verdict::Released(Release::Absent)
         );
+    }
+
+    #[test]
+    fn a_settled_service_keeps_its_worktree_lease() {
+        // The service's durable reservation outlives the settled watch, so
+        // its terminal keeps the worktree lease until service.stop.
+        assert_eq!(settled_lease_keeper(&service("x", "i"), false), Some("t"));
+        assert_eq!(settled_lease_keeper(&service("x", "i"), true), Some("t"));
+        assert_eq!(settled_lease_keeper(&script(), false), None);
+        assert_eq!(settled_lease_keeper(&script(), true), Some("t"));
+        assert_eq!(settled_lease_keeper(&agent_claim(Some("r")), false), None);
     }
 
     #[test]
