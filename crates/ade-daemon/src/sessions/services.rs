@@ -1228,6 +1228,9 @@ impl Sessions {
             let w = d.store.workspace(workspace)?;
             let before = d.store.service(workspace, name)?;
             let targets = if before.terminal_owner.is_none() {
+                // A restored service whose secrets a backup withheld has no
+                // value to launch with; refuse before reserving anything.
+                before.config.ensure_secrets_present()?;
                 let targets = Self::peer_targets(&d, &before)?;
                 d.starting_services.insert(key.clone());
                 targets
