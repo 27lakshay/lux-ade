@@ -3,7 +3,8 @@
   "entry": [
     "apps/desktop/src/main/index.ts",
     "apps/desktop/src/preload/index.ts",
-    "apps/desktop/src/renderer/src/main.tsx"
+    "apps/desktop/src/renderer/src/main.tsx",
+    "apps/desktop/src/renderer/src/dev/*.ts"
   ],
   "boundaries": {
     "zones": [

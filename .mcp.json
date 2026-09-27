@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "ade-app-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@1.10.1",
+        "--browser-url",
+        "http://127.0.0.1:9333",
+        "--no-usage-statistics",
+        "--no-performance-crux"
+      ]
+    },
+    "motion": {
+      "type": "http",
+      "url": "https://mcp.motion.dev"
+    }
+  }
+}

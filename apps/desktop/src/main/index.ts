@@ -38,11 +38,16 @@ import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
 import { closeAll as closeAllTerminals, closeSenderTerminals, registerTerminalIpc } from './terminals'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
+import { enableRemoteDebugging, startDevStateServer } from './dev'
+import { initializeLogging, logWindowConsole } from './logging'
 
 let singleWindowId = ''
+enableRemoteDebugging()
 if (process.env.ADE_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.ADE_E2E_USER_DATA_DIR)
 }
+initializeLogging()
+startDevStateServer()
 registerBrowserIpc(selectProfile)
 
 ipcMain.handle('ade:app-version', () => app.getVersion())
@@ -102,6 +107,7 @@ function openMainWindow(): void {
     },
   })
   windowIds.set(window.webContents.id, singleWindowId)
+  logWindowConsole(window.webContents, 'window')
   let readyForClose = false
   let closeFlushInProgress = false
   window.on('close', (event) => {

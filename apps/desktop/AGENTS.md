@@ -4,6 +4,13 @@ Electron app: `src/main` (Node, owns windows, menus and the daemon connection), 
 only bridge into a window) and `src/renderer` (React UI). Built with electron-vite; `pnpm dev` at
 the repo root builds the backend and starts the app with hot reload.
 
+## Seeing the running app
+
+Use the `drive-ade-app` skill. In development the app opens a DevTools Protocol port (9333) and a
+state endpoint (`curl http://127.0.0.1:9334/state`), and logs to `.dev/logs/main.log`. Details:
+[docs/agents/desktop-debugging.md](../../docs/agents/desktop-debugging.md). Look at the app before
+claiming a UI change works.
+
 ## Process boundaries
 
 - The renderer never imports `electron` or `node:*`. It reaches the backend only through
