@@ -32,8 +32,11 @@ export type BrowserVerdict =
  * true while this process is still running the same request; its outcome is
  * not yet observable, so nothing is decided.
  */
-export function reconcileBrowserEffect(intent: BrowserIntent | null, inFlight: boolean,
-  tabs: ReadonlyMap<string, { requestedUrl: string }>): BrowserVerdict {
+export function reconcileBrowserEffect(
+  intent: BrowserIntent | null,
+  inFlight: boolean,
+  tabs: ReadonlyMap<string, { requestedUrl: string }>,
+): BrowserVerdict {
   if (inFlight) return { outcome: 'unknown', evidence: 'effect_in_progress' }
   if (!intent || !intent.target) return { outcome: 'unknown', evidence: 'intent_not_recorded' }
   const tab = tabs.get(intent.target)
@@ -41,7 +44,8 @@ export function reconcileBrowserEffect(intent: BrowserIntent | null, inFlight: b
     case 'browser.open':
       if (!intent.url) return { outcome: 'unknown', evidence: 'intent_not_recorded' }
       // The planned ID is fresh, so only this request can have created it.
-      return tab ? { outcome: 'applied', tabId: intent.target, evidence: 'planned_tab_present' }
+      return tab
+        ? { outcome: 'applied', tabId: intent.target, evidence: 'planned_tab_present' }
         : { outcome: 'not_applied', evidence: 'planned_tab_absent' }
     case 'browser.navigate':
       if (!intent.url || intent.priorUrl === null) return { outcome: 'unknown', evidence: 'intent_not_recorded' }
@@ -53,7 +57,8 @@ export function reconcileBrowserEffect(intent: BrowserIntent | null, inFlight: b
       return { outcome: 'unknown', evidence: 'tab_at_other_url' }
     case 'browser.close':
       // Admission checked that the target existed before recording intent.
-      return tab ? { outcome: 'not_applied', evidence: 'target_tab_present' }
+      return tab
+        ? { outcome: 'not_applied', evidence: 'target_tab_present' }
         : { outcome: 'applied', tabId: intent.target, evidence: 'target_tab_absent' }
     case 'browser.click':
     case 'browser.type':

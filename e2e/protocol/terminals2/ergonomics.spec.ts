@@ -11,10 +11,12 @@ import { replayText, terminalMetrics, TerminalStream } from '../fixtures/termina
 import { newXterm, openView, TerminalFeed } from './xterm'
 
 /** The runtime terminal's cursor column, from its libghostty-vt screen snapshot. */
-async function runtimeCursor(profile: Parameters<typeof TerminalStream.open>[0], workspaceId: string,
-  terminalId: string): Promise<number> {
-  const stream = TerminalStream.open(profile, workspaceId, terminalId,
-    { op: 'subscribe' })
+async function runtimeCursor(
+  profile: Parameters<typeof TerminalStream.open>[0],
+  workspaceId: string,
+  terminalId: string,
+): Promise<number> {
+  const stream = TerminalStream.open(profile, workspaceId, terminalId, { op: 'subscribe' })
   const snapshot = await stream.snapshot()
   stream.close()
   return (snapshot.terminal_recovery as { cursor_col: number }).cursor_col
@@ -26,7 +28,7 @@ async function runtimeCursor(profile: Parameters<typeof TerminalStream.open>[0],
  */
 const unicodeLine = (label: string, text: string): string => `clear; printf '${label}:%s|' '${text}'; cat\n`
 
-test('Unicode reaches xterm byte for byte and CJK and combining text take the runtime\'s cells', async ({ profile }) => {
+test("Unicode reaches xterm byte for byte and CJK and combining text take the runtime's cells", async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
   const view = await openView(profile, ...target)
@@ -35,10 +37,15 @@ test('Unicode reaches xterm byte for byte and CJK and combining text take the ru
 
   // CJK is two cells wide; e + U+0301 is one cell. The cursor waits just
   // after the bar, so xterm and the runtime must agree on its column.
-  const cases = [['cjk', '中文'], ['combining', 'é']] as const
+  const cases = [
+    ['cjk', '中文'],
+    ['combining', 'é'],
+  ] as const
   for (const [label, text] of cases) {
     view.connection.input(unicodeLine(label, text))
-    const screen = await view.until(`the ${label} line`, (state) => state.lines.some((line) => line.includes(`${label}:${text}|`)))
+    const screen = await view.until(`the ${label} line`, (state) =>
+      state.lines.some((line) => line.includes(`${label}:${text}|`)),
+    )
     const row = screen.lines.findIndex((line) => line.includes(`${label}:${text}|`))
     const lineText = screen.lines[row]
     const xtermColumn = screen.cursor[1] === row ? screen.cursor[0] : -1
@@ -58,8 +65,14 @@ test('Unicode reaches xterm byte for byte and CJK and combining text take the ru
   await expect.poll(async () => (await terminalMetrics(profile, ...target))!.shell_running).toBe(true)
   view.connection.binary([3])
   view.connection.input('echo "still-$$"\n')
-  await view.until('the shell to answer after Ctrl-C', (state) => state.lines.some((line) => line === `still-${shellPid}`))
-  expect(await terminalMetrics(profile, ...target)).toMatchObject({ run_id: runId, shell_pid: shellPid, shell_running: true })
+  await view.until('the shell to answer after Ctrl-C', (state) =>
+    state.lines.some((line) => line === `still-${shellPid}`),
+  )
+  expect(await terminalMetrics(profile, ...target)).toMatchObject({
+    run_id: runId,
+    shell_pid: shellPid,
+    shell_running: true,
+  })
   view.connection.dispose()
 })
 
@@ -107,16 +120,20 @@ test('xterm does not answer a terminal query the runtime already answered (D06)'
 
   // The runtime answered each query once, while the view was attached and
   // parsing the same queries live.
-  const answered = await view.until('the program to read its answers',
-    (state) => state.lines.some((line) => line.startsWith('answers:')))
-  const answers = Buffer.from(answered.lines.find((line) => line.startsWith('answers:'))!.slice(8), 'hex').toString('latin1')
+  const answered = await view.until('the program to read its answers', (state) =>
+    state.lines.some((line) => line.startsWith('answers:')),
+  )
+  const answers = Buffer.from(answered.lines.find((line) => line.startsWith('answers:'))!.slice(8), 'hex').toString(
+    'latin1',
+  )
   expect(answers).toMatch(/^\x1b\[\d+;\d+R\x1b\[\?[\d;]+c$/)
 
   // Anything xterm sent in reply was written to the socket before the
   // answers were drawn, so it would reach the program before this q.
   view.connection.input('q')
-  await view.until('the program to report what else it read',
-    (state) => state.lines.some((line) => line === 'before-q:[]'))
+  await view.until('the program to report what else it read', (state) =>
+    state.lines.some((line) => line === 'before-q:[]'),
+  )
 
   // Without the adapter's reply suppression, the same frames make xterm answer.
   const bare = newXterm({ prepared: false })

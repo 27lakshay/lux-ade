@@ -1,5 +1,14 @@
 // oxlint-disable react/immutability -- prototype shell, not yet approved; fix when rebuilt against the Pen design
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type Ref,
+} from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { createPortal } from 'react-dom'
 import { Pane, LAYOUT_SPRING } from './Pane'
@@ -65,7 +74,8 @@ const rectOf = (el: Element): Rect => {
   const r = el.getBoundingClientRect()
   return { left: r.left, top: r.top, width: r.width, height: r.height }
 }
-const inside = (r: Rect, x: number, y: number) => x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height
+const inside = (r: Rect, x: number, y: number) =>
+  x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height
 
 function zoneOf(r: Rect, x: number, y: number): Side | 'center' {
   const fx = (x - r.left) / r.width
@@ -127,7 +137,12 @@ export function Panes({ leading, trailing, ref }: { leading: ReactNode; trailing
   // ⌘Z undoes the last layout change.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && !e.shiftKey && e.code === 'KeyZ' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+      if (
+        e.metaKey &&
+        !e.shiftKey &&
+        e.code === 'KeyZ' &&
+        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      ) {
         if (undo()) e.preventDefault()
       }
     }
@@ -273,7 +288,8 @@ export function Panes({ leading, trailing, ref }: { leading: ReactNode; trailing
             }
           }
         }
-        if (!(item.kind === 'pane' && hit !== item.paneId && !inStrip && zone === 'center' && lastSwap !== hit)) clearDwell()
+        if (!(item.kind === 'pane' && hit !== item.paneId && !inStrip && zone === 'center' && lastSwap !== hit))
+          clearDwell()
         if (hit !== lastSwap && hit !== (item.kind === 'pane' ? item.paneId : null)) lastSwap = null
       } else {
         lastSwap = null
@@ -306,9 +322,12 @@ export function Panes({ leading, trailing, ref }: { leading: ReactNode; trailing
       if (active) {
         const l = layoutRef.current
         let next = l
-        if (target?.type === 'insert' && item.kind === 'tab') next = insertTab(l, item.tabId, target.paneId, target.index)
-        else if (target?.type === 'split' && item.kind === 'tab') next = splitWithTab(l, item.tabId, target.paneId, target.side)
-        else if (target?.type === 'split' && item.kind === 'pane') next = splitWithPane(l, item.paneId, target.paneId, target.side)
+        if (target?.type === 'insert' && item.kind === 'tab')
+          next = insertTab(l, item.tabId, target.paneId, target.index)
+        else if (target?.type === 'split' && item.kind === 'tab')
+          next = splitWithTab(l, item.tabId, target.paneId, target.side)
+        else if (target?.type === 'split' && item.kind === 'pane')
+          next = splitWithPane(l, item.paneId, target.paneId, target.side)
         else if (target?.type === 'merge' && item.kind === 'pane') next = mergePane(l, item.paneId, target.paneId)
         // Record one history step for the whole drag, live reorders included.
         if (next !== snapshot) commit(next, snapshot)
@@ -487,36 +506,41 @@ export function Panes({ leading, trailing, ref }: { leading: ReactNode; trailing
           they draw above the title-bar toggles. */}
       {createPortal(
         <>
-      {/* Drop preview: a soft fill where the dragged item will land. It glides between zones. */}
-      <AnimatePresence>
-        {drag?.preview ? (
-          <motion.div
-            key="preview"
-            className="pointer-events-none fixed z-40 rounded-xl bg-muted"
-            initial={{ opacity: 0, ...drag.preview }}
-            animate={{ opacity: 1, ...drag.preview }}
-            exit={{ opacity: 0 }}
-            transition={{ ...LAYOUT_SPRING, opacity: { duration: 0.12 } }}
-          />
-        ) : null}
-      </AnimatePresence>
-      {drag?.caret ? <div className="pointer-events-none fixed z-50 rounded-full bg-fg" style={drag.caret} /> : null}
+          {/* Drop preview: a soft fill where the dragged item will land. It glides between zones. */}
+          <AnimatePresence>
+            {drag?.preview ? (
+              <motion.div
+                key="preview"
+                className="pointer-events-none fixed z-40 rounded-xl bg-muted"
+                initial={{ opacity: 0, ...drag.preview }}
+                animate={{ opacity: 1, ...drag.preview }}
+                exit={{ opacity: 0 }}
+                transition={{ ...LAYOUT_SPRING, opacity: { duration: 0.12 } }}
+              />
+            ) : null}
+          </AnimatePresence>
+          {drag?.caret ? (
+            <div className="pointer-events-none fixed z-50 rounded-full bg-fg" style={drag.caret} />
+          ) : null}
 
-      {/* The dragged item follows the pointer as a small card. */}
-      {drag ? (
-        <div className="pointer-events-none fixed left-0 top-0 z-50" style={{ transform: `translate(${drag.ghostX}px, ${drag.ghostY}px)` }}>
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.12 }}
-            className={`flex items-center gap-2 bg-overlay text-[12px] font-medium text-fg shadow-[0_12px_32px_#00000066] backdrop-blur-xl ${
-              drag.item.kind === 'tab' ? 'h-[30px] rounded-md px-2.5' : 'h-9 rounded-xl px-3.5'
-            }`}
-          >
-            {drag.label}
-          </motion.div>
-        </div>
-      ) : null}
+          {/* The dragged item follows the pointer as a small card. */}
+          {drag ? (
+            <div
+              className="pointer-events-none fixed left-0 top-0 z-50"
+              style={{ transform: `translate(${drag.ghostX}px, ${drag.ghostY}px)` }}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.12 }}
+                className={`flex items-center gap-2 bg-overlay text-[12px] font-medium text-fg shadow-[0_12px_32px_#00000066] backdrop-blur-xl ${
+                  drag.item.kind === 'tab' ? 'h-[30px] rounded-md px-2.5' : 'h-9 rounded-xl px-3.5'
+                }`}
+              >
+                {drag.label}
+              </motion.div>
+            </div>
+          ) : null}
         </>,
         document.body,
       )}

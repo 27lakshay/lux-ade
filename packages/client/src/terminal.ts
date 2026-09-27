@@ -96,15 +96,22 @@ export function openTerminalConnection(
       const line = buffered.subarray(0, end)
       buffered = buffered.subarray(end + 1)
       let frame: TerminalFrame
-      try { frame = JSON.parse(line.toString('utf8')) as TerminalFrame }
-      catch { return finish('Terminal sent invalid JSON.') }
+      try {
+        frame = JSON.parse(line.toString('utf8')) as TerminalFrame
+      } catch {
+        return finish('Terminal sent invalid JSON.')
+      }
       if (!frame || typeof frame !== 'object' || typeof frame.type !== 'string') {
         return finish('Terminal sent an invalid frame.')
       }
       if (frame.type === 'snapshot' && incarnation === null && typeof frame.run_id === 'string') {
         incarnation = frame.run_id
       } else if (!sameIncarnation(incarnation, frame)) {
-        onFrame({ type: 'error', code: 'stale_incarnation', message: 'Terminal changed incarnation; reattach to continue.' })
+        onFrame({
+          type: 'error',
+          code: 'stale_incarnation',
+          message: 'Terminal changed incarnation; reattach to continue.',
+        })
         return finish('Terminal changed incarnation.')
       }
       if (frame.type === 'snapshot') {

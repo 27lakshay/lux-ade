@@ -192,54 +192,77 @@ function controlArgs(action: 'list' | 'start', profileId?: string): { binary: st
   if (override !== undefined && !isAbsolute(override)) {
     throw new CliError('usage', 'ADE_CONTROL_BIN must be an absolute executable path.')
   }
-  const binary = override ?? (repositoryCli ? join(repositoryRoot, 'target/debug/ade-control') :
-    join(dirname(cliPath), 'ade-control'))
-  const profilesHome = process.env.ADE_PROFILES_HOME ?? (repositoryCli && !override
-    ? join(repositoryRoot, '.ade/dev-profiles-v2') : undefined)
+  const binary =
+    override ??
+    (repositoryCli ? join(repositoryRoot, 'target/debug/ade-control') : join(dirname(cliPath), 'ade-control'))
+  const profilesHome =
+    process.env.ADE_PROFILES_HOME ??
+    (repositoryCli && !override ? join(repositoryRoot, '.ade/dev-profiles-v2') : undefined)
   const daemon = process.env.ADE_DAEMON_BIN
   if (daemon !== undefined && !isAbsolute(daemon)) {
     throw new CliError('usage', 'ADE_DAEMON_BIN must be an absolute executable path.')
   }
-  return { binary, args: ['profiles', ...(profilesHome ? ['--home', profilesHome] : []),
-    ...(action === 'start' && daemon ? ['--daemon', daemon] : []), action,
-    ...(profileId ? [profileId] : [])] }
+  return {
+    binary,
+    args: [
+      'profiles',
+      ...(profilesHome ? ['--home', profilesHome] : []),
+      ...(action === 'start' && daemon ? ['--daemon', daemon] : []),
+      action,
+      ...(profileId ? [profileId] : []),
+    ],
+  }
 }
 
 async function controlProfiles(action: 'list' | 'start', profileId?: string): Promise<Record<string, unknown>> {
   const { binary, args } = controlArgs(action, profileId)
   const packaged = basename(dirname(binary)) === 'MacOS' && basename(resolve(dirname(binary), '..')) === 'Contents'
-  const environment = packaged ? {
-    ...process.env,
-    ADE_NODE_BIN: join(dirname(binary), 'Lux ADE'),
-    ADE_BUN_BIN: resolve(dirname(binary), '../Resources/bin/bun'),
-    ADE_CONTROL_PACKAGED: '1',
-    ELECTRON_RUN_AS_NODE: '1',
-  } : process.env
+  const environment = packaged
+    ? {
+        ...process.env,
+        ADE_NODE_BIN: join(dirname(binary), 'Lux ADE'),
+        ADE_BUN_BIN: resolve(dirname(binary), '../Resources/bin/bun'),
+        ADE_CONTROL_PACKAGED: '1',
+        ELECTRON_RUN_AS_NODE: '1',
+      }
+    : process.env
   let stdout: string
   try {
-    stdout = (await execFileAsync(binary, args, { timeout: 35_000, maxBuffer: 1024 * 1024,
-      env: environment })).stdout
+    stdout = (await execFileAsync(binary, args, { timeout: 35_000, maxBuffer: 1024 * 1024, env: environment })).stdout
   } catch (error) {
     const failure = error as Error & { code?: string; killed?: boolean; stderr?: string }
     if (failure.code === 'ENOENT' || failure.code === 'EACCES') {
       throw new CliError('unavailable', `Profile controller is unavailable at ${binary}.`)
     }
-    if (failure.killed) throw new CliError('timeout', 'Profile controller timed out; inspect the selected profile before retrying.')
+    if (failure.killed)
+      throw new CliError('timeout', 'Profile controller timed out; inspect the selected profile before retrying.')
     throw new CliError('daemon', failure.stderr?.trim() || 'Profile controller failed.')
   }
   let value: unknown
-  try { value = JSON.parse(stdout) }
-  catch { throw new CliError('protocol', 'Profile controller returned invalid JSON.') }
+  try {
+    value = JSON.parse(stdout)
+  } catch {
+    throw new CliError('protocol', 'Profile controller returned invalid JSON.')
+  }
   return object(value)
 }
 
 async function managedProfiles(): Promise<Record<string, unknown>> {
   const result = await controlProfiles('list')
-  if (result.type !== 'profiles' || !Array.isArray(result.profiles) ||
+  if (
+    result.type !== 'profiles' ||
+    !Array.isArray(result.profiles) ||
     !(result.selected_id === null || typeof result.selected_id === 'string') ||
-    result.profiles.some((profile) => !profile || typeof profile !== 'object' ||
-      typeof profile.id !== 'string' || typeof profile.name !== 'string' ||
-      typeof profile.home !== 'string' || typeof profile.selected !== 'boolean')) {
+    result.profiles.some(
+      (profile) =>
+        !profile ||
+        typeof profile !== 'object' ||
+        typeof profile.id !== 'string' ||
+        typeof profile.name !== 'string' ||
+        typeof profile.home !== 'string' ||
+        typeof profile.selected !== 'boolean',
+    )
+  ) {
     throw new CliError('protocol', 'Profile controller returned an invalid profile list.')
   }
   return result
@@ -254,10 +277,14 @@ async function profileSocket(profileId: string): Promise<string> {
     throw new CliError('invalid_request', 'Profile ID is not registered on this host.')
   }
   const started = await controlProfiles('start', profileId)
-  if (started.type !== 'profile_started' ||
-    !started.profile || typeof started.profile !== 'object' ||
+  if (
+    started.type !== 'profile_started' ||
+    !started.profile ||
+    typeof started.profile !== 'object' ||
     (started.profile as Record<string, unknown>).id !== profileId ||
-    typeof started.socket !== 'string' || !isAbsolute(started.socket)) {
+    typeof started.socket !== 'string' ||
+    !isAbsolute(started.socket)
+  ) {
     throw new CliError('protocol', 'Profile controller started an unexpected profile or returned an invalid socket.')
   }
   return started.socket
@@ -346,23 +373,48 @@ async function main(): Promise<void> {
     const code: string = error instanceof DaemonRequestError || error instanceof CliError ? error.code : 'protocol'
     const message = error instanceof Error ? error.message : String(error)
     const daemon = error instanceof DaemonRequestError ? error : null
-    process.stderr.write(`${JSON.stringify({ type: 'error', code, message,
-      ...(daemon?.recovery ? { recovery: daemon.recovery } : {}),
-      ...(daemon ? { delivery: daemon.delivery } : {}),
-      ...(daemon && usedOperationId() ? { operation_id: usedOperationId() } : {}) })}\n`)
+    process.stderr.write(
+      `${JSON.stringify({
+        type: 'error',
+        code,
+        message,
+        ...(daemon?.recovery ? { recovery: daemon.recovery } : {}),
+        ...(daemon ? { delivery: daemon.delivery } : {}),
+        ...(daemon && usedOperationId() ? { operation_id: usedOperationId() } : {}),
+      })}\n`,
+    )
     // A daemon code without its own exit keeps `daemon`'s; a local failure without one is `protocol`'s.
-    process.exitCode = Object.hasOwn(exitCodes, code) ? exitCodes[code as keyof typeof exitCodes]
-      : daemon?.replied ? exitCodes.daemon : exitCodes.protocol
+    process.exitCode = Object.hasOwn(exitCodes, code)
+      ? exitCodes[code as keyof typeof exitCodes]
+      : daemon?.replied
+        ? exitCodes.daemon
+        : exitCodes.protocol
   }
 }
 
 /** The exit code for each error code, as the usage text documents it. */
 const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
-  usage: 2, invalid_request: 2, unavailable: 3, incompatible: 4, timeout: 5, protocol: 6,
-  daemon: 7, conflict: 8, outcome_unknown: 9, in_progress: 10, overloaded: 11, not_applied: 12,
-  needs_rebind: 13, host_resource_conflict: 14, host_resources_unavailable: 15,
-  lifecycle_command_failed: 16, lifecycle_unavailable: 16, lifecycle_invalid_output: 16,
-  lifecycle_outcome_unknown: 9, restored_send_held: 17, conversation_deleted: 18,
+  usage: 2,
+  invalid_request: 2,
+  unavailable: 3,
+  incompatible: 4,
+  timeout: 5,
+  protocol: 6,
+  daemon: 7,
+  conflict: 8,
+  outcome_unknown: 9,
+  in_progress: 10,
+  overloaded: 11,
+  not_applied: 12,
+  needs_rebind: 13,
+  host_resource_conflict: 14,
+  host_resources_unavailable: 15,
+  lifecycle_command_failed: 16,
+  lifecycle_unavailable: 16,
+  lifecycle_invalid_output: 16,
+  lifecycle_outcome_unknown: 9,
+  restored_send_held: 17,
+  conversation_deleted: 18,
 }
 
 void main()

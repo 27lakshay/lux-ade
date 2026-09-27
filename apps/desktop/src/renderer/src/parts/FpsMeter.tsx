@@ -27,7 +27,10 @@ export function FpsMeter() {
       className="pointer-events-none fixed left-1/2 top-[21px] z-50 -translate-x-1/2 rounded-md bg-overlay px-2.5 py-1 font-mono text-[11px] text-fg-muted shadow-[0_4px_12px_#0000004d] backdrop-blur-xl"
       aria-hidden
     >
-      <span ref={fpsRef} className="text-fg">–</span> fps
+      <span ref={fpsRef} className="text-fg">
+        –
+      </span>{' '}
+      fps
     </div>
   )
 }

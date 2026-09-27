@@ -35,5 +35,6 @@ test('the control lane socket sits beside the profile socket', async () => {
   for (const op of ['agent.cancel', 'terminal.stop', 'service.stop', 'hello', 'runtime.prepare_restart']) {
     assert.equal(controlOperations.has(op), true, op)
   }
-  for (const op of ['agent.send', 'conversation.get', 'session.subscribe']) assert.equal(controlOperations.has(op), false, op)
+  for (const op of ['agent.send', 'conversation.get', 'session.subscribe'])
+    assert.equal(controlOperations.has(op), false, op)
 })

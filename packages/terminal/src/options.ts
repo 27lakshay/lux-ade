@@ -7,7 +7,11 @@ import { suppressReplies } from './feed'
 
 /** `allowProposedApi` is required for `terminal.unicode`. */
 export const terminalOptions: ITerminalOptions & ITerminalInitOnlyOptions = {
-  cols: 100, rows: 30, convertEol: false, scrollback: 10_000, allowProposedApi: true,
+  cols: 100,
+  rows: 30,
+  convertEol: false,
+  scrollback: 10_000,
+  allowProposedApi: true,
 }
 
 /**

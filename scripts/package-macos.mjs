@@ -1,5 +1,16 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  cpSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
@@ -52,7 +63,19 @@ function validateProvider(folder) {
 
 if (process.platform !== 'darwin') throw new Error('package:mac requires macOS')
 run('pnpm', ['build'])
-run('node', ['scripts/cargo.mjs', 'build', '--locked', '--release', '-p', 'ade-daemon', '-p', 'ade-runtime', '--features', 'ade-runtime/native-terminal', '--bins'])
+run('node', [
+  'scripts/cargo.mjs',
+  'build',
+  '--locked',
+  '--release',
+  '-p',
+  'ade-daemon',
+  '-p',
+  'ade-runtime',
+  '--features',
+  'ade-runtime/native-terminal',
+  '--bins',
+])
 
 // pnpm deploy materializes each provider's pinned production closure, including
 // its native optional dependencies, without following development symlinks.
@@ -69,7 +92,9 @@ mkdirSync(contracts, { recursive: true })
 copyFileSync(join(root, 'packages/contracts/package.json'), join(contracts, 'package.json'))
 cpSync(join(root, 'packages/contracts/dist'), join(contracts, 'dist'), { recursive: true })
 cpSync(join(root, 'packages/contracts/schema'), join(contracts, 'schema'), { recursive: true })
-writeFileSync(join(stage, 'ade'), `#!/bin/sh
+writeFileSync(
+  join(stage, 'ade'),
+  `#!/bin/sh
 set -eu
 entry=$0
 while [ -L "$entry" ]; do
@@ -84,32 +109,56 @@ export ADE_CONTROL_BIN="$macos/ade-control"
 export ADE_DAEMON_BIN="$macos/ade-daemon"
 export ELECTRON_RUN_AS_NODE=1
 exec "$macos/Lux ADE" "$macos/../Resources/cli/dist/index.js" "$@"
-`, { mode: 0o755 })
-for (const [packageName, folder] of [['ade-claude-adapter', 'claude'], ['ade-omp-bridge', 'omp']]) {
-  run('pnpm', ['--filter', packageName, 'deploy', '--config.inject-workspace-packages=true', '--prod', '--frozen-lockfile', '--ignore-scripts', join(providers, folder)])
+`,
+  { mode: 0o755 },
+)
+for (const [packageName, folder] of [
+  ['ade-claude-adapter', 'claude'],
+  ['ade-omp-bridge', 'omp'],
+]) {
+  run('pnpm', [
+    '--filter',
+    packageName,
+    'deploy',
+    '--config.inject-workspace-packages=true',
+    '--prod',
+    '--frozen-lockfile',
+    '--ignore-scripts',
+    join(providers, folder),
+  ])
   copyFileSync(join(root, 'providers', folder, 'package.json'), join(providers, folder, 'package.json'))
   walk(join(providers, folder), (filename) => {
     if (relative(join(providers, folder), filename).split(sep).includes('node_modules')) return
-    if (filename.endsWith('.test.mjs') || filename.endsWith('fake-sdk.mjs') || filename.endsWith('mock-cli.mjs') || filename.endsWith('transport-fixture.mjs')) {
+    if (
+      filename.endsWith('.test.mjs') ||
+      filename.endsWith('fake-sdk.mjs') ||
+      filename.endsWith('mock-cli.mjs') ||
+      filename.endsWith('transport-fixture.mjs')
+    ) {
       rmSync(filename)
     }
   })
   validateProvider(folder)
 }
 mkdirSync(join(providers, 'codex'), { recursive: true })
-for (const name of ['shared-server.mjs']) copyFileSync(join(root, 'providers/codex', name), join(providers, 'codex', name))
+for (const name of ['shared-server.mjs'])
+  copyFileSync(join(root, 'providers/codex', name), join(providers, 'codex', name))
 mkdirSync(join(providers, 'opencode'), { recursive: true })
 for (const name of readdirSync(join(root, 'providers/opencode'))) {
-  if (!name.endsWith('.mjs') || name.endsWith('.test.mjs') || name.includes('fixture') || name.includes('mock')) continue
+  if (!name.endsWith('.mjs') || name.endsWith('.test.mjs') || name.includes('fixture') || name.includes('mock'))
+    continue
   copyFileSync(join(root, 'providers/opencode', name), join(providers, 'opencode', name))
 }
 for (const name of ['plan.mjs', 'tool.mjs']) copyFileSync(join(root, 'providers', name), join(providers, name))
 // The backend plugin host (F057); the daemon resolves Resources/packages/plugin-host/src/host.mjs.
 const pluginHost = join(stage, 'packages/plugin-host/src')
 mkdirSync(pluginHost, { recursive: true })
-for (const name of ['host.mjs', 'protocol.mjs']) copyFileSync(join(root, 'packages/plugin-host/src', name), join(pluginHost, name))
+for (const name of ['host.mjs', 'protocol.mjs'])
+  copyFileSync(join(root, 'packages/plugin-host/src', name), join(pluginHost, name))
 
-const bun = realpathSync(process.env.ADE_PACKAGE_BUN_BIN || execFileSync('/bin/sh', ['-c', 'command -v bun'], { encoding: 'utf8' }).trim())
+const bun = realpathSync(
+  process.env.ADE_PACKAGE_BUN_BIN || execFileSync('/bin/sh', ['-c', 'command -v bun'], { encoding: 'utf8' }).trim(),
+)
 if (!statSync(bun).isFile()) throw new Error('A Bun executable is required for Oh My Pi and Codex')
 const installedBunVersion = execFileSync(bun, ['--version'], { encoding: 'utf8' }).trim()
 if (installedBunVersion !== bunVersion) throw new Error(`Expected Bun ${bunVersion}, found ${installedBunVersion}`)
@@ -118,7 +167,11 @@ copyFileSync(bun, join(bin, 'bun'))
 // The bundle's Node for provider bridges and the plugin host: Electron run as
 // Node. ELECTRON_RUN_AS_NODE is set here, for this process only, so it never
 // reaches the daemon's environment and so never a terminal, service or tool.
-writeFileSync(join(bin, 'ade-node'), `#!/bin/sh
+writeFileSync(
+  join(bin, 'ade-node'),
+  `#!/bin/sh
 ELECTRON_RUN_AS_NODE=1 exec "\${0%/*}/../../MacOS/Lux ADE" "$@"
-`, { mode: 0o755 })
+`,
+  { mode: 0o755 },
+)
 run('pnpm', ['exec', 'electron-builder', '--mac', '--dir', '--publish', 'never', '--config', 'electron-builder.yml'])

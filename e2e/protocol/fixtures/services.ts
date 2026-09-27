@@ -106,8 +106,12 @@ export function nodeService(program: string, extra: Omit<ServiceConfig, 'program
 }
 
 /** Create a service at revision 0 and return it. */
-export async function configureService(profile: ScratchProfile, workspaceId: string, name: string,
-  config: ServiceConfig) {
+export async function configureService(
+  profile: ScratchProfile,
+  workspaceId: string,
+  name: string,
+  config: ServiceConfig,
+) {
   return (await profile.call('service.configure', { workspace_id: workspaceId, name, revision: 0, config })).service
 }
 
@@ -115,14 +119,25 @@ export async function inspectService(profile: ScratchProfile, workspaceId: strin
   return profile.call('service.inspect', { workspace_id: workspaceId, name })
 }
 
-export async function serviceState(profile: ScratchProfile, workspaceId: string, name: string): Promise<string | undefined> {
+export async function serviceState(
+  profile: ScratchProfile,
+  workspaceId: string,
+  name: string,
+): Promise<string | undefined> {
   return (await profile.call('service.list', { workspace_id: workspaceId })).states[name]?.state
 }
 
 /** Wait until `service.inspect` reports `state` as the service's readiness. */
-export async function waitForReadiness(profile: ScratchProfile, workspaceId: string, name: string, state: string,
-  timeout = 15_000): Promise<void> {
-  await expect.poll(async () => (await inspectService(profile, workspaceId, name)).readiness.state, { timeout }).toBe(state)
+export async function waitForReadiness(
+  profile: ScratchProfile,
+  workspaceId: string,
+  name: string,
+  state: string,
+  timeout = 15_000,
+): Promise<void> {
+  await expect
+    .poll(async () => (await inspectService(profile, workspaceId, name)).readiness.state, { timeout })
+    .toBe(state)
 }
 
 /** Decode a runtime or durable log tail to text, whatever field carries it. */
@@ -139,11 +154,17 @@ export function logText(tail: unknown): string {
 }
 
 /** GET `url` and parse the JSON body. Never throws on an HTTP error status. */
-export async function httpGet(url: string): Promise<{ status: number; text: string; json: Record<string, unknown> | null }> {
+export async function httpGet(
+  url: string,
+): Promise<{ status: number; text: string; json: Record<string, unknown> | null }> {
   const response = await fetch(url, { headers: { connection: 'close' }, signal: AbortSignal.timeout(10_000) })
   const text = await response.text()
   let json: Record<string, unknown> | null = null
-  try { json = JSON.parse(text) as Record<string, unknown> } catch { /* Not JSON: a proxy refusal. */ }
+  try {
+    json = JSON.parse(text) as Record<string, unknown>
+  } catch {
+    /* Not JSON: a proxy refusal. */
+  }
   return { status: response.status, text, json }
 }
 
@@ -151,7 +172,10 @@ export async function httpGet(url: string): Promise<{ status: number; text: stri
 export function websocketMessage(url: string, timeoutMs = 10_000): Promise<string> {
   return new Promise((resolveMessage, rejectMessage) => {
     const socket = new WebSocket(url.replace(/^http/, 'ws'))
-    const timer = setTimeout(() => { socket.close(); rejectMessage(new Error(`No WebSocket message from ${url}`)) }, timeoutMs)
+    const timer = setTimeout(() => {
+      socket.close()
+      rejectMessage(new Error(`No WebSocket message from ${url}`))
+    }, timeoutMs)
     socket.addEventListener('message', (event) => {
       clearTimeout(timer)
       socket.close()
@@ -184,7 +208,11 @@ export function serviceNameForPort(workspaceId: string, variable: string, port: 
  * One raw protocol line and its reply frame as sent, error frames included, so
  * a spec can assert fields such as `code` and `recovery` that the SDK drops.
  */
-export function rawReply(socket: string, request: Record<string, unknown>, timeoutMs = 30_000): Promise<Record<string, unknown>> {
+export function rawReply(
+  socket: string,
+  request: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<Record<string, unknown>> {
   return new Promise((resolveReply, rejectReply) => {
     const peer = createConnection(socket)
     let frame = ''
@@ -196,14 +224,18 @@ export function rawReply(socket: string, request: Record<string, unknown>, timeo
       const end = frame.indexOf('\n')
       if (end < 0) return
       peer.destroy()
-      try { resolveReply(JSON.parse(frame.slice(0, end)) as Record<string, unknown>) } catch (error) { rejectReply(error) }
+      try {
+        resolveReply(JSON.parse(frame.slice(0, end)) as Record<string, unknown>)
+      } catch (error) {
+        rejectReply(error)
+      }
     })
     peer.once('error', rejectReply)
     peer.once('close', () => rejectReply(new Error('Connection closed before a reply')))
   })
 }
 
-export type ForeignListener ={ pid: number; port: number; close(): Promise<void> }
+export type ForeignListener = { pid: number; port: number; close(): Promise<void> }
 
 /**
  * A process outside ADE that listens on 127.0.0.1:`port` (0 for any), owned by
@@ -223,7 +255,8 @@ server.listen(${port}, '127.0.0.1', () => console.log('listening ' + server.addr
       output += chunk.toString()
       const listening = /listening (\d+)/.exec(output)
       if (listening) resolveBound(Number(listening[1]))
-      else if (/error/.test(output)) rejectBound(new Error(`The foreign listener could not bind ${port}: ${output.trim()}`))
+      else if (/error/.test(output))
+        rejectBound(new Error(`The foreign listener could not bind ${port}: ${output.trim()}`))
     })
     child.once('exit', () => rejectBound(new Error(`The foreign listener exited: ${output.trim()}`)))
   })

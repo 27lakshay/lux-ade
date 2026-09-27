@@ -13,10 +13,19 @@ import { installAndEnable, pluginLines, stagePlugin } from '../fixtures/plugins'
 
 let operations = 0
 
-function invoke(profile: ScratchProfile, pluginId: string, commandId: string, args: unknown = null,
-  operationId = `recovery-${process.pid}-${++operations}`, timeoutMs = 90_000) {
-  return profile.call('plugin.command.invoke', { operation_id: operationId, plugin_id: pluginId, command_id: commandId, args },
-    { timeoutMs })
+function invoke(
+  profile: ScratchProfile,
+  pluginId: string,
+  commandId: string,
+  args: unknown = null,
+  operationId = `recovery-${process.pid}-${++operations}`,
+  timeoutMs = 90_000,
+) {
+  return profile.call(
+    'plugin.command.invoke',
+    { operation_id: operationId, plugin_id: pluginId, command_id: commandId, args },
+    { timeoutMs },
+  )
 }
 
 async function hostStatus(profile: ScratchProfile, pluginId: string) {
@@ -34,14 +43,20 @@ async function healthyPlugin(ade: { root: string }, profile: ScratchProfile): Pr
 }
 
 async function expectHealthyCore(profile: ScratchProfile, healthy: string): Promise<void> {
-  expect((await invoke(profile, healthy, 'e2e.backend.echo', { ok: true })).outcome).toMatchObject({ status: 'completed' })
+  expect((await invoke(profile, healthy, 'e2e.backend.echo', { ok: true })).outcome).toMatchObject({
+    status: 'completed',
+  })
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   expect(workspace.id).toBeTruthy()
-  expect((await profile.call('plugin.list', {})).plugins.map((plugin) => plugin.id).sort())
-    .toEqual(expect.arrayContaining([healthy, 'e2e.faulty']))
+  expect((await profile.call('plugin.list', {})).plugins.map((plugin) => plugin.id).sort()).toEqual(
+    expect.arrayContaining([healthy, 'e2e.faulty']),
+  )
 }
 
-test('safe mode: a backend whose activation keeps failing ends errored after bounded restarts; the core and other plugins keep working, across a daemon restart', async ({ ade, profile }) => {
+test('safe mode: a backend whose activation keeps failing ends errored after bounded restarts; the core and other plugins keep working, across a daemon restart', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(120_000)
   const healthy = await healthyPlugin(ade, profile)
   const { pluginId, outDir } = await installAndEnable(profile, await stageFaultyPlugin(ade.root))
@@ -52,14 +67,21 @@ test('safe mode: a backend whose activation keeps failing ends errored after bou
   // The supervisor retries on its schedule (500 ms, 2 s, 5 s), then stops for good.
   await expect.poll(async () => (await hostStatus(profile, pluginId)).state, { timeout: 30_000 }).toBe('errored')
   const errored = await hostStatus(profile, pluginId)
-  expect(errored).toMatchObject({ crashes: 4, pid: null, retry_at: null,
-    last_error: expect.stringContaining('fixture activation failed') })
-  expect(errored.log_tail.some((line) => line.includes('host start failed') && line.includes('fixture activation failed')))
-    .toBe(true)
+  expect(errored).toMatchObject({
+    crashes: 4,
+    pid: null,
+    retry_at: null,
+    last_error: expect.stringContaining('fixture activation failed'),
+  })
+  expect(
+    errored.log_tail.some((line) => line.includes('host start failed') && line.includes('fixture activation failed')),
+  ).toBe(true)
   expect(await events(outDir, 'activate-failed')).toBe(4)
 
   // Errored means no further starts: a new call is refused with the recovery step, and nothing activates.
-  await expect(invoke(profile, pluginId, 'e2e.faulty.echo')).rejects.toThrow(/stays stopped; run `ade plugin host restart e2e\.faulty`/)
+  await expect(invoke(profile, pluginId, 'e2e.faulty.echo')).rejects.toThrow(
+    /stays stopped; run `ade plugin host restart e2e\.faulty`/,
+  )
   expect(await events(outDir, 'activate-failed')).toBe(4)
   await expectHealthyCore(profile, healthy)
   // The CLI shows the same errored host.
@@ -76,8 +98,10 @@ test('safe mode: a backend whose activation keeps failing ends errored after bou
   await healActivation(outDir, 'fail-activate')
   const restarted = await profile.call('plugin.host.restart', { plugin_id: pluginId })
   expect(restarted.host).toMatchObject({ state: 'running', crashes: 0, last_error: null })
-  expect((await invoke(profile, pluginId, 'e2e.faulty.echo', { back: true })).outcome)
-    .toMatchObject({ status: 'completed', value: { args: { back: true } } })
+  expect((await invoke(profile, pluginId, 'e2e.faulty.echo', { back: true })).outcome).toMatchObject({
+    status: 'completed',
+    value: { args: { back: true } },
+  })
 
   // Disabling and re-enabling start a clean activation generation.
   await profile.call('plugin.disable', { plugin_id: pluginId })
@@ -92,7 +116,10 @@ test('safe mode: a backend whose activation keeps failing ends errored after bou
   expect(await events(outDir, 'activate-failed')).toBe(settled)
 })
 
-test('a host that exits during activation is a crash; a host that hangs in activation is stopped at the deadline', async ({ ade, profile }) => {
+test('a host that exits during activation is a crash; a host that hangs in activation is stopped at the deadline', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(120_000)
   const healthy = await healthyPlugin(ade, profile)
   const { pluginId, outDir } = await installAndEnable(profile, await stageFaultyPlugin(ade.root))
@@ -109,7 +136,8 @@ test('a host that exits during activation is a crash; a host that hangs in activ
   await breakActivation(outDir, 'hang-activate')
   const restart = profile.call('plugin.host.restart', { plugin_id: pluginId }, { timeoutMs: 60_000 })
   await expect.poll(() => events(outDir, 'activate-hang')).toBe(1)
-  const hung = (await pluginLines(outDir, 'lifecycle.jsonl')).filter((line) => line.event === 'activate-hang')[0].pid as number
+  const hung = (await pluginLines(outDir, 'lifecycle.jsonl')).filter((line) => line.event === 'activate-hang')[0]
+    .pid as number
   // The rest of the daemon answers while the activation hangs, and so does the plugin's own status.
   await expectHealthyCore(profile, healthy)
   const during = await profile.call('plugin.host.status', { plugin_id: pluginId }, { timeoutMs: 5_000 })
@@ -118,15 +146,23 @@ test('a host that exits during activation is a crash; a host that hangs in activ
   await expect(restart).rejects.toMatchObject({ code: 'failed' })
   expect(await isRunning(hung)).toBe(false)
   await healActivation(outDir, 'hang-activate')
-  await expect.poll(async () => {
-    const host = await hostStatus(profile, pluginId)
-    if (host.state === 'errored') await profile.call('plugin.host.restart', { plugin_id: pluginId })
-    return (await hostStatus(profile, pluginId)).state
-  }, { timeout: 30_000 }).toBe('running')
+  await expect
+    .poll(
+      async () => {
+        const host = await hostStatus(profile, pluginId)
+        if (host.state === 'errored') await profile.call('plugin.host.restart', { plugin_id: pluginId })
+        return (await hostStatus(profile, pluginId)).state
+      },
+      { timeout: 30_000 },
+    )
+    .toBe('running')
   expect((await invoke(profile, pluginId, 'e2e.faulty.echo')).outcome).toMatchObject({ status: 'completed' })
 })
 
-test('a frozen host is reported unresponsive and replaced by a restart; the frozen call settles as outcome_unknown', async ({ ade, profile }) => {
+test('a frozen host is reported unresponsive and replaced by a restart; the frozen call settles as outcome_unknown', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(120_000)
   const healthy = await healthyPlugin(ade, profile)
   const { pluginId, outDir } = await installAndEnable(profile, await stageFaultyPlugin(ade.root))
@@ -146,7 +182,9 @@ test('a frozen host is reported unresponsive and replaced by a restart; the froz
   await expect.poll(() => isRunning(frozenPid)).toBe(false)
   expect(await frozen).toMatchObject({ code: 'outcome_unknown' })
   // The frozen call is never run again under its ID.
-  await expect(invoke(profile, pluginId, 'e2e.faulty.freeze', null, 'freeze-1')).rejects.toMatchObject({ code: 'outcome_unknown' })
+  await expect(invoke(profile, pluginId, 'e2e.faulty.freeze', null, 'freeze-1')).rejects.toMatchObject({
+    code: 'outcome_unknown',
+  })
   expect(await events(outDir, 'freeze')).toBe(1)
   const after = (await invoke(profile, pluginId, 'e2e.faulty.echo')).outcome as { value: { pid: number } }
   expect(after.value.pid).toBe(restarted.host.pid)
@@ -156,7 +194,8 @@ test('a frozen host is reported unresponsive and replaced by a restart; the froz
 test('the plugin log is a bounded tail of whole lines, newest last', async ({ ade, profile }) => {
   const { pluginId } = await installAndEnable(profile, await stageFaultyPlugin(ade.root))
   await invoke(profile, pluginId, 'e2e.faulty.noise', { lines: 1500, width: 4000 })
-  await expect.poll(async () => (await hostStatus(profile, pluginId)).log_tail.at(-1) ?? '')
+  await expect
+    .poll(async () => (await hostStatus(profile, pluginId)).log_tail.at(-1) ?? '')
     .toMatch(/^noise line 1500 /)
   const tail = (await hostStatus(profile, pluginId)).log_tail
   expect(tail.length).toBeLessThanOrEqual(200)

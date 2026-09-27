@@ -2,8 +2,15 @@
 // Run after `pnpm build:sdk`: node --test packages/client/src/outbox.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { Outbox, OutboxPersistenceUncertain, decideGitAdmission, decideSendRecovery, findPendingSend,
-  gitAdmitted, pendingGitOperation } from '../dist/outbox.js'
+import {
+  Outbox,
+  OutboxPersistenceUncertain,
+  decideGitAdmission,
+  decideSendRecovery,
+  findPendingSend,
+  gitAdmitted,
+  pendingGitOperation,
+} from '../dist/outbox.js'
 
 const codec = {
   version: 3,
@@ -77,7 +84,13 @@ test('a failed save keeps memory unchanged, and an uncertain save refuses all la
 test('open refuses duplicate owners, overflow and invalid files', async () => {
   const record = { owner: 'a', id: '1', body: 'x' }
   await assert.rejects(Outbox.open(storage({ version: 3, records: [record, record] }), codec), /duplicate owners/)
-  await assert.rejects(Outbox.open(storage({ version: 3, records: [record, { ...record, owner: 'b' }, { ...record, owner: 'c' }] }), codec), /full/)
+  await assert.rejects(
+    Outbox.open(
+      storage({ version: 3, records: [record, { ...record, owner: 'b' }, { ...record, owner: 'c' }] }),
+      codec,
+    ),
+    /full/,
+  )
   await assert.rejects(Outbox.open(storage({ version: 1, records: [] }), codec), /invalid/)
   const outbox = await Outbox.open(storage(undefined), codec)
   await outbox.put(record, same)
@@ -107,20 +120,30 @@ test('send recovery follows the daemon outcome once it lists the intent', () => 
 })
 
 test('send recovery holds restored records and refuses mismatches', () => {
-  assert.deepEqual(decideSendRecovery(send({ local: local({ restoreHold: true }), daemon: listed('prepared') })), { kind: 'hold' })
+  assert.deepEqual(decideSendRecovery(send({ local: local({ restoreHold: true }), daemon: listed('prepared') })), {
+    kind: 'hold',
+  })
   assert.equal(decideSendRecovery(send({ local: local({ requestId: 'other' }) })).kind, 'conflict')
   assert.equal(decideSendRecovery(send({ daemon: listed('accepted', { requestId: 'other' }) })).kind, 'conflict')
   assert.equal(decideSendRecovery(send({ daemon: listed('accepted', { matches: false }) })).kind, 'conflict')
 })
 
-const pending = (conversation, request = `r-${conversation}`) =>
-  ({ intent: { conversation_id: conversation, request_id: request }, outcome: 'prepared' })
+const pending = (conversation, request = `r-${conversation}`) => ({
+  intent: { conversation_id: conversation, request_id: request },
+  outcome: 'prepared',
+})
 
 test('findPendingSend pages by Conversation ID and stops once past it', async () => {
-  const pages = { '': { sends: [pending('a'), pending('b')], next_cursor: 'b' },
-    b: { sends: [pending('c'), pending('e')], next_cursor: 'e' }, e: { sends: [pending('f')], next_cursor: null } }
+  const pages = {
+    '': { sends: [pending('a'), pending('b')], next_cursor: 'b' },
+    b: { sends: [pending('c'), pending('e')], next_cursor: 'e' },
+    e: { sends: [pending('f')], next_cursor: null },
+  }
   const seen = []
-  const page = async (after) => { seen.push(after ?? ''); return pages[after ?? ''] }
+  const page = async (after) => {
+    seen.push(after ?? '')
+    return pages[after ?? '']
+  }
   assert.equal((await findPendingSend('c', page)).intent.request_id, 'r-c')
   assert.deepEqual(seen, ['', 'b'])
   seen.length = 0
@@ -130,12 +153,21 @@ test('findPendingSend pages by Conversation ID and stops once past it', async ()
 })
 
 test('findPendingSend refuses a list that does not advance or never ends', async () => {
-  await assert.rejects(findPendingSend('z', async (after) => ({ sends: [pending('a')], next_cursor: after ?? 'a' })), /did not advance/)
+  await assert.rejects(
+    findPendingSend('z', async (after) => ({ sends: [pending('a')], next_cursor: after ?? 'a' })),
+    /did not advance/,
+  )
   let count = 0
-  await assert.rejects(findPendingSend('zz', async () => ({ sends: [pending('a')], next_cursor: `a${++count}` }), 3), /too long/)
+  await assert.rejects(
+    findPendingSend('zz', async () => ({ sends: [pending('a')], next_cursor: `a${++count}` }), 3),
+    /too long/,
+  )
 })
 
-const entry = (id, status, acknowledged_at = null) => ({ operation: { id, status, op: 'review.stage', started_at: 1 }, acknowledged_at })
+const entry = (id, status, acknowledged_at = null) => ({
+  operation: { id, status, op: 'review.stage', started_at: 1 },
+  acknowledged_at,
+})
 
 test('a workspace admits one Git operation that needs the person at a time', () => {
   assert.deepEqual(decideGitAdmission('n', false, null, []), { kind: 'admit' })
@@ -152,7 +184,10 @@ test('a workspace admits one Git operation that needs the person at a time', () 
 test('the pending Git operation prefers the local record, then the newest daemon one', () => {
   const record = { request_id: 'l', op: 'review.commit' }
   assert.deepEqual(pendingGitOperation(record, [entry('o', 'running')]), { source: 'local', record })
-  assert.equal(pendingGitOperation(null, [entry('a', 'interrupted', 3), entry('b', 'interrupted')]).entry.operation.id, 'b')
+  assert.equal(
+    pendingGitOperation(null, [entry('a', 'interrupted', 3), entry('b', 'interrupted')]).entry.operation.id,
+    'b',
+  )
   assert.equal(pendingGitOperation(null, [entry('a', 'interrupted', 3)]), null)
   assert.equal(gitAdmitted('b', [entry('b', 'running')]), true)
   assert.equal(gitAdmitted('c', [entry('b', 'running')]), false)

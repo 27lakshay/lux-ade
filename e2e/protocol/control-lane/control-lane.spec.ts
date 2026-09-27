@@ -12,7 +12,13 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { expect, isRunning, prompts, send, startConversation, test, type ScratchProfile } from '../fixtures'
 import { socketAccess, socketReply } from '../fixtures/sockets'
-import { configureService, nodeService, serviceState, waitForReadiness, writeServicePrograms } from '../fixtures/services'
+import {
+  configureService,
+  nodeService,
+  serviceState,
+  waitForReadiness,
+  writeServicePrograms,
+} from '../fixtures/services'
 import { settledExit, terminalMetrics } from '../fixtures/terminals'
 import { connectOutcome, expectNoneLost, fillBacklog, REFUSED_AT_SOCKET } from './backlog'
 
@@ -25,25 +31,36 @@ function controlSocket(profile: ScratchProfile): string {
 async function runningTurn(profile: ScratchProfile, conversationId: string): Promise<string> {
   await send(profile, conversationId, prompts.hold)
   let turn: string | null = null
-  await expect.poll(async () => {
-    const current = (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
-    turn = current.status === 'running' ? current.active_turn_id ?? null : null
-    return turn
-  }, { timeout: 20_000 }).not.toBeNull()
+  await expect
+    .poll(
+      async () => {
+        const current = (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
+        turn = current.status === 'running' ? (current.active_turn_id ?? null) : null
+        return turn
+      },
+      { timeout: 20_000 },
+    )
+    .not.toBeNull()
   return turn!
 }
 
 /** A call's reply or error, held without an unhandled rejection while the spec acts. */
 function outcome<T>(call: Promise<T>): Promise<{ reply?: T; error?: unknown }> {
-  return call.then((reply) => ({ reply }), (error: unknown) => ({ error }))
+  return call.then(
+    (reply) => ({ reply }),
+    (error: unknown) => ({ error }),
+  )
 }
 
 async function interrupts(profile: ScratchProfile): Promise<Array<string | undefined>> {
-  return (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/interrupt')
+  return (await profile.mockCalls('codex'))
+    .filter((call) => call.method === 'turn/interrupt')
     .map((call) => (call.params as { turnId?: string }).turnId)
 }
 
-test('the control lane is an owner-only socket beside the profile socket that answers hello and health', async ({ profile }) => {
+test('the control lane is an owner-only socket beside the profile socket that answers hello and health', async ({
+  profile,
+}) => {
   expect(await socketAccess(controlSocket(profile))).toEqual({ mode: 0o600, uid: me, socket: true })
   const hello = await socketReply(controlSocket(profile), { op: 'hello' })
   expect(hello.frame).toMatchObject({ type: 'hello', pid: profile.hello.pid, boot_id: profile.hello.boot_id })
@@ -65,14 +82,20 @@ test('the control lane refuses ordinary commands before admission and nothing ru
     { op: 'subscribe', snapshot_format: 'xterm-replay-v1' },
   ]) {
     const refused = await socketReply(controlSocket(profile), request)
-    expect(refused.frame, request.op).toMatchObject({ type: 'error', code: 'invalid_request', pre_admission_rejected: true })
+    expect(refused.frame, request.op).toMatchObject({
+      type: 'error',
+      code: 'invalid_request',
+      pre_admission_rejected: true,
+    })
     expect(String(refused.frame!.message)).toContain(`${request.op} is not served on the control lane`)
   }
   expect((await profile.call('catalog.get', {})).catalog.conversations).toHaveLength(before)
   expect((await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')).toEqual([])
 })
 
-test('the control lane refuses a peer that is not the profile user, through the raw protocol, the SDK and the CLI', async ({ ade }) => {
+test('the control lane refuses a peer that is not the profile user, through the raw protocol, the SDK and the CLI', async ({
+  ade,
+}) => {
   const peerUid = join(ade.root, 'daemon-peer-uid')
   const profile = await ade.profile({ env: { ADE_E2E_DAEMON_PEER_UID_FILE: peerUid } })
   const { conversationId } = await startConversation(profile, 'codex')
@@ -82,8 +105,9 @@ test('the control lane refuses a peer that is not the profile user, through the 
     const hello = await socketReply(controlSocket(profile), { op: 'hello' })
     expect(hello.frame).toMatchObject({ type: 'error', code: 'unauthenticated' })
     // The refusal is a reply, so the SDK does not fall back to the profile socket.
-    await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }))
-      .rejects.toMatchObject({ code: 'unauthenticated', delivery: 'not_sent', replied: true })
+    await expect(
+      profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }),
+    ).rejects.toMatchObject({ code: 'unauthenticated', delivery: 'not_sent', replied: true })
     const cli = await profile.cli('conversation', 'cancel', conversationId, '--turn', turn)
     expect(cli.code).not.toBe(0)
     expect(cli.stderr).toMatch(/unauthenticated/)
@@ -95,7 +119,9 @@ test('the control lane refuses a peer that is not the profile user, through the 
   await expect.poll(() => interrupts(profile)).toEqual([turn])
 })
 
-test('a cancel sent while a connection flood fills the profile socket backlog is admitted on its first attempt', async ({ profile }) => {
+test('a cancel sent while a connection flood fills the profile socket backlog is admitted on its first attempt', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, conversationId)
   const full = await fillBacklog(profile, conversationId)
@@ -112,8 +138,12 @@ test('a cancel sent while a connection flood fills the profile socket backlog is
   const replies = await full.replies
   expectNoneLost(replies)
   expect(replies.filter((reply) => REFUSED_AT_SOCKET.test(reply)).length).toBeGreaterThan(0)
-  await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId }))
-    .conversation.status, { timeout: 30_000 }).toBe('interrupted')
+  await expect
+    .poll(
+      async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status,
+      { timeout: 30_000 },
+    )
+    .toBe('interrupted')
 })
 
 test('without the control lane, the same full backlog refuses the cancel before it is sent', async ({ profile }) => {
@@ -125,8 +155,9 @@ test('without the control lane, the same full backlog refuses the cancel before 
   try {
     // The daemon stays paused until the cancel settles, so its fallback
     // connection meets the full backlog however late it is made.
-    const cancelled = await outcome(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn },
-      { timeoutMs: 10_000 }))
+    const cancelled = await outcome(
+      profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }, { timeoutMs: 10_000 }),
+    )
     // The refusal is truthful: nothing was sent, so a retry is safe.
     expect(cancelled).toMatchObject({ error: { code: 'unavailable', delivery: 'not_sent', replied: false } })
   } finally {
@@ -138,7 +169,10 @@ test('without the control lane, the same full backlog refuses the cancel before 
   await expect.poll(() => interrupts(profile)).toEqual([turn])
 })
 
-test('terminal.stop and service.stop sent while a connection flood fills the profile socket backlog are admitted on their first attempt', async ({ profile, repo }) => {
+test('terminal.stop and service.stop sent while a connection flood fills the profile socket backlog are admitted on their first attempt', async ({
+  profile,
+  repo,
+}) => {
   test.setTimeout(90_000)
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
@@ -149,7 +183,8 @@ test('terminal.stop and service.stop sent while a connection flood fills the pro
   const { conversationId } = await startConversation(profile, 'codex', repo.path)
   const shell = (await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })).workspace
   let shellPid: number | null = null
-  await expect.poll(async () => (shellPid = (await terminalMetrics(profile, shell.id, shell.terminal_id))?.shell_pid ?? null))
+  await expect
+    .poll(async () => (shellPid = (await terminalMetrics(profile, shell.id, shell.terminal_id))?.shell_pid ?? null))
     .not.toBeNull()
 
   const full = await fillBacklog(profile, conversationId)
@@ -173,7 +208,9 @@ test('terminal.stop and service.stop sent while a connection flood fills the pro
   expect(await serviceState(profile, workspace.id, 'web')).toBe('stopped')
 })
 
-test('without a control lane, as with an older daemon, the SDK and the CLI stop work over the profile socket', async ({ profile }) => {
+test('without a control lane, as with an older daemon, the SDK and the CLI stop work over the profile socket', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   // Remove the lane's socket file: the daemon keeps serving its profile socket only.
   await rm(controlSocket(profile))
@@ -183,15 +220,19 @@ test('without a control lane, as with an older daemon, the SDK and the CLI stop 
   expect(cli.code, cli.stderr).toBe(0)
   await expect.poll(() => interrupts(profile)).toEqual([turn])
   // A daemon refusal over the profile socket arrives as its reply.
-  await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: 'turn-not-this-one' }))
-    .rejects.toMatchObject({ replied: true, message: expect.stringMatching(/no longer active/) })
+  await expect(
+    profile.call('agent.cancel', { conversation_id: conversationId, turn_id: 'turn-not-this-one' }),
+  ).rejects.toMatchObject({ replied: true, message: expect.stringMatching(/no longer active/) })
 })
 
 test('shutdown over the control lane hands the runtime over and removes both sockets', async ({ profile }) => {
   const daemonPid = profile.hello.pid
   const runtimePid = profile.hello.runtime_pid
-  const prepared = await socketReply(controlSocket(profile), { op: 'runtime.prepare_restart',
-    operation_id: `restart-${randomUUID()}`, boot_id: profile.hello.boot_id })
+  const prepared = await socketReply(controlSocket(profile), {
+    op: 'runtime.prepare_restart',
+    operation_id: `restart-${randomUUID()}`,
+    boot_id: profile.hello.boot_id,
+  })
   expect(prepared.frame).toMatchObject({ type: 'ack', boot_id: profile.hello.boot_id })
   await expect.poll(() => isRunning(daemonPid)).toBe(false)
   await expect(socketAccess(controlSocket(profile))).rejects.toThrow(/ENOENT/)
@@ -199,5 +240,8 @@ test('shutdown over the control lane hands the runtime over and removes both soc
   // The next daemon adopts the same runtime and opens a new control lane.
   const next = await profile.restartDaemon()
   expect(next.runtime_pid).toBe(runtimePid)
-  expect((await socketReply(controlSocket(profile), { op: 'hello' })).frame).toMatchObject({ type: 'hello', pid: next.pid })
+  expect((await socketReply(controlSocket(profile), { op: 'hello' })).frame).toMatchObject({
+    type: 'hello',
+    pid: next.pid,
+  })
 })

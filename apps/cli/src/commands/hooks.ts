@@ -49,8 +49,12 @@ function one(positionals: string[], usage: string): string {
   return positionals[0]
 }
 
-export async function runHookCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runHookCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'hook') return undefined
   switch (action) {
     case 'subscriptions':
@@ -65,10 +69,13 @@ export async function runHookCommand(socketPath: string, area: string | undefine
       }
       const after = count(parsed.named['--after'], '--after')
       const limit = count(parsed.named['--limit'], '--limit')
-      return dailyUseCommand(socketPath, { op: 'hook.delivery.list',
+      return dailyUseCommand(socketPath, {
+        op: 'hook.delivery.list',
         ...(status ? { status: status as Status } : {}),
         ...(parsed.named['--plugin'] ? { plugin_id: parsed.named['--plugin'] } : {}),
-        ...(after !== undefined ? { after } : {}), ...(limit !== undefined ? { limit } : {}) })
+        ...(after !== undefined ? { after } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      })
     }
     case 'inspect':
     case 'abandon': {
@@ -81,10 +88,17 @@ export async function runHookCommand(socketPath: string, area: string | undefine
       const effect_id = one(parsed.positionals, 'hook retry requires EFFECT_ID --request-id ID')
       const operation_id = parsed.named['--request-id']
       if (!operation_id || operation_id.length > 256) {
-        throw new CliError('usage', 'hook retry requires --request-id ID (1 to 256 characters); reuse it only to repeat the same retry.')
+        throw new CliError(
+          'usage',
+          'hook retry requires --request-id ID (1 to 256 characters); reuse it only to repeat the same retry.',
+        )
       }
-      return dailyUseCommand(socketPath, { op: 'hook.delivery.retry', effect_id, operation_id,
-        ...(parsed.flags.has('--acknowledge-unknown') ? { acknowledge_unknown: true } : {}) })
+      return dailyUseCommand(socketPath, {
+        op: 'hook.delivery.retry',
+        effect_id,
+        operation_id,
+        ...(parsed.flags.has('--acknowledge-unknown') ? { acknowledge_unknown: true } : {}),
+      })
     }
     default:
       throw new CliError('usage', 'Unknown hook command. Run ade --help for usage.')

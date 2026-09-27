@@ -12,7 +12,11 @@ let context
 
 function record(file, entry) {
   const directory = context?.settings.out_dir
-  if (directory) appendFileSync(join(directory, file), `${JSON.stringify({ pid: process.pid, generation: context.generation, ...entry })}\n`)
+  if (directory)
+    appendFileSync(
+      join(directory, file),
+      `${JSON.stringify({ pid: process.pid, generation: context.generation, ...entry })}\n`,
+    )
 }
 
 function switched(name) {
@@ -40,11 +44,14 @@ export async function activate(ctx) {
   // Blocks the host's event loop: the host can no longer answer anything.
   ctx.commands.register('e2e.faulty.freeze', () => {
     record('lifecycle.jsonl', { event: 'freeze' })
-    for (;;) { /* frozen */ }
+    for (;;) {
+      /* frozen */
+    }
   })
   ctx.commands.register('e2e.faulty.noise', (args) => {
     const lines = Number(args?.lines ?? 0)
-    for (let index = 1; index <= lines; index += 1) console.log(`noise line ${index} ${'x'.repeat(Number(args?.width ?? 0))}`)
+    for (let index = 1; index <= lines; index += 1)
+      console.log(`noise line ${index} ${'x'.repeat(Number(args?.width ?? 0))}`)
     return { lines }
   })
   ctx.hooks.on('workspace.created', (payload, meta) => {

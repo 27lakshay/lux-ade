@@ -15,12 +15,18 @@ const DEFAULT_MS = 30_000
 
 export function remoteDeadlineMs(op: string): number {
   switch (op) {
-    case 'remote.host.add': return ADD_BUDGET_MS + MARGIN_MS
-    case 'remote.host.probe': return PROBE_BUDGET_MS + MARGIN_MS
+    case 'remote.host.add':
+      return ADD_BUDGET_MS + MARGIN_MS
+    case 'remote.host.probe':
+      return PROBE_BUDGET_MS + MARGIN_MS
     // The revocation is recorded on the host over one ssh command (45 s).
-    case 'remote.host.revoke': return PROBE_BUDGET_MS + MARGIN_MS
-    case 'remote.host.start': return START_BUDGET_MS + MARGIN_MS
-    case 'remote.host.install': return INSTALL_BUDGET_MS + MARGIN_MS
-    default: return DEFAULT_MS
+    case 'remote.host.revoke':
+      return PROBE_BUDGET_MS + MARGIN_MS
+    case 'remote.host.start':
+      return START_BUDGET_MS + MARGIN_MS
+    case 'remote.host.install':
+      return INSTALL_BUDGET_MS + MARGIN_MS
+    default:
+      return DEFAULT_MS
   }
 }

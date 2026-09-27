@@ -35,7 +35,11 @@ export async function age(path: string, days: number): Promise<void> {
  * part) that no terminal or service owns, as a deleted workspace leaves
  * behind, idle for `days`.
  */
-export async function plantOrphanServiceLog(profile: ScratchProfile, days: number, body = 'orphan output\n'): Promise<string> {
+export async function plantOrphanServiceLog(
+  profile: ScratchProfile,
+  days: number,
+  body = 'orphan output\n',
+): Promise<string> {
   const directory = serviceLogDirectory(profile)
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const key = randomBytes(32).toString('hex')
@@ -45,8 +49,13 @@ export async function plantOrphanServiceLog(profile: ScratchProfile, days: numbe
 }
 
 /** Plant a rotated diagnostic log `<process>.<date>.jsonl`, aged `days`. */
-export async function plantDiagnosticLog(profile: ScratchProfile, process: string, date: string, days: number,
-  lines: unknown[] = [{ fields: { event: 'process_started' } }]): Promise<string> {
+export async function plantDiagnosticLog(
+  profile: ScratchProfile,
+  process: string,
+  date: string,
+  days: number,
+  lines: unknown[] = [{ fields: { event: 'process_started' } }],
+): Promise<string> {
   const directory = diagnosticLogDirectory(profile)
   await mkdir(directory, { recursive: true })
   const name = `${process}.${date}.jsonl`
@@ -56,8 +65,12 @@ export async function plantDiagnosticLog(profile: ScratchProfile, process: strin
 }
 
 /** Start a node HTTP service in `workspacePath` and return its workspace, start reply and log keys. */
-export async function startService(profile: ScratchProfile, workspacePath: string, name: string,
-  env: Record<string, string> = {}) {
+export async function startService(
+  profile: ScratchProfile,
+  workspacePath: string,
+  name: string,
+  env: Record<string, string> = {},
+) {
   const { workspace } = await profile.call('workspace.open', { path: workspacePath })
   const files = await writeServicePrograms(workspacePath)
   const before = new Set(await names(serviceLogDirectory(profile)))
@@ -65,10 +78,20 @@ export async function startService(profile: ScratchProfile, workspacePath: strin
   const started = await profile.call('service.start', { workspace_id: workspace.id, name })
   await waitForReadiness(profile, workspace.id, name, 'tcp_listening')
   let keys: string[] = []
-  await expect.poll(async () => {
-    keys = [...new Set((await names(serviceLogDirectory(profile))).filter((file) => !before.has(file))
-      .map((file) => file.split('.')[0]))]
-    return keys.length
-  }, { message: 'the service to write its durable log' }).toBeGreaterThan(0)
+  await expect
+    .poll(
+      async () => {
+        keys = [
+          ...new Set(
+            (await names(serviceLogDirectory(profile)))
+              .filter((file) => !before.has(file))
+              .map((file) => file.split('.')[0]),
+          ),
+        ]
+        return keys.length
+      },
+      { message: 'the service to write its durable log' },
+    )
+    .toBeGreaterThan(0)
   return { workspace, service, started, logKeys: keys }
 }

@@ -6,8 +6,12 @@ export const slashCommandUsage = `  command list ID                        List 
                                         Queue a listed command or skill in the provider's native form
 `
 
-export async function runSlashCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runSlashCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'command') return undefined
   if (action === 'list') {
     if (rest.length !== 1) throw new CliError('usage', 'command list takes one conversation ID.')
@@ -20,9 +24,14 @@ export async function runSlashCommand(socketPath: string, area: string | undefin
     const [conversation, kind, name] = rest
     if (kind !== 'command' && kind !== 'skill') throw new CliError('usage', 'Kind must be command or skill.')
     const options = namedOptions(rest.slice(3), ['--request-id', '--arguments'], 'command invoke')
-    const reply = await dailyUseCommand<'command.invoke'>(socketPath, { op: 'command.invoke',
-      operation_id: required(options['--request-id'], '--request-id'), conversation_id: conversation,
-      kind, name, ...(options['--arguments'] ? { arguments: options['--arguments'] } : {}) })
+    const reply = await dailyUseCommand<'command.invoke'>(socketPath, {
+      op: 'command.invoke',
+      operation_id: required(options['--request-id'], '--request-id'),
+      conversation_id: conversation,
+      kind,
+      name,
+      ...(options['--arguments'] ? { arguments: options['--arguments'] } : {}),
+    })
     const reason = typeof reply.reason === 'string' ? reply.reason : 'No reason was given.'
     if (reply.outcome === 'unavailable') throw new CliError('unavailable', reason)
     if (reply.outcome === 'unknown') throw new CliError('outcome_unknown', reason)

@@ -10,13 +10,20 @@ export type ProcessRow = { pid: number; ppid: number; pgid: number; state: strin
 export type OwnedProcess = { pid: number; role: string; command: string }
 
 export async function processTable(): Promise<ProcessRow[]> {
-  const { stdout } = await execFileAsync('ps', ['-axww', '-o', 'pid=,ppid=,pgid=,state=,command='],
-    { maxBuffer: 16 * 1024 * 1024 })
+  const { stdout } = await execFileAsync('ps', ['-axww', '-o', 'pid=,ppid=,pgid=,state=,command='], {
+    maxBuffer: 16 * 1024 * 1024,
+  })
   const rows: ProcessRow[] = []
   for (const line of stdout.split('\n')) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)
-    if (match) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]),
-      state: match[4], command: match[5] })
+    if (match)
+      rows.push({
+        pid: Number(match[1]),
+        ppid: Number(match[2]),
+        pgid: Number(match[3]),
+        state: match[4],
+        command: match[5],
+      })
   }
   return rows
 }
@@ -26,8 +33,15 @@ export async function processTable(): Promise<ProcessRow[]> {
  * zombie: signal 0 still reaches it, so the process table decides.
  */
 export async function isRunning(pid: number): Promise<boolean> {
-  try { process.kill(pid, 0) } catch { return false }
-  const state = await execFileAsync('ps', ['-o', 'state=', '-p', String(pid)]).then(({ stdout }) => stdout.trim(), () => '')
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return false
+  }
+  const state = await execFileAsync('ps', ['-o', 'state=', '-p', String(pid)]).then(
+    ({ stdout }) => stdout.trim(),
+    () => '',
+  )
   return state !== '' && !state.startsWith('Z')
 }
 

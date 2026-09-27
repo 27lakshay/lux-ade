@@ -1,10 +1,15 @@
 import { createConnection, type Socket } from 'node:net'
 import { call, type CallRequest } from './call.js'
 import { helloLine } from './request.js'
-import { decodeFeedFrame as decodeDailyUseFeedFrame, decodeRequest as decodeDailyUseRequest,
-  decodeResponse as decodeDailyUseResponse, type FeedFrame as DailyUseFeedFrame,
-  type Operation as DailyUseOperation, type Request as DailyUseRequest,
-  type Response as DailyUseResponse } from '@ade/contracts'
+import {
+  decodeFeedFrame as decodeDailyUseFeedFrame,
+  decodeRequest as decodeDailyUseRequest,
+  decodeResponse as decodeDailyUseResponse,
+  type FeedFrame as DailyUseFeedFrame,
+  type Operation as DailyUseOperation,
+  type Request as DailyUseRequest,
+  type Response as DailyUseResponse,
+} from '@ade/contracts'
 
 export {
   openTerminalConnection,
@@ -12,22 +17,48 @@ export {
   type TerminalConnectionOptions,
   type TerminalFrame,
 } from './terminal.js'
-export { requestDaemon, controlOperations, controlSocketPath, DaemonRequestError, categoryErrorCodes, daemonRefusalCodes, isDaemonRefusal,
-  type DaemonErrorCode, type DaemonResponse, type KnownDaemonErrorCode, type RequestDelivery,
-  type RequestOptions } from './request.js'
-export { call, decodeCallReply, encodeCall, takesOperationId, type CallRequest, type OperationIdOperation } from './call.js'
+export {
+  requestDaemon,
+  controlOperations,
+  controlSocketPath,
+  DaemonRequestError,
+  categoryErrorCodes,
+  daemonRefusalCodes,
+  isDaemonRefusal,
+  type DaemonErrorCode,
+  type DaemonResponse,
+  type KnownDaemonErrorCode,
+  type RequestDelivery,
+  type RequestOptions,
+} from './request.js'
+export {
+  call,
+  decodeCallReply,
+  encodeCall,
+  takesOperationId,
+  type CallRequest,
+  type OperationIdOperation,
+} from './call.js'
 export { isOperation, operationIdOperations, operations, type Operation, type Tier } from '@ade/contracts'
 export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'
-export { decodeDailyUseFeedFrame, decodeDailyUseRequest, decodeDailyUseResponse,
-  type DailyUseFeedFrame, type DailyUseOperation, type DailyUseRequest,
-  type DailyUseResponse }
+export {
+  decodeDailyUseFeedFrame,
+  decodeDailyUseRequest,
+  decodeDailyUseResponse,
+  type DailyUseFeedFrame,
+  type DailyUseOperation,
+  type DailyUseRequest,
+  type DailyUseResponse,
+}
 
 /**
  * A typed command against the same profile daemon used by Electron and the CLI.
  * An effect command without an `operation_id` is sent under a fresh one.
  */
-export async function dailyUseCommand<O extends DailyUseOperation>(endpoint: string,
-  request: DailyUseCommand<O>): Promise<DailyUseResponse<O>> {
+export async function dailyUseCommand<O extends DailyUseOperation>(
+  endpoint: string,
+  request: DailyUseCommand<O>,
+): Promise<DailyUseResponse<O>> {
   const { op, ...fields } = request as unknown as { op: O } & Record<string, unknown>
   return call(endpoint, op, fields as unknown as CallRequest<O>)
 }
@@ -65,7 +96,13 @@ export interface Catalog {
   conversations: Conversation[]
 }
 
-export type ConnectionStatus = 'unconfigured' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable' | 'incompatible'
+export type ConnectionStatus =
+  | 'unconfigured'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'unavailable'
+  | 'incompatible'
 
 export interface ClientState {
   sequence: number
@@ -82,7 +119,7 @@ type FeedListener = (frame: FeedFrame) => void
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null
 }
 
@@ -94,7 +131,7 @@ function stringFields(value: unknown, keys: string[]): string[] | null {
   const source = record(value)
   if (!source) return null
   const values = keys.map((key) => requiredString(source[key]))
-  return values.includes(null) ? null : values as string[]
+  return values.includes(null) ? null : (values as string[])
 }
 
 function parseWorkspace(value: unknown): Workspace | null {
@@ -104,11 +141,20 @@ function parseWorkspace(value: unknown): Workspace | null {
   const repositoryId = source.repository_id
   if (repositoryId !== undefined && repositoryId !== null && typeof repositoryId !== 'string') return null
   if (source.needs_rebind !== undefined && typeof source.needs_rebind !== 'boolean') return null
-  if (source.worktree_lifecycle_needs_rebind !== undefined && typeof source.worktree_lifecycle_needs_rebind !== 'boolean') return null
-  return { id: fields[0], root: fields[1], name: fields[2], terminal_id: fields[3],
-    repository_id: (repositoryId ?? null),
+  if (
+    source.worktree_lifecycle_needs_rebind !== undefined &&
+    typeof source.worktree_lifecycle_needs_rebind !== 'boolean'
+  )
+    return null
+  return {
+    id: fields[0],
+    root: fields[1],
+    name: fields[2],
+    terminal_id: fields[3],
+    repository_id: repositoryId ?? null,
     needs_rebind: source.needs_rebind === true,
-    worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true }
+    worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true,
+  }
 }
 
 function parseConversation(value: unknown): Conversation | null {
@@ -120,7 +166,12 @@ function parseConversation(value: unknown): Conversation | null {
   const accountContext = source?.account_context
   if (accountId !== undefined && accountId !== null && typeof accountId !== 'string') return null
   if (accountContext !== undefined && accountContext !== 'managed' && accountContext !== 'legacy_ambient') return null
-  return { id: fields[0], workspace_id: fields[1], title, provider: fields[2], status: fields[3],
+  return {
+    id: fields[0],
+    workspace_id: fields[1],
+    title,
+    provider: fields[2],
+    status: fields[3],
     ...(accountId !== undefined ? { account_id: accountId } : {}),
     ...(accountContext !== undefined ? { account_context: accountContext } : {}),
   }
@@ -136,8 +187,11 @@ function parseCatalog(value: unknown): Catalog | null {
 }
 
 function parseFrame(line: Buffer): Record<string, unknown> | null {
-  try { return record(JSON.parse(line.toString('utf8'))) }
-  catch { return null }
+  try {
+    return record(JSON.parse(line.toString('utf8')))
+  } catch {
+    return null
+  }
 }
 
 function eventPosition(frame: Record<string, unknown>): { bootId: string; revision: number } | null {
@@ -171,8 +225,10 @@ export class AdeClient {
    * reached through a forward. A host that refuses the pairing ends the feed:
    * it is not retried.
    */
-  constructor(private readonly endpoint: string | undefined,
-    private readonly options: { pairing?: { pairingId: string; token: string } | null } = {}) {}
+  constructor(
+    private readonly endpoint: string | undefined,
+    private readonly options: { pairing?: { pairingId: string; token: string } | null } = {},
+  ) {}
 
   getState(): ClientState {
     return this.state
@@ -181,12 +237,16 @@ export class AdeClient {
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
     listener(this.state)
-    return () => { this.listeners.delete(listener) }
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
   subscribeFeed(listener: FeedListener): () => void {
     this.feedListeners.add(listener)
-    return () => { this.feedListeners.delete(listener) }
+    return () => {
+      this.feedListeners.delete(listener)
+    }
   }
 
   /** Selected generated frames. Reconnect starts with a new catalog snapshot. */
@@ -194,8 +254,9 @@ export class AdeClient {
     return this.subscribeFeed((frame) => {
       if (frame.type === 'catalog' || frame.type === 'conversation_changed') {
         let selected: DailyUseFeedFrame
-        try { selected = decodeDailyUseFeedFrame(frame) }
-        catch (error) {
+        try {
+          selected = decodeDailyUseFeedFrame(frame)
+        } catch (error) {
           this.publish({ status: 'incompatible', detail: `Daemon daily-use contract is invalid: ${String(error)}` })
           this.stop()
           return
@@ -220,19 +281,41 @@ export class AdeClient {
     return this.command<'catalog.get'>({ op: 'catalog.get' })
   }
 
-  getConversation(conversationId: string, before?: number, limit?: number): Promise<DailyUseResponse<'conversation.get'>> {
-    return this.command<'conversation.get'>({ op: 'conversation.get', conversation_id: conversationId,
-      ...(before !== undefined ? { before } : {}), ...(limit !== undefined ? { limit } : {}) })
+  getConversation(
+    conversationId: string,
+    before?: number,
+    limit?: number,
+  ): Promise<DailyUseResponse<'conversation.get'>> {
+    return this.command<'conversation.get'>({
+      op: 'conversation.get',
+      conversation_id: conversationId,
+      ...(before !== undefined ? { before } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    })
   }
 
   sendPrompt(conversationId: string, requestId: string, text: string): Promise<DailyUseResponse<'agent.send'>> {
-    return this.command<'agent.send'>({ op: 'agent.send', conversation_id: conversationId, request_id: requestId, text })
+    return this.command<'agent.send'>({
+      op: 'agent.send',
+      conversation_id: conversationId,
+      request_id: requestId,
+      text,
+    })
   }
 
-  answerRequest(conversationId: string, requestId: string, decision: string,
-    answers?: unknown): Promise<DailyUseResponse<'agent.answer'>> {
-    return this.command<'agent.answer'>({ op: 'agent.answer', conversation_id: conversationId,
-      request_id: requestId, decision, ...(answers !== undefined ? { answers } : {}) })
+  answerRequest(
+    conversationId: string,
+    requestId: string,
+    decision: string,
+    answers?: unknown,
+  ): Promise<DailyUseResponse<'agent.answer'>> {
+    return this.command<'agent.answer'>({
+      op: 'agent.answer',
+      conversation_id: conversationId,
+      request_id: requestId,
+      decision,
+      ...(answers !== undefined ? { answers } : {}),
+    })
   }
 
   start(): void {
@@ -269,7 +352,10 @@ export class AdeClient {
   private connect(): void {
     if (!this.endpoint || !this.running) return
     const generation = ++this.generation
-    this.publish({ status: this.state.catalog ? 'reconnecting' : 'connecting', detail: 'Connecting to profile daemon…' })
+    this.publish({
+      status: this.state.catalog ? 'reconnecting' : 'connecting',
+      detail: 'Connecting to profile daemon…',
+    })
     const socket = createConnection({ path: this.endpoint })
     this.socket = socket
     let phase: 'hello' | 'catalog' | 'stream' = 'hello'
@@ -296,8 +382,10 @@ export class AdeClient {
           if (phase === 'hello' && (frame.code === 'pairing_revoked' || frame.code === 'unauthenticated')) {
             // The host refused this pairing. Retrying cannot help: a person pairs again.
             this.running = false
-            this.publish({ status: 'unavailable',
-              detail: requiredString(frame.message) ?? 'The host refused this pairing.' })
+            this.publish({
+              status: 'unavailable',
+              detail: requiredString(frame.message) ?? 'The host refused this pairing.',
+            })
             socket.destroy()
             return
           }
@@ -313,9 +401,10 @@ export class AdeClient {
       }
     })
     socket.on('error', (error: NodeJS.ErrnoException) => {
-      terminalError = error.code === 'ENOENT' || error.code === 'ECONNREFUSED'
-        ? 'Profile daemon is unavailable at the selected socket.'
-        : `Profile daemon connection failed: ${error.message}`
+      terminalError =
+        error.code === 'ENOENT' || error.code === 'ECONNREFUSED'
+          ? 'Profile daemon is unavailable at the selected socket.'
+          : `Profile daemon connection failed: ${error.message}`
     })
     socket.on('close', () => {
       if (generation !== this.generation) return
@@ -340,18 +429,30 @@ export class AdeClient {
   private applyHello(frame: Record<string, unknown>, socket: Socket): 'catalog' | 'invalid' {
     if (frame.type !== 'hello') return 'invalid'
     if (frame.application_protocol !== APPLICATION_PROTOCOL || frame.session_protocol !== SESSION_PROTOCOL) {
-      this.publish({ status: 'incompatible', detail: 'This daemon uses an incompatible application or session protocol. Keep its current owner running and select a compatible ADE build.' })
+      this.publish({
+        status: 'incompatible',
+        detail:
+          'This daemon uses an incompatible application or session protocol. Keep its current owner running and select a compatible ADE build.',
+      })
       this.running = false
       socket.destroy()
       return 'invalid'
     }
-    try { decodeDailyUseResponse('hello', frame) }
-    catch { return 'invalid' }
+    try {
+      decodeDailyUseResponse('hello', frame)
+    } catch {
+      return 'invalid'
+    }
     socket.write('{"op":"session.subscribe"}\n')
     return 'catalog'
   }
 
-  private applyInitialCatalog(frame: Record<string, unknown>, socket: Socket, bootId: string, revision: number): 'stream' | 'invalid' {
+  private applyInitialCatalog(
+    frame: Record<string, unknown>,
+    socket: Socket,
+    bootId: string,
+    revision: number,
+  ): 'stream' | 'invalid' {
     if (frame.type !== 'catalog') return 'invalid'
     const catalog = parseCatalog(frame.catalog)
     if (!catalog) return 'invalid'

@@ -15,16 +15,38 @@ import { join } from 'node:path'
 import { browserProfileDirectory, browserTabPage, writeDurableRecord } from './browser'
 import { DIAGNOSTICS_EXCLUDED, REDACTION_POLICY, redactText, redactUrl } from './browser-diagnostics-core'
 import { attachDiagnostics, releaseDiagnostics, type Collector } from './browser-diagnostics'
-import { coverageGaps, emptyCounters, limitReached, RECORDING_FORMAT, RECORDING_LIMITS, recordingSpec,
-  reportedState, sameSpec, validManifest, type RecordingManifest, type RecordingSpec,
-  type ReportedState, type StopReason } from './browser-recording-core'
+import {
+  coverageGaps,
+  emptyCounters,
+  limitReached,
+  RECORDING_FORMAT,
+  RECORDING_LIMITS,
+  recordingSpec,
+  reportedState,
+  sameSpec,
+  validManifest,
+  type RecordingManifest,
+  type RecordingSpec,
+  type ReportedState,
+  type StopReason,
+} from './browser-recording-core'
 
 type Mark = { seq: number; retained: number; dropped: number; detachments: number }
 type Live = {
-  key: string; profileId: string; dir: string; manifest: RecordingManifest; contents: WebContents
-  collector: Collector | null; start: { console: Mark; network: Mark } | null
-  timers: NodeJS.Timeout[]; events: FileHandle | null; writes: Promise<void>; ticking: boolean
-  detach: Array<() => void>; stopping: Promise<void> | null; sealError: string | null
+  key: string
+  profileId: string
+  dir: string
+  manifest: RecordingManifest
+  contents: WebContents
+  collector: Collector | null
+  start: { console: Mark; network: Mark } | null
+  timers: NodeJS.Timeout[]
+  events: FileHandle | null
+  writes: Promise<void>
+  ticking: boolean
+  detach: Array<() => void>
+  stopping: Promise<void> | null
+  sealError: string | null
 }
 const running = new Map<string, Live>()
 const starting = new Set<string>()
@@ -36,22 +58,32 @@ async function recordingsRoot(profileId: string): Promise<string> {
   const root = join(browserProfileDirectory(profileId), 'browser-recordings-v1')
   await mkdir(root, { recursive: true, mode: 0o700 })
   const info = await lstat(root)
-  if (!info.isDirectory() || (info.mode & 0o077) !== 0) throw new Error('Browser recording directory is unsafe; preserve it for review')
+  if (!info.isDirectory() || (info.mode & 0o077) !== 0)
+    throw new Error('Browser recording directory is unsafe; preserve it for review')
   return root
 }
 
 async function readManifest(dir: string, recordingId: string): Promise<RecordingManifest | null> {
   let info: Awaited<ReturnType<typeof lstat>>
-  try { info = await lstat(join(dir, 'manifest.json')) } catch (error) {
+  try {
+    info = await lstat(join(dir, 'manifest.json'))
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    const exists = await lstat(dir).then(() => true, () => false)
+    const exists = await lstat(dir).then(
+      () => true,
+      () => false,
+    )
     if (exists) throw new Error('conflict: the recording directory has no manifest; preserve it for review')
     return null
   }
-  if (!info.isFile() || info.size > 64 * 1024) throw new Error('Browser recording manifest is unsafe; preserve it for review')
+  if (!info.isFile() || info.size > 64 * 1024)
+    throw new Error('Browser recording manifest is unsafe; preserve it for review')
   let value: unknown
-  try { value = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')) }
-  catch { throw new Error('Browser recording manifest is invalid; preserve it for review') }
+  try {
+    value = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))
+  } catch {
+    throw new Error('Browser recording manifest is invalid; preserve it for review')
+  }
   return validManifest(value, recordingId)
 }
 
@@ -63,30 +95,51 @@ async function diskCounters(dir: string, manifest: RecordingManifest): Promise<R
     counters.frames = names.length
     counters.bytes = 0
     for (const name of names) counters.bytes += (await lstat(join(dir, 'frames', name))).size
-  } catch { /* No frames directory: nothing was captured. */ }
+  } catch {
+    /* No frames directory: nothing was captured. */
+  }
   try {
     const events = await lstat(join(dir, 'page-events.jsonl'))
     if (events.isFile() && events.size <= 8 * 1024 * 1024) {
       counters.pageEvents = (await readFile(join(dir, 'page-events.jsonl'), 'utf8')).split('\n').filter(Boolean).length
       counters.bytes += events.size
     }
-  } catch { /* No events file. */ }
+  } catch {
+    /* No events file. */
+  }
   return { ...manifest, counters }
 }
 
 function report(manifest: RecordingManifest, state: ReportedState, dir: string): Record<string, unknown> {
   const c = manifest.counters
-  return { type: 'browser_recording', recording_id: manifest.recordingId, tab_id: manifest.tabId, format: RECORDING_FORMAT,
-    state, capture: manifest.capture, interval_ms: manifest.intervalMs, max_duration_ms: manifest.maxDurationMs,
-    started_at_ms: manifest.startedAtMs, stopped_at_ms: manifest.stoppedAtMs, stop_reason: manifest.stopReason,
-    artifact_dir: dir, frames: c.frames, frames_unavailable: c.framesUnavailable, page_events: c.pageEvents,
-    console_entries: c.consoleEntries, network_entries: c.networkEntries, bytes: c.bytes,
-    coverage_gaps: coverageGaps(manifest, state) }
+  return {
+    type: 'browser_recording',
+    recording_id: manifest.recordingId,
+    tab_id: manifest.tabId,
+    format: RECORDING_FORMAT,
+    state,
+    capture: manifest.capture,
+    interval_ms: manifest.intervalMs,
+    max_duration_ms: manifest.maxDurationMs,
+    started_at_ms: manifest.startedAtMs,
+    stopped_at_ms: manifest.stoppedAtMs,
+    stop_reason: manifest.stopReason,
+    artifact_dir: dir,
+    frames: c.frames,
+    frames_unavailable: c.framesUnavailable,
+    page_events: c.pageEvents,
+    console_entries: c.consoleEntries,
+    network_entries: c.networkEntries,
+    bytes: c.bytes,
+    coverage_gaps: coverageGaps(manifest, state),
+  }
 }
 
 function liveReport(live: Live): Record<string, unknown> {
   if (live.sealError) {
-    throw new Error(`unavailable: the recording stopped but its manifest was not saved (${live.sealError}); repeat stop to retry`)
+    throw new Error(
+      `unavailable: the recording stopped but its manifest was not saved (${live.sealError}); repeat stop to retry`,
+    )
   }
   return report(live.manifest, 'recording', live.dir)
 }
@@ -105,14 +158,21 @@ function mark(collector: Collector, kind: 'console' | 'network', seq: number): M
 function appendEvent(live: Live, event: Record<string, unknown>): void {
   const counters = live.manifest.counters
   if (!live.events || live.stopping) return
-  if (counters.pageEvents >= RECORDING_LIMITS.maxPageEvents) { counters.pageEventsDropped += 1; return }
+  if (counters.pageEvents >= RECORDING_LIMITS.maxPageEvents) {
+    counters.pageEventsDropped += 1
+    return
+  }
   counters.pageEvents += 1
   const line = `${JSON.stringify({ at_ms: Date.now(), ...event })}\n`
   const handle = live.events
-  live.writes = live.writes.then(async () => {
-    await handle.appendFile(line)
-    counters.bytes += Buffer.byteLength(line)
-  }).catch(() => { void stop(live, 'write_failed') })
+  live.writes = live.writes
+    .then(async () => {
+      await handle.appendFile(line)
+      counters.bytes += Buffer.byteLength(line)
+    })
+    .catch(() => {
+      void stop(live, 'write_failed')
+    })
 }
 
 function watchPage(live: Live): void {
@@ -120,7 +180,9 @@ function watchPage(live: Live): void {
   const on = <T extends unknown[]>(event: string, listener: (...args: T) => void): void => {
     const handler = listener as (...args: unknown[]) => void
     contents.on(event as 'did-navigate', handler)
-    live.detach.push(() => { if (!contents.isDestroyed()) contents.removeListener(event as 'did-navigate', handler) })
+    live.detach.push(() => {
+      if (!contents.isDestroyed()) contents.removeListener(event as 'did-navigate', handler)
+    })
   }
   const pageEvents = live.manifest.capture.includes('page_events')
   if (pageEvents) {
@@ -128,43 +190,68 @@ function watchPage(live: Live): void {
     on('did-navigate-in-page', (_event: unknown, url: string, isMainFrame: boolean) => {
       if (isMainFrame) appendEvent(live, { kind: 'navigated_in_page', url: redactUrl(url) })
     })
-    on('page-title-updated', (_event: unknown, title: string) => appendEvent(live, { kind: 'title_changed',
-      title: redactText(title, 256) }))
+    on('page-title-updated', (_event: unknown, title: string) =>
+      appendEvent(live, { kind: 'title_changed', title: redactText(title, 256) }),
+    )
     on('did-fail-load', (_event: unknown, code: number, description: string, url: string, isMainFrame: boolean) => {
-      if (isMainFrame) appendEvent(live, { kind: 'load_failed', code, error: redactText(description, 256), url: redactUrl(url) })
+      if (isMainFrame)
+        appendEvent(live, { kind: 'load_failed', code, error: redactText(description, 256), url: redactUrl(url) })
     })
-    on('render-process-gone', (_event: unknown, details: { reason?: string }) => appendEvent(live, {
-      kind: 'page_process_gone', reason: redactText(details?.reason ?? 'unknown', 64) }))
+    on('render-process-gone', (_event: unknown, details: { reason?: string }) =>
+      appendEvent(live, {
+        kind: 'page_process_gone',
+        reason: redactText(details?.reason ?? 'unknown', 64),
+      }),
+    )
   }
   const closed = (): void => {
     if (pageEvents) appendEvent(live, { kind: 'closed' })
     void stop(live, 'target_closed')
   }
   contents.once('destroyed', closed)
-  live.detach.push(() => { if (!contents.isDestroyed()) contents.removeListener('destroyed', closed) })
+  live.detach.push(() => {
+    if (!contents.isDestroyed()) contents.removeListener('destroyed', closed)
+  })
 }
 
 async function tick(live: Live): Promise<void> {
   const counters = live.manifest.counters
   if (live.stopping) return
-  if (live.ticking || live.contents.isDestroyed()) { counters.framesUnavailable += 1; return }
+  if (live.ticking || live.contents.isDestroyed()) {
+    counters.framesUnavailable += 1
+    return
+  }
   live.ticking = true
   try {
     let png: Buffer | null = null
     try {
       const image = await live.contents.capturePage()
       png = image.isEmpty() ? null : image.toPNG()
-    } catch { png = null }
+    } catch {
+      png = null
+    }
     if (live.stopping) return
-    if (!png || png.length === 0) { counters.framesUnavailable += 1; return }
+    if (!png || png.length === 0) {
+      counters.framesUnavailable += 1
+      return
+    }
     const name = `${String(counters.frames + 1).padStart(6, '0')}.png`
     try {
       const file = await open(join(live.dir, 'frames', name), 'wx', 0o600)
-      try { await file.writeFile(png) } finally { await file.close() }
-    } catch { void stop(live, 'write_failed'); return }
+      try {
+        await file.writeFile(png)
+      } finally {
+        await file.close()
+      }
+    } catch {
+      void stop(live, 'write_failed')
+      return
+    }
     counters.frames += 1
     counters.bytes += png.length
-  } finally { live.ticking = false }
+  } finally {
+    live.ticking = false
+  }
   const reason = limitReached(counters, live.manifest, Date.now() - live.manifest.startedAtMs)
   if (reason) void stop(live, reason)
 }
@@ -218,7 +305,11 @@ function stop(live: Live, reason: StopReason): Promise<void> {
     const manifest = live.manifest
     let failed = reason === 'write_failed'
     if (live.events) {
-      try { await live.events.sync() } catch { failed = true }
+      try {
+        await live.events.sync()
+      } catch {
+        failed = true
+      }
       await live.events.close().catch(() => undefined)
       live.events = null
     }
@@ -226,9 +317,17 @@ function stop(live: Live, reason: StopReason): Promise<void> {
       const entries = windowEntries(live)
       releaseDiagnostics(live.collector, holderOf(manifest.recordingId))
       try {
-        await writeDurableRecord(live.dir, 'diagnostics.json', { format: RECORDING_FORMAT, redaction: REDACTION_POLICY,
-          excluded: DIAGNOSTICS_EXCLUDED, ...entries })
-      } catch { failed = true; manifest.counters.consoleEntries = 0; manifest.counters.networkEntries = 0 }
+        await writeDurableRecord(live.dir, 'diagnostics.json', {
+          format: RECORDING_FORMAT,
+          redaction: REDACTION_POLICY,
+          excluded: DIAGNOSTICS_EXCLUDED,
+          ...entries,
+        })
+      } catch {
+        failed = true
+        manifest.counters.consoleEntries = 0
+        manifest.counters.networkEntries = 0
+      }
     }
     manifest.state = 'stopped'
     manifest.stoppedAtMs = Date.now()
@@ -270,9 +369,20 @@ async function startRecording(profileId: string, request: Record<string, unknown
       releaseDiagnostics(collector, holderOf(recordingId))
       throw new Error('unavailable: the tab page changed while the recording started')
     }
-    const manifest: RecordingManifest = { format: RECORDING_FORMAT, recordingId, tabId: spec.tabId,
-      capture: spec.capture, intervalMs: spec.intervalMs, maxDurationMs: spec.maxDurationMs, state: 'recording',
-      startedAtMs: Date.now(), stoppedAtMs: null, stopReason: null, counters: emptyCounters(), captureEnded: null }
+    const manifest: RecordingManifest = {
+      format: RECORDING_FORMAT,
+      recordingId,
+      tabId: spec.tabId,
+      capture: spec.capture,
+      intervalMs: spec.intervalMs,
+      maxDurationMs: spec.maxDurationMs,
+      state: 'recording',
+      startedAtMs: Date.now(),
+      stoppedAtMs: null,
+      stopReason: null,
+      counters: emptyCounters(),
+      captureEnded: null,
+    }
     let events: FileHandle | null = null
     try {
       await mkdir(dir, { mode: 0o700 })
@@ -290,23 +400,51 @@ async function startRecording(profileId: string, request: Record<string, unknown
       if (collector) releaseDiagnostics(collector, holderOf(recordingId))
       throw new Error(`unavailable: the recording could not be created: ${String(error)}`)
     }
-    const seq = Math.max(0, ...(collector ? [...collector.console.items, ...collector.network.items].map((item) => item.seq) : []))
-    const live: Live = { key, profileId, dir, manifest, contents, collector,
+    const seq = Math.max(
+      0,
+      ...(collector ? [...collector.console.items, ...collector.network.items].map((item) => item.seq) : []),
+    )
+    const live: Live = {
+      key,
+      profileId,
+      dir,
+      manifest,
+      contents,
+      collector,
       start: collector ? { console: mark(collector, 'console', seq), network: mark(collector, 'network', seq) } : null,
-      timers: [], events, writes: Promise.resolve(), ticking: false, detach: [], stopping: null, sealError: null }
+      timers: [],
+      events,
+      writes: Promise.resolve(),
+      ticking: false,
+      detach: [],
+      stopping: null,
+      sealError: null,
+    }
     running.set(key, live)
     watchPage(live)
-    if (spec.capture.includes('page_events')) appendEvent(live, { kind: 'recording_started', url: redactUrl(contents.getURL()) })
+    if (spec.capture.includes('page_events'))
+      appendEvent(live, { kind: 'recording_started', url: redactUrl(contents.getURL()) })
     if (spec.capture.includes('screenshots')) {
-      live.timers.push(setInterval(() => { void tick(live) }, spec.intervalMs))
+      live.timers.push(
+        setInterval(() => {
+          void tick(live)
+        }, spec.intervalMs),
+      )
       void tick(live)
     }
-    live.timers.push(setInterval(() => {
-      const reason = limitReached(manifest.counters, manifest, Date.now() - manifest.startedAtMs)
-      if (reason) void stop(live, reason)
-    }, Math.min(1000, spec.maxDurationMs)))
+    live.timers.push(
+      setInterval(
+        () => {
+          const reason = limitReached(manifest.counters, manifest, Date.now() - manifest.startedAtMs)
+          if (reason) void stop(live, reason)
+        },
+        Math.min(1000, spec.maxDurationMs),
+      ),
+    )
     return liveReport(live)
-  } finally { starting.delete(key) }
+  } finally {
+    starting.delete(key)
+  }
 }
 
 async function stopRecording(profileId: string, recordingId: unknown): Promise<Record<string, unknown>> {
@@ -337,8 +475,11 @@ export async function stopAllRecordings(): Promise<void> {
   await Promise.all([...running.values()].map((live) => stop(live, 'owner_stopped')))
 }
 
-export function browserRecordingRequest(profileId: string, op: string,
-  request: Record<string, unknown>): Promise<Record<string, unknown>> {
+export function browserRecordingRequest(
+  profileId: string,
+  op: string,
+  request: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   if (op === 'browser.recording.start') return startRecording(profileId, request)
   if (op === 'browser.recording.stop') return stopRecording(profileId, request.recording_id)
   return getRecording(profileId, request.recording_id)

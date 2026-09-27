@@ -29,18 +29,31 @@ let connection = null
 const feed = new TerminalFeed(terminal, {
   status: (message) => statuses.push(message),
   ready: () => {},
-  failed: () => { failed = true; connection?.dispose() },
+  failed: () => {
+    failed = true
+    connection?.dispose()
+  },
 })
-terminal.onData((data) => { if (feed.ready) connection?.input(data) })
-connection = openTerminalConnection(socket, workspaceId, terminalId, (frame) => {
-  if (Atomics.load(gate, 0) === 0 && Array.isArray(frame.bytes)) {
-    Atomics.wait(gate, 0, 0, Math.max(1, frame.bytes.length / bytesPerMs))
-  }
-  if (frame.type === 'snapshot') snapshots += 1
-  if (frame.type === 'snapshot' && frame.resync === true) resyncs += 1
-  if (frame.type === 'error') errors.push(frame)
-  feed.push(frame)
-}, (reason) => { closed = reason })
+terminal.onData((data) => {
+  if (feed.ready) connection?.input(data)
+})
+connection = openTerminalConnection(
+  socket,
+  workspaceId,
+  terminalId,
+  (frame) => {
+    if (Atomics.load(gate, 0) === 0 && Array.isArray(frame.bytes)) {
+      Atomics.wait(gate, 0, 0, Math.max(1, frame.bytes.length / bytesPerMs))
+    }
+    if (frame.type === 'snapshot') snapshots += 1
+    if (frame.type === 'snapshot' && frame.resync === true) resyncs += 1
+    if (frame.type === 'error') errors.push(frame)
+    feed.push(frame)
+  },
+  (reason) => {
+    closed = reason
+  },
+)
 
 function screen() {
   const buffer = terminal.buffer.active
@@ -48,17 +61,30 @@ function screen() {
   for (let row = 0; row < terminal.rows; row++) {
     lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '')
   }
-  return { buffer: buffer.type, cols: terminal.cols, rows: terminal.rows, cursor: [buffer.cursorX, buffer.cursorY],
-    lines, modes: { ...terminal.modes } }
+  return {
+    buffer: buffer.type,
+    cols: terminal.cols,
+    rows: terminal.rows,
+    cursor: [buffer.cursorX, buffer.cursorY],
+    lines,
+    modes: { ...terminal.modes },
+  }
 }
 
 parentPort.on('message', (message) => {
   if (message.type === 'report') {
-    terminal.write('', () => parentPort.postMessage({
-      sdk: { offset: connection.offset(), resyncs: connection.resyncs(), incarnation: connection.incarnation() },
-      feed: { ready: feed.ready, failed },
-      snapshots, resyncs, errors, statuses, closed, screen: screen(),
-    }))
+    terminal.write('', () =>
+      parentPort.postMessage({
+        sdk: { offset: connection.offset(), resyncs: connection.resyncs(), incarnation: connection.incarnation() },
+        feed: { ready: feed.ready, failed },
+        snapshots,
+        resyncs,
+        errors,
+        statuses,
+        closed,
+        screen: screen(),
+      }),
+    )
   } else if (message.type === 'close') {
     connection.dispose()
     feed.dispose()

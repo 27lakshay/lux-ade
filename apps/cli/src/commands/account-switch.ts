@@ -19,31 +19,48 @@ function generation(value: string): number {
   return number
 }
 
-export async function runAccountSwitchCommand(socketPath: string, area: string | undefined,
-  action: string | undefined, rest: string[]): Promise<CommandResult | undefined> {
+export async function runAccountSwitchCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'account' || action !== 'switch') return undefined
   const [verb, ...words] = rest
   if (verb === 'list') {
     if (words.length !== 1) throw new CliError('usage', 'account switch list requires CONVERSATION.')
-    return dailyUseCommand(socketPath, { op: 'account.switch.list', conversation_id: required(words[0], 'CONVERSATION') })
+    return dailyUseCommand(socketPath, {
+      op: 'account.switch.list',
+      conversation_id: required(words[0], 'CONVERSATION'),
+    })
   }
   if (verb === 'preview') {
     if (words.length !== 2) throw new CliError('usage', 'account switch preview requires CONVERSATION ACCOUNT.')
-    return dailyUseCommand(socketPath, { op: 'account.switch.preview',
-      conversation_id: required(words[0], 'CONVERSATION'), account_id: required(words[1], 'ACCOUNT') })
+    return dailyUseCommand(socketPath, {
+      op: 'account.switch.preview',
+      conversation_id: required(words[0], 'CONVERSATION'),
+      account_id: required(words[1], 'ACCOUNT'),
+    })
   }
   if (verb === 'apply') {
     if (words.length < 2) throw new CliError('usage', 'account switch apply requires CONVERSATION ACCOUNT.')
-    const options = namedOptions(words.slice(2), ['--from', '--generation', '--continuity', '--request-id'],
-      'account switch apply')
+    const options = namedOptions(
+      words.slice(2),
+      ['--from', '--generation', '--continuity', '--request-id'],
+      'account switch apply',
+    )
     const from = required(options['--from'], '--from')
     const continuity = continuities.find((value) => value === options['--continuity'])
     if (!continuity) throw new CliError('usage', `--continuity must be ${continuities.join(' or ')}.`)
-    return dailyUseCommand(socketPath, { op: 'account.switch',
+    return dailyUseCommand(socketPath, {
+      op: 'account.switch',
       operation_id: required(options['--request-id'], '--request-id'),
-      conversation_id: required(words[0], 'CONVERSATION'), account_id: required(words[1], 'ACCOUNT'),
+      conversation_id: required(words[0], 'CONVERSATION'),
+      account_id: required(words[1], 'ACCOUNT'),
       expected_account_id: from === 'ambient' ? null : from,
-      expected_generation: generation(required(options['--generation'], '--generation')), continuity })
+      expected_generation: generation(required(options['--generation'], '--generation')),
+      continuity,
+    })
   }
   throw new CliError('usage', 'account switch needs preview, apply or list. Run ade --help for usage.')
 }

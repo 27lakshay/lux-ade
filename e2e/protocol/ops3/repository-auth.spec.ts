@@ -17,12 +17,15 @@ async function configureSsh(ade: AdeHarness, profile: ScratchProfile, repo: Scra
   const log = join(bin, 'calls.log')
   const client = join(bin, 'fixture-ssh')
   // Git runs `<sshCommand> [options] HOST COMMAND`; the command is the last argument.
-  await writeFile(client, `#!/bin/sh
+  await writeFile(
+    client,
+    `#!/bin/sh
 printf '%s\\n' "$*" >> '${log}'
 for last; do :; done
 for arg; do case "$arg" in denied-host) echo 'Permission denied (publickey).' >&2; exit 255;; esac; done
 exec /bin/sh -c "$last"
-`)
+`,
+  )
   await chmod(client, 0o755)
   await repo.git('config', '--file', join(profile.home, '.gitconfig'), 'core.sshCommand', client)
   return { log }
@@ -46,7 +49,11 @@ async function branch(repo: ScratchRepo, bare: string): Promise<string> {
   return repo.git('--git-dir', bare, 'for-each-ref', '--format=%(objectname)', 'refs/heads/main')
 }
 
-test('F062: publish and clone use the configured SSH client, and a refused key is reported as not pushed', async ({ ade, profile, repo }) => {
+test('F062: publish and clone use the configured SSH client, and a refused key is reported as not pushed', async ({
+  ade,
+  profile,
+  repo,
+}) => {
   const { log } = await configureSsh(ade, profile, repo)
   const coverage = await profile.call('repository.coverage', {})
   expect(coverage.transports.find((entry) => entry.transport === 'ssh')?.supported).toBe(true)
@@ -54,8 +61,13 @@ test('F062: publish and clone use the configured SSH client, and a refused key i
   const bare = await emptyBare(ade, repo, 'over-ssh')
   const url = `ssh://fixture-host${bare}`
   const folder = await plainFolder(ade, 'ssh-publish')
-  const published = await profile.call('repository.publish', { operation_id: 'publish-ssh', path: folder, url,
-    create_initial_commit: true, commit_message: 'Initial import' })
+  const published = await profile.call('repository.publish', {
+    operation_id: 'publish-ssh',
+    path: folder,
+    url,
+    create_initial_commit: true,
+    commit_message: 'Initial import',
+  })
   expect(published).toMatchObject({ outcome: 'published', pushed: true })
   expect(await branch(repo, bare)).toBe(published.commit)
   // The push went through the user's SSH client to the named host.
@@ -73,29 +85,56 @@ test('F062: publish and clone use the configured SSH client, and a refused key i
   // push step, the remote keeps nothing, and the reply says why.
   const refusedBare = await emptyBare(ade, repo, 'refused')
   const refusedFolder = await plainFolder(ade, 'ssh-refused')
-  const refused = await profile.call('repository.publish', { operation_id: 'publish-denied', path: refusedFolder,
-    url: `ssh://denied-host${refusedBare}`, create_initial_commit: true, commit_message: 'Initial import' })
+  const refused = await profile.call('repository.publish', {
+    operation_id: 'publish-denied',
+    path: refusedFolder,
+    url: `ssh://denied-host${refusedBare}`,
+    create_initial_commit: true,
+    commit_message: 'Initial import',
+  })
   expect(refused).toMatchObject({ outcome: 'not_pushed', pushed: false, failed_step: 'push' })
   // Git's own account of the refusal is reported, so the user can fix the key.
   expect(refused.failure).toContain('Permission denied (publickey)')
   expect(await branch(repo, refusedBare)).toBe('')
   // The refusal is the recorded outcome: a replay returns it and does not try again.
   const calls = (await readFile(log, 'utf8')).split('\n').filter((line) => line.includes('denied-host')).length
-  expect(await profile.call('repository.publish', { operation_id: 'publish-denied', path: refusedFolder,
-    url: `ssh://denied-host${refusedBare}`, create_initial_commit: true, commit_message: 'Initial import' })).toEqual(refused)
+  expect(
+    await profile.call('repository.publish', {
+      operation_id: 'publish-denied',
+      path: refusedFolder,
+      url: `ssh://denied-host${refusedBare}`,
+      create_initial_commit: true,
+      commit_message: 'Initial import',
+    }),
+  ).toEqual(refused)
   expect((await readFile(log, 'utf8')).split('\n').filter((line) => line.includes('denied-host')).length).toBe(calls)
 })
 
-test('F062: a URL carrying a password is refused before Git runs, and the password is never echoed', async ({ ade, profile, repo: _repo }) => {
+test('F062: a URL carrying a password is refused before Git runs, and the password is never echoed', async ({
+  ade,
+  profile,
+  repo: _repo,
+}) => {
   const folder = await plainFolder(ade, 'with-password')
-  for (const url of ['https://fixture-user:hunter2-secret@example.invalid/repo.git',
-    'ssh://fixture-user:hunter2-secret@example.invalid/repo.git']) {
-    const clone = await rawReply(profile, { op: 'repository.clone', operation_id: `clone-${url.length}`, url,
-      destination: join(ade.root, 'clones', 'never') })
+  for (const url of [
+    'https://fixture-user:hunter2-secret@example.invalid/repo.git',
+    'ssh://fixture-user:hunter2-secret@example.invalid/repo.git',
+  ]) {
+    const clone = await rawReply(profile, {
+      op: 'repository.clone',
+      operation_id: `clone-${url.length}`,
+      url,
+      destination: join(ade.root, 'clones', 'never'),
+    })
     expect(clone).toMatchObject({ type: 'error', message: expect.stringContaining('credential helper') })
     expect(JSON.stringify(clone)).not.toContain('hunter2-secret')
-    const publish = await rawReply(profile, { op: 'repository.publish', operation_id: `publish-${url.length}`,
-      path: folder, url, create_initial_commit: true })
+    const publish = await rawReply(profile, {
+      op: 'repository.publish',
+      operation_id: `publish-${url.length}`,
+      path: folder,
+      url,
+      create_initial_commit: true,
+    })
     expect(publish.type).toBe('error')
     expect(JSON.stringify(publish)).not.toContain('hunter2-secret')
   }

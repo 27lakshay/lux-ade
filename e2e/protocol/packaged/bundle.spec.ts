@@ -41,14 +41,19 @@ test('the bundle carries every declared native and provider resource and no test
   // Every resource the daemon, runtime and CLI resolve relative to Contents/Resources.
   for (const resource of [
     'app.asar',
-    'cli/dist/index.js', 'cli/package.json',
-    'cli/node_modules/@ade/client/dist/index.js', 'cli/node_modules/@ade/contracts/dist/index.js',
-    'providers/claude/bridge.mjs', 'providers/claude/package.json',
+    'cli/dist/index.js',
+    'cli/package.json',
+    'cli/node_modules/@ade/client/dist/index.js',
+    'cli/node_modules/@ade/contracts/dist/index.js',
+    'providers/claude/bridge.mjs',
+    'providers/claude/package.json',
     'providers/claude/node_modules/@anthropic-ai/claude-agent-sdk/package.json',
     'providers/codex/shared-server.mjs',
     'providers/omp/package.json',
-    'providers/plan.mjs', 'providers/tool.mjs',
-    'packages/plugin-host/src/host.mjs', 'packages/plugin-host/src/protocol.mjs',
+    'providers/plan.mjs',
+    'providers/tool.mjs',
+    'packages/plugin-host/src/host.mjs',
+    'packages/plugin-host/src/protocol.mjs',
   ]) {
     expect((await lstat(join(bundle.resources, resource)).catch(() => null))?.isFile(), resource).toBe(true)
   }
@@ -60,8 +65,13 @@ test('the bundle carries every declared native and provider resource and no test
     if (inside.split(sep).includes('node_modules')) return
     shipped.push(inside)
   })
-  expect(shipped.filter((path) => /(\.test\.mjs|fake-sdk\.mjs|mock-cli\.mjs|transport-fixture\.mjs|\.py)$/.test(path)
-    || /mock|fixture/.test(path))).toEqual([])
+  expect(
+    shipped.filter(
+      (path) =>
+        /(\.test\.mjs|fake-sdk\.mjs|mock-cli\.mjs|transport-fixture\.mjs|\.py)$/.test(path) ||
+        /mock|fixture/.test(path),
+    ),
+  ).toEqual([])
   expect((await readdir(bundle.resources)).filter((name) => name.endsWith('.py'))).toEqual([])
 })
 
@@ -72,8 +82,12 @@ test('bundled launchers and provider shims are relocatable and never name the bu
       if (path.split(sep).at(-2) === '.bin' && (await lstat(path)).isFile()) checked.push(path)
     })
   }
-  await walk(join(bundle.resources, 'cli'), async (path) => { if (/\.(m?js|json)$/.test(path)) checked.push(path) })
-  await walk(join(bundle.resources, 'packages'), async (path) => { if (path.endsWith('.mjs')) checked.push(path) })
+  await walk(join(bundle.resources, 'cli'), async (path) => {
+    if (/\.(m?js|json)$/.test(path)) checked.push(path)
+  })
+  await walk(join(bundle.resources, 'packages'), async (path) => {
+    if (path.endsWith('.mjs')) checked.push(path)
+  })
   expect(checked.length).toBeGreaterThan(3)
   const naming: string[] = []
   for (const path of checked) {
@@ -92,9 +106,15 @@ test('the bundle reports its versions and protocols with no development tooling 
 
   // The app version is the desktop package's; the bundled CLI is the same release.
   const plist = await readFile(bundle.infoPlist, 'utf8')
-  const desktop = JSON.parse(await readFile(join(repositoryRoot, 'apps/desktop/package.json'), 'utf8')) as { version: string }
-  const bundledCli = JSON.parse(await readFile(join(bundle.resources, 'cli/package.json'), 'utf8')) as { version: string }
-  expect(plist).toMatch(new RegExp(`<key>CFBundleShortVersionString</key>\\s*<string>${desktop.version.replaceAll('.', '\\.')}</string>`))
+  const desktop = JSON.parse(await readFile(join(repositoryRoot, 'apps/desktop/package.json'), 'utf8')) as {
+    version: string
+  }
+  const bundledCli = JSON.parse(await readFile(join(bundle.resources, 'cli/package.json'), 'utf8')) as {
+    version: string
+  }
+  expect(plist).toMatch(
+    new RegExp(`<key>CFBundleShortVersionString</key>\\s*<string>${desktop.version.replaceAll('.', '\\.')}</string>`),
+  )
   expect(bundledCli.version).toBe(desktop.version)
 
   // ade-control reports the protocols it speaks and finds its sibling executables.
@@ -111,11 +131,22 @@ test('the bundle reports its versions and protocols with no development tooling 
   const bun = await run(bundle.bun, ['--version'], env, home)
   expect(bun.code, bun.stderr).toBe(0)
   expect(bun.stdout.trim()).toBe('1.3.14')
-  const node = await run(bundle.node, ['-e', 'console.log(JSON.stringify({node: process.versions.node, electron: process.versions.electron, execPath: process.execPath, path: process.env.PATH}))'],
-    env, home)
+  const node = await run(
+    bundle.node,
+    [
+      '-e',
+      'console.log(JSON.stringify({node: process.versions.node, electron: process.versions.electron, execPath: process.execPath, path: process.env.PATH}))',
+    ],
+    env,
+    home,
+  )
   expect(node.code, node.stderr).toBe(0)
-  expect(JSON.parse(node.stdout)).toMatchObject({ node: expect.any(String), electron: expect.any(String),
-    execPath: bundle.electron, path: minimalPath })
+  expect(JSON.parse(node.stdout)).toMatchObject({
+    node: expect.any(String),
+    electron: expect.any(String),
+    execPath: bundle.electron,
+    path: minimalPath,
+  })
 
   // The installed CLI runs through a symlink placed elsewhere, as an install in ~/bin would.
   const link = join(ade.root, 'bin', 'ade')

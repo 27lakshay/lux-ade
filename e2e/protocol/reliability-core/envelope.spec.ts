@@ -24,8 +24,9 @@ function pauseDirectory(ade: AdeHarness): string {
 }
 
 async function context(ade: AdeHarness): Promise<Context> {
-  const profile = await ade.profile({ env: { ADE_E2E_WORKER_PAUSE_ENABLED: '1',
-    ADE_E2E_ENVELOPE_PAUSE_DIR: pauseDirectory(ade) } })
+  const profile = await ade.profile({
+    env: { ADE_E2E_WORKER_PAUSE_ENABLED: '1', ADE_E2E_ENVELOPE_PAUSE_DIR: pauseDirectory(ade) },
+  })
   return { ade, profile, repo: await ade.repo() }
 }
 
@@ -42,27 +43,39 @@ async function attempt(ctx: Context, op: string, request: Fields): Promise<Outco
 }
 
 async function exists(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false)
+  return access(path).then(
+    () => true,
+    () => false,
+  )
 }
 
 /** Wait until the observed effect differs from `before`, and return it. */
 async function applied(effect: EnvelopeCase, ctx: Context, state: unknown, before: unknown): Promise<unknown> {
   let after: unknown
-  await expect.poll(async () => {
-    after = await effect.observe(ctx, state)
-    return JSON.stringify(after) !== JSON.stringify(before)
-  }, { timeout: 30_000, message: `${effect.op} to take effect` }).toBe(true)
+  await expect
+    .poll(
+      async () => {
+        after = await effect.observe(ctx, state)
+        return JSON.stringify(after) !== JSON.stringify(before)
+      },
+      { timeout: 30_000, message: `${effect.op} to take effect` },
+    )
+    .toBe(true)
   return after
 }
 
 async function refusesAlteredPayload(effect: EnvelopeCase, ctx: Context, state: unknown, id: string): Promise<void> {
   const conflict = await attempt(ctx, effect.op, { ...effect.request(state, true), operation_id: id })
-  expect(conflict, JSON.stringify(conflict)).toMatchObject({ error: { code: 'conflict', message: expect.stringMatching(CONFLICT) } })
+  expect(conflict, JSON.stringify(conflict)).toMatchObject({
+    error: { code: 'conflict', message: expect.stringMatching(CONFLICT) },
+  })
 }
 
 for (const effect of envelopeCases) {
   test.describe(effect.op, () => {
-    test(`R002: ${effect.op} replays one operation ID, refuses it for another payload, also after a daemon crash`, async ({ ade }) => {
+    test(`R002: ${effect.op} replays one operation ID, refuses it for another payload, also after a daemon crash`, async ({
+      ade,
+    }) => {
       const ctx = await context(ade)
       const state = await effect.setup(ctx)
       const request = { ...effect.request(state, false), operation_id: 'core-replay' }
@@ -107,21 +120,31 @@ for (const effect of envelopeCases) {
         expect(await lost).toMatchObject({ error: { code: expect.any(String) } })
         await ctx.profile.restartDaemon()
         // Before any retry, the new daemon already lists a possibly applied command as unknown.
-        const listed = async () => (await ctx.profile.call('diagnostics.status', {})).unknown
-          .some((entry) => entry.subject === request.operation_id && entry.operation === effect.op)
+        const listed = async () =>
+          (await ctx.profile.call('diagnostics.status', {})).unknown.some(
+            (entry) => entry.subject === request.operation_id && entry.operation === effect.op,
+          )
         expect(await listed()).toBe(point !== 'admitted')
 
         const outcome = await attempt(ctx, effect.op, request)
         if (point === 'admitted') {
           // The intent was recorded but the command never reached its handler.
-          expect(outcome, JSON.stringify(outcome)).toMatchObject({ error: { code: 'not_applied',
-            message: expect.stringMatching(/interrupted before it ran; nothing changed/) } })
+          expect(outcome, JSON.stringify(outcome)).toMatchObject({
+            error: {
+              code: 'not_applied',
+              message: expect.stringMatching(/interrupted before it ran; nothing changed/),
+            },
+          })
         } else if (point === 'ran' && effect.reconciles) {
           // The current state proves the effect, so the receipt settles with its reply.
           expect(outcome, JSON.stringify(outcome)).toEqual({ reply: { type: 'ack' } })
         } else {
-          expect(outcome, JSON.stringify(outcome)).toMatchObject({ error: { code: 'outcome_unknown',
-            message: expect.stringMatching(/outcome of operation core-\w+ is unknown/) } })
+          expect(outcome, JSON.stringify(outcome)).toMatchObject({
+            error: {
+              code: 'outcome_unknown',
+              message: expect.stringMatching(/outcome of operation core-\w+ is unknown/),
+            },
+          })
         }
         expect(await effect.observe(ctx, state)).toEqual(effectAtCrash)
         // A reconciled command leaves the unknown list; an unresolved one stays on it.

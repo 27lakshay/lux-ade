@@ -1,6 +1,10 @@
 import { dailyUseCommand, type DailyUseRequest, type DailyUseResponse } from '@ade/client'
 import {
-  deviceCapability, previewCapability, RemoteDaemonTransport, validateTarget, type RemoteTarget,
+  deviceCapability,
+  previewCapability,
+  RemoteDaemonTransport,
+  validateTarget,
+  type RemoteTarget,
 } from '@ade/client/remote'
 import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
 
@@ -44,13 +48,20 @@ function resource(words: string[], command: string): Resource {
   const workspace_id = required(workspace, 'WORKSPACE_ID')
   const resourceKind = kind(kindWord)
   if (extra.length || (resourceKind === 'workspace') !== (key === undefined)) {
-    throw new CliError('usage', `placement ${command} takes KIND WORKSPACE_ID, plus ID or NAME unless KIND is workspace.`)
+    throw new CliError(
+      'usage',
+      `placement ${command} takes KIND WORKSPACE_ID, plus ID or NAME unless KIND is workspace.`,
+    )
   }
   switch (resourceKind) {
-    case 'workspace': return { kind: 'workspace', workspace_id }
-    case 'conversation': return { kind: 'conversation', workspace_id, conversation_id: required(key, 'ID') }
-    case 'terminal': return { kind: 'terminal', workspace_id, terminal_id: required(key, 'ID') }
-    case 'service': return { kind: 'service', workspace_id, name: required(key, 'NAME') }
+    case 'workspace':
+      return { kind: 'workspace', workspace_id }
+    case 'conversation':
+      return { kind: 'conversation', workspace_id, conversation_id: required(key, 'ID') }
+    case 'terminal':
+      return { kind: 'terminal', workspace_id, terminal_id: required(key, 'ID') }
+    case 'service':
+      return { kind: 'service', workspace_id, name: required(key, 'NAME') }
   }
 }
 
@@ -64,15 +75,20 @@ function timeout(options: Record<string, string>): number {
 
 /** The remote transport target for a started host, from the registry and its last start. */
 async function remoteTarget(socketPath: string, entry: HostEntry): Promise<RemoteTarget | null> {
-  if (entry.host.kind !== 'remote' || entry.readiness !== 'started' || !entry.remote_socket ||
-    !entry.remote_profile_id) return null
+  if (entry.host.kind !== 'remote' || entry.readiness !== 'started' || !entry.remote_socket || !entry.remote_profile_id)
+    return null
   const hostId = entry.host.host_id
   const { hosts } = await dailyUseCommand<'remote.host.list'>(socketPath, { op: 'remote.host.list' })
   const registered = hosts.find((candidate) => candidate.host_id === hostId)
   if (!registered) return null
   // The daemon pinned this key; the forward trusts only it, never the user's known_hosts.
-  const target = { hostId, profileId: entry.remote_profile_id, destination: registered.ssh_target,
-    remoteSocket: entry.remote_socket, hostPublicKey: registered.host_public_key }
+  const target = {
+    hostId,
+    profileId: entry.remote_profile_id,
+    destination: registered.ssh_target,
+    remoteSocket: entry.remote_socket,
+    hostPublicKey: registered.host_public_key,
+  }
   return validateTarget(target) ? null : target
 }
 
@@ -82,8 +98,11 @@ async function preview(socketPath: string, rest: string[]): Promise<CommandResul
   const address = required(url, 'URL')
   const deadline = timeout(namedOptions(optionWords, ['--timeout-ms'], 'placement preview'))
   const { hosts } = await dailyUseCommand<'placement.hosts'>(socketPath, { op: 'placement.hosts' })
-  const entry = hosts.find((candidate) => candidate.host.kind === chosen.kind &&
-    (candidate.host.kind === 'local' || (chosen.kind === 'remote' && candidate.host.host_id === chosen.host_id)))
+  const entry = hosts.find(
+    (candidate) =>
+      candidate.host.kind === chosen.kind &&
+      (candidate.host.kind === 'local' || (chosen.kind === 'remote' && candidate.host.host_id === chosen.host_id)),
+  )
   if (!entry) throw new CliError('not_applied', `${hostWord} is not a registered execution host.`)
   const devices = deviceCapability(entry)
   const target = await remoteTarget(socketPath, entry)
@@ -101,8 +120,12 @@ async function preview(socketPath: string, rest: string[]): Promise<CommandResul
   }
 }
 
-export async function runPlacementCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runPlacementCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'placement') return undefined
   switch (action) {
     case 'hosts':
@@ -111,15 +134,22 @@ export async function runPlacementCommand(socketPath: string, area: string | und
     case 'check': {
       const [hostWord, kindWord, ...optionWords] = rest
       const options = namedOptions(optionWords, ['--workspace'], 'placement check')
-      const decision = await dailyUseCommand<'placement.check'>(socketPath, { op: 'placement.check', host: host(hostWord),
-        resource: kind(kindWord), ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}) })
+      const decision = await dailyUseCommand<'placement.check'>(socketPath, {
+        op: 'placement.check',
+        host: host(hostWord),
+        resource: kind(kindWord),
+        ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}),
+      })
       if (!decision.admitted) throw new CliError('not_applied', decision.reason ?? 'Placement refused.')
       return decision
     }
     case 'record': {
       const [hostWord, ...words] = rest
-      return dailyUseCommand(socketPath, { op: 'placement.record', host: host(hostWord),
-        resource: resource(words, 'record') })
+      return dailyUseCommand(socketPath, {
+        op: 'placement.record',
+        host: host(hostWord),
+        resource: resource(words, 'record'),
+      })
     }
     case 'resolve':
       return dailyUseCommand(socketPath, { op: 'placement.resolve', resource: resource(rest, 'resolve') })
@@ -127,8 +157,10 @@ export async function runPlacementCommand(socketPath: string, area: string | und
       return dailyUseCommand(socketPath, { op: 'placement.release', resource: resource(rest, 'release') })
     case 'list': {
       const options = namedOptions(rest, ['--host'], 'placement list')
-      return dailyUseCommand(socketPath, { op: 'placement.list',
-        ...(options['--host'] ? { host_id: options['--host'] } : {}) })
+      return dailyUseCommand(socketPath, {
+        op: 'placement.list',
+        ...(options['--host'] ? { host_id: options['--host'] } : {}),
+      })
     }
     case 'preview':
       return preview(socketPath, rest)

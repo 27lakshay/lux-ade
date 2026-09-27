@@ -42,18 +42,17 @@ export interface RemotePairingCredential {
   token: string
 }
 
-export type RemotePhase =
-  | 'idle'
-  | 'forwarding'
-  | 'handshaking'
-  | 'connected'
-  | 'unknown'
-  | 'failed'
-  | 'stopped'
+export type RemotePhase = 'idle' | 'forwarding' | 'handshaking' | 'connected' | 'unknown' | 'failed' | 'stopped'
 
 /** Why a connection stopped retrying. Each needs a person to act. */
-export type RemoteFailure = 'host_untrusted' | 'auth_failed' | 'incompatible' | 'identity_mismatch' | 'invalid_target'
-  | 'pairing_revoked' | 'unauthorized'
+export type RemoteFailure =
+  | 'host_untrusted'
+  | 'auth_failed'
+  | 'incompatible'
+  | 'identity_mismatch'
+  | 'invalid_target'
+  | 'pairing_revoked'
+  | 'unauthorized'
 
 /** The identity a remote daemon proves in its hello. */
 export interface RemoteIdentity {
@@ -174,14 +173,22 @@ export function hostTrustArgs(target: RemoteTarget, knownHostsFile: string | nul
   }
   return [
     ...common,
-    '-o', `UserKnownHostsFile=${knownHostsFile}`,
-    '-o', 'GlobalKnownHostsFile=/dev/null',
-    '-o', 'KnownHostsCommand=none',
-    '-o', `HostKeyAlias=${hostKeyAlias(target.hostId)}`,
-    '-o', `HostKeyAlgorithms=${key.algorithms}`,
-    '-o', 'UpdateHostKeys=no',
-    '-o', 'CheckHostIP=no',
-    '-o', 'VerifyHostKeyDNS=no',
+    '-o',
+    `UserKnownHostsFile=${knownHostsFile}`,
+    '-o',
+    'GlobalKnownHostsFile=/dev/null',
+    '-o',
+    'KnownHostsCommand=none',
+    '-o',
+    `HostKeyAlias=${hostKeyAlias(target.hostId)}`,
+    '-o',
+    `HostKeyAlgorithms=${key.algorithms}`,
+    '-o',
+    'UpdateHostKeys=no',
+    '-o',
+    'CheckHostIP=no',
+    '-o',
+    'VerifyHostKeyDNS=no',
   ]
 }
 
@@ -191,8 +198,13 @@ export function validateTarget(target: RemoteTarget): string | null {
   if (!ID_PATTERN.test(target.profileId)) return 'Profile ID must be 1-128 letters, digits, ".", "_", ":" or "-".'
   if (!DESTINATION_PATTERN.test(target.destination)) return 'SSH destination must be [user@]host with no options.'
   const socket = target.remoteSocket
-  if (!socket.startsWith('/') || socket.includes('\0') || socket.includes(':') || /\s/.test(socket) ||
-    socket.split('/').includes('..')) {
+  if (
+    !socket.startsWith('/') ||
+    socket.includes('\0') ||
+    socket.includes(':') ||
+    /\s/.test(socket) ||
+    socket.split('/').includes('..')
+  ) {
     return 'Remote socket must be an absolute path without "..", ":" or whitespace.'
   }
   if (Buffer.byteLength(socket) > MAX_UNIX_SOCKET_BYTES) return 'Remote socket path is too long for a Unix socket.'
@@ -201,7 +213,8 @@ export function validateTarget(target: RemoteTarget): string | null {
   }
   const pairing = target.pairing
   if (pairing !== undefined && pairing !== null) {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(pairing.pairingId)) return 'Pairing ID must be 1-128 letters, digits, "-" or "_".'
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(pairing.pairingId))
+      return 'Pairing ID must be 1-128 letters, digits, "-" or "_".'
     if (typeof pairing.token !== 'string' || pairing.token.length === 0 || Buffer.byteLength(pairing.token) > 4096) {
       return 'The pairing token must be 1 to 4096 bytes.'
     }
@@ -243,25 +256,38 @@ export function validateLocalSocket(path: string): string | null {
  */
 export function sshForwardArgs(target: RemoteTarget, localSocket: string, knownHostsFile: string | null): string[] {
   return [
-    '-N', '-T',
+    '-N',
+    '-T',
     ...hostTrustArgs(target, knownHostsFile),
-    '-o', 'ExitOnForwardFailure=yes',
-    '-o', 'StreamLocalBindUnlink=yes',
-    '-o', 'StreamLocalBindMask=0177',
-    '-o', 'ServerAliveInterval=15',
-    '-o', 'ServerAliveCountMax=3',
-    '-o', 'ConnectTimeout=15',
-    '-o', 'ControlMaster=no',
-    '-o', 'ControlPath=none',
-    '-L', `${localSocket}:${target.remoteSocket}`,
-    '--', target.destination,
+    '-o',
+    'ExitOnForwardFailure=yes',
+    '-o',
+    'StreamLocalBindUnlink=yes',
+    '-o',
+    'StreamLocalBindMask=0177',
+    '-o',
+    'ServerAliveInterval=15',
+    '-o',
+    'ServerAliveCountMax=3',
+    '-o',
+    'ConnectTimeout=15',
+    '-o',
+    'ControlMaster=no',
+    '-o',
+    'ControlPath=none',
+    '-L',
+    `${localSocket}:${target.remoteSocket}`,
+    '--',
+    target.destination,
   ]
 }
 
 /** Classifies an ssh exit. Trust and authentication failures do not retry on their own. */
 export function classifySshExit(stderr: string): 'host_untrusted' | 'auth_failed' | 'transient' {
-  if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No [A-Z0-9-]+ host key is known/i
-    .test(stderr)) return 'host_untrusted'
+  if (
+    /Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No [A-Z0-9-]+ host key is known/i.test(stderr)
+  )
+    return 'host_untrusted'
   if (/Permission denied \(/i.test(stderr)) return 'auth_failed'
   return 'transient'
 }
@@ -275,9 +301,13 @@ function helloIdentity(hello: Record<string, unknown>): RemoteIdentity | { incom
   const runtimeSocket = hello.runtime_socket
   const bootId = hello.boot_id
   const buildId = hello.build_id
-  if (typeof runtimeSocket !== 'string' || runtimeSocket.length === 0 ||
-    typeof bootId !== 'string' || bootId.length === 0 ||
-    !(buildId === null || buildId === undefined || typeof buildId === 'string')) {
+  if (
+    typeof runtimeSocket !== 'string' ||
+    runtimeSocket.length === 0 ||
+    typeof bootId !== 'string' ||
+    bootId.length === 0 ||
+    !(buildId === null || buildId === undefined || typeof buildId === 'string')
+  ) {
     return { incompatible: 'Remote daemon hello is missing its runtime identity.' }
   }
   return { runtimeSocket, bootId, buildId: buildId ?? null }
@@ -304,8 +334,14 @@ export function initialRemoteState(target: RemoteTarget): RemoteState {
 function lose(state: RemoteState, detail: string): RemoteStep {
   const attempt = state.attempt + 1
   return {
-    state: { ...state, phase: 'unknown', current: null, attempt, failure: null,
-      detail: `${detail} Remote state is unknown; reconnecting to the same host.` },
+    state: {
+      ...state,
+      phase: 'unknown',
+      current: null,
+      attempt,
+      failure: null,
+      detail: `${detail} Remote state is unknown; reconnecting to the same host.`,
+    },
     effects: [{ type: 'kill_forward' }, { type: 'schedule_retry', delayMs: retryDelay(attempt) }],
   }
 }
@@ -327,8 +363,10 @@ export function reduceRemote(state: RemoteState, event: RemoteEvent): RemoteStep
   const none: RemoteStep = { state, effects: [] }
   if (event.type === 'stop') {
     if (state.phase === 'stopped') return none
-    return { state: { ...state, phase: 'stopped', current: null, detail: 'Disconnected by request.' },
-      effects: [{ type: 'kill_forward' }, { type: 'cancel_retry' }] }
+    return {
+      state: { ...state, phase: 'stopped', current: null, detail: 'Disconnected by request.' },
+      effects: [{ type: 'kill_forward' }, { type: 'cancel_retry' }],
+    }
   }
   if (event.type === 'refused') {
     // The host itself refused this pairing: stop, and send nothing further.
@@ -340,14 +378,18 @@ export function reduceRemote(state: RemoteState, event: RemoteEvent): RemoteStep
     if (state.phase !== 'idle' && state.phase !== 'stopped' && state.phase !== 'failed') return none
     // An explicit start clears a failure, but the identity pin survives: the
     // same target must still reach the same profile runtime.
-    return { state: { ...state, phase: 'forwarding', failure: null, attempt: 0,
-      detail: 'Opening SSH forward…' }, effects: [{ type: 'spawn_forward' }] }
+    return {
+      state: { ...state, phase: 'forwarding', failure: null, attempt: 0, detail: 'Opening SSH forward…' },
+      effects: [{ type: 'spawn_forward' }],
+    }
   }
   switch (state.phase) {
     case 'forwarding':
       if (event.type === 'forward_ready') {
-        return { state: { ...state, phase: 'handshaking', detail: 'Handshaking with remote daemon…' },
-          effects: [{ type: 'send_hello' }] }
+        return {
+          state: { ...state, phase: 'handshaking', detail: 'Handshaking with remote daemon…' },
+          effects: [{ type: 'send_hello' }],
+        }
       }
       if (event.type === 'forward_failed' || event.type === 'link_lost') {
         if (event.type === 'forward_failed') {
@@ -363,18 +405,33 @@ export function reduceRemote(state: RemoteState, event: RemoteEvent): RemoteStep
         const identity = helloIdentity(event.hello)
         if ('incompatible' in identity) return fail(state, 'incompatible', identity.incompatible)
         if (state.pinned && state.pinned.runtimeSocket !== identity.runtimeSocket) {
-          return fail(state, 'identity_mismatch',
-            'The remote socket now reaches a different profile runtime. Refusing to continue on the wrong profile.')
+          return fail(
+            state,
+            'identity_mismatch',
+            'The remote socket now reaches a different profile runtime. Refusing to continue on the wrong profile.',
+          )
         }
-        return { state: { ...state, phase: 'connected', pinned: state.pinned ?? identity, current: identity,
-          attempt: 0, failure: null, detail: '' }, effects: [] }
+        return {
+          state: {
+            ...state,
+            phase: 'connected',
+            pinned: state.pinned ?? identity,
+            current: identity,
+            attempt: 0,
+            failure: null,
+            detail: '',
+          },
+          effects: [],
+        }
       }
       if (event.type === 'hello_failed') {
         return event.incompatible ? fail(state, 'incompatible', event.detail) : lose(state, event.detail)
       }
       if (event.type === 'forward_failed') {
         const kind = classifySshExit(event.stderr)
-        return kind === 'transient' ? lose(state, 'SSH forward exited during handshake.') : fail(state, kind, failureDetail[kind])
+        return kind === 'transient'
+          ? lose(state, 'SSH forward exited during handshake.')
+          : fail(state, kind, failureDetail[kind])
       }
       if (event.type === 'link_lost') return lose(state, event.detail)
       return none
@@ -384,8 +441,10 @@ export function reduceRemote(state: RemoteState, event: RemoteEvent): RemoteStep
       return none
     case 'unknown':
       if (event.type === 'retry_due') {
-        return { state: { ...state, phase: 'forwarding', detail: `${state.detail} Attempt ${state.attempt + 1}.` },
-          effects: [{ type: 'spawn_forward' }] }
+        return {
+          state: { ...state, phase: 'forwarding', detail: `${state.detail} Attempt ${state.attempt + 1}.` },
+          effects: [{ type: 'spawn_forward' }],
+        }
       }
       return none
     default:
@@ -401,11 +460,16 @@ export type RemoteAdmission = { admitted: true } | { admitted: false; reason: st
  * and nothing is redirected elsewhere.
  */
 export function admitRemoteRequest(state: RemoteState, target: RemoteTarget): RemoteAdmission {
-  if (state.key !== connectionKey(target)) return { admitted: false, reason: 'Request targets a different host or profile.' }
+  if (state.key !== connectionKey(target))
+    return { admitted: false, reason: 'Request targets a different host or profile.' }
   if (state.phase !== 'connected' || !state.current) {
-    return { admitted: false, reason: state.phase === 'unknown'
-      ? 'Remote host is disconnected; its state is unknown. The request was not sent.'
-      : `Remote host is not connected (${state.phase}). The request was not sent.` }
+    return {
+      admitted: false,
+      reason:
+        state.phase === 'unknown'
+          ? 'Remote host is disconnected; its state is unknown. The request was not sent.'
+          : `Remote host is not connected (${state.phase}). The request was not sent.`,
+    }
   }
   return { admitted: true }
 }
@@ -423,11 +487,16 @@ export function requestLostLink(failure: { code: string; replied: boolean }): bo
 /** The status a client shows for a host. Link loss is `unknown`, never a local status. */
 export function remoteStatus(state: RemoteState): 'connected' | 'connecting' | 'unknown' | 'failed' | 'disconnected' {
   switch (state.phase) {
-    case 'connected': return 'connected'
+    case 'connected':
+      return 'connected'
     case 'forwarding':
-    case 'handshaking': return state.pinned ? 'unknown' : 'connecting'
-    case 'unknown': return 'unknown'
-    case 'failed': return 'failed'
-    default: return 'disconnected'
+    case 'handshaking':
+      return state.pinned ? 'unknown' : 'connecting'
+    case 'unknown':
+      return 'unknown'
+    case 'failed':
+      return 'failed'
+    default:
+      return 'disconnected'
   }
 }

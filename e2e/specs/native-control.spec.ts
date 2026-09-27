@@ -27,8 +27,14 @@ test('native profile control starts, attaches and restores a fenced backend with
     owners.push(owner)
     const attached = await run('profiles', '--home', home, 'start')
     expect(attached.daemon.boot_id).toBe(owner.bootId)
-    const restarted = await run('runtime', 'restart', '--home', created.profile.home,
-      '--daemon', resolve('target/debug/ade-daemon'))
+    const restarted = await run(
+      'runtime',
+      'restart',
+      '--home',
+      created.profile.home,
+      '--daemon',
+      resolve('target/debug/ade-daemon'),
+    )
     expect(restarted.daemon.boot_id).not.toBe(owner.bootId)
     expect(restarted.daemon.runtime_instance).toBe(owner.runtimeInstance)
     owners[0] = await managedProfileOwner(started.socket)
@@ -46,8 +52,9 @@ test('native profile control starts, attaches and restores a fenced backend with
     expect(JSON.stringify(catalogue)).toContain(root)
     expect((await run('profiles', '--home', home, 'pending-restores')).profiles).toEqual([])
     await writeFile(join(bundle, 'backend', 'manifest.json'), '{"corrupt":true}')
-    await expect(run('profiles', '--home', home, 'restore-backend', '--backup', bundle,
-      '--name', 'Corrupt')).rejects.toThrow(/Registered backend manifest changed/)
+    await expect(
+      run('profiles', '--home', home, 'restore-backend', '--backup', bundle, '--name', 'Corrupt'),
+    ).rejects.toThrow(/Registered backend manifest changed/)
     expect((await run('profiles', '--home', home, 'list')).profiles).toHaveLength(2)
   } finally {
     for (const owner of owners.reverse()) await stopManagedProfile(owner)
@@ -59,7 +66,7 @@ test('native browser lease releases on parent EOF and refuses a second owner', a
   const root = await mkdtemp(join(tmpdir(), 'ade-native-lease-'))
   const lock = join(root, 'lease.lock')
   const children: ReturnType<typeof spawn>[] = []
-  const lease = async (): Promise<{ child: ReturnType<typeof spawn>, status: string }> => {
+  const lease = async (): Promise<{ child: ReturnType<typeof spawn>; status: string }> => {
     const child = spawn(control, ['browser-lease', lock], { stdio: ['pipe', 'pipe', 'pipe'] })
     children.push(child)
     const status = await new Promise<string>((resolveStatus, rejectStatus) => {
@@ -79,7 +86,10 @@ test('native browser lease releases on parent EOF and refuses a second owner', a
     expect(third.status).toBe('ready')
     third.child.stdin.end()
   } finally {
-    for (const child of children) { child.stdin.end(); if (child.exitCode === null) child.kill() }
+    for (const child of children) {
+      child.stdin.end()
+      if (child.exitCode === null) child.kill()
+    }
     await rm(root, { recursive: true, force: true })
   }
 })

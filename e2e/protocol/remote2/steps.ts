@@ -17,13 +17,21 @@ type Transport = Awaited<ReturnType<RemoteLab['transport']>>
  * The SDK target for a started host's paired endpoint, presenting its pairing
  * with `token`. The endpoint is the one `remote.host.start` reported.
  */
-export function pairedTarget(started: Started, token: string,
-  pairing: { pairing_id: string } = started.pairing): RemoteTarget {
+export function pairedTarget(
+  started: Started,
+  token: string,
+  pairing: { pairing_id: string } = started.pairing,
+): RemoteTarget {
   const socket = started.daemon.paired_socket
   expect(socket, 'remote.host.start reports the paired endpoint it granted').toBeTruthy()
-  return { hostId: started.hostId, profileId: started.remoteProfileId, destination: started.registered.ssh_target,
-    remoteSocket: socket!, hostPublicKey: started.registered.host_public_key,
-    pairing: { pairingId: pairing.pairing_id, token } }
+  return {
+    hostId: started.hostId,
+    profileId: started.remoteProfileId,
+    destination: started.registered.ssh_target,
+    remoteSocket: socket!,
+    hostPublicKey: started.registered.host_public_key,
+    pairing: { pairingId: pairing.pairing_id, token },
+  }
 }
 
 /** A connected transport to the host's paired endpoint with the lab's pairing token. */
@@ -44,11 +52,18 @@ export async function hostGrants(started: Started): Promise<Array<{ pairing_id: 
 /** Opens a workspace on the host and starts a Codex turn the host's mock holds until cancelled. */
 export async function heldRemoteTurn(link: Transport, started: Started, requestId = 'held-turn') {
   const { workspace } = await remoteCall(link, 'workspace.open', { path: (await started.host.repo('app')).path })
-  const { conversation } = await remoteCall(link, 'conversation.create', { workspace_id: workspace.id,
-    provider: 'codex' })
+  const { conversation } = await remoteCall(link, 'conversation.create', {
+    workspace_id: workspace.id,
+    provider: 'codex',
+  })
   await remoteCall(link, 'agent.send', { conversation_id: conversation.id, request_id: requestId, text: 'hold' })
-  await expect.poll(async () => (await remoteCall(link, 'conversation.get', { conversation_id: conversation.id }))
-    .conversation.status, { timeout: 20_000 }).toBe('running')
+  await expect
+    .poll(
+      async () =>
+        (await remoteCall(link, 'conversation.get', { conversation_id: conversation.id })).conversation.status,
+      { timeout: 20_000 },
+    )
+    .toBe('running')
   return { workspace, conversation }
 }
 

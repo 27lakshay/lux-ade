@@ -4,23 +4,48 @@
 // exit, or release their lease, until the whole observed tree is gone.
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, isRunning, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
-  type AdeHarness, type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  isRunning,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type AdeHarness,
+  type ScratchProfile,
+} from '../fixtures'
 import { mockDirectory } from '../fixtures/providers'
 import { recoveryFixtures, waitForAttemptRecord, waitForPidFile, waitForRecordedDescendant } from '../fixtures/recovery'
 
 /** Workspace recipes: a shell that ignores TERM and HUP and starts an escaping descendant. */
 async function writeRecipes(root: string): Promise<void> {
   await mkdir(join(root, '.ade'), { recursive: true })
-  const stubborn = (linger: number) => ({ program: '/bin/sh', args: ['-c', [
-    "trap '' TERM HUP",
-    `python3 '${recoveryFixtures.escapee}' "$PWD" ${linger} &`,
-    'echo $$ > shell.pid',
-    'while :; do sleep 1; done',
-  ].join('\n')] })
-  await writeFile(join(root, '.ade', 'scripts.json'), JSON.stringify({ schema_version: 1, scripts: {
-    stubborn: stubborn(0), orphaning: stubborn(3), quick: { program: '/bin/sh', args: ['-c', 'echo ADE_QUICK'] },
-  } }))
+  const stubborn = (linger: number) => ({
+    program: '/bin/sh',
+    args: [
+      '-c',
+      [
+        "trap '' TERM HUP",
+        `python3 '${recoveryFixtures.escapee}' "$PWD" ${linger} &`,
+        'echo $$ > shell.pid',
+        'while :; do sleep 1; done',
+      ].join('\n'),
+    ],
+  })
+  await writeFile(
+    join(root, '.ade', 'scripts.json'),
+    JSON.stringify({
+      schema_version: 1,
+      scripts: {
+        stubborn: stubborn(0),
+        orphaning: stubborn(3),
+        quick: { program: '/bin/sh', args: ['-c', 'echo ADE_QUICK'] },
+      },
+    }),
+  )
 }
 
 async function startStubborn(ade: AdeHarness, profile: ScratchProfile, name: 'stubborn' | 'orphaning') {
@@ -41,7 +66,9 @@ function claimsExit(status: unknown): boolean {
   return kind === 'success' || kind === 'failure' || kind === 'signaled'
 }
 
-test('disconnecting a provider that ignores TERM escalates and confirms only once its escaped descendant is gone', async ({ ade }) => {
+test('disconnecting a provider that ignores TERM escalates and confirms only once its escaped descendant is gone', async ({
+  ade,
+}) => {
   const profile = await ade.profile({ env: { ADE_CODEX_BIN: recoveryFixtures.stubbornCodex } })
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.turn)
@@ -63,7 +90,10 @@ test('disconnecting a provider that ignores TERM escalates and confirms only onc
 })
 
 for (const name of ['stubborn', 'orphaning'] as const) {
-  test(`script.stop reports an exit only after the ${name} tree, which ignores TERM, is gone`, async ({ ade, profile }) => {
+  test(`script.stop reports an exit only after the ${name} tree, which ignores TERM, is gone`, async ({
+    ade,
+    profile,
+  }) => {
     const { workspaceId, runId, shellPid, escapedPid } = await startStubborn(ade, profile, name)
     expect(await isRunning(escapedPid)).toBe(true)
 
@@ -73,12 +103,17 @@ for (const name of ['stubborn', 'orphaning'] as const) {
       expect(await isRunning(escapedPid)).toBe(false)
       expect(await isRunning(shellPid)).toBe(false)
     }
-    await expect.poll(async () => {
-      const inspected = await profile.call('script.inspect', { workspace_id: workspaceId, run_id: runId })
-      // Checked against the same observation that reports the exit.
-      if (claimsExit(inspected.exit_status)) expect(await isRunning(escapedPid)).toBe(false)
-      return inspected.state === 'exited' && claimsExit(inspected.exit_status)
-    }, { timeout: 15_000 }).toBe(true)
+    await expect
+      .poll(
+        async () => {
+          const inspected = await profile.call('script.inspect', { workspace_id: workspaceId, run_id: runId })
+          // Checked against the same observation that reports the exit.
+          if (claimsExit(inspected.exit_status)) expect(await isRunning(escapedPid)).toBe(false)
+          return inspected.state === 'exited' && claimsExit(inspected.exit_status)
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true)
     expect(await isRunning(shellPid)).toBe(false)
     expect(await isRunning(escapedPid)).toBe(false)
     const inspected = await profile.call('script.inspect', { workspace_id: workspaceId, run_id: runId })
@@ -90,7 +125,10 @@ for (const name of ['stubborn', 'orphaning'] as const) {
   })
 }
 
-test('a script tree that survives a runtime kill is quarantined and blocks the workspace until it exits', async ({ ade, profile }) => {
+test('a script tree that survives a runtime kill is quarantined and blocks the workspace until it exits', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(90_000)
   const { workspaceId, runId, shellPid, escapedPid } = await startStubborn(ade, profile, 'stubborn')
   const key = `script:${workspaceId}:${runId}`
@@ -114,18 +152,27 @@ test('a script tree that survives a runtime kill is quarantined and blocks the w
   // Reconciled before admission: no new run, no retire, no user release.
   await expect(profile.call('script.start', { workspace_id: workspaceId, name: 'quick' })).rejects.toThrow()
   await expect(profile.call('script.retire', { workspace_id: workspaceId, run_id: runId })).rejects.toThrow()
-  await expect(profile.call('runtime.recovery.release', { report_id: report!.id, attempt_key: key }))
-    .rejects.toThrow(/still running/)
+  await expect(profile.call('runtime.recovery.release', { report_id: report!.id, attempt_key: key })).rejects.toThrow(
+    /still running/,
+  )
 
   // The whole tree exits; a later observation settles the attempt and the
   // workspace admits new work again.
   process.kill(escapedPid, 'SIGKILL')
   process.kill(shellPid, 'SIGKILL')
   await expect.poll(() => isRunning(shellPid)).toBe(false)
-  await expect.poll(async () => {
-    const reports = (await profile.call('runtime.recovery', {})).reports
-    return reports.flatMap((candidate) => candidate.attempts).find((candidate) => candidate.key === key)?.resolved_at ?? null
-  }, { timeout: 30_000 }).not.toBeNull()
+  await expect
+    .poll(
+      async () => {
+        const reports = (await profile.call('runtime.recovery', {})).reports
+        return (
+          reports.flatMap((candidate) => candidate.attempts).find((candidate) => candidate.key === key)?.resolved_at ??
+          null
+        )
+      },
+      { timeout: 30_000 },
+    )
+    .not.toBeNull()
   await profile.call('script.start', { workspace_id: workspaceId, name: 'quick' })
 })
 
@@ -139,19 +186,28 @@ test('a script tree that survives a runtime kill is quarantined and blocks the w
 // 'orphaning': it lost its parent to launchd before the runtime died, so only
 // the record made while the runtime lived ties it to the attempt.
 for (const name of ['stubborn', 'orphaning'] as const) {
-  test(`an escaped descendant that survives a runtime kill keeps its script attempt quarantined${name === 'orphaning' ? ' after it was orphaned before the kill' : ''}`, async ({ ade, profile }) => {
+  test(`an escaped descendant that survives a runtime kill keeps its script attempt quarantined${name === 'orphaning' ? ' after it was orphaned before the kill' : ''}`, async ({
+    ade,
+    profile,
+  }) => {
     test.setTimeout(90_000)
     const { workspaceId, runId, shellPid, escapedPid } = await startStubborn(ade, profile, name)
     const key = `script:${workspaceId}:${runId}`
     const recordKey = `terminal:${workspaceId}:${runId}`
     await waitForAttemptRecord(profile, recordKey)
     // The runtime reports the escapee among the descendants it tracks for this run.
-    await expect.poll(async () => {
-      const run = (await profile.call('script.runs', { workspace_id: workspaceId })).runs
-        .find((candidate) => candidate.run_id === runId)
-      const reported = (run?.metrics as { descendants?: Array<{ pid: number }> } | undefined)?.descendants ?? []
-      return reported.map((descendant) => descendant.pid)
-    }, { message: 'the runtime to report the escaped descendant' }).toContain(escapedPid)
+    await expect
+      .poll(
+        async () => {
+          const run = (await profile.call('script.runs', { workspace_id: workspaceId })).runs.find(
+            (candidate) => candidate.run_id === runId,
+          )
+          const reported = (run?.metrics as { descendants?: Array<{ pid: number }> } | undefined)?.descendants ?? []
+          return reported.map((descendant) => descendant.pid)
+        },
+        { message: 'the runtime to report the escaped descendant' },
+      )
+      .toContain(escapedPid)
     // Without a parent in the tree, the escapee is known only if it was
     // recorded while the runtime lived. Wait for that record, not a time.
     if (name === 'orphaning') await waitForRecordedDescendant(profile, recordKey, escapedPid)
@@ -161,16 +217,21 @@ for (const name of ['stubborn', 'orphaning'] as const) {
     await expect.poll(() => isRunning(shellPid)).toBe(false)
     expect(await isRunning(escapedPid)).toBe(true)
 
-    const attempt = async () => (await profile.call('runtime.recovery', {})).reports
-      .flatMap((report) => report.attempts).find((candidate) => candidate.key === key)
-    const reportId = async () => (await profile.call('runtime.recovery', {})).reports
-      .find((report) => report.attempts.some((candidate) => candidate.key === key))!.id
+    const attempt = async () =>
+      (await profile.call('runtime.recovery', {})).reports
+        .flatMap((report) => report.attempts)
+        .find((candidate) => candidate.key === key)
+    const reportId = async () =>
+      (await profile.call('runtime.recovery', {})).reports.find((report) =>
+        report.attempts.some((candidate) => candidate.key === key),
+      )!.id
     expect(await attempt()).toMatchObject({ kind: 'script', classification: 'quarantined', resolved_at: null })
     expect((await attempt())?.pids).toContain(escapedPid)
     // Each release observes again now that the shell is gone: the escapee alone refuses it.
     const refusesWhileEscapeeRuns = async () => {
-      await expect(profile.call('runtime.recovery.release', { report_id: await reportId(), attempt_key: key }))
-        .rejects.toThrow(/still running/)
+      await expect(
+        profile.call('runtime.recovery.release', { report_id: await reportId(), attempt_key: key }),
+      ).rejects.toThrow(/still running/)
       await expect(profile.call('script.retire', { workspace_id: workspaceId, run_id: runId })).rejects.toThrow()
       await expect(profile.call('script.start', { workspace_id: workspaceId, name: 'quick' })).rejects.toThrow()
     }

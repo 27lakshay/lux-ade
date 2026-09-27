@@ -6,7 +6,10 @@ import { dirname, join } from 'node:path'
 import { expect, test } from '../fixtures'
 import { create, createReady, item, operationId, register, settled } from './lifecycle'
 
-test('an external tree is protected until a confirmed adoption, which grants removal authority', async ({ ade, profile }) => {
+test('an external tree is protected until a confirmed adoption, which grants removal authority', async ({
+  ade,
+  profile,
+}) => {
   const repo = await ade.repo()
   const other = await ade.repo({ name: 'other' })
   const repositoryId = await register(profile, repo)
@@ -21,14 +24,23 @@ test('an external tree is protected until a confirmed adoption, which grants rem
   await profile.call('worktree.refresh', { repository_id: repositoryId, operation_id: refresh })
   await settled(profile, repositoryId, refresh)
   expect(await item(profile, repositoryId, external)).toMatchObject({ ade_owned: false })
-  await expect(profile.call('worktree.remove', { repository_id: repositoryId, operation_id: operationId('remove'), path: external }))
-    .rejects.toThrow()
+  await expect(
+    profile.call('worktree.remove', {
+      repository_id: repositoryId,
+      operation_id: operationId('remove'),
+      path: external,
+    }),
+  ).rejects.toThrow()
   const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
   expect(plan.trees.find((tree) => tree.path === external)?.blockers).toEqual(['external'])
 
   // Adoption needs the exact confirmed path, a linked tree of this repository, and not the primary.
   const adopt = (path: string, confirm_path?: string) =>
-    profile.call('worktree.adopt', { repository_id: repositoryId, path, ...(confirm_path ? { confirm_path } : {}) } as never)
+    profile.call('worktree.adopt', {
+      repository_id: repositoryId,
+      path,
+      ...(confirm_path ? { confirm_path } : {}),
+    } as never)
   await expect(adopt(external)).rejects.toThrow(/confirm_path/)
   await expect(adopt(external, `${external}/`)).rejects.toThrow(/confirm_path/)
   await expect(adopt(repo.path, repo.path)).rejects.toThrow(/primary checkout cannot be adopted/)
@@ -62,9 +74,13 @@ test('a tree replaced at the same path loses the authority granted to the old on
 
   const plan = await profile.call('worktree.cleanup.plan', { repository_id: repositoryId })
   const blockers = plan.trees.find((tree) => tree.path === path)?.blockers ?? []
-  expect(blockers.some((blocker) => blocker === 'authority_changed' || blocker === 'external'), JSON.stringify(blockers)).toBe(true)
-  await expect(profile.call('worktree.remove', { repository_id: repositoryId, operation_id: operationId('remove'), path }))
-    .rejects.toThrow()
+  expect(
+    blockers.some((blocker) => blocker === 'authority_changed' || blocker === 'external'),
+    JSON.stringify(blockers),
+  ).toBe(true)
+  await expect(
+    profile.call('worktree.remove', { repository_id: repositoryId, operation_id: operationId('remove'), path }),
+  ).rejects.toThrow()
   expect(existsSync(path)).toBe(true)
   expect(await repo.git('-C', path, 'branch', '--show-current')).toBe('second')
 })
@@ -81,17 +97,33 @@ test('adoption is refused while another profile holds a removal claim on the tre
   // The owner's teardown holds the exclusive removal claim until released.
   const started = join(ade.root, 'teardown-started')
   const release = join(ade.root, 'teardown-release')
-  await owner.call('worktree.configure', { repository_id: ownerRepository, config: { teardown: [{ name: 'wait',
-    command: ['/bin/sh', '-c', `: > '${started}'; while [ ! -f '${release}' ]; do sleep 0.05; done`], timeout_seconds: 60 }] } })
+  await owner.call('worktree.configure', {
+    repository_id: ownerRepository,
+    config: {
+      teardown: [
+        {
+          name: 'wait',
+          command: ['/bin/sh', '-c', `: > '${started}'; while [ ! -f '${release}' ]; do sleep 0.05; done`],
+          timeout_seconds: 60,
+        },
+      ],
+    },
+  })
   const removal = operationId('remove-claimed')
   await owner.call('worktree.remove', { repository_id: ownerRepository, operation_id: removal, path: tree })
   await expect.poll(() => existsSync(started), { timeout: 20_000 }).toBe(true)
   try {
-    const refused = await other.call('worktree.adopt', { repository_id: otherRepository, path: tree, confirm_path: tree })
-      .then(() => null, (error: unknown) => String(error))
+    const refused = await other
+      .call('worktree.adopt', { repository_id: otherRepository, path: tree, confirm_path: tree })
+      .then(
+        () => null,
+        (error: unknown) => String(error),
+      )
     expect(refused).toMatch(/conflicts with the active exclusive remove claim/)
     const plan = await other.call('worktree.cleanup.plan', { repository_id: otherRepository })
-    expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toEqual(expect.arrayContaining(['external', 'claim_held']))
+    expect(plan.trees.find((candidate) => candidate.path === tree)?.blockers).toEqual(
+      expect.arrayContaining(['external', 'claim_held']),
+    )
   } finally {
     await writeFile(release, '')
   }
@@ -99,7 +131,10 @@ test('adoption is refused while another profile holds a removal claim on the tre
   expect(existsSync(tree)).toBe(false)
 })
 
-test('a pull-request head fetched from a configured remote becomes a new tree; unknown remotes, URLs and missing refs are refused', async ({ ade, profile }) => {
+test('a pull-request head fetched from a configured remote becomes a new tree; unknown remotes, URLs and missing refs are refused', async ({
+  ade,
+  profile,
+}) => {
   const upstream = await ade.repo({ name: 'upstream' })
   await upstream.git('checkout', '--quiet', '-b', 'contributor')
   const prHead = await upstream.commit('Contributor change', { 'pr.txt': 'from the pull request\n' })
@@ -116,8 +151,10 @@ test('a pull-request head fetched from a configured remote becomes a new tree; u
   const cli = await profile.cli('worktree', 'new', repositoryId, '--name', 'pr-7', '--pr', '7', '--request-id', id)
   expect(cli.code, cli.stderr).toBe(0)
   const created = await settled(profile, repositoryId, id)
-  expect(created, JSON.stringify(created)).toMatchObject({ status: 'succeeded',
-    result: { resolved: { branch: 'pr-7', base: prHead, fetch: { remote: 'origin', ref: 'refs/pull/7/head' } } } })
+  expect(created, JSON.stringify(created)).toMatchObject({
+    status: 'succeeded',
+    result: { resolved: { branch: 'pr-7', base: prHead, fetch: { remote: 'origin', ref: 'refs/pull/7/head' } } },
+  })
   const tree = created.worktree_path!
   expect(await repo.git('-C', tree, 'rev-parse', 'HEAD')).toBe(prHead)
   expect(await readFile(join(tree, 'pr.txt'), 'utf8')).toBe('from the pull request\n')
@@ -134,12 +171,21 @@ test('a pull-request head fetched from a configured remote becomes a new tree; u
   ]
   const before = await repo.git('worktree', 'list', '--porcelain')
   for (const [fetch, message] of refusals) {
-    const refused = await create(profile, repositoryId, { name: `refused-${refusals.findIndex(([f]) => f === fetch)}`, fetch })
+    const refused = await create(profile, repositoryId, {
+      name: `refused-${refusals.findIndex(([f]) => f === fetch)}`,
+      fetch,
+    })
     expect(refused, JSON.stringify(fetch)).toMatchObject({ status: 'failed' })
     expect(refused.error).toMatch(message)
   }
   expect(await repo.git('worktree', 'list', '--porcelain')).toBe(before)
   // A fetched source replaces base; both together are refused at admission.
-  await expect(profile.call('worktree.create', { repository_id: repositoryId, operation_id: operationId('both'),
-    base: 'main', fetch: { remote: 'origin', ref: 'refs/pull/7/head' } })).rejects.toThrow(/one or the other/)
+  await expect(
+    profile.call('worktree.create', {
+      repository_id: repositoryId,
+      operation_id: operationId('both'),
+      base: 'main',
+      fetch: { remote: 'origin', ref: 'refs/pull/7/head' },
+    }),
+  ).rejects.toThrow(/one or the other/)
 })

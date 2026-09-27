@@ -20,14 +20,18 @@ async function turn(profile: ScratchProfile, conversationId: string, text: strin
 /** Wait until the conversation's finished turns are all recorded. */
 async function recordedTurns(profile: ScratchProfile, conversationId: string, count: number): Promise<any[]> {
   let turns: any[] = []
-  await expect.poll(async () => {
-    turns = (await call(profile, 'usage.turns', { conversation_id: conversationId })).turns
-    return turns.filter((entry) => entry.finished).length
-  }).toBe(count)
+  await expect
+    .poll(async () => {
+      turns = (await call(profile, 'usage.turns', { conversation_id: conversationId })).turns
+      return turns.filter((entry) => entry.finished).length
+    })
+    .toBe(count)
   return turns
 }
 
-test('records Codex turns with provenance, marks cost and silent turns unavailable, and keeps the latest limits', async ({ profile }) => {
+test('records Codex turns with provenance, marks cost and silent turns unavailable, and keeps the latest limits', async ({
+  profile,
+}) => {
   const { conversationId, workspaceId } = await startConversation(profile, 'codex')
   await turn(profile, conversationId, usagePrompt)
   await turn(profile, conversationId, 'hello')
@@ -37,25 +41,50 @@ test('records Codex turns with provenance, marks cost and silent turns unavailab
   const reported = turns.filter((entry) => entry.reported)
   expect(reported).toHaveLength(2)
   for (const entry of reported) {
-    expect(entry).toMatchObject({ conversation_id: conversationId, workspace_id: workspaceId, provider: 'codex',
-      account_id: null, source: 'thread/tokenUsage/updated', scope: 'main_agent',
-      tokens: { input: 120, cached_input: 20, output: 30, reasoning: 5 }, cost_usd: null, cost_basis: null })
+    expect(entry).toMatchObject({
+      conversation_id: conversationId,
+      workspace_id: workspaceId,
+      provider: 'codex',
+      account_id: null,
+      source: 'thread/tokenUsage/updated',
+      scope: 'main_agent',
+      tokens: { input: 120, cached_input: 20, output: 30, reasoning: 5 },
+      cost_usd: null,
+      cost_basis: null,
+    })
   }
   // A turn the provider said nothing about is unreported, never zero.
-  expect(turns.find((entry) => !entry.reported)).toMatchObject({ tokens: { input: null, output: null }, cost_usd: null, source: null })
+  expect(turns.find((entry) => !entry.reported)).toMatchObject({
+    tokens: { input: null, output: null },
+    cost_usd: null,
+    source: null,
+  })
 
   const summary = await call(profile, 'usage.summary', { group_by: 'provider' })
   const codex = summary.groups.find((group: any) => group.key === 'codex')
-  expect(codex).toMatchObject({ turns: 3, unreported_turns: 1,
+  expect(codex).toMatchObject({
+    turns: 3,
+    unreported_turns: 1,
     input: { value: 240, reported_turns: 2, unreported_turns: 1 },
     output: { value: 60, reported_turns: 2, unreported_turns: 1 },
-    cost: { value_usd: null, reported_turns: 0, unreported_turns: 3 } })
+    cost: { value_usd: null, reported_turns: 0, unreported_turns: 3 },
+  })
   expect(summary.recording).toEqual({ dropped_batches: 0, last_error: null })
 
   const limits = await call(profile, 'usage.limits', { provider: 'codex' })
-  expect(limits.windows).toEqual([expect.objectContaining({ provider: 'codex', account_id: null, limit_id: 'codex:primary',
-    used_percent: 42, window_minutes: 300, resets_at: farFutureMs, plan: 'pro', source: 'account/rateLimits/updated',
-    reset_since_observed: false })])
+  expect(limits.windows).toEqual([
+    expect.objectContaining({
+      provider: 'codex',
+      account_id: null,
+      limit_id: 'codex:primary',
+      used_percent: 42,
+      window_minutes: 300,
+      resets_at: farFutureMs,
+      plan: 'pro',
+      source: 'account/rateLimits/updated',
+      reset_since_observed: false,
+    }),
+  ])
   expect(limits.windows[0].observed_at).toBeGreaterThan(0)
 })
 
@@ -70,23 +99,44 @@ test('records Claude costs as agent estimates and omits a cost the agent could n
 
   // Each turn is the difference of the query's running totals.
   for (const entry of oldestFirst.slice(0, 2)) {
-    expect(entry).toMatchObject({ reported: true, source: 'result', scope: 'all_agents', cost_basis: 'agent_estimate',
-      models: ['claude-fixture'], tokens: { input: 130, cached_input: 100, cache_write: 20, output: 5 } })
+    expect(entry).toMatchObject({
+      reported: true,
+      source: 'result',
+      scope: 'all_agents',
+      cost_basis: 'agent_estimate',
+      models: ['claude-fixture'],
+      tokens: { input: 130, cached_input: 100, cache_write: 20, output: 5 },
+    })
     expect(entry.cost_usd).toBeCloseTo(0.5)
   }
-  expect(oldestFirst[2]).toMatchObject({ reported: true, cost_usd: null, cost_basis: null, tokens: { input: 130, output: 5 } })
+  expect(oldestFirst[2]).toMatchObject({
+    reported: true,
+    cost_usd: null,
+    cost_basis: null,
+    tokens: { input: 130, output: 5 },
+  })
   expect(oldestFirst[2].note).toMatch(/no price/)
   expect(oldestFirst[3]).toMatchObject({ reported: false, cost_usd: null })
 
   const summary = await call(profile, 'usage.summary', { group_by: 'conversation', conversation_id: conversationId })
-  expect(summary.total).toMatchObject({ turns: 4, unreported_turns: 1,
+  expect(summary.total).toMatchObject({
+    turns: 4,
+    unreported_turns: 1,
     input: { value: 390, reported_turns: 3, unreported_turns: 1 },
-    cost: { basis: ['agent_estimate'], reported_turns: 2, unreported_turns: 2 } })
+    cost: { basis: ['agent_estimate'], reported_turns: 2, unreported_turns: 2 },
+  })
   expect(summary.total.cost.value_usd).toBeCloseTo(1.0)
 
   const limits = await call(profile, 'usage.limits', { provider: 'claude' })
-  expect(limits.windows).toEqual([expect.objectContaining({ limit_id: 'five_hour', used_percent: 25,
-    resets_at: farFutureMs, status: 'allowed_warning', source: 'rate_limit_event' })])
+  expect(limits.windows).toEqual([
+    expect.objectContaining({
+      limit_id: 'five_hour',
+      used_percent: 25,
+      resets_at: farFutureMs,
+      status: 'allowed_warning',
+      source: 'rate_limit_event',
+    }),
+  ])
 })
 
 test('aggregates across providers by workspace, account and day', async ({ profile }) => {
@@ -100,8 +150,12 @@ test('aggregates across providers by workspace, account and day', async ({ profi
   const byProvider = await call(profile, 'usage.summary', { group_by: 'provider' })
   expect(byProvider.groups.map((group: any) => group.key).sort()).toEqual(['claude', 'codex'])
   // Codex reports no cost, so the combined cost is partial and says so.
-  expect(byProvider.total).toMatchObject({ turns: 2, input: { value: 250, reported_turns: 2 },
-    cost: { reported_turns: 1, unreported_turns: 1 }, scopes: expect.arrayContaining(['main_agent', 'all_agents']) })
+  expect(byProvider.total).toMatchObject({
+    turns: 2,
+    input: { value: 250, reported_turns: 2 },
+    cost: { reported_turns: 1, unreported_turns: 1 },
+    scopes: expect.arrayContaining(['main_agent', 'all_agents']),
+  })
 
   const byWorkspace = await call(profile, 'usage.summary', { group_by: 'workspace' })
   expect(byWorkspace.groups).toEqual([expect.objectContaining({ key: codex.workspaceId, turns: 2 })])
@@ -159,10 +213,16 @@ test('an exhausted Claude limit is shown and does not switch account or model', 
   const { conversationId } = await startConversation(profile, 'claude')
   const before = (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
   await turn(profile, conversationId, 'usage-exhausted')
-  await expect.poll(async () => (await call(profile, 'usage.limits', { provider: 'claude' })).windows[0]?.status)
+  await expect
+    .poll(async () => (await call(profile, 'usage.limits', { provider: 'claude' })).windows[0]?.status)
     .toBe('rejected')
-  await expect.poll(async () => (await call(profile, 'provider.quota', { provider: 'claude' })).entries
-    .some((entry: { exhausted: boolean }) => entry.exhausted)).toBe(true)
+  await expect
+    .poll(async () =>
+      (await call(profile, 'provider.quota', { provider: 'claude' })).entries.some(
+        (entry: { exhausted: boolean }) => entry.exhausted,
+      ),
+    )
+    .toBe(true)
 
   // The next turn still runs on the Conversation's own account and model.
   await turn(profile, conversationId, 'hello')

@@ -24,16 +24,24 @@ type Exported = {
 async function importedConversation(profile: ScratchProfile, root: string, pairs: number): Promise<string> {
   const workspace = (await profile.call('workspace.open', { path: root })).workspace
   const turns = Array.from({ length: pairs * 2 }, (_, index) => ({
-    uuid: `m${index}`, parent: index ? `m${index - 1}` : null, role: (index % 2 ? 'assistant' : 'user') as 'user' | 'assistant',
+    uuid: `m${index}`,
+    parent: index ? `m${index - 1}` : null,
+    role: (index % 2 ? 'assistant' : 'user') as 'user' | 'assistant',
     text: `${index % 2 ? 'Answer' : 'Question'} ${index}`,
   }))
   await claudeTranscript(profile.home, sessionId, root, claudeRecords(sessionId, root, turns))
-  const imported = await profile.call('history.import.session' as never, { provider: 'claude', native_session_id: sessionId,
-    workspace_id: workspace.id } as never) as { conversation: { provenance: { conversation_id: string } } }
+  const imported = (await profile.call(
+    'history.import.session' as never,
+    { provider: 'claude', native_session_id: sessionId, workspace_id: workspace.id } as never,
+  )) as { conversation: { provenance: { conversation_id: string } } }
   return imported.conversation.provenance.conversation_id
 }
 
-test('F050: an export writes the complete readable history across pages into a new private file', async ({ ade, profile, repo }) => {
+test('F050: an export writes the complete readable history across pages into a new private file', async ({
+  ade,
+  profile,
+  repo,
+}) => {
   const conversationId = await importedConversation(profile, repo.path, 130)
   const directory = join(ade.root, 'exports')
   await mkdir(directory, { recursive: true })
@@ -41,13 +49,22 @@ test('F050: an export writes the complete readable history across pages into a n
 
   const result = await profile.cli('conversation', 'export', conversationId, file)
   expect(result.code, result.stderr).toBe(0)
-  expect(result.json).toMatchObject({ type: 'conversation_export', conversation_id: conversationId, file,
-    format: 'ade-conversation-history-v1', message_count: 260 })
+  expect(result.json).toMatchObject({
+    type: 'conversation_export',
+    conversation_id: conversationId,
+    file,
+    format: 'ade-conversation-history-v1',
+    message_count: 260,
+  })
   expect((await stat(file)).mode & 0o777).toBe(0o600)
 
   const exported = JSON.parse(await readFile(file, 'utf8')) as Exported
-  expect(exported).toMatchObject({ format: 'ade-conversation-history-v1', scope: 'conversation-history',
-    message_order: 'newest_first', conversation: { id: conversationId } })
+  expect(exported).toMatchObject({
+    format: 'ade-conversation-history-v1',
+    scope: 'conversation-history',
+    message_order: 'newest_first',
+    conversation: { id: conversationId },
+  })
   expect(exported.messages).toHaveLength(260)
   // Every message once, newest first, and readable as the transcript said it.
   const sequences = exported.messages.map((message) => message.sequence)
@@ -57,8 +74,9 @@ test('F050: an export writes the complete readable history across pages into a n
   expect(exported.messages[0]).toMatchObject({ role: 'assistant', text: 'Answer 259' })
   // The export equals what the public read returns page by page.
   const newest = await profile.call('conversation.get', { conversation_id: conversationId, limit: 100 })
-  expect(exported.messages.slice(0, 100).map((message) => message.id))
-    .toEqual([...newest.messages].reverse().map((message) => (message as { id: string }).id))
+  expect(exported.messages.slice(0, 100).map((message) => message.id)).toEqual(
+    [...newest.messages].reverse().map((message) => (message as { id: string }).id),
+  )
 
   // A second export never replaces the first, and leaves no temporary file.
   const before = await readFile(file, 'utf8')
@@ -74,8 +92,12 @@ test('F050: an export writes the complete readable history across pages into a n
   expect((await readdir(directory)).sort()).toEqual(['history.json', 'notes.json'])
 
   // An unknown Conversation and a missing directory are refused without writing.
-  expect((await profile.cli('conversation', 'export', 'conversation_missing', join(directory, 'missing.json'))).code).not.toBe(0)
-  expect((await profile.cli('conversation', 'export', conversationId, join(directory, 'absent', 'x.json'))).code).not.toBe(0)
+  expect(
+    (await profile.cli('conversation', 'export', 'conversation_missing', join(directory, 'missing.json'))).code,
+  ).not.toBe(0)
+  expect(
+    (await profile.cli('conversation', 'export', conversationId, join(directory, 'absent', 'x.json'))).code,
+  ).not.toBe(0)
   expect((await readdir(directory)).sort()).toEqual(['history.json', 'notes.json'])
 
   // The export survives a daemon crash: the history it reads is durable.
@@ -87,7 +109,11 @@ test('F050: an export writes the complete readable history across pages into a n
   expect(replayed.boot_id).not.toBe(exported.boot_id)
 })
 
-test('F050: an export whose history changes while it pages is refused and leaves no file', async ({ ade, profile, repo }) => {
+test('F050: an export whose history changes while it pages is refused and leaves no file', async ({
+  ade,
+  profile,
+  repo,
+}) => {
   const conversationId = await importedConversation(profile, repo.path, 400)
   const { conversationId: live } = await startConversation(profile, 'codex')
   const directory = join(ade.root, 'racing')

@@ -24,8 +24,11 @@ export function opId(label: string): string {
 }
 
 /** One `orchestration.child.wait` observation. */
-export async function waitOnce(profile: ScratchProfile, child: string,
-  options: { messageId?: string; timeoutMs?: number; deadlineMs?: number } = {}): Promise<Wait> {
+export async function waitOnce(
+  profile: ScratchProfile,
+  child: string,
+  options: { messageId?: string; timeoutMs?: number; deadlineMs?: number } = {},
+): Promise<Wait> {
   return await profile.call('orchestration.child.wait', {
     child_conversation_id: child,
     ...(options.messageId ? { message_id: options.messageId } : {}),
@@ -35,13 +38,22 @@ export async function waitOnce(profile: ScratchProfile, child: string,
 }
 
 /** Repeat the wait until it reports `state` (and `outcome`, when given), and return that reply. */
-export async function waitForChild(profile: ScratchProfile, child: string, state: string,
-  options: { messageId?: string; outcome?: string; timeout?: number } = {}): Promise<Wait> {
+export async function waitForChild(
+  profile: ScratchProfile,
+  child: string,
+  state: string,
+  options: { messageId?: string; outcome?: string; timeout?: number } = {},
+): Promise<Wait> {
   let last: Wait | undefined
-  await expect.poll(async () => {
-    last = await waitOnce(profile, child, { messageId: options.messageId, timeoutMs: 0 })
-    return options.outcome ? `${last.state}:${last.outcome}` : last.state
-  }, { timeout: options.timeout ?? 20_000 }).toBe(options.outcome ? `${state}:${options.outcome}` : state)
+  await expect
+    .poll(
+      async () => {
+        last = await waitOnce(profile, child, { messageId: options.messageId, timeoutMs: 0 })
+        return options.outcome ? `${last.state}:${last.outcome}` : last.state
+      },
+      { timeout: options.timeout ?? 20_000 },
+    )
+    .toBe(options.outcome ? `${state}:${options.outcome}` : state)
   return last as Wait
 }
 

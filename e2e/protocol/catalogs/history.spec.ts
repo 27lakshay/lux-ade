@@ -19,11 +19,13 @@ function expectHonestStatus(index: any): void {
 
 async function searchUntil(profile: ScratchProfile, request: Record<string, unknown>, count: number): Promise<any> {
   let reply: any
-  await expect.poll(async () => {
-    reply = await call(profile, 'history.search', request)
-    expectHonestStatus(reply.index)
-    return reply.results.length
-  }).toBe(count)
+  await expect
+    .poll(async () => {
+      reply = await call(profile, 'history.search', request)
+      expectHonestStatus(reply.index)
+      return reply.results.length
+    })
+    .toBe(count)
   return reply
 }
 
@@ -40,7 +42,9 @@ test('searches Codex and Claude history together and each hit opens the message 
     expect(hit.excerpt).toMatch(/marmoset/)
     // The hit names a conversation and message that open to the same text.
     const snapshot = await profile.call('conversation.get', { conversation_id: hit.provenance.conversation_id })
-    const message = snapshot.messages.find((entry) => (entry as { id?: string }).id === hit.message_id) as { text?: string } | undefined
+    const message = snapshot.messages.find((entry) => (entry as { id?: string }).id === hit.message_id) as
+      | { text?: string }
+      | undefined
     expect(message?.text).toContain('marmoset')
     expect(hit.provenance.workspace_id).toBe(snapshot.conversation.workspace_id)
     expect(hit.provenance.import).toBeUndefined()
@@ -52,7 +56,10 @@ test('searches Codex and Claude history together and each hit opens the message 
 
   const onlyClaude = await call(profile, 'history.search', { query: 'marmoset', provider: 'claude' })
   expect(onlyClaude.results.map((hit: any) => hit.provenance.conversation_id)).toEqual([claude.conversationId])
-  const inConversation = await call(profile, 'history.search', { query: 'marmoset', conversation_id: codex.conversationId })
+  const inConversation = await call(profile, 'history.search', {
+    query: 'marmoset',
+    conversation_id: codex.conversationId,
+  })
   expect(inConversation.results).toHaveLength(1)
   // Assistant replies are indexed too, by their final text.
   await searchUntil(profile, { query: 'hello world', provider: 'codex' }, 1)
@@ -65,7 +72,9 @@ test('searches Codex and Claude history together and each hit opens the message 
   expect(ids).toEqual(expect.arrayContaining([codex.conversationId, claude.conversationId]))
   for (const entry of listed.conversations) expect(entry.message_count).toBeGreaterThanOrEqual(2)
 
-  await expect(call(profile, 'history.search', { query: 'marmoset', workspace_id: 'workspace_missing' })).rejects.toThrow()
+  await expect(
+    call(profile, 'history.search', { query: 'marmoset', workspace_id: 'workspace_missing' }),
+  ).rejects.toThrow()
   const cli = await profile.cli('history', 'search', 'marmoset')
   expect(cli.code).toBe(0)
   expect(cli.json).toMatchObject({ type: 'history_search' })
@@ -90,10 +99,12 @@ test('pages results with a cursor that a rebuild expires', async ({ profile }) =
   // A repeated rebuild request for the old epoch converges instead of starting again.
   const repeated = await call(profile, 'history.index.rebuild', { expected_epoch: epoch })
   expect(repeated.index.epoch).toBe(epoch + 1)
-  await expect(call(profile, 'history.search', { query: 'capybara', limit: 2, cursor: page.next_cursor }))
-    .rejects.toThrow(/expired/)
+  await expect(
+    call(profile, 'history.search', { query: 'capybara', limit: 2, cursor: page.next_cursor }),
+  ).rejects.toThrow(/expired/)
   await searchUntil(profile, { query: 'capybara' }, 3)
-  await expect.poll(async () => (await call(profile, 'history.index.status', {})).index)
+  await expect
+    .poll(async () => (await call(profile, 'history.index.status', {})).index)
     .toMatchObject({ epoch: epoch + 1, rebuilding: false, pending_changes: 0, caught_up: true })
 })
 
@@ -108,7 +119,8 @@ test('catches up after a daemon kill without losing or duplicating indexed messa
 
   const after = await searchUntil(profile, { query: 'okapi' }, 5)
   expect(new Set(after.results.map((hit: any) => hit.message_id)).size).toBe(5)
-  await expect.poll(async () => (await call(profile, 'history.index.status', {})).index)
+  await expect
+    .poll(async () => (await call(profile, 'history.index.status', {})).index)
     .toMatchObject({ rebuilding: false, pending_changes: 0, caught_up: true, last_error: null })
 
   // A turn sent right before a kill is indexed once the new daemon has it.

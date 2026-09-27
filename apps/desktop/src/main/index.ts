@@ -5,14 +5,32 @@ import { browserQuitGuard, closeBrowserWindow, registerBrowserIpc, setBrowserPro
 import { BrowserOwner } from './browser-owner'
 import { registerConversationIpc } from './conversations/ipc'
 import { draftQuitGuard, warnPendingSends } from './conversations/quit-guard'
-import { drafts, flushDraft, persistentWindowId, reconcileAcceptedSend, setSendJournal, unsafePending,
-  windowIds } from './conversations/send-pipeline'
+import {
+  drafts,
+  flushDraft,
+  persistentWindowId,
+  reconcileAcceptedSend,
+  setSendJournal,
+  unsafePending,
+  windowIds,
+} from './conversations/send-pipeline'
 import { registerFileIpc } from './files'
 import { watchActivity } from './notifications'
 import { GitJournal } from './git-journal'
-import { broadcast, fixedSocket, getBrowserOwner, getClient, managedProfiles, publishProfile, refreshProfiles,
-  setBrowserOwner, setStartupProfileSelection, setUnsubscribeClient, setUnsubscribeFeed,
-  stopClient } from './profile-connection'
+import {
+  broadcast,
+  fixedSocket,
+  getBrowserOwner,
+  getClient,
+  managedProfiles,
+  publishProfile,
+  refreshProfiles,
+  setBrowserOwner,
+  setStartupProfileSelection,
+  setUnsubscribeClient,
+  setUnsubscribeFeed,
+  stopClient,
+} from './profile-connection'
 import { registerProfileIpc, selectProfile } from './profiles'
 import { finishQuit, holdQuit, registerQuitGuard, registerQuitTeardown } from './quit-guards'
 import { registerReviewIpc, setGitJournal } from './review'
@@ -92,8 +110,13 @@ function openMainWindow(): void {
     // uncertain send to verify recovery after process exit.
     if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.env.ADE_E2E_TEST_CLOSE_GUARD !== '1') return
     if (readyForClose) return
-    if (closeFlushInProgress) { event.preventDefault(); return }
-    const owned = [...drafts.entries()].filter(([key]) => key.startsWith(`${window.webContents.id}:`)).map(([, entry]) => entry)
+    if (closeFlushInProgress) {
+      event.preventDefault()
+      return
+    }
+    const owned = [...drafts.entries()]
+      .filter(([key]) => key.startsWith(`${window.webContents.id}:`))
+      .map(([, entry]) => entry)
     if (!owned.some((entry) => entry.send || entry.timer || entry.savedRevision < entry.draft.revision)) return
     event.preventDefault()
     closeFlushInProgress = true
@@ -103,13 +126,19 @@ function openMainWindow(): void {
         await warnPendingSends(window)
         return
       }
-      const pending = owned.filter((entry) => !entry.send && (entry.timer || entry.savedRevision < entry.draft.revision))
+      const pending = owned.filter(
+        (entry) => !entry.send && (entry.timer || entry.savedRevision < entry.draft.revision),
+      )
       const results = await Promise.allSettled(pending.map(flushDraft))
       if (results.some((result) => result.status === 'rejected')) {
         if (process.env.ADE_E2E_USER_DATA_DIR) console.error('Draft was not saved during window close')
-        else await dialog.showMessageBox(window, { type: 'error', title: 'Draft was not saved',
-          message: 'This window is staying open because a draft could not be saved.',
-          detail: 'Restore the profile daemon and try closing the window again.' })
+        else
+          await dialog.showMessageBox(window, {
+            type: 'error',
+            title: 'Draft was not saved',
+            message: 'This window is staying open because a draft could not be saved.',
+            detail: 'Restore the profile daemon and try closing the window again.',
+          })
         return
       }
       if (await unsafePending(owned)) {
@@ -118,7 +147,9 @@ function openMainWindow(): void {
       }
       readyForClose = true
       if (!window.isDestroyed()) window.close()
-    })().finally(() => { closeFlushInProgress = false })
+    })().finally(() => {
+      closeFlushInProgress = false
+    })
   })
   window.webContents.on('did-start-navigation', () => closeSenderTerminals(window.webContents.id))
   window.webContents.on('destroyed', () => {
@@ -128,7 +159,9 @@ function openMainWindow(): void {
     selectionRequests.delete(window.webContents.id)
     for (const [key, entry] of drafts) {
       if (!key.startsWith(`${window.webContents.id}:`)) continue
-      void flushDraft(entry).then(() => drafts.delete(key)).catch(() => undefined)
+      void flushDraft(entry)
+        .then(() => drafts.delete(key))
+        .catch(() => undefined)
     }
     windowIds.delete(window.webContents.id)
   })
@@ -145,49 +178,67 @@ function openMainWindow(): void {
   }
 }
 
-app.whenReady().then(async () => {
-  if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.platform === 'darwin') {
-    app.setActivationPolicy('accessory')
-    app.dock?.hide()
-  }
-  nativeTheme.themeSource = 'dark'
-  singleWindowId = await persistentWindowId()
-  setSendJournal(await SendJournal.open(join(app.getPath('userData'), 'pending-sends-v1.json')))
-  setGitJournal(await GitJournal.open(join(app.getPath('userData'), 'git-intents-v1.json')))
-  if (!managedProfiles && fixedSocket) {
-    const fixedIdentity = createHash('sha256').update(resolve(fixedSocket)).digest('hex').slice(0, 32)
-    const home = join(app.getPath('userData'), 'browser-fixed', fixedIdentity)
-    await setBrowserProfile('fixed', home)
-    setBrowserOwner(await BrowserOwner.open(`fixed-${fixedIdentity}`, 'fixed'))
-  }
-  setUnsubscribeClient(getClient().subscribe((state) => {
-    broadcast('ade:client-state-changed', state)
-    if (state.status === 'connected' && fixedSocket) {
-      void getBrowserOwner()?.register(fixedSocket, state.bootId).catch((error) =>
-        console.error('Browser owner registration failed', error))
+app
+  .whenReady()
+  .then(async () => {
+    if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.platform === 'darwin') {
+      app.setActivationPolicy('accessory')
+      app.dock?.hide()
     }
-  }))
-  const stopFeed = getClient().subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
-  const stopActivity = watchActivity(getClient())
-  setUnsubscribeFeed(() => { stopFeed(); stopActivity() })
-  getClient().start()
-  openMainWindow()
-  if (managedProfiles) {
-    setStartupProfileSelection(refreshProfiles().then(async (state) => {
-      if (state.selectedId) await selectProfile(state.selectedId, false)
-    }).catch((error) => { publishProfile({ error: String(error) }) }).finally(() => { setStartupProfileSelection(null) }))
-  }
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
+    nativeTheme.themeSource = 'dark'
+    singleWindowId = await persistentWindowId()
+    setSendJournal(await SendJournal.open(join(app.getPath('userData'), 'pending-sends-v1.json')))
+    setGitJournal(await GitJournal.open(join(app.getPath('userData'), 'git-intents-v1.json')))
+    if (!managedProfiles && fixedSocket) {
+      const fixedIdentity = createHash('sha256').update(resolve(fixedSocket)).digest('hex').slice(0, 32)
+      const home = join(app.getPath('userData'), 'browser-fixed', fixedIdentity)
+      await setBrowserProfile('fixed', home)
+      setBrowserOwner(await BrowserOwner.open(`fixed-${fixedIdentity}`, 'fixed'))
+    }
+    setUnsubscribeClient(
+      getClient().subscribe((state) => {
+        broadcast('ade:client-state-changed', state)
+        if (state.status === 'connected' && fixedSocket) {
+          void getBrowserOwner()
+            ?.register(fixedSocket, state.bootId)
+            .catch((error) => console.error('Browser owner registration failed', error))
+        }
+      }),
+    )
+    const stopFeed = getClient().subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
+    const stopActivity = watchActivity(getClient())
+    setUnsubscribeFeed(() => {
+      stopFeed()
+      stopActivity()
+    })
+    getClient().start()
+    openMainWindow()
+    if (managedProfiles) {
+      setStartupProfileSelection(
+        refreshProfiles()
+          .then(async (state) => {
+            if (state.selectedId) await selectProfile(state.selectedId, false)
+          })
+          .catch((error) => {
+            publishProfile({ error: String(error) })
+          })
+          .finally(() => {
+            setStartupProfileSelection(null)
+          }),
+      )
+    }
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
+    })
   })
-}).catch((error: unknown) => {
-  if (process.env.ADE_E2E_USER_DATA_DIR) {
-    console.error('ADE could not open its window:', error)
-  } else {
-    dialog.showErrorBox('ADE could not open its window', String(error))
-  }
-  app.quit()
-})
+  .catch((error: unknown) => {
+    if (process.env.ADE_E2E_USER_DATA_DIR) {
+      console.error('ADE could not open its window:', error)
+    } else {
+      dialog.showErrorBox('ADE could not open its window', String(error))
+    }
+    app.quit()
+  })
 
 let quitRequested = false
 app.on('before-quit', (event) => {

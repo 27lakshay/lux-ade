@@ -14,7 +14,10 @@ export const REFUSED_AT_SOCKET = /unavailable at the selected socket/
 export function connectOutcome(path: string): Promise<string> {
   return new Promise((resolve) => {
     const socket = createConnection(path)
-    socket.once('connect', () => { socket.destroy(); resolve('connected') })
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve('connected')
+    })
     socket.once('error', (error: NodeJS.ErrnoException) => resolve(error.code ?? String(error)))
   })
 }
@@ -24,17 +27,34 @@ export function connectOutcome(path: string): Promise<string> {
  * refused because they name another turn. Each resolves to `ok` or its error.
  */
 export function burst(profile: ScratchProfile, conversationId: string, size: number): Promise<string[]> {
-  return Promise.all(Array.from({ length: size }, (_, index) => (index % 2
-    ? profile.call('conversation.get', { conversation_id: conversationId })
-    : profile.call('conversation.steer', { operation_id: `burst-${index}`, conversation_id: conversationId,
-      turn_id: 'not-this-turn', text: 'x' })).then(() => 'ok', (error: unknown) => String(error))))
+  return Promise.all(
+    Array.from({ length: size }, (_, index) =>
+      (index % 2
+        ? profile.call('conversation.get', { conversation_id: conversationId })
+        : profile.call('conversation.steer', {
+            operation_id: `burst-${index}`,
+            conversation_id: conversationId,
+            turn_id: 'not-this-turn',
+            text: 'x',
+          })
+      ).then(
+        () => 'ok',
+        (error: unknown) => String(error),
+      ),
+    ),
+  )
 }
 
 /** Every burst reply was answered, refused for its own reason, or refused at the socket before it was sent. */
 export function expectNoneLost(replies: string[]) {
-  expect(replies.filter((reply) => reply !== 'ok'
-    && !/no longer the running turn|send a message instead|not running/.test(reply) && !REFUSED_AT_SOCKET.test(reply)))
-    .toEqual([])
+  expect(
+    replies.filter(
+      (reply) =>
+        reply !== 'ok' &&
+        !/no longer the running turn|send a message instead|not running/.test(reply) &&
+        !REFUSED_AT_SOCKET.test(reply),
+    ),
+  ).toEqual([])
 }
 
 export type FullBacklog = {
@@ -58,7 +78,8 @@ export async function fillBacklog(profile: ScratchProfile, conversationId: strin
   }
   try {
     const replies = burst(profile, conversationId, size)
-    await expect.poll(() => connectOutcome(profile.socket), { message: 'the profile socket to refuse connections' })
+    await expect
+      .poll(() => connectOutcome(profile.socket), { message: 'the profile socket to refuse connections' })
       .toBe('ECONNREFUSED')
     return { replies, resume }
   } catch (error) {

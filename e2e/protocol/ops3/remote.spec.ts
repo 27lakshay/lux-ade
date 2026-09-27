@@ -10,7 +10,10 @@ import { expect, remoteCall, test } from '../fixtures/remote-hosts'
 import { treeSnapshot } from '../fixtures/tree'
 import { startedHost, targetOf } from '../remote/steps'
 
-test('F062: a clone sent to a selected remote host lands there, registers there, and replays there', async ({ ade, remote }) => {
+test('F062: a clone sent to a selected remote host lands there, registers there, and replays there', async ({
+  ade,
+  remote,
+}) => {
   const profile = await remote.profile()
   const started = await startedHost(remote, profile, 'buildbox')
   const source = await started.host.repo('app-source', { 'README.md': '# Remote app\n' })
@@ -39,10 +42,14 @@ test('F062: a clone sent to a selected remote host lands there, registers there,
   expect(JSON.stringify(local.catalog)).not.toContain(destination)
   expect(JSON.stringify(local.catalog)).not.toContain(cloned.workspace!.id)
   await expect(stat(join(ade.root, 'projects'))).rejects.toThrow()
-  await profile.call('placement.record', { host: { kind: 'remote', host_id: 'buildbox' },
-    resource: { kind: 'workspace', workspace_id: cloned.workspace!.id } })
-  expect((await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: cloned.workspace!.id } }))
-    .placement).toMatchObject({ host: { kind: 'remote', host_id: 'buildbox' }, source: 'recorded' })
+  await profile.call('placement.record', {
+    host: { kind: 'remote', host_id: 'buildbox' },
+    resource: { kind: 'workspace', workspace_id: cloned.workspace!.id },
+  })
+  expect(
+    (await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: cloned.workspace!.id } }))
+      .placement,
+  ).toMatchObject({ host: { kind: 'remote', host_id: 'buildbox' }, source: 'recorded' })
 })
 
 test('F132: a skill installed and placed on a remote host is written only there', async ({ remote }) => {
@@ -56,18 +63,34 @@ test('F132: a skill installed and placed on a remote host is written only there'
   const transport = await remote.transport(targetOf(started))
   transport.start()
   await transport.waitUntilConnected(15_000)
-  const installed = await remoteCall(transport, 'skill.install', { operation_id: 'install-on-host', source_path: source })
-  const placed = await remoteCall(transport, 'skill.place', { operation_id: 'place-on-host', name: 'greet',
-    expected_content_hash: installed.skill.content_hash, provider: 'claude', scope: 'global' })
+  const installed = await remoteCall(transport, 'skill.install', {
+    operation_id: 'install-on-host',
+    source_path: source,
+  })
+  const placed = await remoteCall(transport, 'skill.place', {
+    operation_id: 'place-on-host',
+    name: 'greet',
+    expected_content_hash: installed.skill.content_hash,
+    provider: 'claude',
+    scope: 'global',
+  })
   expect(placed).toMatchObject({ outcome: 'created', path: join(started.host.home, '.claude/skills/greet') })
-  expect(await readFile(join(started.host.home, '.claude/skills/greet/SKILL.md'), 'utf8')).toContain('Greets on the host.')
+  expect(await readFile(join(started.host.home, '.claude/skills/greet/SKILL.md'), 'utf8')).toContain(
+    'Greets on the host.',
+  )
 
   // The local profile was never asked: its catalog is empty and its HOME unchanged.
   expect((await profile.call('skill.list', {})).skills).toEqual([])
   expect(await treeSnapshot(profile.home)).toEqual(localHome)
   // The local daemon cannot place what only the host installed.
-  await expect(profile.call('skill.place', { operation_id: 'place-locally', name: 'greet',
-    expected_content_hash: installed.skill.content_hash, provider: 'claude', scope: 'global' }))
-    .rejects.toThrow(/No bundle of this name/)
+  await expect(
+    profile.call('skill.place', {
+      operation_id: 'place-locally',
+      name: 'greet',
+      expected_content_hash: installed.skill.content_hash,
+      provider: 'claude',
+      scope: 'global',
+    }),
+  ).rejects.toThrow(/No bundle of this name/)
   await expect(stat(join(profile.home, '.claude/skills/greet'))).rejects.toThrow()
 })

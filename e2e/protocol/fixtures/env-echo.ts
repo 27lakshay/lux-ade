@@ -51,5 +51,5 @@ export async function writeEnvEchoPrograms(directory: string): Promise<EnvEchoFi
 /** The `ENV` line a print run wrote, parsed; `undefined` until it appears. */
 export function printedEnv(output: string): Record<string, string> | undefined {
   const line = /ENV (\{.*\})/.exec(output)
-  return line ? JSON.parse(line[1]) as Record<string, string> : undefined
+  return line ? (JSON.parse(line[1]) as Record<string, string>) : undefined
 }

@@ -11,13 +11,20 @@ export type Tier = (typeof operations)[Operation]['tier']
 export type Request<O extends Operation = Operation> = RequestByOperation[O]
 export type Response<O extends Operation = Operation> = ResponseByOperation[O]
 
-interface ValidationError { instancePath: string; message?: string; params?: Record<string, unknown> }
+interface ValidationError {
+  instancePath: string
+  message?: string
+  params?: Record<string, unknown>
+}
 type Validator = ((value: unknown) => boolean) & { errors?: ValidationError[] | null }
 const validators = generatedValidators as unknown as Record<string, Validator>
 
 /** A value that does not match its contract. */
 export class ContractError extends TypeError {
-  constructor(readonly at: string, detail: string) {
+  constructor(
+    readonly at: string,
+    detail: string,
+  ) {
     super(`Invalid ${at}: ${detail}`)
     this.name = 'ContractError'
   }
@@ -33,7 +40,10 @@ function check(name: string, value: unknown, at: string): void {
   const error = validate.errors?.[0]
   const extra = error?.params?.additionalProperty
   const detail = error?.message ?? 'does not match its contract'
-  throw new ContractError(`${at}${error?.instancePath ?? ''}`, typeof extra === 'string' ? `${detail} (${extra})` : detail)
+  throw new ContractError(
+    `${at}${error?.instancePath ?? ''}`,
+    typeof extra === 'string' ? `${detail} (${extra})` : detail,
+  )
 }
 
 export function isOperation(op: unknown): op is Operation {

@@ -62,26 +62,42 @@ export type ManagedProfileOwner = {
 /** Record both process identities while the profile daemon is still reachable. */
 export async function managedProfileOwner(socket: string): Promise<ManagedProfileOwner> {
   const hello = await rpc(socket, { op: 'hello' })
-  if (hello.type !== 'hello' || typeof hello.pid !== 'number' ||
-    typeof hello.runtime_socket !== 'string' || typeof hello.runtime_instance !== 'string' ||
-    typeof hello.runtime_pid !== 'number' || typeof hello.boot_id !== 'string') {
+  if (
+    hello.type !== 'hello' ||
+    typeof hello.pid !== 'number' ||
+    typeof hello.runtime_socket !== 'string' ||
+    typeof hello.runtime_instance !== 'string' ||
+    typeof hello.runtime_pid !== 'number' ||
+    typeof hello.boot_id !== 'string'
+  ) {
     throw new Error(`Managed profile did not report complete process identity at ${socket}`)
   }
-  return { socket, bootId: hello.boot_id, daemonPid: hello.pid,
-    runtimeSocket: hello.runtime_socket, runtimeInstance: hello.runtime_instance,
-    runtimePid: hello.runtime_pid }
+  return {
+    socket,
+    bootId: hello.boot_id,
+    daemonPid: hello.pid,
+    runtimeSocket: hello.runtime_socket,
+    runtimeInstance: hello.runtime_instance,
+    runtimePid: hello.runtime_pid,
+  }
 }
 
 /** Stop only the daemon/runtime captured above; retain test data if ownership is uncertain. */
 export async function stopManagedProfile(owner: ManagedProfileOwner): Promise<void> {
   const current = await rpc(owner.socket, { op: 'hello' }, 500).catch(() => null)
-  if (current && (current.boot_id !== owner.bootId || current.pid !== owner.daemonPid ||
-    current.runtime_instance !== owner.runtimeInstance || current.runtime_pid !== owner.runtimePid)) {
+  if (
+    current &&
+    (current.boot_id !== owner.bootId ||
+      current.pid !== owner.daemonPid ||
+      current.runtime_instance !== owner.runtimeInstance ||
+      current.runtime_pid !== owner.runtimePid)
+  ) {
     throw new Error(`Managed profile daemon changed identity at ${owner.socket}`)
   }
   if (current) {
-    try { await prepareRestart(owner.socket, owner.bootId) }
-    catch (error) {
+    try {
+      await prepareRestart(owner.socket, owner.bootId)
+    } catch (error) {
       const again = await rpc(owner.socket, { op: 'hello' }, 500).catch(() => null)
       if (!again || again.boot_id !== owner.bootId || again.pid !== owner.daemonPid) {
         throw new Error(`Daemon cleanup is unconfirmed at ${owner.socket}: ${String(error)}`)
@@ -101,8 +117,11 @@ export async function stopManagedProfile(owner: ManagedProfileOwner): Promise<vo
 export async function stopManagedProfiles(owners: ManagedProfileOwner[]): Promise<void> {
   const failures: string[] = []
   for (const owner of owners) {
-    try { await stopManagedProfile(owner) }
-    catch (error) { failures.push(`${owner.socket}: ${String(error)}`) }
+    try {
+      await stopManagedProfile(owner)
+    } catch (error) {
+      failures.push(`${owner.socket}: ${String(error)}`)
+    }
   }
   if (failures.length) throw new Error(`Managed ADE cleanup is unconfirmed; retain test data:\n${failures.join('\n')}`)
 }
@@ -118,8 +137,7 @@ export async function stopOrphanRuntime(dataDirectory: string): Promise<void> {
   if (!hello) return
   const expected = await realpath(dataDirectory)
   const actual = typeof hello.data_directory === 'string' ? await realpath(hello.data_directory) : ''
-  if (actual !== expected || hello.pid !== Number(latest[1]) ||
-    typeof hello.instance_id !== 'string') {
+  if (actual !== expected || hello.pid !== Number(latest[1]) || typeof hello.instance_id !== 'string') {
     throw new Error(`Refusing to stop a runtime with unexpected test identity at ${socket}`)
   }
   await stopRuntime(socket, hello.instance_id, hello.pid)
@@ -162,13 +180,19 @@ export async function startDaemon(
   })
   let stderr = ''
   let startupHello: Reply | null = null
-  child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString().slice(0, 8_192) })
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString().slice(0, 8_192)
+  })
 
   try {
     const hello = await waitForHello(socket, child, () => stderr)
     startupHello = hello
-    if (typeof hello.runtime_pid !== 'number' || typeof hello.runtime_instance !== 'string'
-      || typeof hello.runtime_socket !== 'string') throw new Error('Daemon did not report a runtime identity')
+    if (
+      typeof hello.runtime_pid !== 'number' ||
+      typeof hello.runtime_instance !== 'string' ||
+      typeof hello.runtime_socket !== 'string'
+    )
+      throw new Error('Daemon did not report a runtime identity')
     startupCheck?.(hello)
     return {
       socket,
@@ -207,7 +231,10 @@ export async function startDaemon(
           // Keep logs and ownership files if shutdown cannot be confirmed.
           if (stopped) await rm(rootDirectory, { recursive: true, force: true })
         }
-        if (!stopped) throw new Error(`ADE fixture cleanup is unconfirmed; diagnostics retained at ${rootDirectory}: ${String(cleanupFailure)}\n${stderr}`)
+        if (!stopped)
+          throw new Error(
+            `ADE fixture cleanup is unconfirmed; diagnostics retained at ${rootDirectory}: ${String(cleanupFailure)}\n${stderr}`,
+          )
       },
     }
   } catch (error) {
@@ -215,15 +242,28 @@ export async function startDaemon(
     await waitForExit(child).catch(() => undefined)
     const runtimeLog = await readFile(join(effectiveDataDirectory, 'runtime.log'), 'utf8').catch(() => '')
     let cleanupError: unknown
-    if (startupHello || await access(runtimeSocket).then(() => true, () => false)
-      || await access(join(effectiveDataDirectory, 'runtime.log')).then(() => true, () => false)) {
+    if (
+      startupHello ||
+      (await access(runtimeSocket).then(
+        () => true,
+        () => false,
+      )) ||
+      (await access(join(effectiveDataDirectory, 'runtime.log')).then(
+        () => true,
+        () => false,
+      ))
+    ) {
       try {
-        const runtime = startupHello ?? await waitForRuntimeHello(runtimeSocket)
+        const runtime = startupHello ?? (await waitForRuntimeHello(runtimeSocket))
         const ownedSocket = typeof runtime.runtime_socket === 'string' ? runtime.runtime_socket : runtimeSocket
-        const ownedInstance = typeof runtime.runtime_instance === 'string' ? runtime.runtime_instance : runtime.instance_id
+        const ownedInstance =
+          typeof runtime.runtime_instance === 'string' ? runtime.runtime_instance : runtime.instance_id
         const ownedPid = typeof runtime.runtime_pid === 'number' ? runtime.runtime_pid : runtime.pid
-        if ((!startupHello && runtime.data_directory !== await realpath(effectiveDataDirectory))
-          || typeof ownedInstance !== 'string' || typeof ownedPid !== 'number') {
+        if (
+          (!startupHello && runtime.data_directory !== (await realpath(effectiveDataDirectory))) ||
+          typeof ownedInstance !== 'string' ||
+          typeof ownedPid !== 'number'
+        ) {
           throw new Error('Runtime startup identity does not match this fixture')
         }
         await stopRuntime(ownedSocket, ownedInstance, ownedPid)
@@ -233,15 +273,23 @@ export async function startDaemon(
       }
     }
     if (!cleanupError) await rm(rootDirectory, { recursive: true, force: true })
-    throw new Error(`ADE daemon failed to start: ${String(error)}\n${stderr}\n${runtimeLog}`
-      + (cleanupError ? `\nDetached runtime cleanup is unconfirmed; diagnostics retained at ${rootDirectory}: ${String(cleanupError)}` : ''))
+    throw new Error(
+      `ADE daemon failed to start: ${String(error)}\n${stderr}\n${runtimeLog}` +
+        (cleanupError
+          ? `\nDetached runtime cleanup is unconfirmed; diagnostics retained at ${rootDirectory}: ${String(cleanupError)}`
+          : ''),
+    )
   }
 }
 
 async function prepareRestart(socket: string, bootId: unknown): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt++) {
     try {
-      await rpc(socket, { op: 'runtime.prepare_restart', operation_id: `restart-${globalThis.crypto.randomUUID()}`, boot_id: bootId })
+      await rpc(socket, {
+        op: 'runtime.prepare_restart',
+        operation_id: `restart-${globalThis.crypto.randomUUID()}`,
+        boot_id: bootId,
+      })
       return
     } catch (error) {
       if (attempt === 49 || !String(error).includes('A command is still being admitted')) throw error
@@ -256,7 +304,9 @@ async function waitForHello(socket: string, child: ChildProcess, diagnostics: ()
     try {
       const hello = await rpc(socket, { op: 'hello' })
       if (hello.type === 'hello') return hello
-    } catch { /* The socket is not ready yet. */ }
+    } catch {
+      /* The socket is not ready yet. */
+    }
     await delay(50)
   }
   throw new Error(`Daemon did not become ready: ${diagnostics()}`)
@@ -264,7 +314,12 @@ async function waitForHello(socket: string, child: ChildProcess, diagnostics: ()
 
 function isProcessAlive(pid: unknown): boolean {
   if (typeof pid !== 'number') return false
-  try { process.kill(pid, 0); return true } catch { return false }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function stopRuntime(socket: string, instance: unknown, pid: unknown): Promise<void> {
@@ -278,9 +333,13 @@ async function stopRuntime(socket: string, instance: unknown, pid: unknown): Pro
       const observed = await rpc(socket, { op: 'hello' }, 500).catch(() => null)
       if (observed && observed.instance_id !== instance) throw new Error('Runtime changed identity during stop')
       if (!observed && !isProcessAlive(pid)) return
-      if (observed && !String(error).includes('Disconnect the application daemon')
-        && !String(error).includes('Connection closed before a reply')
-        && !String(error).includes('timed out')) throw error
+      if (
+        observed &&
+        !String(error).includes('Disconnect the application daemon') &&
+        !String(error).includes('Connection closed before a reply') &&
+        !String(error).includes('timed out')
+      )
+        throw error
       await delay(50)
     }
   }
@@ -293,7 +352,9 @@ async function waitForRuntimeHello(socket: string): Promise<Reply> {
     try {
       const hello = await rpc(socket, { op: 'hello' }, 500)
       if (hello.type === 'hello') return hello
-    } catch { /* The detached runtime may still be starting. */ }
+    } catch {
+      /* The detached runtime may still be starting. */
+    }
     await delay(50)
   }
   throw new Error(`Detached runtime did not become ready at ${socket}`)
@@ -320,6 +381,9 @@ async function waitForExit(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
   await new Promise<void>((resolveExit, rejectExit) => {
     const timer = setTimeout(() => rejectExit(new Error('Daemon did not exit')), 10_000)
-    child.once('exit', () => { clearTimeout(timer); resolveExit() })
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolveExit()
+    })
   })
 }

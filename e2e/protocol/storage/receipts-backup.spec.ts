@@ -48,9 +48,17 @@ class Owner {
         if (end < 0) return
         const command = JSON.parse(buffered.slice(0, end)) as Command
         owner.commands.push(command)
-        peer.end(`${JSON.stringify({ type: 'browser_mutation', profile_id: command.profile_id,
-          owner_id: command.owner_id, request_id: command.request_id,
-          payload_fingerprint: command.payload_fingerprint, op: command.op, tab_id: 'tab-opened' })}\n`)
+        peer.end(
+          `${JSON.stringify({
+            type: 'browser_mutation',
+            profile_id: command.profile_id,
+            owner_id: command.owner_id,
+            request_id: command.request_id,
+            payload_fingerprint: command.payload_fingerprint,
+            op: command.op,
+            tab_id: 'tab-opened',
+          })}\n`,
+        )
       })
     })
     await new Promise<void>((listening) => owner.server!.listen(socket, () => listening()))
@@ -62,8 +70,12 @@ class Owner {
 
   /** Register with the running daemon; a new daemon forgets the owner. */
   async register(): Promise<void> {
-    const registered = await this.profile.rpc({ op: 'browser.owner.register', profile_id: this.profileId,
-      owner_id: this.ownerId, socket_path: join(this.profile.root, 'bo', 'o.sock') })
+    const registered = await this.profile.rpc({
+      op: 'browser.owner.register',
+      profile_id: this.profileId,
+      owner_id: this.ownerId,
+      socket_path: join(this.profile.root, 'bo', 'o.sock'),
+    })
     expect(registered.type, JSON.stringify(registered)).not.toBe('error')
   }
 
@@ -85,12 +97,19 @@ async function attempt(profile: ScratchProfile, op: string, request: Record<stri
   }
 }
 
-test('a restored profile replays envelope and browser receipts instead of running a retried operation ID again @fault', async ({ ade, profile }) => {
+test('a restored profile replays envelope and browser receipts instead of running a retried operation ID again @fault', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(120_000)
   const owner = await Owner.start(profile)
   try {
-    const open = { profile_id: owner.profileId, owner_id: owner.ownerId, url: 'https://storage.example/',
-      operation_id: 'restore-browser-open' }
+    const open = {
+      profile_id: owner.profileId,
+      owner_id: owner.ownerId,
+      url: 'https://storage.example/',
+      operation_id: 'restore-browser-open',
+    }
     const opened = await attempt(profile, 'browser.open', open)
     expect(opened, JSON.stringify(opened)).toMatchObject({ reply: { type: 'browser_mutation', op: 'browser.open' } })
     const account = { operation_id: 'restore-account-create', provider: 'codex', name: 'Receipt account' }
@@ -104,10 +123,12 @@ test('a restored profile replays envelope and browser receipts instead of runnin
     const manifest = await readManifest(bundle)
     expect(manifest.format_version).toBe(7)
     expect(manifest.entries.map((entry) => entry.path)).toEqual(expect.arrayContaining([ENVELOPE, BROWSER]))
-    expect(manifest.coverage).toEqual(expect.arrayContaining([
-      expect.objectContaining({ store: ENVELOPE, disposition: 'backed_up' }),
-      expect.objectContaining({ store: BROWSER, disposition: 'backed_up' }),
-    ]))
+    expect(manifest.coverage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ store: ENVELOPE, disposition: 'backed_up' }),
+        expect.objectContaining({ store: BROWSER, disposition: 'backed_up' }),
+      ]),
+    )
 
     // The profile loses its data and is restored in place from the bundle.
     await profile.stop()
@@ -119,14 +140,16 @@ test('a restored profile replays envelope and browser receipts instead of runnin
 
     // The browser retry replays the recorded reply and never reaches the owner again.
     expect(await attempt(profile, 'browser.open', open)).toEqual(opened)
-    expect(await attempt(profile, 'browser.open', { ...open, url: 'https://other.example/' }))
-      .toMatchObject({ error: { code: 'conflict' } })
+    expect(await attempt(profile, 'browser.open', { ...open, url: 'https://other.example/' })).toMatchObject({
+      error: { code: 'conflict' },
+    })
     expect(owner.relayed('restore-browser-open')).toBe(1)
 
     // The account retry replays too; no second account appears.
     expect(await attempt(profile, 'account.create', account)).toEqual(created)
-    expect(await attempt(profile, 'account.create', { ...account, name: 'Another account' }))
-      .toMatchObject({ error: { code: 'conflict' } })
+    expect(await attempt(profile, 'account.create', { ...account, name: 'Another account' })).toMatchObject({
+      error: { code: 'conflict' },
+    })
     expect((await profile.call('account.list', {})).accounts.map((item) => item.id)).toEqual(accountsBefore)
   } finally {
     owner.close()
@@ -141,17 +164,29 @@ test('a format-6 bundle without the receipt stores still restores', async ({ ade
   const manifest = await readManifest(legacy)
   const receipts = new Set([ENVELOPE, BROWSER])
   for (const store of receipts) await rm(join(legacy, store), { force: true })
-  await writeFile(join(legacy, 'manifest.json'), JSON.stringify({ ...manifest, format_version: 6,
-    entries: manifest.entries.filter((entry) => !receipts.has(entry.path)),
-    coverage: manifest.coverage.filter((item) => !receipts.has(item.store)) }))
+  await writeFile(
+    join(legacy, 'manifest.json'),
+    JSON.stringify({
+      ...manifest,
+      format_version: 6,
+      entries: manifest.entries.filter((entry) => !receipts.has(entry.path)),
+      coverage: manifest.coverage.filter((item) => !receipts.has(item.store)),
+    }),
+  )
   const inspected = await control(ade, ['backup', 'inspect', '--backup', legacy])
   expect(inspected.code, inspected.stderr).toBe(0)
 
   // A format-6 bundle may not claim a receipt store it did not have.
   const claiming = await copyBundle(bundle, join(ade.root, 'format-6-claiming'))
   const claimed = await readManifest(claiming)
-  await writeFile(join(claiming, 'manifest.json'), JSON.stringify({ ...claimed, format_version: 6,
-    coverage: claimed.coverage.filter((item) => !receipts.has(item.store)) }))
+  await writeFile(
+    join(claiming, 'manifest.json'),
+    JSON.stringify({
+      ...claimed,
+      format_version: 6,
+      coverage: claimed.coverage.filter((item) => !receipts.has(item.store)),
+    }),
+  )
   const refused = await control(ade, ['backup', 'inspect', '--backup', claiming])
   expect(refused.code).not.toBe(0)
   expect(refused.stderr).toMatch(/Unknown backup path/)

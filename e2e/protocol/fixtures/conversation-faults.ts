@@ -22,6 +22,14 @@ export const conversationFaults = {
 /** Wait until the proxy is holding a compaction call it has not forwarded. */
 export async function waitForHeldCompaction(profile: ScratchProfile, timeout = 15_000): Promise<void> {
   const held = join(mockDirectory(profile.root, 'codex'), 'compact-held')
-  await expect.poll(() => access(held).then(() => true, () => false), { timeout, message: 'a held compaction' })
+  await expect
+    .poll(
+      () =>
+        access(held).then(
+          () => true,
+          () => false,
+        ),
+      { timeout, message: 'a held compaction' },
+    )
     .toBe(true)
 }

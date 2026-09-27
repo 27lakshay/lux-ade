@@ -15,13 +15,30 @@ const deliveryStatuses = ['claimed', 'shown', 'failed', 'suppressed'] as const
 type DeliveryStatus = (typeof deliveryStatuses)[number]
 type ActivityKind = DailyUseRequest<'notification.preferences.set'>['muted_kinds'][number]
 // Every kind the contract declares; the type check fails when one is added there.
-const activityKinds = Object.keys({ turn_completed: 0, turn_failed: 0, turn_interrupted: 0, approval_requested: 0,
-  question_requested: 0, operation_unknown: 0, snooze_ended: 0, account_switched: 0 } satisfies Record<ActivityKind, 0>)
+const activityKinds = Object.keys({
+  turn_completed: 0,
+  turn_failed: 0,
+  turn_interrupted: 0,
+  approval_requested: 0,
+  question_requested: 0,
+  operation_unknown: 0,
+  snooze_ended: 0,
+  account_switched: 0,
+} satisfies Record<ActivityKind, 0>)
 
-export async function runActivityCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runActivityCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area === 'activity' && action === 'list') {
-    const parsed = parseWords(rest, ['--limit', '--before', '--after'], ['--unread', '--include-dismissed'], 'activity list')
+    const parsed = parseWords(
+      rest,
+      ['--limit', '--before', '--after'],
+      ['--unread', '--include-dismissed'],
+      'activity list',
+    )
     positionals(parsed, 0, 'activity list accepts only options')
     const { '--limit': limit, '--before': before, '--after': after } = parsed.options
     if (before !== undefined && after !== undefined) throw new CliError('usage', 'Use --before or --after, not both.')
@@ -66,8 +83,10 @@ export async function runActivityCommand(socketPath: string, area: string | unde
     if (kinds.some((kind) => !activityKinds.includes(kind))) {
       throw new CliError('usage', `--muted must be none or a comma-separated list of ${activityKinds.join(', ')}.`)
     }
-    return call(socketPath, 'notification.preferences.set', { desktop: desktop === 'on',
-      muted_kinds: kinds as ActivityKind[] })
+    return call(socketPath, 'notification.preferences.set', {
+      desktop: desktop === 'on',
+      muted_kinds: kinds as ActivityKind[],
+    })
   }
   return undefined
 }

@@ -67,20 +67,36 @@ export function mountTerminal(
   observer.observe(container)
 
   subscriptions.push(...prepareTerminal(terminal))
-  subscriptions.push(terminal.onData((data) => { if (feed.ready) channel?.input(data) }))
-  subscriptions.push(terminal.onBinary((data) => {
-    if (feed.ready) channel?.binary(Array.from(data, (character) => character.charCodeAt(0) & 255))
-  }))
+  subscriptions.push(
+    terminal.onData((data) => {
+      if (feed.ready) channel?.input(data)
+    }),
+  )
+  subscriptions.push(
+    terminal.onBinary((data) => {
+      if (feed.ready) channel?.binary(Array.from(data, (character) => character.charCodeAt(0) & 255))
+    }),
+  )
 
-  void bridge.attach(workspaceId, terminalId, (frame) => {
-    if (!disposed && !failed) feed.push(frame)
-  }, (reason) => { if (!disposed) onStatus(reason) }).then((attached) => {
-    if (disposed || failed) attached.dispose()
-    else {
-      channel = attached
-      fitAndNotify()
-    }
-  }).catch((error: Error) => onStatus(error.message))
+  void bridge
+    .attach(
+      workspaceId,
+      terminalId,
+      (frame) => {
+        if (!disposed && !failed) feed.push(frame)
+      },
+      (reason) => {
+        if (!disposed) onStatus(reason)
+      },
+    )
+    .then((attached) => {
+      if (disposed || failed) attached.dispose()
+      else {
+        channel = attached
+        fitAndNotify()
+      }
+    })
+    .catch((error: Error) => onStatus(error.message))
 
   return {
     terminal,

@@ -42,17 +42,22 @@ function filters(options: Record<string, string>): Record<string, string | numbe
 
 const GROUPS = ['conversation', 'workspace', 'provider', 'account', 'day'] as const
 
-export async function runUsageCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runUsageCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'usage') return undefined
   if (action === 'summary') {
     const options = namedOptions(rest, ['--by', '--utc-offset', ...FILTER_OPTIONS], 'usage summary')
     const by = required(options['--by'], '--by')
-    const group_by = GROUPS.find(group => group === by)
+    const group_by = GROUPS.find((group) => group === by)
     if (!group_by) throw new CliError('usage', `--by must be one of ${GROUPS.join(', ')}.`)
-    const utc_offset_minutes = options['--utc-offset'] !== undefined
-      ? integer(options['--utc-offset'], -840, 840, '--utc-offset')
-      : -new Date().getTimezoneOffset()
+    const utc_offset_minutes =
+      options['--utc-offset'] !== undefined
+        ? integer(options['--utc-offset'], -840, 840, '--utc-offset')
+        : -new Date().getTimezoneOffset()
     return dailyUseCommand(socketPath, { op: 'usage.summary', group_by, utc_offset_minutes, ...filters(options) })
   }
   if (action === 'turns') {

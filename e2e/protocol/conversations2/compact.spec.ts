@@ -3,8 +3,17 @@
 // daemon crash between dispatch and the provider's acknowledgement; a crash
 // that loses the run leaves the outcome explicitly unknown; the provider is
 // never asked to compact twice for one operation.
-import { conversationStatus, expect, prompts, send, startConversation, test, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  conversationStatus,
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { conversationFaults, waitForHeldCompaction } from '../fixtures/conversation-faults'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 
@@ -13,8 +22,9 @@ async function compactions(profile: ScratchProfile): Promise<number> {
 }
 
 async function compactionRecords(profile: ScratchProfile, conversationId: string): Promise<number> {
-  return (await profile.call('conversation.get', { conversation_id: conversationId })).messages
-    .filter((message) => message.kind === 'contextCompaction' && message.status === 'completed').length
+  return (await profile.call('conversation.get', { conversation_id: conversationId })).messages.filter(
+    (message) => message.kind === 'contextCompaction' && message.status === 'completed',
+  ).length
 }
 
 async function readyConversation(profile: ScratchProfile): Promise<string> {
@@ -24,7 +34,9 @@ async function readyConversation(profile: ScratchProfile): Promise<string> {
   return conversationId
 }
 
-test('R002: the same compaction converges on its reply after reconnects and a crash; another payload conflicts', async ({ profile }) => {
+test('R002: the same compaction converges on its reply after reconnects and a crash; another payload conflicts', async ({
+  profile,
+}) => {
   const conversationId = await readyConversation(profile)
   const compact = { operation_id: 'compact-r002', conversation_id: conversationId }
   const reply = await profile.call('conversation.compact', compact)
@@ -41,8 +53,9 @@ test('R002: the same compaction converges on its reply after reconnects and a cr
 
   // The operation ID on another Conversation is a different payload.
   const other = await readyConversation(profile)
-  await expect(profile.call('conversation.compact', { operation_id: 'compact-r002', conversation_id: other }))
-    .rejects.toThrow(/already used for a different request/)
+  await expect(
+    profile.call('conversation.compact', { operation_id: 'compact-r002', conversation_id: other }),
+  ).rejects.toThrow(/already used for a different request/)
   const conflict = await profile.cli('conversation', 'compact', other, '--request-id', 'compact-r002')
   expect(conflict.code).not.toBe(0)
   expect(await compactions(profile)).toBe(1)
@@ -50,7 +63,9 @@ test('R002: the same compaction converges on its reply after reconnects and a cr
   expect(await compactionRecords(profile, other)).toBe(0)
 })
 
-test('R001: a compaction whose reply was lost is read back after a daemon crash without a second native call', async ({ profile }) => {
+test('R001: a compaction whose reply was lost is read back after a daemon crash without a second native call', async ({
+  profile,
+}) => {
   const conversationId = await readyConversation(profile)
   const compact = { operation_id: 'compact-lost', conversation_id: conversationId }
   await sendAndLoseReply(profile, { op: 'conversation.compact', ...compact })
@@ -62,7 +77,9 @@ test('R001: a compaction whose reply was lost is read back after a daemon crash 
   expect(await compactionRecords(profile, conversationId)).toBe(1)
 })
 
-test('R001: a daemon crash between dispatch and the provider acknowledgement is reconciled from the same run', async ({ ade }) => {
+test('R001: a daemon crash between dispatch and the provider acknowledgement is reconciled from the same run', async ({
+  ade,
+}) => {
   const profile = await ade.profile({ env: conversationFaults.env })
   const conversationId = await readyConversation(profile)
   await profile.releaseMock('codex', conversationFaults.holdCompact)
@@ -85,7 +102,9 @@ test('R001: a daemon crash between dispatch and the provider acknowledgement is 
   expect(await compactionRecords(profile, conversationId)).toBe(1)
 })
 
-test('R001: a compaction whose run was lost with the runtime is reported unknown and never sent again', async ({ ade }) => {
+test('R001: a compaction whose run was lost with the runtime is reported unknown and never sent again', async ({
+  ade,
+}) => {
   const profile = await ade.profile({ env: conversationFaults.env })
   const conversationId = await readyConversation(profile)
   await profile.releaseMock('codex', conversationFaults.holdCompact)
@@ -110,7 +129,10 @@ test('R001: a compaction whose run was lost with the runtime is reported unknown
   expect(await compactions(profile)).toBe(0)
 
   // A new operation compacts on the new run.
-  const fresh = await profile.call('conversation.compact', { operation_id: 'compact-after-loss', conversation_id: conversationId })
+  const fresh = await profile.call('conversation.compact', {
+    operation_id: 'compact-after-loss',
+    conversation_id: conversationId,
+  })
   expect(fresh).toMatchObject({ outcome: 'acknowledged' })
   expect(await compactions(profile)).toBe(1)
 })

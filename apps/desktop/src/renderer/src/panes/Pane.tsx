@@ -115,7 +115,11 @@ export function Pane(p: Props) {
       </motion.div>
 
       {/* The body takes `layout` too so its contents are scale-corrected while the card resizes. */}
-      <motion.div layout transition={{ layout: p.resizing ? { duration: 0 } : LAYOUT_SPRING }} className="relative min-h-0 flex-1">
+      <motion.div
+        layout
+        transition={{ layout: p.resizing ? { duration: 0 } : LAYOUT_SPRING }}
+        className="relative min-h-0 flex-1"
+      >
         {active?.kind === 'chat' ? <ChatView title={active.title} /> : null}
         {active?.kind === 'terminal' ? <TerminalView title={active.title} /> : null}
         {active?.kind === 'empty' ? <EmptyView onPick={(kind) => p.onPick(active.id, kind)} /> : null}

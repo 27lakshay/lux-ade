@@ -15,7 +15,9 @@ type Account = { id: string; provider: string; name: string; native_home: string
 type Conversation = { id: string; account_id: string | null; account_context: string; provider: string }
 
 async function profile(home: string, ...args: string[]): Promise<Record<string, unknown>> {
-  const result = await execFileAsync('python3', [profiles, '--home', home, '--daemon', daemonBinary, ...args], { timeout: 30_000 })
+  const result = await execFileAsync('python3', [profiles, '--home', home, '--daemon', daemonBinary, ...args], {
+    timeout: 30_000,
+  })
   const value = JSON.parse(result.stdout) as Record<string, unknown>
   if (args[0] === 'start' && typeof value.socket === 'string') value.owner = await managedProfileOwner(value.socket)
   return value
@@ -31,12 +33,14 @@ test('accounts have durable, distinct profile homes and conversations keep their
   let launch: Launch | null = null
   try {
     const createdProfile = (await profile(home, 'create', 'Work')).profile as { id: string }
-    launch = await profile(home, 'start', createdProfile.id) as Launch
+    launch = (await profile(home, 'start', createdProfile.id)) as Launch
     const catalog = await rpc(launch.socket, { op: 'catalog.get' })
     const workspace = (catalog.catalog as { workspaces: Array<{ id: string }> }).workspaces[0]
 
-    const first = (await rpc(launch.socket, { op: 'account.create', provider: 'codex', name: 'Personal' })).account as Account
-    const second = (await rpc(launch.socket, { op: 'account.create', provider: 'codex', name: 'Team' })).account as Account
+    const first = (await rpc(launch.socket, { op: 'account.create', provider: 'codex', name: 'Personal' }))
+      .account as Account
+    const second = (await rpc(launch.socket, { op: 'account.create', provider: 'codex', name: 'Team' }))
+      .account as Account
     expect(first).toMatchObject({ provider: 'codex', name: 'Personal', generation: 0, state: 'unverified' })
     expect(second).toMatchObject({ provider: 'codex', name: 'Team', generation: 0, state: 'unverified' })
     expect(first.id).not.toBe(second.id)
@@ -50,30 +54,78 @@ test('accounts have durable, distinct profile homes and conversations keep their
 
     const accounts = await rpc(launch.socket, { op: 'account.list' })
     expect(accounts.accounts).toEqual([first, second])
-    await expect(rpc(launch.socket, { op: 'conversation.create', workspace_id: workspace.id,
-      provider: 'claude', account_id: first.id, title: 'Wrong provider' })).rejects.toThrow(/another provider/)
-    await expect(rpc(launch.socket, { op: 'conversation.create', workspace_id: workspace.id,
-      provider: 'codex', account_id: 'missing-account', title: 'Missing account' })).rejects.toThrow()
-    await expect(rpc(launch.socket, { op: 'conversation.create', workspace_id: workspace.id,
-      provider: 'codex', account_id: null, title: 'Invalid account' })).rejects.toThrow(/Invalid account ID/)
+    await expect(
+      rpc(launch.socket, {
+        op: 'conversation.create',
+        workspace_id: workspace.id,
+        provider: 'claude',
+        account_id: first.id,
+        title: 'Wrong provider',
+      }),
+    ).rejects.toThrow(/another provider/)
+    await expect(
+      rpc(launch.socket, {
+        op: 'conversation.create',
+        workspace_id: workspace.id,
+        provider: 'codex',
+        account_id: 'missing-account',
+        title: 'Missing account',
+      }),
+    ).rejects.toThrow()
+    await expect(
+      rpc(launch.socket, {
+        op: 'conversation.create',
+        workspace_id: workspace.id,
+        provider: 'codex',
+        account_id: null,
+        title: 'Invalid account',
+      }),
+    ).rejects.toThrow(/Invalid account ID/)
 
-    const firstConversation = (await rpc(launch.socket, { op: 'conversation.create', workspace_id: workspace.id,
-      provider: 'codex', account_id: first.id, title: 'Personal turn' })).conversation as Conversation
-    const secondConversation = (await rpc(launch.socket, { op: 'conversation.create', workspace_id: workspace.id,
-      provider: 'codex', account_id: second.id, title: 'Team turn' })).conversation as Conversation
-    const ambient = (await rpc(launch.socket, { op: 'conversation.create', workspace_id: workspace.id,
-      provider: 'codex', title: 'Earlier behavior' })).conversation as Conversation
+    const firstConversation = (
+      await rpc(launch.socket, {
+        op: 'conversation.create',
+        workspace_id: workspace.id,
+        provider: 'codex',
+        account_id: first.id,
+        title: 'Personal turn',
+      })
+    ).conversation as Conversation
+    const secondConversation = (
+      await rpc(launch.socket, {
+        op: 'conversation.create',
+        workspace_id: workspace.id,
+        provider: 'codex',
+        account_id: second.id,
+        title: 'Team turn',
+      })
+    ).conversation as Conversation
+    const ambient = (
+      await rpc(launch.socket, {
+        op: 'conversation.create',
+        workspace_id: workspace.id,
+        provider: 'codex',
+        title: 'Earlier behavior',
+      })
+    ).conversation as Conversation
     expect(firstConversation).toMatchObject({ account_id: first.id, account_context: 'managed' })
     expect(secondConversation).toMatchObject({ account_id: second.id, account_context: 'managed' })
     expect(ambient).toMatchObject({ account_id: null, account_context: 'legacy_ambient' })
 
     await stop(launch)
-    launch = await profile(home, 'start', createdProfile.id) as Launch
+    launch = (await profile(home, 'start', createdProfile.id)) as Launch
     expect((await rpc(launch.socket, { op: 'account.list' })).accounts).toEqual([first, second])
-    for (const [conversation, expected] of [[firstConversation, first.id], [secondConversation, second.id], [ambient, null]] as const) {
+    for (const [conversation, expected] of [
+      [firstConversation, first.id],
+      [secondConversation, second.id],
+      [ambient, null],
+    ] as const) {
       const snapshot = await rpc(launch.socket, { op: 'conversation.get', conversation_id: conversation.id })
-      expect(snapshot.conversation).toMatchObject({ id: conversation.id, account_id: expected,
-        account_context: expected ? 'managed' : 'legacy_ambient' })
+      expect(snapshot.conversation).toMatchObject({
+        id: conversation.id,
+        account_id: expected,
+        account_context: expected ? 'managed' : 'legacy_ambient',
+      })
     }
     await rename(first.native_home, `${first.native_home}-saved`)
     await symlink(second.native_home, first.native_home)
@@ -90,17 +142,25 @@ test('a legacy profile database upgrades without losing ambient conversations', 
   let launch: Launch | null = null
   try {
     const selected = (await profile(home, 'create', 'Existing')).profile as { id: string; home: string }
-    launch = await profile(home, 'start', selected.id) as Launch
+    launch = (await profile(home, 'start', selected.id)) as Launch
     const catalog = await rpc(launch.socket, { op: 'catalog.get' })
     const workspace = (catalog.catalog as { workspaces: Array<{ id: string }> }).workspaces[0]
-    const existing = (await rpc(launch.socket, { op: 'conversation.create', workspace_id: workspace.id,
-      provider: 'codex', title: 'Before accounts' })).conversation as Conversation
+    const existing = (
+      await rpc(launch.socket, {
+        op: 'conversation.create',
+        workspace_id: workspace.id,
+        provider: 'codex',
+        title: 'Before accounts',
+      })
+    ).conversation as Conversation
     await stop(launch)
     launch = null
 
     // Model a v8 profile after the real process has produced its other durable state.
     const database = join(selected.home, 'data', 'sessions.sqlite')
-    await execFileAsync('python3', ['-c', `import sqlite3,sys
+    await execFileAsync('python3', [
+      '-c',
+      `import sqlite3,sys
 with sqlite3.connect(sys.argv[1]) as db:
  db.execute('DROP TABLE accounts')
  db.execute('ALTER TABLE attachments DROP COLUMN created_at')
@@ -108,13 +168,19 @@ with sqlite3.connect(sys.argv[1]) as db:
  db.execute('ALTER TABLE attachments DROP COLUMN generation')
  db.execute('DROP TABLE restore_fence')
  db.execute('DELETE FROM schema_migrations WHERE version>=9')
- db.execute('PRAGMA user_version=8')`, database])
+ db.execute('PRAGMA user_version=8')`,
+      database,
+    ])
 
-    launch = await profile(home, 'start', selected.id) as Launch
+    launch = (await profile(home, 'start', selected.id)) as Launch
     const restored = await rpc(launch.socket, { op: 'conversation.get', conversation_id: existing.id })
-    expect(restored.conversation).toMatchObject({ id: existing.id, account_id: null,
-      account_context: 'legacy_ambient' })
-    const account = (await rpc(launch.socket, { op: 'account.create', provider: 'codex', name: 'New' })).account as Account
+    expect(restored.conversation).toMatchObject({
+      id: existing.id,
+      account_id: null,
+      account_context: 'legacy_ambient',
+    })
+    const account = (await rpc(launch.socket, { op: 'account.create', provider: 'codex', name: 'New' }))
+      .account as Account
     expect(account.state).toBe('unverified')
   } finally {
     if (launch) await stop(launch)

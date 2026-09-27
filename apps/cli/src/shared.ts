@@ -3,11 +3,25 @@ import { requestDaemon, type DaemonResponse } from '@ade/client'
 
 export type CommandResult = DaemonResponse | Record<string, unknown>
 
-export type ErrorCode = 'usage' | 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' |
-  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded' | 'not_applied'
+export type ErrorCode =
+  | 'usage'
+  | 'unavailable'
+  | 'incompatible'
+  | 'timeout'
+  | 'protocol'
+  | 'daemon'
+  | 'invalid_request'
+  | 'conflict'
+  | 'outcome_unknown'
+  | 'in_progress'
+  | 'overloaded'
+  | 'not_applied'
 
 export class CliError extends Error {
-  constructor(public readonly code: ErrorCode, message: string) {
+  constructor(
+    public readonly code: ErrorCode,
+    message: string,
+  ) {
     super(message)
   }
 }
@@ -57,9 +71,13 @@ export function namedOptions(words: string[], allowed: readonly string[], comman
 
 export function jsonObject(value: string | undefined, label: string): Record<string, unknown> {
   let parsed: unknown
-  try { parsed = JSON.parse(required(value, label)) }
-  catch { throw new CliError('usage', `${label} must be valid JSON.`) }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new CliError('usage', `${label} must be an object.`)
+  try {
+    parsed = JSON.parse(required(value, label))
+  } catch {
+    throw new CliError('usage', `${label} must be valid JSON.`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new CliError('usage', `${label} must be an object.`)
   return parsed as Record<string, unknown>
 }
 
@@ -77,13 +95,23 @@ export interface ParsedWords {
   flags: Set<string>
 }
 
-export function parseWords(words: string[], valueOptions: readonly string[], flagOptions: readonly string[],
-  command: string): ParsedWords {
+export function parseWords(
+  words: string[],
+  valueOptions: readonly string[],
+  flagOptions: readonly string[],
+  command: string,
+): ParsedWords {
   const parsed: ParsedWords = { positionals: [], options: {}, flags: new Set() }
   for (let index = 0; index < words.length; index++) {
     const word = words[index]
-    if (!word.startsWith('--')) { parsed.positionals.push(word); continue }
-    if (flagOptions.includes(word) && !parsed.flags.has(word)) { parsed.flags.add(word); continue }
+    if (!word.startsWith('--')) {
+      parsed.positionals.push(word)
+      continue
+    }
+    if (flagOptions.includes(word) && !parsed.flags.has(word)) {
+      parsed.flags.add(word)
+      continue
+    }
     const value = words[index + 1]
     if (!valueOptions.includes(word) || parsed.options[word] !== undefined || !value || value.startsWith('--')) {
       throw new CliError('usage', `Invalid ${command} option ${word}. Run ade --help for usage.`)
@@ -106,7 +134,10 @@ export function positionals(parsed: ParsedWords, count: number, usage: string): 
 export function requestIdOption(parsed: ParsedWords, command: string): string {
   const id = parsed.options['--request-id']
   if (!id || id.length > 256) {
-    throw new CliError('usage', `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`)
+    throw new CliError(
+      'usage',
+      `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`,
+    )
   }
   return id
 }

@@ -19,15 +19,24 @@ test('two attachments hand viewport ownership over by claim, by input and by det
   // The first attachment claims the viewport; both see the PTY resize.
   let mark = first.frames.length
   first.send({ op: 'resize', cols: 120, rows: 40, width_px: 0, height_px: 0, claim: true, run_id: runId })
-  await first.waitFor('ownership for the first attachment', (frame) => frame.type === 'viewport' && frame.owner === true, { from: mark })
-  await second.waitFor('the claimed size', (frame) => frame.type === 'terminal_resize' && frame.cols === 120 && frame.rows === 40)
+  await first.waitFor(
+    'ownership for the first attachment',
+    (frame) => frame.type === 'viewport' && frame.owner === true,
+    { from: mark },
+  )
+  await second.waitFor(
+    'the claimed size',
+    (frame) => frame.type === 'terminal_resize' && frame.cols === 120 && frame.rows === 40,
+  )
   expect((await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.resize_owner).toBe(a)
 
   // An observer's plain resize records its size but does not change the PTY.
   mark = second.frames.length
   second.send({ op: 'resize', cols: 80, rows: 20, width_px: 0, height_px: 0, claim: false, run_id: runId })
   second.send({ op: 'ping', run_id: runId })
-  const metrics = await second.waitFor('metrics after the observer resize', (frame) => frame.type === 'metrics', { from: mark })
+  const metrics = await second.waitFor('metrics after the observer resize', (frame) => frame.type === 'metrics', {
+    from: mark,
+  })
   expect((metrics.metrics as Record<string, unknown>).resize_owner).toBe(a)
   expect(second.frames.slice(mark).some((frame) => frame.type === 'terminal_resize')).toBe(false)
   first.send({ op: 'input', data: 'echo "size-a:$(stty size)"\n', run_id: runId })
@@ -37,8 +46,14 @@ test('two attachments hand viewport ownership over by claim, by input and by det
   const firstMark = first.frames.length
   mark = second.frames.length
   second.send({ op: 'input', data: 'echo "size-b:$(stty size)"\n', run_id: runId })
-  await second.waitFor('ownership for the typing attachment', (frame) => frame.type === 'viewport' && frame.owner === true, { from: mark })
-  await first.waitFor('the loss of ownership', (frame) => frame.type === 'viewport' && frame.owner === false, { from: firstMark })
+  await second.waitFor(
+    'ownership for the typing attachment',
+    (frame) => frame.type === 'viewport' && frame.owner === true,
+    { from: mark },
+  )
+  await first.waitFor('the loss of ownership', (frame) => frame.type === 'viewport' && frame.owner === false, {
+    from: firstMark,
+  })
   await second.waitForText(/size-b:20 80/)
   expect((await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.resize_owner).toBe(b)
 
@@ -48,18 +63,31 @@ test('two attachments hand viewport ownership over by claim, by input and by det
   const detached = await second.waitFor('the detach reply', (frame) => frame.type === 'detached')
   expect(detached).toMatchObject({ attachment: b, run_id: runId })
   await second.waitForClose()
-  await first.waitFor('ownership handed back', (frame) => frame.type === 'viewport' && frame.owner === true, { from: handOff })
-  await first.waitFor('the survivor size', (frame) => frame.type === 'terminal_resize' && frame.cols === 120 && frame.rows === 40, { from: handOff })
+  await first.waitFor('ownership handed back', (frame) => frame.type === 'viewport' && frame.owner === true, {
+    from: handOff,
+  })
+  await first.waitFor(
+    'the survivor size',
+    (frame) => frame.type === 'terminal_resize' && frame.cols === 120 && frame.rows === 40,
+    { from: handOff },
+  )
   const after = (await terminalMetrics(profile, workspace.id, workspace.terminal_id))!
   expect(after).toMatchObject({ shell_running: true, shell_pid: shellPid, run_id: runId, resize_owner: a })
 
   // Closing the last attachment without a detach also releases ownership and leaves the shell running.
   first.close()
-  await expect.poll(async () => (await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.resize_owner).toBeNull()
-  expect((await terminalMetrics(profile, workspace.id, workspace.terminal_id))!).toMatchObject({ shell_running: true, shell_pid: shellPid })
+  await expect
+    .poll(async () => (await terminalMetrics(profile, workspace.id, workspace.terminal_id))!.resize_owner)
+    .toBeNull()
+  expect((await terminalMetrics(profile, workspace.id, workspace.terminal_id))!).toMatchObject({
+    shell_running: true,
+    shell_pid: shellPid,
+  })
 })
 
-test('input and resize naming another incarnation change nothing, and an exited incarnation refuses them', async ({ profile }) => {
+test('input and resize naming another incarnation change nothing, and an exited incarnation refuses them', async ({
+  profile,
+}) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
   const stream = TerminalStream.open(profile, ...target)
@@ -81,7 +109,11 @@ test('input and resize naming another incarnation change nothing, and an exited 
   expect(stream.frames.slice(mark).some((frame) => frame.type === 'terminal_resize')).toBe(false)
 
   // A subscribe that expects another incarnation gets no snapshot.
-  const expectingOld = TerminalStream.open(profile, ...target, { op: 'subscribe', snapshot_format: 'xterm-replay-v1', run_id: 'terminal-run-earlier' })
+  const expectingOld = TerminalStream.open(profile, ...target, {
+    op: 'subscribe',
+    snapshot_format: 'xterm-replay-v1',
+    run_id: 'terminal-run-earlier',
+  })
   const refused = await expectingOld.waitFor('the stale subscribe refusal', (frame) => frame.type === 'error')
   expect(refused.code).toBe('stale_incarnation')
   expect(expectingOld.frames.some((frame) => frame.type === 'snapshot')).toBe(false)
@@ -93,7 +125,9 @@ test('input and resize naming another incarnation change nothing, and an exited 
   mark = stream.frames.length
   stream.send({ op: 'input', data: 'echo late\n', run_id: runId })
   stream.send({ op: 'resize', cols: 60, rows: 20, claim: true, run_id: runId })
-  await expect.poll(() => stream.frames.slice(mark).filter((frame) => frame.code === 'incarnation_exited').length).toBe(2)
+  await expect
+    .poll(() => stream.frames.slice(mark).filter((frame) => frame.code === 'incarnation_exited').length)
+    .toBe(2)
 
   // The CLI reports the refusal instead of claiming the input was submitted.
   const sent = await profile.cli('terminal', 'send', ...target, 'echo late')

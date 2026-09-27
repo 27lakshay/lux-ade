@@ -19,7 +19,12 @@ export function registerFileIpc(): void {
       else request.path = args.path
     }
     if (op === 'file.search') {
-      if (typeof args.query !== 'string' || !args.query.trim() || args.query.length > 256 || args.query.includes('\0')) {
+      if (
+        typeof args.query !== 'string' ||
+        !args.query.trim() ||
+        args.query.length > 256 ||
+        args.query.includes('\0')
+      ) {
         throw new Error('Invalid file search')
       }
       request.query = args.query.trim()
@@ -30,7 +35,8 @@ export function registerFileIpc(): void {
         request.cursor = args.cursor
       }
       if (args.limit !== undefined) {
-        if (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100) throw new Error('Invalid file limit')
+        if (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100)
+          throw new Error('Invalid file limit')
         request.limit = args.limit
       } else request.limit = 100
     }

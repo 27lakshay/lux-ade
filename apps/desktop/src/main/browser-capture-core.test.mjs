@@ -2,15 +2,36 @@
 // Run: node --test apps/desktop/src/main/browser-capture-core.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CAPTURE_LIMITS, clampCapture, collectionScript, fitWithin, pickEncoding, recordUrl, screenshotCrop,
-  STYLE_PROPERTIES, validSelector } from './browser-capture-core.ts'
+import {
+  CAPTURE_LIMITS,
+  clampCapture,
+  collectionScript,
+  fitWithin,
+  pickEncoding,
+  recordUrl,
+  screenshotCrop,
+  STYLE_PROPERTIES,
+  validSelector,
+} from './browser-capture-core.ts'
 
-const raw = (overrides = {}) => ({ url: 'https://u:p@a.test/page?token=1#x', title: 'A', tag: 'BUTTON',
-  html: '<button class="b">Go</button>', text: 'Go', rect: { x: 10, y: 20, width: 100, height: 40 },
+const raw = (overrides = {}) => ({
+  url: 'https://u:p@a.test/page?token=1#x',
+  title: 'A',
+  tag: 'BUTTON',
+  html: '<button class="b">Go</button>',
+  text: 'Go',
+  rect: { x: 10, y: 20, width: 100, height: 40 },
   styles: { color: 'rgb(0, 0, 0)', 'font-size': '14px', 'not-listed': 'x' },
-  attributes: { class: 'b', onclick: 'steal()', href: 'https://a.test/x?session_id=9', 'data-id': '7',
-    title: 'api_key=abc' },
-  viewport: { width: 1280, height: 800, device_pixel_ratio: 2 }, ...overrides })
+  attributes: {
+    class: 'b',
+    onclick: 'steal()',
+    href: 'https://a.test/x?session_id=9',
+    'data-id': '7',
+    title: 'api_key=abc',
+  },
+  viewport: { width: 1280, height: 800, device_pixel_ratio: 2 },
+  ...overrides,
+})
 
 test('a capture keeps the element and strips credentials, queries and handlers', () => {
   const outcome = clampCapture(raw())
@@ -28,7 +49,9 @@ test('a capture keeps the element and strips credentials, queries and handlers',
 
 test('oversized parts are cut and reported', () => {
   const many = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`data-a${i}`, 'v']))
-  const outcome = clampCapture(raw({ html: 'x'.repeat(CAPTURE_LIMITS.html + 1), text: 'y'.repeat(9000), attributes: many }))
+  const outcome = clampCapture(
+    raw({ html: 'x'.repeat(CAPTURE_LIMITS.html + 1), text: 'y'.repeat(9000), attributes: many }),
+  )
   assert.equal(outcome.ok, true)
   assert.equal(outcome.page.element.html.length, CAPTURE_LIMITS.html)
   assert.equal(outcome.page.element.text.length, CAPTURE_LIMITS.text)
@@ -69,16 +92,29 @@ test('the collection script embeds the selector as data', () => {
 test('the crop follows the bitmap scale and clips to the viewport', () => {
   const viewport = { width: 1000, height: 800 }
   const bitmap = { width: 2000, height: 1600 }
-  assert.deepEqual(screenshotCrop({ x: 10, y: 20, width: 100, height: 50 }, viewport, bitmap),
-    { ok: true, crop: { x: 20, y: 40, width: 200, height: 100 }, scale: 2 })
-  assert.deepEqual(screenshotCrop({ x: 900, y: 700, width: 500, height: 500 }, viewport, bitmap).crop,
-    { x: 1800, y: 1400, width: 200, height: 200 })
-  assert.deepEqual(screenshotCrop({ x: 0, y: 900, width: 10, height: 10 }, viewport, bitmap),
-    { ok: false, reason: 'not_visible' })
-  assert.deepEqual(screenshotCrop({ x: 0, y: 0, width: 0, height: 10 }, viewport, bitmap),
-    { ok: false, reason: 'not_visible' })
-  assert.deepEqual(screenshotCrop({ x: 0, y: 0, width: 1, height: 1 }, viewport, { width: 0, height: 0 }),
-    { ok: false, reason: 'capture_failed' })
+  assert.deepEqual(screenshotCrop({ x: 10, y: 20, width: 100, height: 50 }, viewport, bitmap), {
+    ok: true,
+    crop: { x: 20, y: 40, width: 200, height: 100 },
+    scale: 2,
+  })
+  assert.deepEqual(screenshotCrop({ x: 900, y: 700, width: 500, height: 500 }, viewport, bitmap).crop, {
+    x: 1800,
+    y: 1400,
+    width: 200,
+    height: 200,
+  })
+  assert.deepEqual(screenshotCrop({ x: 0, y: 900, width: 10, height: 10 }, viewport, bitmap), {
+    ok: false,
+    reason: 'not_visible',
+  })
+  assert.deepEqual(screenshotCrop({ x: 0, y: 0, width: 0, height: 10 }, viewport, bitmap), {
+    ok: false,
+    reason: 'not_visible',
+  })
+  assert.deepEqual(screenshotCrop({ x: 0, y: 0, width: 1, height: 1 }, viewport, { width: 0, height: 0 }), {
+    ok: false,
+    reason: 'capture_failed',
+  })
 })
 
 test('screenshots are resized and encoded within their bounds', () => {

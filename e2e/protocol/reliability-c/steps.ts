@@ -8,7 +8,10 @@ import { rawReply } from '../fixtures/raw-reply'
 let refreshes = 0
 
 export async function exists(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false)
+  return access(path).then(
+    () => true,
+    () => false,
+  )
 }
 
 /** A linked tree made with plain Git, outside ADE, on a new branch. Returns its canonical path. */
@@ -21,11 +24,16 @@ export async function externalTree(ade: AdeHarness, repo: ScratchRepo, branch: s
 /** Wait for a worktree lifecycle operation to leave `running` and return it. */
 export async function settledOperation(profile: ScratchProfile, repositoryId: string, operationId: string) {
   let status = 'running'
-  await expect.poll(async () => {
-    status = (await profile.call('worktree.operation', { repository_id: repositoryId, operation_id: operationId }))
-      .operation.status
-    return status
-  }, { timeout: 30_000 }).not.toBe('running')
+  await expect
+    .poll(
+      async () => {
+        status = (await profile.call('worktree.operation', { repository_id: repositoryId, operation_id: operationId }))
+          .operation.status
+        return status
+      },
+      { timeout: 30_000 },
+    )
+    .not.toBe('running')
   return status
 }
 
@@ -58,8 +66,13 @@ export async function launchShell(profile: ScratchProfile, tree: string) {
 
 /** `worktree.remove` over the raw protocol, so the typed error code is visible. */
 export function removeTree(profile: ScratchProfile, repositoryId: string, operationId: string, tree: string) {
-  return rawReply(profile, { op: 'worktree.remove', repository_id: repositoryId, operation_id: operationId,
-    path: tree, confirm_path: tree })
+  return rawReply(profile, {
+    op: 'worktree.remove',
+    repository_id: repositoryId,
+    operation_id: operationId,
+    path: tree,
+    confirm_path: tree,
+  })
 }
 
 /** Checkout claims on, inside or around `path`, as `profile` sees them. */

@@ -15,7 +15,8 @@ export type NativeSession = {
   rewrite(records: Array<Record<string, unknown>>): Promise<void>
 }
 
-const jsonl = (records: Array<Record<string, unknown>>) => records.map((record) => `${JSON.stringify(record)}\n`).join('')
+const jsonl = (records: Array<Record<string, unknown>>) =>
+  records.map((record) => `${JSON.stringify(record)}\n`).join('')
 
 function session(id: string, path: string): NativeSession {
   return {
@@ -32,8 +33,12 @@ function session(id: string, path: string): NativeSession {
 }
 
 /** A Claude Code transcript at `<home>/.claude/projects/<project>/<id>.jsonl`. */
-export async function claudeTranscript(home: string, id: string, cwd: string,
-  records: Array<Record<string, unknown>>): Promise<NativeSession> {
+export async function claudeTranscript(
+  home: string,
+  id: string,
+  cwd: string,
+  records: Array<Record<string, unknown>>,
+): Promise<NativeSession> {
   const directory = join(home, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'))
   await mkdir(directory, { recursive: true })
   const path = join(directory, `${id}.jsonl`)
@@ -42,31 +47,48 @@ export async function claudeTranscript(home: string, id: string, cwd: string,
 }
 
 /** Claude Code transcript records for one session: a chain of user and assistant text turns. */
-export function claudeRecords(id: string, cwd: string, turns: Array<{ uuid: string; parent: string | null;
-  role: 'user' | 'assistant'; text: string }>): Array<Record<string, unknown>> {
+export function claudeRecords(
+  id: string,
+  cwd: string,
+  turns: Array<{ uuid: string; parent: string | null; role: 'user' | 'assistant'; text: string }>,
+): Array<Record<string, unknown>> {
   return turns.map((turn, index) => ({
-    type: turn.role, uuid: turn.uuid, parentUuid: turn.parent, isSidechain: false, sessionId: id, cwd,
+    type: turn.role,
+    uuid: turn.uuid,
+    parentUuid: turn.parent,
+    isSidechain: false,
+    sessionId: id,
+    cwd,
     timestamp: new Date(Date.UTC(2026, 8, 1, 10, 0, index)).toISOString(),
-    message: turn.role === 'user' ? { role: 'user', content: turn.text }
-      : { role: 'assistant', content: [{ type: 'text', text: turn.text }] },
+    message:
+      turn.role === 'user'
+        ? { role: 'user', content: turn.text }
+        : { role: 'assistant', content: [{ type: 'text', text: turn.text }] },
   }))
 }
 
 /** A Codex rollout at `<home>/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`. */
-export async function codexRollout(home: string, id: string, cwd: string,
-  records: Array<Record<string, unknown>>): Promise<NativeSession> {
+export async function codexRollout(
+  home: string,
+  id: string,
+  cwd: string,
+  records: Array<Record<string, unknown>>,
+): Promise<NativeSession> {
   const directory = join(home, '.codex', 'sessions', '2026', '09', '06')
   await mkdir(directory, { recursive: true })
   const path = join(directory, `rollout-2026-09-06T13-36-02-${id}.jsonl`)
-  await writeFile(path, jsonl([
-    { timestamp: '2026-09-06T13:36:02.049Z', type: 'session_meta', payload: { id, cwd } },
-    ...records,
-  ]))
+  await writeFile(
+    path,
+    jsonl([{ timestamp: '2026-09-06T13:36:02.049Z', type: 'session_meta', payload: { id, cwd } }, ...records]),
+  )
   return session(id, path)
 }
 
 /** One Codex `response_item` message record. */
 export function codexMessage(role: 'user' | 'assistant', text: string, second = 3): Record<string, unknown> {
-  return { timestamp: `2026-09-06T13:36:${String(second).padStart(2, '0')}.000Z`, type: 'response_item',
-    payload: { type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] } }
+  return {
+    timestamp: `2026-09-06T13:36:${String(second).padStart(2, '0')}.000Z`,
+    type: 'response_item',
+    payload: { type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] },
+  }
 }

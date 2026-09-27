@@ -48,14 +48,21 @@ async function until<T>(what: string, probe: () => Promise<T | undefined>, timeo
 function parseJson(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text)
-    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
   } catch {
     return null
   }
 }
 
-function run(binary: string, args: string[], env: Record<string, string>, cwd: string,
-  timeoutMs = 60_000): Promise<CliResult> {
+function run(
+  binary: string,
+  args: string[],
+  env: Record<string, string>,
+  cwd: string,
+  timeoutMs = 60_000,
+): Promise<CliResult> {
   return new Promise<CliResult>((resolveResult) => {
     execFile(binary, args, { cwd, env, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
       const failure = error as (Error & { code?: number | string }) | null
@@ -78,9 +85,15 @@ export class ManagedProfile {
   /** The daemon endpoint ade-control derives from the runtime home. Set by `ProfileHost.create`. */
   socket = ''
 
-  constructor(private readonly host: ProfileHost, readonly id: string, readonly name: string,
+  constructor(
+    private readonly host: ProfileHost,
+    readonly id: string,
+    readonly name: string,
     /** `<profiles home>/profiles/<id>/runtime`, as `profile list` reports it. */
-    readonly runtimeHome: string, index: number, env: Record<string, string> = {}) {
+    readonly runtimeHome: string,
+    index: number,
+    env: Record<string, string> = {},
+  ) {
     this.root = join(host.ade.root, 'managed', `m${index}`)
     this.logsDirectory = join(this.root, 'logs')
     this.defaultWorkspaceRoot = join(runtimeHome, '..', 'workspace')
@@ -93,19 +106,35 @@ export class ManagedProfile {
     return this.cliWith({}, ...args)
   }
 
-  async cliWith(options: { env?: Record<string, string>; profile?: string | null }, ...args: string[]): Promise<CliResult> {
+  async cliWith(
+    options: { env?: Record<string, string>; profile?: string | null },
+    ...args: string[]
+  ): Promise<CliResult> {
     const selection = options.profile === null ? [] : ['--profile', options.profile ?? this.id]
     const started = Date.now()
-    const result = await run(this.host.launcher.cli[0], [...this.host.launcher.cli.slice(1), ...selection, ...args],
-      { ...this.env, ...options.env }, this.host.cwd)
-    await this.log({ via: 'cli', args: [...selection, ...args], code: result.code, error: result.code ? result.stderr : undefined,
-      ms: Date.now() - started })
+    const result = await run(
+      this.host.launcher.cli[0],
+      [...this.host.launcher.cli.slice(1), ...selection, ...args],
+      { ...this.env, ...options.env },
+      this.host.cwd,
+    )
+    await this.log({
+      via: 'cli',
+      args: [...selection, ...args],
+      code: result.code,
+      error: result.code ? result.stderr : undefined,
+      ms: Date.now() - started,
+    })
     await this.host.track()
     return result
   }
 
   /** One operation through the SDK's `call()` on the running daemon. It never starts one. */
-  async call<O extends Operation>(op: O, request: CallRequest<O>, options: { timeoutMs?: number } = {}): Promise<Response<O>> {
+  async call<O extends Operation>(
+    op: O,
+    request: CallRequest<O>,
+    options: { timeoutMs?: number } = {},
+  ): Promise<Response<O>> {
     const { call } = await client()
     const started = Date.now()
     try {
@@ -128,7 +157,13 @@ export class ManagedProfile {
    * Read through `ade-control runtime status` once the runtime home exists.
    */
   async hello(): Promise<Hello | null> {
-    if (!(await access(this.runtimeHome).then(() => true, () => false))) return null
+    if (
+      !(await access(this.runtimeHome).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return null
     const status = await this.host.control(['runtime', 'status', '--home', this.runtimeHome])
     if (status.code !== 0) throw new Error(`runtime status failed: ${status.stderr}`)
     return (status.json?.daemon as Hello | null | undefined) ?? null
@@ -163,8 +198,8 @@ export class ManagedProfile {
     await this.host.track()
     await this.log({ via: 'fixture', event: 'kill daemon', pid: hello.pid })
     process.kill(hello.pid, 'SIGKILL')
-    await until('the killed daemon to exit', async () => (await isRunning(hello.pid)) ? undefined : true)
-    await until('the killed daemon endpoint to stop answering', async () => (await this.hello()) ? undefined : true)
+    await until('the killed daemon to exit', async () => ((await isRunning(hello.pid)) ? undefined : true))
+    await until('the killed daemon endpoint to stop answering', async () => ((await this.hello()) ? undefined : true))
     return hello
   }
 
@@ -173,7 +208,7 @@ export class ManagedProfile {
     await this.host.track()
     await this.log({ via: 'fixture', event: 'kill runtime', pid })
     process.kill(pid, 'SIGKILL')
-    await until('the killed runtime to exit', async () => (await isRunning(pid)) ? undefined : true)
+    await until('the killed runtime to exit', async () => ((await isRunning(pid)) ? undefined : true))
   }
 
   /**
@@ -185,7 +220,7 @@ export class ManagedProfile {
   async stop(): Promise<void> {
     await this.host.track()
     let hello = await this.hello()
-    if (!hello && this.lastRuntimePid !== null && await isRunning(this.lastRuntimePid)) {
+    if (!hello && this.lastRuntimePid !== null && (await isRunning(this.lastRuntimePid))) {
       const started = await this.host.control(['profiles', 'start', this.id], this.env)
       if (started.code !== 0) throw new Error(`Could not adopt the orphaned runtime: ${started.stderr}`)
       await this.host.track()
@@ -195,20 +230,27 @@ export class ManagedProfile {
     await this.log({ via: 'fixture', event: 'stop', pid: hello.pid, runtime_pid: hello.runtime_pid })
     await until('runtime.prepare_restart to be accepted', async () => {
       try {
-        await rpc(this.socket, { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`,
-          boot_id: hello.boot_id }, 5_000)
+        await rpc(
+          this.socket,
+          { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`, boot_id: hello.boot_id },
+          5_000,
+        )
         return true
       } catch (error) {
         if (/retry shortly|retry after completion/.test(String(error))) return undefined
         throw error
       }
     })
-    await until('the daemon to exit', async () => (await isRunning(hello.pid)) ? undefined : true)
+    await until('the daemon to exit', async () => ((await isRunning(hello.pid)) ? undefined : true))
     const runtime = await this.runtimeHello(hello.runtime_socket)
     if (runtime) {
       await until('runtime.stop to be accepted', async () => {
         try {
-          await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: runtime.instance_id, stop_active: true }, 5_000)
+          await rpc(
+            hello.runtime_socket,
+            { op: 'runtime.stop', instance_id: runtime.instance_id, stop_active: true },
+            5_000,
+          )
           return true
         } catch (error) {
           if (!(await isRunning(runtime.pid as number))) return true
@@ -216,7 +258,7 @@ export class ManagedProfile {
           throw error
         }
       })
-      await until('the runtime to exit', async () => (await isRunning(runtime.pid as number)) ? undefined : true)
+      await until('the runtime to exit', async () => ((await isRunning(runtime.pid as number)) ? undefined : true))
     }
   }
 
@@ -224,8 +266,10 @@ export class ManagedProfile {
   lastRuntimePid: number | null = null
 
   async log(entry: Record<string, unknown>): Promise<void> {
-    await appendFile(join(this.logsDirectory, 'operations.jsonl'),
-      `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`).catch(() => undefined)
+    await appendFile(
+      join(this.logsDirectory, 'operations.jsonl'),
+      `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`,
+    ).catch(() => undefined)
   }
 }
 
@@ -259,7 +303,10 @@ export class ProfileHost {
   readonly env: Record<string, string>
   readonly profiles: ManagedProfile[] = []
 
-  private constructor(readonly ade: AdeHarness, readonly launcher: Launcher) {
+  private constructor(
+    readonly ade: AdeHarness,
+    readonly launcher: Launcher,
+  ) {
     this.home = join(ade.root, 'profiles-home')
     this.userHome = join(ade.root, 'user-home')
     this.cwd = join(ade.root, 'cwd')
@@ -293,9 +340,9 @@ export class ProfileHost {
     const created = await this.control(['profiles', 'create', name])
     if (created.code !== 0) throw new Error(`profiles create failed: ${created.stderr}`)
     const record = (created.json as { profile: { id: string; name: string; home: string } }).profile
-    const profile = new ManagedProfile(this, record.id, record.name, record.home, this.profiles.length + 1,
-      options.env)
-    for (const directory of [profile.root, profile.logsDirectory]) await mkdir(directory, { recursive: true, mode: 0o700 })
+    const profile = new ManagedProfile(this, record.id, record.name, record.home, this.profiles.length + 1, options.env)
+    for (const directory of [profile.root, profile.logsDirectory])
+      await mkdir(directory, { recursive: true, mode: 0o700 })
     const located = await this.control(['locate', '--home', record.home])
     if (located.code !== 0) throw new Error(`locate failed: ${located.stderr}`)
     profile.socket = located.json!.socket as string
@@ -309,7 +356,7 @@ export class ProfileHost {
    */
   async track(): Promise<void> {
     for (const profile of this.profiles) {
-      const hello = await rpc(profile.socket, { op: 'hello' }, 2_000).catch(() => null) as Hello | null
+      const hello = (await rpc(profile.socket, { op: 'hello' }, 2_000).catch(() => null)) as Hello | null
       if (!hello) continue
       await this.ade.ledger.own(hello.pid, `managed ${profile.name} daemon`)
       if (typeof hello.runtime_pid === 'number') {
@@ -323,16 +370,26 @@ export class ProfileHost {
   async teardown(testInfo: TestInfo): Promise<void> {
     const failures: string[] = []
     for (const profile of this.profiles) {
-      try { await profile.stop() } catch (error) { failures.push(`${profile.name}: ${String(error)}`) }
+      try {
+        await profile.stop()
+      } catch (error) {
+        failures.push(`${profile.name}: ${String(error)}`)
+      }
     }
     if (failures.length || testInfo.status !== testInfo.expectedStatus) {
       for (const [index, profile] of this.profiles.entries()) {
-        for (const [name, path] of [['operations.jsonl', join(profile.logsDirectory, 'operations.jsonl')],
-          ['daemon.log', join(profile.runtimeHome, 'daemon.log')], ['data-daemon.log', join(profile.dataDirectory, 'daemon.log')],
-          ['runtime.log', join(profile.dataDirectory, 'runtime.log')]] as const) {
+        for (const [name, path] of [
+          ['operations.jsonl', join(profile.logsDirectory, 'operations.jsonl')],
+          ['daemon.log', join(profile.runtimeHome, 'daemon.log')],
+          ['data-daemon.log', join(profile.dataDirectory, 'daemon.log')],
+          ['runtime.log', join(profile.dataDirectory, 'runtime.log')],
+        ] as const) {
           const body = await readFile(path).catch(() => null)
-          if (body) await testInfo.attach(`m${index + 1}-${name}`, { body: body.subarray(Math.max(0, body.length - 1024 * 1024)),
-            contentType: 'text/plain' })
+          if (body)
+            await testInfo.attach(`m${index + 1}-${name}`, {
+              body: body.subarray(Math.max(0, body.length - 1024 * 1024)),
+              contentType: 'text/plain',
+            })
         }
       }
     }

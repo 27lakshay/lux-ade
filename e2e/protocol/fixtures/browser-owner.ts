@@ -41,17 +41,31 @@ export function ownerStorageProfile(profileId: string): string {
 
 /** A 1x1 PNG, for a capture's element screenshot. */
 export const onePixelPng = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
 
 /** The reply a real owner gives to `browser.context.capture`: one bounded element of the page. */
-export function contextCaptureReply(command: BrowserOwnerCommand, page: { url: string; title: string; html: string;
-  text: string }): Record<string, unknown> {
+export function contextCaptureReply(
+  command: BrowserOwnerCommand,
+  page: { url: string; title: string; html: string; text: string },
+): Record<string, unknown> {
   const screenshot = command.screenshot !== false
   return {
-    type: 'browser_context_capture', profile_id: command.profile_id, owner_id: command.owner_id, tab_id: command.tab_id,
-    url: page.url, title: page.title,
-    element: { tag: 'H1', html: page.html, text: page.text, rect: { x: 8, y: 16, width: 320, height: 40 },
-      styles: { color: 'rgb(0, 0, 0)', 'font-size': '32px' }, attributes: { class: 'headline' } },
+    type: 'browser_context_capture',
+    profile_id: command.profile_id,
+    owner_id: command.owner_id,
+    tab_id: command.tab_id,
+    url: page.url,
+    title: page.title,
+    element: {
+      tag: 'H1',
+      html: page.html,
+      text: page.text,
+      rect: { x: 8, y: 16, width: 320, height: 40 },
+      styles: { color: 'rgb(0, 0, 0)', 'font-size': '32px' },
+      attributes: { class: 'headline' },
+    },
     viewport: { width: 1280, height: 800, device_pixel_ratio: 2 },
     truncated: [],
     screenshot: screenshot ? { data: onePixelPng.toString('base64'), width: 1, height: 1 } : null,
@@ -63,9 +77,12 @@ export function contextCaptureReply(command: BrowserOwnerCommand, page: { url: s
  * Listen on a private socket under the profile's root, register it as the
  * profile's browser owner, and answer each relayed command with `answer`.
  */
-export async function startBrowserOwner(profile: ScratchProfile,
+export async function startBrowserOwner(
+  profile: ScratchProfile,
   answer: (command: BrowserOwnerCommand) => Record<string, unknown>,
-  ownerId = 'e2e-owner', profileId = fixedBrowserProfile(profile.socket)): Promise<BrowserOwner> {
+  ownerId = 'e2e-owner',
+  profileId = fixedBrowserProfile(profile.socket),
+): Promise<BrowserOwner> {
   const directory = join(profile.root, 'bo')
   await mkdir(directory, { recursive: true, mode: 0o700 })
   await chmod(directory, 0o700)
@@ -91,9 +108,14 @@ export async function startBrowserOwner(profile: ScratchProfile,
   server.unref()
   await chmod(socket, 0o600)
   const register = async () => {
-    const registered = await profile.rpc({ op: 'browser.owner.register', profile_id: profileId, owner_id: ownerId,
-      socket_path: socket })
-    if (registered.type === 'error') throw new Error(`The browser owner fixture could not register: ${JSON.stringify(registered)}`)
+    const registered = await profile.rpc({
+      op: 'browser.owner.register',
+      profile_id: profileId,
+      owner_id: ownerId,
+      socket_path: socket,
+    })
+    if (registered.type === 'error')
+      throw new Error(`The browser owner fixture could not register: ${JSON.stringify(registered)}`)
   }
   try {
     await register()
@@ -107,7 +129,9 @@ export async function startBrowserOwner(profile: ScratchProfile,
     commands,
     register,
     async close() {
-      await profile.rpc({ op: 'browser.owner.unregister', profile_id: profileId, owner_id: ownerId }).catch(() => undefined)
+      await profile
+        .rpc({ op: 'browser.owner.unregister', profile_id: profileId, owner_id: ownerId })
+        .catch(() => undefined)
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
     },
   }

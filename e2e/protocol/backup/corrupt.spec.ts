@@ -26,41 +26,89 @@ function sql(statements: string): (db: DatabaseSync) => void {
 }
 
 const damages: Damage[] = [
-  { name: 'a flipped byte in the profile database', message: /Backup file failed verification: sessions\.sqlite/,
+  {
+    name: 'a flipped byte in the profile database',
+    message: /Backup file failed verification: sessions\.sqlite/,
     damage: async (bundle) => {
       const path = join(bundle, 'sessions.sqlite')
       const bytes = await readFile(path)
       bytes[bytes.length - 1] ^= 0xff
       await writeFile(path, bytes)
-    } },
-  { name: 'an unknown format', message: /Unsupported backend backup format or scope/,
-    damage: (bundle) => editManifest(bundle, (manifest) => { manifest.format_version = 99 }) },
-  { name: 'a manifest that is not JSON', message: /./,
-    damage: (bundle) => writeFile(join(bundle, 'manifest.json'), '{"format_version":') },
-  { name: 'no manifest, as an interrupted stage has', message: /./,
-    damage: (bundle) => rm(join(bundle, 'manifest.json')) },
-  { name: 'coverage that claims an excluded store', message: /Backup coverage does not match this format/,
-    damage: (bundle) => editManifest(bundle, (manifest) => {
-      manifest.coverage.find((item) => item.store === 'host-resources.sqlite3')!.disposition = 'backed_up'
-    }) },
-  { name: 'an entry outside the known stores', message: /Unknown backup path/,
-    damage: (bundle) => editManifest(bundle, (manifest) => { manifest.entries[0].path = '../sessions.sqlite' }) },
-  { name: 'a plugin registry without its artifacts', message: /only half of the plugin registry/,
-    damage: (bundle) => editManifest(bundle, (manifest) => {
-      manifest.entries = manifest.entries.filter((entry) => entry.path !== 'sessions.plugins/artifacts')
-    }) },
-  { name: 'a changed plugin artifact file', message: /Backup file failed verification/,
-    damage: async (bundle) => appendFile(await artifactFile(bundle, 'dist/ui.js'), '// changed\n') },
-  { name: 'an extra file in the plugin artifacts', message: /does not match its manifest/,
-    damage: async (bundle) => writeFile(join(await artifactFile(bundle, 'dist/ui.js'), '..', 'extra.js'), '') },
-  { name: 'a future profile schema', message: /Unsupported sessions\.sqlite schema version 99/,
-    damage: (bundle) => rewriteDatabase(bundle, sql('PRAGMA user_version=99;')) },
-  { name: 'a profile schema from before the execution fence', message: /Restore requires a schema-12 backup/,
-    damage: (bundle) => rewriteDatabase(bundle, sql('PRAGMA user_version=11;')) },
-  { name: 'an incomplete attachment payload', message: /Attachment payload is incomplete/,
-    damage: (bundle) => rewriteDatabase(bundle, sql("UPDATE attachments SET data=substr(data,1,8) WHERE state='live';")) },
-  { name: 'a damaged skill blob', message: /Skill backup-notes blob/,
-    damage: (bundle) => rewriteDatabase(bundle, sql("UPDATE skill_blobs SET data=CAST(X'00' || data AS BLOB);")) },
+    },
+  },
+  {
+    name: 'an unknown format',
+    message: /Unsupported backend backup format or scope/,
+    damage: (bundle) =>
+      editManifest(bundle, (manifest) => {
+        manifest.format_version = 99
+      }),
+  },
+  {
+    name: 'a manifest that is not JSON',
+    message: /./,
+    damage: (bundle) => writeFile(join(bundle, 'manifest.json'), '{"format_version":'),
+  },
+  {
+    name: 'no manifest, as an interrupted stage has',
+    message: /./,
+    damage: (bundle) => rm(join(bundle, 'manifest.json')),
+  },
+  {
+    name: 'coverage that claims an excluded store',
+    message: /Backup coverage does not match this format/,
+    damage: (bundle) =>
+      editManifest(bundle, (manifest) => {
+        manifest.coverage.find((item) => item.store === 'host-resources.sqlite3')!.disposition = 'backed_up'
+      }),
+  },
+  {
+    name: 'an entry outside the known stores',
+    message: /Unknown backup path/,
+    damage: (bundle) =>
+      editManifest(bundle, (manifest) => {
+        manifest.entries[0].path = '../sessions.sqlite'
+      }),
+  },
+  {
+    name: 'a plugin registry without its artifacts',
+    message: /only half of the plugin registry/,
+    damage: (bundle) =>
+      editManifest(bundle, (manifest) => {
+        manifest.entries = manifest.entries.filter((entry) => entry.path !== 'sessions.plugins/artifacts')
+      }),
+  },
+  {
+    name: 'a changed plugin artifact file',
+    message: /Backup file failed verification/,
+    damage: async (bundle) => appendFile(await artifactFile(bundle, 'dist/ui.js'), '// changed\n'),
+  },
+  {
+    name: 'an extra file in the plugin artifacts',
+    message: /does not match its manifest/,
+    damage: async (bundle) => writeFile(join(await artifactFile(bundle, 'dist/ui.js'), '..', 'extra.js'), ''),
+  },
+  {
+    name: 'a future profile schema',
+    message: /Unsupported sessions\.sqlite schema version 99/,
+    damage: (bundle) => rewriteDatabase(bundle, sql('PRAGMA user_version=99;')),
+  },
+  {
+    name: 'a profile schema from before the execution fence',
+    message: /Restore requires a schema-12 backup/,
+    damage: (bundle) => rewriteDatabase(bundle, sql('PRAGMA user_version=11;')),
+  },
+  {
+    name: 'an incomplete attachment payload',
+    message: /Attachment payload is incomplete/,
+    damage: (bundle) =>
+      rewriteDatabase(bundle, sql("UPDATE attachments SET data=substr(data,1,8) WHERE state='live';")),
+  },
+  {
+    name: 'a damaged skill blob',
+    message: /Skill backup-notes blob/,
+    damage: (bundle) => rewriteDatabase(bundle, sql("UPDATE skill_blobs SET data=CAST(X'00' || data AS BLOB);")),
+  },
 ]
 
 test('refuses every damaged or unsupported bundle before it creates a restore target', async ({ ade, profile }) => {

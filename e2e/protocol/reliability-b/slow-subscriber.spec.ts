@@ -8,8 +8,17 @@
 // catalog. A terminal viewer that stops reading is handled the same way.
 import { join } from 'node:path'
 import { access } from 'node:fs/promises'
-import { expect, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
 import { mockDirectory } from '../fixtures/providers'
 import { RawFeed } from '../fixtures/raw-feed'
@@ -38,7 +47,9 @@ function expectContiguous(revisions: number[]): void {
   }
 }
 
-test('a feed client that stops reading is evicted while a flood, another provider and a fast client continue', async ({ ade }) => {
+test('a feed client that stops reading is evicted while a flood, another provider and a fast client continue', async ({
+  ade,
+}) => {
   test.setTimeout(180_000)
   const profile = await ade.profile({ env: { ADE_CODEX_BIN: recoveryFixtures.floodCodex } })
   const mocks = mockDirectory(profile.root, 'codex')
@@ -52,13 +63,21 @@ test('a feed client that stops reading is evicted while a flood, another provide
   const flood = await startConversation(profile, 'codex')
   const other = await startConversation(profile, 'claude')
   await send(profile, flood.conversationId, 'flood')
-  await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: flood.conversationId }))
-    .conversation.status).toBe('running')
+  await expect
+    .poll(
+      async () =>
+        (await profile.call('conversation.get', { conversation_id: flood.conversationId })).conversation.status,
+    )
+    .toBe('running')
   await profile.releaseMock('codex', 'flood-release')
 
   // While the flood streams, control requests and another provider stay responsive.
   const latencies: number[] = []
-  const floodDone = () => access(join(mocks, 'flood-done')).then(() => true, () => false)
+  const floodDone = () =>
+    access(join(mocks, 'flood-done')).then(
+      () => true,
+      () => false,
+    )
   let turns = 0
   while (!(await floodDone()) || turns === 0) {
     latencies.push(await timed(() => profile.rpc({ op: 'hello' })))
@@ -80,9 +99,15 @@ test('a feed client that stops reading is evicted while a flood, another provide
   await expect.poll(() => queueDepth(profile, 'feed.subscribers')).toBe(1)
 
   // The fast client saw the whole flood in order on one connection, without reconnecting.
-  const last = await fast.waitFor((frame) => frame.type === 'conversation_changed' &&
-    JSON.stringify(frame.messages ?? []).includes('flood-') &&
-    (frame.messages as Array<{ provider_item_id?: string }>).some((message) => (message.provider_item_id ?? '').endsWith('-639')), 60_000)
+  const last = await fast.waitFor(
+    (frame) =>
+      frame.type === 'conversation_changed' &&
+      JSON.stringify(frame.messages ?? []).includes('flood-') &&
+      (frame.messages as Array<{ provider_item_id?: string }>).some((message) =>
+        (message.provider_item_id ?? '').endsWith('-639'),
+      ),
+    60_000,
+  )
   expect(last.boot_id).toBe(profile.hello.boot_id)
   expect(fast.states.filter((state) => state.status === 'reconnecting' || state.status === 'unavailable')).toEqual([])
   expectContiguous(fast.frames.map((frame) => frame.revision))
@@ -112,15 +137,21 @@ test('a feed client that stops reading is evicted while a flood, another provide
   fast.stop()
   // With the daemon attached, the burst was held back at the provider, not
   // dropped: the run is still going and reports no output failure.
-  expect((await profile.call('conversation.get', { conversation_id: flood.conversationId })).conversation)
-    .toMatchObject({ status: 'running', error: null })
+  expect(
+    (await profile.call('conversation.get', { conversation_id: flood.conversationId })).conversation,
+  ).toMatchObject({ status: 'running', error: null })
   await profile.call('agent.cancel', { conversation_id: flood.conversationId })
-  await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: flood.conversationId }))
-    .conversation.status).toMatch(/^(idle|ready|interrupted)$/)
+  await expect
+    .poll(
+      async () =>
+        (await profile.call('conversation.get', { conversation_id: flood.conversationId })).conversation.status,
+    )
+    .toMatch(/^(idle|ready|interrupted)$/)
 })
 
-
-test('a terminal viewer that stops reading is cut off with its output intact while another viewer keeps up', async ({ profile }) => {
+test('a terminal viewer that stops reading is cut off with its output intact while another viewer keeps up', async ({
+  profile,
+}) => {
   test.setTimeout(120_000)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
@@ -132,8 +163,13 @@ test('a terminal viewer that stops reading is cut off with its output intact whi
 
   // About 1.6 MiB of paced output: a viewer that reads keeps up, but it is far
   // more than the stuck viewer's socket buffers hold.
-  live.send({ op: 'input', run_id: runId, data: "for i in $(seq 1 400); do head -c 4096 /dev/zero | tr '\\0' y; " +
-    'echo " line-$i"; sleep 0.01; done; echo "flo""od-done"\n' })
+  live.send({
+    op: 'input',
+    run_id: runId,
+    data:
+      "for i in $(seq 1 400); do head -c 4096 /dev/zero | tr '\\0' y; " +
+      'echo " line-$i"; sleep 0.01; done; echo "flo""od-done"\n',
+  })
   await live.waitForText(/flood-done/, 90_000)
   expect(live.text()).toMatch(/ line-400\r?\n/)
   // Input still echoes promptly for the viewer that keeps reading.
@@ -141,7 +177,8 @@ test('a terminal viewer that stops reading is cut off with its output intact whi
   live.send({ op: 'input', data: 'echo "ec""ho-after"\n', run_id: runId })
   await live.waitForText(/echo-after/)
   expect(performance.now() - started).toBeLessThan(2_000)
-  const offsets = live.frames.filter((frame) => frame.type === 'terminal')
+  const offsets = live.frames
+    .filter((frame) => frame.type === 'terminal')
     .map((frame) => ({ offset: frame.offset as number, length: (frame.bytes as number[]).length }))
   for (let index = 1; index < offsets.length; index++) {
     expect(offsets[index].offset).toBe(offsets[index - 1].offset + offsets[index - 1].length)
@@ -151,7 +188,8 @@ test('a terminal viewer that stops reading is cut off with its output intact whi
   // The stuck viewer gets an unbroken prefix of the output and then a close, never a skipped range.
   stuck.resume()
   await stuck.waitForClose(60_000)
-  const chunks = stuck.frames.filter((frame) => frame.type === 'terminal')
+  const chunks = stuck.frames
+    .filter((frame) => frame.type === 'terminal')
     .map((frame) => ({ offset: frame.offset as number, length: (frame.bytes as number[]).length }))
   for (let index = 1; index < chunks.length; index++) {
     expect(chunks[index].offset).toBe(chunks[index - 1].offset + chunks[index - 1].length)
@@ -160,7 +198,11 @@ test('a terminal viewer that stops reading is cut off with its output intact whi
   const total = (await terminalMetrics(profile, ...target))!.terminal_bytes as number
   expect(reached).toBeLessThan(total)
   // The shell never noticed.
-  expect(await terminalMetrics(profile, ...target)).toMatchObject({ shell_pid: pid, shell_running: true, run_id: runId })
+  expect(await terminalMetrics(profile, ...target)).toMatchObject({
+    shell_pid: pid,
+    shell_running: true,
+    run_id: runId,
+  })
   // Reattaching starts again from a snapshot that replays everything the stuck viewer missed.
   const again = TerminalStream.open(profile, ...target)
   const snapshot = await again.snapshot()

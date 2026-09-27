@@ -1,4 +1,10 @@
-import { dailyUseCommand, decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseResponse } from '@ade/client'
+import {
+  dailyUseCommand,
+  decodeDailyUseResponse,
+  requestDaemon,
+  type DailyUseOperation,
+  type DailyUseResponse,
+} from '@ade/client'
 import { CliError, jsonObject, effectOperationId, required, type CommandResult } from '../shared.js'
 
 export const serviceUsage = `  service list WORKSPACE_ID             List managed services and execution state
@@ -39,7 +45,8 @@ export const listenerUsage = `  listener list                         Observe lo
 function revision(value: string | undefined): number {
   if (value === undefined) return 0
   const number = Number(value)
-  if (!Number.isSafeInteger(number) || number < 0) throw new CliError('usage', 'REVISION must be a nonnegative integer.')
+  if (!Number.isSafeInteger(number) || number < 0)
+    throw new CliError('usage', 'REVISION must be a nonnegative integer.')
   return number
 }
 
@@ -62,50 +69,71 @@ function port(value: string | undefined, label: string): number {
 
 function sha256(value: string | undefined): string {
   if (!value || !/^[a-f0-9]{64}$/.test(value)) {
-    throw new CliError('usage', 'EXPECTED_REGISTRY_SHA256 must be 64 lowercase hexadecimal characters from service url-recovery.')
+    throw new CliError(
+      'usage',
+      'EXPECTED_REGISTRY_SHA256 must be 64 lowercase hexadecimal characters from service url-recovery.',
+    )
   }
   return value
 }
 
 /** A service or listener request whose reply is checked against its contract. */
-async function serviceRequest<O extends DailyUseOperation>(socketPath: string, op: O,
-  fields: Record<string, unknown> = {}): Promise<DailyUseResponse<O>> {
+async function serviceRequest<O extends DailyUseOperation>(
+  socketPath: string,
+  op: O,
+  fields: Record<string, unknown> = {},
+): Promise<DailyUseResponse<O>> {
   const response = await requestDaemon(socketPath, op, fields)
-  try { return decodeDailyUseResponse(op, response) }
-  catch (error) { throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`) }
+  try {
+    return decodeDailyUseResponse(op, response)
+  } catch (error) {
+    throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`)
+  }
 }
 
-export async function runServiceCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runServiceCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area === 'service' && action === 'list') {
     return serviceRequest(socketPath, 'service.list', { workspace_id: required(rest[0], 'WORKSPACE_ID') })
   }
   if (area === 'service' && action === 'inspect') {
     if (rest.length > 3) throw new CliError('usage', 'service inspect accepts WORKSPACE_ID NAME [TAIL_BYTES].')
     return serviceRequest(socketPath, 'service.inspect', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
       tail_bytes: tailBytes(rest[2]),
     })
   }
   if (area === 'service' && action === 'url') {
     if (rest.length !== 3) throw new CliError('usage', 'service url requires WORKSPACE_ID NAME PORT_VARIABLE.')
     return serviceRequest(socketPath, 'service.proxy.ensure', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
       port_variable: required(rest[2], 'PORT_VARIABLE'),
     })
   }
   if (area === 'service' && action === 'url-inspect') {
     if (rest.length !== 3) throw new CliError('usage', 'service url-inspect requires WORKSPACE_ID NAME PORT_VARIABLE.')
     return serviceRequest(socketPath, 'service.proxy.inspect', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
       port_variable: required(rest[2], 'PORT_VARIABLE'),
     })
   }
   if (area === 'service' && action === 'remap') {
-    if (rest.length !== 7) throw new CliError('usage',
-      'service remap requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_ROUTE_ID EXPECTED_ROUTE_PORT.')
+    if (rest.length !== 7)
+      throw new CliError(
+        'usage',
+        'service remap requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_ROUTE_ID EXPECTED_ROUTE_PORT.',
+      )
     return serviceRequest(socketPath, 'service.proxy.remap', {
-      operation_id: effectOperationId(), workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
       port_variable: required(rest[2], 'PORT_VARIABLE'),
       expected_service_identity: required(rest[3], 'EXPECTED_SERVICE_ID'),
       expected_target_port: port(rest[4], 'EXPECTED_TARGET_PORT'),
@@ -114,10 +142,15 @@ export async function runServiceCommand(socketPath: string, area: string | undef
     })
   }
   if (area === 'service' && action === 'url-retire') {
-    if (rest.length !== 7) throw new CliError('usage',
-      'service url-retire requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT.')
+    if (rest.length !== 7)
+      throw new CliError(
+        'usage',
+        'service url-retire requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT.',
+      )
     return serviceRequest(socketPath, 'service.proxy.retire', {
-      operation_id: effectOperationId(), workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
       port_variable: required(rest[2], 'PORT_VARIABLE'),
       expected_route_id: required(rest[3], 'EXPECTED_ROUTE_ID'),
       expected_service_identity: required(rest[4], 'EXPECTED_SERVICE_ID'),
@@ -130,10 +163,15 @@ export async function runServiceCommand(socketPath: string, area: string | undef
     return serviceRequest(socketPath, 'service.proxy.recovery.inspect')
   }
   if (area === 'service' && action === 'url-retry') {
-    if (rest.length !== 7) throw new CliError('usage',
-      'service url-retry requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT.')
+    if (rest.length !== 7)
+      throw new CliError(
+        'usage',
+        'service url-retry requires WORKSPACE_ID NAME PORT_VARIABLE EXPECTED_ROUTE_ID EXPECTED_SERVICE_ID EXPECTED_TARGET_PORT EXPECTED_PROXY_PORT.',
+      )
     return serviceRequest(socketPath, 'service.proxy.recovery.retry', {
-      operation_id: effectOperationId(), workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
       port_variable: required(rest[2], 'PORT_VARIABLE'),
       expected_route_id: required(rest[3], 'EXPECTED_ROUTE_ID'),
       expected_service_identity: required(rest[4], 'EXPECTED_SERVICE_ID'),
@@ -142,33 +180,45 @@ export async function runServiceCommand(socketPath: string, area: string | undef
     })
   }
   if (area === 'service' && action === 'url-recovery-reset') {
-    if (rest.length !== 2 || rest[1] !== '--confirm-reset') throw new CliError('usage',
-      'service url-recovery-reset requires EXPECTED_REGISTRY_SHA256 --confirm-reset. Inspect first; the corrupt bytes are archived.')
+    if (rest.length !== 2 || rest[1] !== '--confirm-reset')
+      throw new CliError(
+        'usage',
+        'service url-recovery-reset requires EXPECTED_REGISTRY_SHA256 --confirm-reset. Inspect first; the corrupt bytes are archived.',
+      )
     return serviceRequest(socketPath, 'service.proxy.recovery.reset', {
-      operation_id: effectOperationId(), expected_registry_sha256: sha256(rest[0]),
+      operation_id: effectOperationId(),
+      expected_registry_sha256: sha256(rest[0]),
     })
   }
   if (area === 'service' && action === 'configure') {
     return serviceRequest(socketPath, 'service.configure', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
-      config: jsonObject(rest[2], 'JSON_CONFIG'), revision: revision(rest[3]),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
+      config: jsonObject(rest[2], 'JSON_CONFIG'),
+      revision: revision(rest[3]),
     })
   }
   if (area === 'service' && action === 'remove') {
     if (rest.length !== 3) throw new CliError('usage', 'service remove requires WORKSPACE_ID NAME REVISION.')
     return serviceRequest(socketPath, 'service.remove', {
-      operation_id: effectOperationId(), workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'), revision: revision(rest[2]),
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
+      revision: revision(rest[2]),
     })
   }
   if (area === 'service' && action === 'health') {
     if (rest.length !== 2) throw new CliError('usage', 'service health requires WORKSPACE_ID NAME.')
     return serviceRequest(socketPath, 'service.health.sample', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
     })
   }
   if (area === 'service' && (action === 'start' || action === 'stop')) {
     return serviceRequest(socketPath, action === 'start' ? 'service.start' : 'service.stop', {
-      operation_id: effectOperationId(), workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
     })
   }
   if (area === 'script' && (action === 'list' || action === 'runs')) {
@@ -179,7 +229,10 @@ export async function runServiceCommand(socketPath: string, area: string | undef
   if (area === 'script' && action === 'start') {
     if (rest.length !== 2) throw new CliError('usage', 'script start requires WORKSPACE_ID NAME.')
     return dailyUseCommand(socketPath, {
-      op: 'script.start', operation_id: effectOperationId(), workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+      op: 'script.start',
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: required(rest[1], 'NAME'),
     })
   }
   if (area === 'script' && action === 'inspect') {
@@ -187,7 +240,9 @@ export async function runServiceCommand(socketPath: string, area: string | undef
       throw new CliError('usage', 'script inspect requires WORKSPACE_ID RUN_ID [TAIL_BYTES].')
     }
     return dailyUseCommand(socketPath, {
-      op: 'script.inspect', workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
+      op: 'script.inspect',
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      run_id: required(rest[1], 'RUN_ID'),
       ...(rest[2] === undefined ? {} : { tail_bytes: tailBytes(rest[2]) }),
     })
   }
@@ -195,15 +250,21 @@ export async function runServiceCommand(socketPath: string, area: string | undef
     if (rest.length !== 2) throw new CliError('usage', `script ${action} requires WORKSPACE_ID RUN_ID.`)
     const op = action === 'stop' ? 'script.stop' : 'script.retire'
     return dailyUseCommand(socketPath, {
-      op, operation_id: effectOperationId(), workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      op,
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
       run_id: required(rest[1], 'RUN_ID'),
     })
   }
   return undefined
 }
 
-export async function runListenerCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runListenerCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area === 'listener' && action === 'list') {
     if (rest.length) throw new CliError('usage', 'listener list does not accept arguments.')
     return serviceRequest(socketPath, 'listener.list')

@@ -1,7 +1,31 @@
 // oxlint-disable react/immutability -- prototype shell, not yet approved; fix when rebuilt against the Pen design
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { ArrowLeftRight, Columns2, Gauge, Layers, MessageSquare, Moon, PanelLeft, PanelRight, Plus, SlidersHorizontal, SquarePen, Sun, Undo2, Wind, X } from 'lucide-react'
+import {
+  ArrowLeftRight,
+  Columns2,
+  Gauge,
+  Layers,
+  MessageSquare,
+  Moon,
+  PanelLeft,
+  PanelRight,
+  Plus,
+  SlidersHorizontal,
+  SquarePen,
+  Sun,
+  Undo2,
+  Wind,
+  X,
+} from 'lucide-react'
 import { DEFAULT_SETTINGS, panelTransition, type MotionSettings } from './motion'
 import { Sidebar } from './parts/Sidebar'
 import { Panes, type PanesHandle } from './panes/Panes'
@@ -14,7 +38,16 @@ import { IconButton } from './parts/IconButton'
 import { applyTokens, DEFAULT_GLASS, DEFAULT_THEME, REDUCED_TRANSPARENCY } from './tokens'
 import { usePersistentState } from './persist'
 
-import { GUTTER, LEADING_SLOT, LEFT_W, RIGHT_TOGGLE_INSET, RIGHT_W, SIDEBAR_TOGGLE_X, TOGGLE_SIZE, TOGGLE_TOP } from './layout'
+import {
+  GUTTER,
+  LEADING_SLOT,
+  LEFT_W,
+  RIGHT_TOGGLE_INSET,
+  RIGHT_W,
+  SIDEBAR_TOGGLE_X,
+  TOGGLE_SIZE,
+  TOGGLE_TOP,
+} from './layout'
 import { Grip } from './parts/Grip'
 import { LAYOUT_SPRING } from './panes/Pane'
 
@@ -164,7 +197,10 @@ export function App() {
 
   // The two sidebars can trade sides by their grips. Each keeps its own width and its own
   // visibility; the arrangement persists with the dev-panel settings.
-  const [sides, setSides] = usePersistentState<Record<SideName, SidePanel>>('sidebarSides', { left: 'sessions', right: 'changes' })
+  const [sides, setSides] = usePersistentState<Record<SideName, SidePanel>>('sidebarSides', {
+    left: 'sessions',
+    right: 'changes',
+  })
   const cardEls = useRef<Record<SideName, HTMLElement | null>>({ left: null, right: null })
   const [sideDrag, setSideDrag] = useState<SideDrag | null>(null)
   const [sideHide, setSideHide] = usePersistentState<SideHide>('sidebarHide', 'slide')
@@ -272,7 +308,12 @@ export function App() {
             // eases into the normal card.
             style={{
               transition: 'box-shadow 300ms ease, background-color 300ms ease',
-              ...(raised[side] ? { ['--card-bg' as string]: 'var(--side-solid)', boxShadow: '0 24px 64px #00000073, 0 2px 8px #00000040' } : {}),
+              ...(raised[side]
+                ? {
+                    ['--card-bg' as string]: 'var(--side-solid)',
+                    boxShadow: '0 24px 64px #00000073, 0 2px 8px #00000040',
+                  }
+                : {}),
             }}
             initial={false}
             animate={{
@@ -304,7 +345,7 @@ export function App() {
 
         {/* The panes sit above the sidebars, so in cover mode their edge slides over them. */}
         <div className="relative z-10 flex min-w-0 flex-1">
-        <Panes
+          <Panes
             ref={panes}
             // With a sidebar closed, the top corner panes' strips leave room under the window-level
             // toggles.
@@ -344,7 +385,10 @@ export function App() {
         ) : null}
       </AnimatePresence>
       {sideDrag ? (
-        <div className="pointer-events-none fixed left-0 top-0 z-50" style={{ transform: `translate(${sideDrag.ghostX}px, ${sideDrag.ghostY}px)` }}>
+        <div
+          className="pointer-events-none fixed left-0 top-0 z-50"
+          style={{ transform: `translate(${sideDrag.ghostX}px, ${sideDrag.ghostY}px)` }}
+        >
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -432,7 +476,14 @@ export function App() {
         onClose={() => setPaletteOpen(false)}
         reduced={settings.reduced}
         commands={[
-          { id: 'new-chat', group: 'Sessions', label: 'New conversation', shortcut: '⌘N', icon: SquarePen, run: newConversation },
+          {
+            id: 'new-chat',
+            group: 'Sessions',
+            label: 'New conversation',
+            shortcut: '⌘N',
+            icon: SquarePen,
+            run: newConversation,
+          },
           ...['Design review pass', 'Packaging E2E', 'Service ports', 'Notes cleanup'].map((title) => ({
             id: `open-${title}`,
             group: 'Sessions',
@@ -441,10 +492,31 @@ export function App() {
             icon: MessageSquare,
             run: () => panes.current?.openChat(title),
           })),
-          { id: 'new-tab', group: 'Panes', label: 'New tab', shortcut: '⌘T', icon: Plus, run: () => panes.current?.newTab() },
-          { id: 'split', group: 'Panes', label: 'Split pane right', shortcut: '⌘\\', icon: Columns2, run: () => panes.current?.splitRight() },
+          {
+            id: 'new-tab',
+            group: 'Panes',
+            label: 'New tab',
+            shortcut: '⌘T',
+            icon: Plus,
+            run: () => panes.current?.newTab(),
+          },
+          {
+            id: 'split',
+            group: 'Panes',
+            label: 'Split pane right',
+            shortcut: '⌘\\',
+            icon: Columns2,
+            run: () => panes.current?.splitRight(),
+          },
           { id: 'close-tab', group: 'Panes', label: 'Close tab', icon: X, run: () => panes.current?.closeTab() },
-          { id: 'undo', group: 'Panes', label: 'Undo layout change', shortcut: '⌘Z', icon: Undo2, run: () => panes.current?.undo() },
+          {
+            id: 'undo',
+            group: 'Panes',
+            label: 'Undo layout change',
+            shortcut: '⌘Z',
+            icon: Undo2,
+            run: () => panes.current?.undo(),
+          },
           {
             id: 'left',
             group: 'View',
@@ -463,14 +535,68 @@ export function App() {
             icon: PanelRight,
             run: toggleRight,
           },
-          { id: 'swap', group: 'View', label: 'Swap sidebars', keywords: ['move', 'sides'], icon: ArrowLeftRight, run: swapSides },
-          { id: 'hide-slide', group: 'View', label: 'Sidebar hide: slide out', checked: sideHide === 'slide', run: () => setSideHide('slide') },
-          { id: 'hide-cover', group: 'View', label: 'Sidebar hide: cover with panes', checked: sideHide === 'cover', run: () => setSideHide('cover') },
-          { id: 'dark', group: 'Appearance', label: 'Dark theme', checked: theme === 'dark', icon: Moon, run: () => setTheme('dark') },
-          { id: 'light', group: 'Appearance', label: 'Light theme', checked: theme === 'light', icon: Sun, run: () => setTheme('light') },
-          { id: 'glass', group: 'Appearance', label: glassOn ? 'Turn glass off' : 'Turn glass on', keywords: ['transparency', 'blur'], icon: Layers, run: () => setGlassOverride(!glassOn) },
-          { id: 'dev', group: 'Developer', label: `${devOpen ? 'Hide' : 'Show'} dev panel`, shortcut: '⌘.', icon: SlidersHorizontal, run: () => setDevOpen((v) => !v) },
-          { id: 'fps', group: 'Developer', label: `${fpsMeter ? 'Hide' : 'Show'} frame meter`, keywords: ['fps'], icon: Gauge, run: () => setFpsMeter(!fpsMeter) },
+          {
+            id: 'swap',
+            group: 'View',
+            label: 'Swap sidebars',
+            keywords: ['move', 'sides'],
+            icon: ArrowLeftRight,
+            run: swapSides,
+          },
+          {
+            id: 'hide-slide',
+            group: 'View',
+            label: 'Sidebar hide: slide out',
+            checked: sideHide === 'slide',
+            run: () => setSideHide('slide'),
+          },
+          {
+            id: 'hide-cover',
+            group: 'View',
+            label: 'Sidebar hide: cover with panes',
+            checked: sideHide === 'cover',
+            run: () => setSideHide('cover'),
+          },
+          {
+            id: 'dark',
+            group: 'Appearance',
+            label: 'Dark theme',
+            checked: theme === 'dark',
+            icon: Moon,
+            run: () => setTheme('dark'),
+          },
+          {
+            id: 'light',
+            group: 'Appearance',
+            label: 'Light theme',
+            checked: theme === 'light',
+            icon: Sun,
+            run: () => setTheme('light'),
+          },
+          {
+            id: 'glass',
+            group: 'Appearance',
+            label: glassOn ? 'Turn glass off' : 'Turn glass on',
+            keywords: ['transparency', 'blur'],
+            icon: Layers,
+            run: () => setGlassOverride(!glassOn),
+          },
+          {
+            id: 'dev',
+            group: 'Developer',
+            label: `${devOpen ? 'Hide' : 'Show'} dev panel`,
+            shortcut: '⌘.',
+            icon: SlidersHorizontal,
+            run: () => setDevOpen((v) => !v),
+          },
+          {
+            id: 'fps',
+            group: 'Developer',
+            label: `${fpsMeter ? 'Hide' : 'Show'} frame meter`,
+            keywords: ['fps'],
+            icon: Gauge,
+            run: () => setFpsMeter(!fpsMeter),
+          },
           {
             id: 'reduced',
             group: 'Developer',

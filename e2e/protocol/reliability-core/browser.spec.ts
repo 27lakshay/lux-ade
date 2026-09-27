@@ -47,8 +47,12 @@ class Owner {
   /** Register with the running daemon; a new daemon forgets the owner. */
   async register(): Promise<void> {
     const socket = join(this.profile.root, 'bo', 'o.sock')
-    const registered = await this.profile.rpc({ op: 'browser.owner.register', profile_id: this.profileId,
-      owner_id: this.ownerId, socket_path: socket })
+    const registered = await this.profile.rpc({
+      op: 'browser.owner.register',
+      profile_id: this.profileId,
+      owner_id: this.ownerId,
+      socket_path: socket,
+    })
     expect(registered.type, JSON.stringify(registered)).not.toBe('error')
   }
 
@@ -72,10 +76,20 @@ class Owner {
       this.commands.push(command)
       if (command.op === 'browser.operation') {
         // The owner proves an interrupted mutation from its tabs.
-        const done = this.commands.find((earlier) => earlier.request_id === command.request_id && earlier.op !== command.op)
-        peer.end(`${JSON.stringify({ type: 'browser_operation', profile_id: this.profileId, owner_id: this.ownerId,
-          request_id: command.request_id, payload_fingerprint: done?.payload_fingerprint, state: 'completed',
-          result: done && this.mutation(done) })}\n`)
+        const done = this.commands.find(
+          (earlier) => earlier.request_id === command.request_id && earlier.op !== command.op,
+        )
+        peer.end(
+          `${JSON.stringify({
+            type: 'browser_operation',
+            profile_id: this.profileId,
+            owner_id: this.ownerId,
+            request_id: command.request_id,
+            payload_fingerprint: done?.payload_fingerprint,
+            state: 'completed',
+            result: done && this.mutation(done),
+          })}\n`,
+        )
       } else if (this.holding) {
         this.held.push(peer)
       } else {
@@ -85,9 +99,15 @@ class Owner {
   }
 
   private mutation(command: Command): Record<string, unknown> {
-    return { type: 'browser_mutation', profile_id: command.profile_id, owner_id: command.owner_id,
-      request_id: command.request_id, payload_fingerprint: command.payload_fingerprint, op: command.op,
-      tab_id: command.tab_id ?? 'tab-opened' }
+    return {
+      type: 'browser_mutation',
+      profile_id: command.profile_id,
+      owner_id: command.owner_id,
+      request_id: command.request_id,
+      payload_fingerprint: command.payload_fingerprint,
+      op: command.op,
+      tab_id: command.tab_id ?? 'tab-opened',
+    }
   }
 }
 
@@ -95,15 +115,35 @@ type Case = { op: string; request: (owner: Owner, altered: boolean) => Record<st
 
 const target = (owner: Owner) => ({ profile_id: owner.profileId, owner_id: owner.ownerId })
 const cases: Case[] = [
-  { op: 'browser.open', request: (owner, altered) => ({ ...target(owner),
-    url: altered ? 'https://other.example/' : 'https://core.example/' }) },
-  { op: 'browser.navigate', request: (owner, altered) => ({ ...target(owner), tab_id: 'tab-1',
-    url: altered ? 'https://other.example/' : 'https://core.example/next' }) },
+  {
+    op: 'browser.open',
+    request: (owner, altered) => ({
+      ...target(owner),
+      url: altered ? 'https://other.example/' : 'https://core.example/',
+    }),
+  },
+  {
+    op: 'browser.navigate',
+    request: (owner, altered) => ({
+      ...target(owner),
+      tab_id: 'tab-1',
+      url: altered ? 'https://other.example/' : 'https://core.example/next',
+    }),
+  },
   { op: 'browser.close', request: (owner, altered) => ({ ...target(owner), tab_id: altered ? 'tab-2' : 'tab-1' }) },
-  { op: 'browser.click', request: (owner, altered) => ({ ...target(owner), tab_id: 'tab-1',
-    selector: altered ? '#other' : '#go' }) },
-  { op: 'browser.type', request: (owner, altered) => ({ ...target(owner), tab_id: 'tab-1', selector: 'input',
-    text: altered ? 'other text' : 'core text' }) },
+  {
+    op: 'browser.click',
+    request: (owner, altered) => ({ ...target(owner), tab_id: 'tab-1', selector: altered ? '#other' : '#go' }),
+  },
+  {
+    op: 'browser.type',
+    request: (owner, altered) => ({
+      ...target(owner),
+      tab_id: 'tab-1',
+      selector: 'input',
+      text: altered ? 'other text' : 'core text',
+    }),
+  },
 ]
 
 async function attempt(profile: ScratchProfile, op: string, request: Record<string, unknown>) {
@@ -117,7 +157,9 @@ async function attempt(profile: ScratchProfile, op: string, request: Record<stri
 
 for (const effect of cases) {
   test.describe(effect.op, () => {
-    test(`R002: ${effect.op} replays one operation ID without reaching the owner again, also after a daemon crash`, async ({ profile }) => {
+    test(`R002: ${effect.op} replays one operation ID without reaching the owner again, also after a daemon crash`, async ({
+      profile,
+    }) => {
       const owner = await Owner.start(profile)
       try {
         const request = { ...effect.request(owner, false), operation_id: 'core-browser' }
@@ -140,7 +182,9 @@ for (const effect of cases) {
       }
     })
 
-    test(`R001: ${effect.op} held by the owner when the daemon crashes is unknown, never relayed again, and reconciled`, async ({ profile }) => {
+    test(`R001: ${effect.op} held by the owner when the daemon crashes is unknown, never relayed again, and reconciled`, async ({
+      profile,
+    }) => {
       const owner = await Owner.start(profile)
       try {
         owner.holding = true

@@ -31,8 +31,15 @@ export type AndroidDevice = {
   detail?: string
 }
 
-export type HoldKey = 'bootstatus' | 'install' | 'launch' | 'adb-install' | 'am-start' | 'emulator'
-  | 'adb-input' | 'idb-input'
+export type HoldKey =
+  | 'bootstatus'
+  | 'install'
+  | 'launch'
+  | 'adb-install'
+  | 'am-start'
+  | 'emulator'
+  | 'adb-input'
+  | 'idb-input'
 
 export type DeviceHostState = {
   /** `missing` answers like xcrun without Simulator tools; `failed` like a broken CoreSimulator. */
@@ -51,9 +58,17 @@ export type DeviceHostState = {
   [key: string]: unknown
 }
 
-export type ToolCall = { tool: string; args: string[]; pid: number; launched_pid?: number; abandoned?: string
+export type ToolCall = {
+  tool: string
+  args: string[]
+  pid: number
+  launched_pid?: number
+  abandoned?: string
   /** An input event: the words after `input` (adb) or `ui` (idb), and the device it went to. */
-  input?: string[]; serial?: string; udid?: string }
+  input?: string[]
+  serial?: string
+  udid?: string
+}
 
 /** Recorded sample identities. */
 export const samples = {
@@ -69,18 +84,34 @@ export function sampleState(): DeviceHostState {
     simulators: [
       { udid: samples.iphone, name: 'iPhone 17 Pro', runtime: 'iOS-26-4', state: 'Shutdown' },
       { udid: samples.ipad, name: 'iPad Air', runtime: 'iOS-26-4', state: 'Booted' },
-      { udid: samples.noRuntime, name: 'iPhone 16', runtime: 'iOS-18-2', state: 'Shutdown', isAvailable: false,
-        availabilityError: 'runtime profile not found using "System" match policy' },
+      {
+        udid: samples.noRuntime,
+        name: 'iPhone 16',
+        runtime: 'iOS-18-2',
+        state: 'Shutdown',
+        isAvailable: false,
+        availabilityError: 'runtime profile not found using "System" match policy',
+      },
       { udid: samples.watch, name: 'Apple Watch Series 11', runtime: 'watchOS-11-0', state: 'Shutdown' },
     ],
     android: {
       avds: ['Pixel_9_Pro', 'Tablet_API_35'],
       devices: [
-        { serial: 'emulator-5554', state: 'device', avd: 'Tablet_API_35', boot_completed: true,
-          detail: 'product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 device:emu64a transport_id:1' },
+        {
+          serial: 'emulator-5554',
+          state: 'device',
+          avd: 'Tablet_API_35',
+          boot_completed: true,
+          detail: 'product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 device:emu64a transport_id:1',
+        },
         { serial: 'R58M123456', state: 'unauthorized', detail: 'usb:1-1 transport_id:2' },
         { serial: '0A1B2C3D', state: 'offline', detail: 'transport_id:3' },
-        { serial: 'ZY22ABCDEF', state: 'no permissions', detail: '(user in plugdev group; are your udev rules wrong?); see [http://developer.android.com/tools/device.html] usb:1-2 transport_id:4' },
+        {
+          serial: 'ZY22ABCDEF',
+          state: 'no permissions',
+          detail:
+            '(user in plugdev group; are your udev rules wrong?); see [http://developer.android.com/tools/device.html] usb:1-2 transport_id:4',
+        },
       ],
       apps: {},
     },
@@ -90,7 +121,10 @@ export function sampleState(): DeviceHostState {
 export class DeviceHost {
   readonly bin: string
   readonly sdk: string
-  private constructor(readonly dir: string, readonly tools: { xcrun: boolean; android: boolean; idb: boolean }) {
+  private constructor(
+    readonly dir: string,
+    readonly tools: { xcrun: boolean; android: boolean; idb: boolean },
+  ) {
     this.bin = join(dir, 'bin')
     this.sdk = join(dir, 'sdk')
   }
@@ -101,15 +135,24 @@ export class DeviceHost {
    * input; xcrun is always a shim so the real one never runs (`simctl:
    * 'missing'` models a host without Xcode).
    */
-  static async create(root: string, state: DeviceHostState = sampleState(),
-    tools: { android?: boolean; idb?: boolean } = {}): Promise<DeviceHost> {
-    const host = new DeviceHost(join(root, 'device-host'),
-      { xcrun: true, android: tools.android ?? true, idb: tools.idb ?? true })
+  static async create(
+    root: string,
+    state: DeviceHostState = sampleState(),
+    tools: { android?: boolean; idb?: boolean } = {},
+  ): Promise<DeviceHost> {
+    const host = new DeviceHost(join(root, 'device-host'), {
+      xcrun: true,
+      android: tools.android ?? true,
+      idb: tools.idb ?? true,
+    })
     const shims: Array<[string, string]> = [[join(host.bin, 'xcrun'), 'xcrun']]
     if (host.tools.idb) shims.push([join(host.bin, 'idb'), 'idb'])
     if (host.tools.android) {
-      shims.push([join(host.sdk, 'platform-tools/adb'), 'adb'], [join(host.sdk, 'emulator/emulator'), 'emulator'],
-        [join(host.sdk, 'build-tools/35.0.0/aapt2'), 'aapt2'])
+      shims.push(
+        [join(host.sdk, 'platform-tools/adb'), 'adb'],
+        [join(host.sdk, 'emulator/emulator'), 'emulator'],
+        [join(host.sdk, 'build-tools/35.0.0/aapt2'), 'aapt2'],
+      )
     } else {
       await mkdir(host.sdk, { recursive: true })
     }
@@ -130,8 +173,13 @@ export class DeviceHost {
   }
 
   path(tool: 'xcrun' | 'idb' | 'adb' | 'emulator' | 'aapt2'): string {
-    return { xcrun: join(this.bin, 'xcrun'), idb: join(this.bin, 'idb'), adb: join(this.sdk, 'platform-tools/adb'),
-      emulator: join(this.sdk, 'emulator/emulator'), aapt2: join(this.sdk, 'build-tools/35.0.0/aapt2') }[tool]
+    return {
+      xcrun: join(this.bin, 'xcrun'),
+      idb: join(this.bin, 'idb'),
+      adb: join(this.sdk, 'platform-tools/adb'),
+      emulator: join(this.sdk, 'emulator/emulator'),
+      aapt2: join(this.sdk, 'build-tools/35.0.0/aapt2'),
+    }[tool]
   }
 
   async state(): Promise<DeviceHostState> {
@@ -152,7 +200,10 @@ export class DeviceHost {
   /** Every effect the shims performed, in order. */
   async calls(tool?: string, action?: string): Promise<ToolCall[]> {
     const text = await readFile(join(this.dir, 'calls.jsonl'), 'utf8')
-    return text.split('\n').filter(Boolean).map((line) => JSON.parse(line) as ToolCall)
+    return text
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as ToolCall)
       .filter((call) => (!tool || call.tool === tool) && (!action || call.args.includes(action)))
   }
 
@@ -160,13 +211,23 @@ export class DeviceHost {
   async hold(key: HoldKey, phase: 'before' | 'after' = 'before'): Promise<void> {
     await rm(join(this.dir, `held-${key}`), { force: true })
     await rm(join(this.dir, `release-${key}`), { force: true })
-    await this.update((state) => { state.holds = { ...state.holds, [key]: { phase } } })
+    await this.update((state) => {
+      state.holds = { ...state.holds, [key]: { phase } }
+    })
   }
 
   /** Resolves once a shim is paused at `key`. */
   async held(key: HoldKey): Promise<void> {
-    await expect.poll(() => readFile(join(this.dir, `held-${key}`), 'utf8').then(() => true, () => false),
-      { timeout: 20_000 }).toBe(true)
+    await expect
+      .poll(
+        () =>
+          readFile(join(this.dir, `held-${key}`), 'utf8').then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 20_000 },
+      )
+      .toBe(true)
   }
 
   async release(key: HoldKey): Promise<void> {
@@ -177,7 +238,9 @@ export class DeviceHost {
   async app(name: string, bundleId: string, version: string): Promise<string> {
     const path = join(this.dir, 'apps', `${name}.app`)
     await mkdir(path, { recursive: true })
-    await writeFile(join(path, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+    await writeFile(
+      join(path, 'Info.plist'),
+      `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -186,7 +249,8 @@ export class DeviceHost {
   <key>CFBundleExecutable</key><string>${name}</string>
 </dict>
 </plist>
-`)
+`,
+    )
     return path
   }
 

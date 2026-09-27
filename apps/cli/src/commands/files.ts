@@ -15,8 +15,12 @@ function page(options: Record<string, string>): { cursor?: string; limit?: numbe
   }
 }
 
-export async function runFileCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runFileCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'file') return undefined
   if (action === 'list') {
     const parsed = parseWords(rest, ['--cursor', '--limit'], [], 'file list')
@@ -32,8 +36,11 @@ export async function runFileCommand(socketPath: string, area: string | undefine
     return call(socketPath, 'file.search', { workspace_id, query, ...page(parsed.options) })
   }
   if (action === 'preview') {
-    const [workspace_id, path] = positionals(parseWords(rest, [], [], 'file preview'), 2,
-      'file preview requires WORKSPACE_ID PATH')
+    const [workspace_id, path] = positionals(
+      parseWords(rest, [], [], 'file preview'),
+      2,
+      'file preview requires WORKSPACE_ID PATH',
+    )
     return call(socketPath, 'file.preview', { workspace_id, path })
   }
   return undefined

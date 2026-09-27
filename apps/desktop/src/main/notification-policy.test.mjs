@@ -5,18 +5,30 @@ import { test } from 'node:test'
 import { decideNotification, NOTIFY_MAX_AGE_MS, rememberHandled } from './notification-policy.ts'
 
 const now = 1_000_000_000
-const activity = (fields = {}) => ({ id: 'activity_1', kind: 'turn_completed', state: 'unread',
-  title: 'Fix build', detail: null, created_at: now - 1000, ...fields })
+const activity = (fields = {}) => ({
+  id: 'activity_1',
+  kind: 'turn_completed',
+  state: 'unread',
+  title: 'Fix build',
+  detail: null,
+  created_at: now - 1000,
+  ...fields,
+})
 const context = (fields = {}) => ({ focused: false, now, handled: new Set(), ...fields })
 
 test('new unread activity is presented while the window is not focused', () => {
-  assert.deepEqual(decideNotification(activity(), context()),
-    { action: 'present', title: 'Fix build', body: 'Turn completed' })
+  assert.deepEqual(decideNotification(activity(), context()), {
+    action: 'present',
+    title: 'Fix build',
+    body: 'Turn completed',
+  })
 })
 
 test('a focused window suppresses with a recorded reason', () => {
-  assert.deepEqual(decideNotification(activity(), context({ focused: true })),
-    { action: 'suppress', reason: 'window_focused' })
+  assert.deepEqual(decideNotification(activity(), context({ focused: true })), {
+    action: 'suppress',
+    reason: 'window_focused',
+  })
 })
 
 test('handled, read, dismissed, stale and unknown kinds are skipped', () => {
@@ -31,7 +43,10 @@ test('failures carry their bounded detail; other kinds do not', () => {
   const failed = decideNotification(activity({ kind: 'turn_failed', detail: 'x'.repeat(400) }), context())
   assert.equal(failed.action, 'present')
   assert.equal(failed.body, `Turn failed: ${'x'.repeat(200)}`)
-  const approval = decideNotification(activity({ kind: 'approval_requested', detail: 'item/x/requestApproval' }), context())
+  const approval = decideNotification(
+    activity({ kind: 'approval_requested', detail: 'item/x/requestApproval' }),
+    context(),
+  )
   assert.equal(approval.body, 'Approval needed')
   assert.equal(decideNotification(activity({ kind: 'snooze_ended' }), context()).body, 'Snooze ended')
   assert.equal(decideNotification(activity({ title: '  ' }), context()).title, 'ADE')

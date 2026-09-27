@@ -1,10 +1,25 @@
 // Proof spec for the protocol E2E fixtures: a real daemon and runtime, a
 // scratch Git repository, the SDK, the CLI, the provider mocks and the fault
 // helpers, with nothing left running afterwards.
-import { expect, fixtureAnswers, isRunning, prompts, send, startConversation, test, turnReply, waitForIdle,
-  waitForMessage, waitForPendingRequest, type MockProvider } from './fixtures'
+import {
+  expect,
+  fixtureAnswers,
+  isRunning,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  waitForPendingRequest,
+  type MockProvider,
+} from './fixtures'
 
-test('opens a workspace, reads the catalog and capabilities, and keeps the workspace across a daemon restart', async ({ profile, repo }) => {
+test('opens a workspace, reads the catalog and capabilities, and keeps the workspace across a daemon restart', async ({
+  profile,
+  repo,
+}) => {
   const opened = await profile.call('workspace.open', { path: repo.path })
   expect(opened.workspace.root).toBe(repo.path)
 
@@ -29,8 +44,10 @@ test('opens a workspace, reads the catalog and capabilities, and keeps the works
 
   const restored = await profile.call('catalog.get', {})
   expect(restored.boot_id).toBe(after.boot_id)
-  expect(restored.catalog.workspaces.find((workspace) => workspace.id === opened.workspace.id))
-    .toMatchObject({ root: repo.path, needs_rebind: false })
+  expect(restored.catalog.workspaces.find((workspace) => workspace.id === opened.workspace.id)).toMatchObject({
+    root: repo.path,
+    needs_rebind: false,
+  })
 
   await profile.stop()
   expect(await isRunning(after.pid)).toBe(false)
@@ -62,14 +79,22 @@ for (const provider of ['codex', 'claude'] as MockProvider[]) {
 
     await send(profile, conversationId, prompts.approval)
     const approval = await waitForPendingRequest(profile, conversationId)
-    await profile.call('agent.answer', { conversation_id: conversationId, request_id: approval.id, decision: 'decline' })
+    await profile.call('agent.answer', {
+      conversation_id: conversationId,
+      request_id: approval.id,
+      decision: 'decline',
+    })
     await waitForIdle(profile, conversationId)
 
     await send(profile, conversationId, prompts.questions)
     const questions = await waitForPendingRequest(profile, conversationId)
     expect(Object.keys(fixtureAnswers(questions))).toHaveLength(2)
-    await profile.call('agent.answer', { conversation_id: conversationId, request_id: questions.id,
-      decision: 'answer', answers: fixtureAnswers(questions) })
+    await profile.call('agent.answer', {
+      conversation_id: conversationId,
+      request_id: questions.id,
+      decision: 'answer',
+      answers: fixtureAnswers(questions),
+    })
     await waitForIdle(profile, conversationId)
 
     const calls = await profile.mockCalls(provider)
@@ -106,5 +131,8 @@ test('the CLI runner returns the exit code and the parsed JSON error', async ({ 
 
 test('the SDK rejects a reply-less request that fails its contract before sending it', async ({ profile }) => {
   // @ts-expect-error: the contract requires `path`.
-  await expect(profile.call('workspace.open', {})).rejects.toMatchObject({ code: 'invalid_request', delivery: 'not_sent' })
+  await expect(profile.call('workspace.open', {})).rejects.toMatchObject({
+    code: 'invalid_request',
+    delivery: 'not_sent',
+  })
 })

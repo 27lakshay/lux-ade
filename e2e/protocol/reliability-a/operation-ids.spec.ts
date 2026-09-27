@@ -10,14 +10,35 @@ import { expect, test } from '../fixtures'
 import { repositoryRoot } from '../fixtures/environment'
 
 const addedInRound4 = [
-  'conversation.create', 'queue.pause', 'agent.cancel', 'agent.resume', 'agent.disconnect', 'account.create',
-  'terminal.restart', 'terminal.stop', 'terminal.retire', 'service.start', 'service.stop', 'service.remove',
-  'service.proxy.remap', 'service.proxy.retire', 'service.proxy.recovery.retry', 'service.proxy.recovery.reset',
-  'worktree.adopt', 'script.start', 'script.stop', 'script.retire', 'runtime.prepare_restart',
+  'conversation.create',
+  'queue.pause',
+  'agent.cancel',
+  'agent.resume',
+  'agent.disconnect',
+  'account.create',
+  'terminal.restart',
+  'terminal.stop',
+  'terminal.retire',
+  'service.start',
+  'service.stop',
+  'service.remove',
+  'service.proxy.remap',
+  'service.proxy.retire',
+  'service.proxy.recovery.retry',
+  'service.proxy.recovery.reset',
+  'worktree.adopt',
+  'script.start',
+  'script.stop',
+  'script.retire',
+  'runtime.prepare_restart',
 ] as const
 
-const contracts = JSON.parse(readFileSync(join(repositoryRoot, 'packages/contracts/schema/contracts.json'), 'utf8')) as
-  { $defs: Record<string, { required?: string[] }>; operations: Array<{ name: string; request: string; tier: string }> }
+const contracts = JSON.parse(
+  readFileSync(join(repositoryRoot, 'packages/contracts/schema/contracts.json'), 'utf8'),
+) as {
+  $defs: Record<string, { required?: string[] }>
+  operations: Array<{ name: string; request: string; tier: string }>
+}
 
 /** The fields the `op` request contract requires. */
 function requiredFields(op: string): string[] {
@@ -25,7 +46,6 @@ function requiredFields(op: string): string[] {
   expect(operation?.tier).toBe('effect_command')
   return contracts.$defs[operation!.request]?.required ?? []
 }
-
 
 for (const op of addedInRound4) {
   test(`R002: ${op} is an effect command that takes a required operation ID`, () => {

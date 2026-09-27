@@ -30,16 +30,27 @@ function settled<T extends { outcome: string; reason?: string | null }>(reply: T
   return reply
 }
 
-function split(rest: string[], positional: number, allowed: readonly string[], command: string):
-  { args: string[]; options: Record<string, string> } {
+function split(
+  rest: string[],
+  positional: number,
+  allowed: readonly string[],
+  command: string,
+): { args: string[]; options: Record<string, string> } {
   if (rest.length < positional || rest.slice(0, positional).some((word) => word.startsWith('--'))) {
     throw new CliError('usage', `conversation ${command} is missing arguments. Run ade --help for usage.`)
   }
-  return { args: rest.slice(0, positional), options: namedOptions(rest.slice(positional), allowed, `conversation ${command}`) }
+  return {
+    args: rest.slice(0, positional),
+    options: namedOptions(rest.slice(positional), allowed, `conversation ${command}`),
+  }
 }
 
-export async function runConversationControlCommand(socketPath: string, area: string | undefined,
-  action: string | undefined, rest: string[]): Promise<CommandResult | undefined> {
+export async function runConversationControlCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'conversation') return undefined
   if (action === 'controls') {
     const { args } = split(rest, 1, [], 'controls')
@@ -47,25 +58,44 @@ export async function runConversationControlCommand(socketPath: string, area: st
   }
   if (action === 'steer') {
     const { args, options } = split(rest, 3, ['--request-id'], 'steer')
-    return settled(await dailyUseCommand<'conversation.steer'>(socketPath, { op: 'conversation.steer',
-      operation_id: required(options['--request-id'], '--request-id'), conversation_id: args[0],
-      turn_id: args[1], text: required(args[2], 'TEXT') }))
+    return settled(
+      await dailyUseCommand<'conversation.steer'>(socketPath, {
+        op: 'conversation.steer',
+        operation_id: required(options['--request-id'], '--request-id'),
+        conversation_id: args[0],
+        turn_id: args[1],
+        text: required(args[2], 'TEXT'),
+      }),
+    )
   }
   if (action === 'compact') {
     const { args, options } = split(rest, 1, ['--request-id'], 'compact')
-    return settled(await dailyUseCommand<'conversation.compact'>(socketPath, { op: 'conversation.compact',
-      operation_id: required(options['--request-id'], '--request-id'), conversation_id: args[0] }))
+    return settled(
+      await dailyUseCommand<'conversation.compact'>(socketPath, {
+        op: 'conversation.compact',
+        operation_id: required(options['--request-id'], '--request-id'),
+        conversation_id: args[0],
+      }),
+    )
   }
   if (action === 'rewind-preview') {
     const scope = rest[1]
     if (scope === 'conversation' && (rest.length === 2 || rest.length === 3)) {
-      return dailyUseCommand(socketPath, { op: 'conversation.rewind.preview', conversation_id: rest[0],
-        scope: 'conversation', ...(rest[2] ? { before_message_id: rest[2] } : {}) })
+      return dailyUseCommand(socketPath, {
+        op: 'conversation.rewind.preview',
+        conversation_id: rest[0],
+        scope: 'conversation',
+        ...(rest[2] ? { before_message_id: rest[2] } : {}),
+      })
     }
     const { args } = split(rest, 3, [], 'rewind-preview')
     if (scope !== 'files') throw new CliError('usage', 'Rewind scope must be files or conversation.')
-    return dailyUseCommand(socketPath, { op: 'conversation.rewind.preview', conversation_id: args[0],
-      scope: 'files', checkpoint_id: args[2] })
+    return dailyUseCommand(socketPath, {
+      op: 'conversation.rewind.preview',
+      conversation_id: args[0],
+      scope: 'files',
+      checkpoint_id: args[2],
+    })
   }
   if (action === 'rewind') {
     const confirm = rest.filter((word) => word === '--confirm-overwrite')
@@ -74,16 +104,30 @@ export async function runConversationControlCommand(socketPath: string, area: st
     if (words[1] === 'conversation') {
       const positional = words.length > 2 && !words[2].startsWith('--') ? 4 : 2
       const { args, options } = split(words, positional, ['--request-id'], 'rewind')
-      return settled(await dailyUseCommand<'conversation.rewind'>(socketPath, { op: 'conversation.rewind',
-        operation_id: required(options['--request-id'], '--request-id'), conversation_id: args[0],
-        scope: 'conversation', confirm_overwrite: false,
-        ...(positional === 4 ? { before_message_id: args[2], expected_state: args[3] } : {}) }))
+      return settled(
+        await dailyUseCommand<'conversation.rewind'>(socketPath, {
+          op: 'conversation.rewind',
+          operation_id: required(options['--request-id'], '--request-id'),
+          conversation_id: args[0],
+          scope: 'conversation',
+          confirm_overwrite: false,
+          ...(positional === 4 ? { before_message_id: args[2], expected_state: args[3] } : {}),
+        }),
+      )
     }
     const { args, options } = split(words, 4, ['--request-id'], 'rewind')
     if (args[1] !== 'files') throw new CliError('usage', 'Rewind scope must be files or conversation.')
-    return settled(await dailyUseCommand<'conversation.rewind'>(socketPath, { op: 'conversation.rewind',
-      operation_id: required(options['--request-id'], '--request-id'), conversation_id: args[0],
-      scope: 'files', checkpoint_id: args[2], expected_state: args[3], confirm_overwrite: confirm.length === 1 }))
+    return settled(
+      await dailyUseCommand<'conversation.rewind'>(socketPath, {
+        op: 'conversation.rewind',
+        operation_id: required(options['--request-id'], '--request-id'),
+        conversation_id: args[0],
+        scope: 'files',
+        checkpoint_id: args[2],
+        expected_state: args[3],
+        confirm_overwrite: confirm.length === 1,
+      }),
+    )
   }
   if (action === 'snooze') {
     const { args } = split(rest, 2, [], 'snooze')
@@ -104,8 +148,11 @@ export async function runConversationControlCommand(socketPath: string, area: st
   }
   if (action === 'delete') {
     const { args } = split(rest, 1, [], 'delete')
-    return dailyUseCommand<'conversation.delete'>(socketPath, { op: 'conversation.delete',
-      operation_id: effectOperationId(), conversation_id: args[0] })
+    return dailyUseCommand<'conversation.delete'>(socketPath, {
+      op: 'conversation.delete',
+      operation_id: effectOperationId(),
+      conversation_id: args[0],
+    })
   }
   return undefined
 }

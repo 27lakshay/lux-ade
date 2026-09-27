@@ -3,8 +3,14 @@
 // The daemon's delivery claim is the durable dedupe; this set only avoids
 // asking twice from one process.
 
-export type ActivityKind = 'turn_completed' | 'turn_failed' | 'turn_interrupted' |
-  'approval_requested' | 'question_requested' | 'operation_unknown' | 'snooze_ended'
+export type ActivityKind =
+  | 'turn_completed'
+  | 'turn_failed'
+  | 'turn_interrupted'
+  | 'approval_requested'
+  | 'question_requested'
+  | 'operation_unknown'
+  | 'snooze_ended'
 
 export type NotifiableActivity = {
   id: string
@@ -35,8 +41,10 @@ const headline: Record<ActivityKind, string> = {
   snooze_ended: 'Snooze ended',
 }
 
-export function decideNotification(activity: NotifiableActivity,
-  context: { focused: boolean; now: number; handled: ReadonlySet<string> }): NotificationDecision {
+export function decideNotification(
+  activity: NotifiableActivity,
+  context: { focused: boolean; now: number; handled: ReadonlySet<string> },
+): NotificationDecision {
   if (context.handled.has(activity.id) || activity.state !== 'unread') return { action: 'skip' }
   if (!Object.hasOwn(headline, activity.kind)) return { action: 'skip' }
   if (context.now - activity.created_at > NOTIFY_MAX_AGE_MS) return { action: 'skip' }

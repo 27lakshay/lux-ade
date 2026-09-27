@@ -7,7 +7,12 @@ import { pathToFileURL } from 'node:url'
 import { join, dirname } from 'node:path'
 import { expect } from '@playwright/test'
 import type { AdeClient, ClientState } from '../../../packages/client/dist/index.js'
-import type { ConversationSnapshot, ProjectionCause, ProjectionState, SyncFrame } from '../../../packages/client/dist/sync.js'
+import type {
+  ConversationSnapshot,
+  ProjectionCause,
+  ProjectionState,
+  SyncFrame,
+} from '../../../packages/client/dist/sync.js'
 import { binaries } from './environment'
 import type { ScratchProfile } from './profile'
 
@@ -15,12 +20,16 @@ type ClientModule = typeof import('../../../packages/client/dist/index.js')
 type SyncModule = typeof import('../../../packages/client/dist/sync.js')
 
 export type ViewMessage = { id: string; sequence: number; text?: string; [key: string]: unknown }
-export type ViewSnapshot = ConversationSnapshot<{ id: string; status: string; [key: string]: unknown }, ViewMessage, unknown>
+export type ViewSnapshot = ConversationSnapshot<
+  { id: string; status: string; [key: string]: unknown },
+  ViewMessage,
+  unknown
+>
 
 /** The SDK modules, loaded as ES modules. */
 export async function sdkModules(): Promise<{ client: ClientModule; sync: SyncModule }> {
-  const client = await import(pathToFileURL(binaries.client).href) as ClientModule
-  const sync = await import(pathToFileURL(join(dirname(binaries.client), 'sync.js')).href) as SyncModule
+  const client = (await import(pathToFileURL(binaries.client).href)) as ClientModule
+  const sync = (await import(pathToFileURL(join(dirname(binaries.client), 'sync.js')).href)) as SyncModule
   return { client, sync }
 }
 
@@ -75,7 +84,9 @@ export async function openConversationView(profile: ScratchProfile, conversation
     })
     current = next
     next.start()
-    await expect.poll(() => next.getState().status, { timeout: 20_000, message: 'the SDK client to connect' }).toBe('connected')
+    await expect
+      .poll(() => next.getState().status, { timeout: 20_000, message: 'the SDK client to connect' })
+      .toBe('connected')
     return next
   }
   const detach = () => {
@@ -90,7 +101,10 @@ export async function openConversationView(profile: ScratchProfile, conversation
     conversationId,
     fetchSnapshot: async (id, limit) => {
       fetches += 1
-      const snapshot = await snapshotProfile.call('conversation.get', { conversation_id: id, limit }) as unknown as ViewSnapshot
+      const snapshot = (await snapshotProfile.call('conversation.get', {
+        conversation_id: id,
+        limit,
+      })) as unknown as ViewSnapshot
       const hold = held
       held = null
       if (hold) {
@@ -99,8 +113,15 @@ export async function openConversationView(profile: ScratchProfile, conversation
       }
       return snapshot
     },
-    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
-    onState: (state, cause) => { states.push({ state, cause }) },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    onState: (state, cause) => {
+      states.push({ state, cause })
+    },
   })
 
   const view: ConversationView = {
@@ -111,9 +132,13 @@ export async function openConversationView(profile: ScratchProfile, conversation
     forwarded,
     holdNextSnapshot() {
       let release!: () => void
-      const gate = new Promise<void>((resolveGate) => { release = resolveGate })
+      const gate = new Promise<void>((resolveGate) => {
+        release = resolveGate
+      })
       let read!: (value: ViewSnapshot) => void
-      const readPromise = new Promise<ViewSnapshot>((resolveRead) => { read = resolveRead })
+      const readPromise = new Promise<ViewSnapshot>((resolveRead) => {
+        read = resolveRead
+      })
       held = { read, gate }
       return { read: readPromise, release }
     },
@@ -121,11 +146,16 @@ export async function openConversationView(profile: ScratchProfile, conversation
     attach,
     async settle(match, timeout = 30_000) {
       let found: ViewSnapshot | null = null
-      await expect.poll(() => {
-        const state = view.latest()
-        found = state?.status === 'current' && state.snapshot && match(state.snapshot) ? state.snapshot : null
-        return found !== null
-      }, { timeout, message: 'the projection to settle' }).toBe(true)
+      await expect
+        .poll(
+          () => {
+            const state = view.latest()
+            found = state?.status === 'current' && state.snapshot && match(state.snapshot) ? state.snapshot : null
+            return found !== null
+          },
+          { timeout, message: 'the projection to settle' },
+        )
+        .toBe(true)
       return found!
     },
     dispose() {
@@ -133,7 +163,9 @@ export async function openConversationView(profile: ScratchProfile, conversation
       stopProjection()
       detach()
     },
-    get disposed() { return disposed },
+    get disposed() {
+      return disposed
+    },
   }
   return view
 }
@@ -142,8 +174,11 @@ export async function openConversationView(profile: ScratchProfile, conversation
 export function viewDigest(snapshot: { conversation: { status: string }; messages: unknown[] }) {
   return {
     status: snapshot.conversation.status,
-    messages: (snapshot.messages as ViewMessage[]).map((message) => ({ id: message.id, sequence: message.sequence,
-      text: message.text ?? null })),
+    messages: (snapshot.messages as ViewMessage[]).map((message) => ({
+      id: message.id,
+      sequence: message.sequence,
+      text: message.text ?? null,
+    })),
   }
 }
 

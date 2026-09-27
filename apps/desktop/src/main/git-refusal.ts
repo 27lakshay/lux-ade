@@ -40,8 +40,12 @@ export function unknownOperation(failure: RequestFailure | null): boolean {
  * receipt), and `listed` the IDs `review.operation.list` returned, or null if
  * that call failed.
  */
-export function decideRefusedGitRecord(requestId: string, send: RequestFailure | null,
-  lookup: RequestFailure | null, listed: readonly string[] | null): 'release' | 'keep' {
+export function decideRefusedGitRecord(
+  requestId: string,
+  send: RequestFailure | null,
+  lookup: RequestFailure | null,
+  listed: readonly string[] | null,
+): 'release' | 'keep' {
   if (!definiteRefusal(send) || !unknownOperation(lookup) || listed === null) return 'keep'
   return listed.includes(requestId) ? 'keep' : 'release'
 }

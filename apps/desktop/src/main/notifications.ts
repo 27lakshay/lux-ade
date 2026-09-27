@@ -14,11 +14,24 @@ const handled = new Set<string>()
 // Electron drops a notification's click handler once the object is collected.
 const live = new Map<string, Notification>()
 
-const focused = (): boolean => BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused())
+const focused = (): boolean =>
+  BrowserWindow.getAllWindows().some((window) => !window.isDestroyed() && window.isFocused())
 
-function report(client: AdeClient, activityId: string, outcome: 'shown' | 'failed' | 'suppressed', reason?: string): void {
-  void client.command({ op: 'notification.delivery.report', activity_id: activityId, channel: 'desktop',
-    client_id: clientId, outcome, ...(reason ? { reason: reason.replace(/\s+/g, ' ').slice(0, 500) } : {}) })
+function report(
+  client: AdeClient,
+  activityId: string,
+  outcome: 'shown' | 'failed' | 'suppressed',
+  reason?: string,
+): void {
+  void client
+    .command({
+      op: 'notification.delivery.report',
+      activity_id: activityId,
+      channel: 'desktop',
+      client_id: clientId,
+      outcome,
+      ...(reason ? { reason: reason.replace(/\s+/g, ' ').slice(0, 500) } : {}),
+    })
     .catch((error: unknown) => console.error('Notification delivery report failed', error))
 }
 
@@ -29,7 +42,8 @@ function openTarget(client: AdeClient, activity: Activity): void {
     window.show()
     window.focus()
   }
-  void client.command({ op: 'activity.mark', activity_ids: [activity.id], mark: 'read' })
+  void client
+    .command({ op: 'activity.mark', activity_ids: [activity.id], mark: 'read' })
     .catch((error: unknown) => console.error('Activity mark failed', error))
 }
 
@@ -39,8 +53,12 @@ async function consider(client: AdeClient, activity: Activity): Promise<void> {
   rememberHandled(handled, activity.id)
   let claim
   try {
-    claim = await client.command({ op: 'notification.delivery.claim', activity_id: activity.id,
-      channel: 'desktop', client_id: clientId })
+    claim = await client.command({
+      op: 'notification.delivery.claim',
+      activity_id: activity.id,
+      channel: 'desktop',
+      client_id: clientId,
+    })
   } catch (error) {
     // Nothing was shown, and this client's own claim may be retried safely.
     handled.delete(activity.id)
@@ -56,13 +74,21 @@ async function consider(client: AdeClient, activity: Activity): Promise<void> {
   if (live.size > 50) live.delete(live.keys().next().value as string)
   let settled = false
   notification.once('show', () => {
-    if (!settled) { settled = true; report(client, activity.id, 'shown') }
+    if (!settled) {
+      settled = true
+      report(client, activity.id, 'shown')
+    }
   })
   notification.once('failed', (_event, error) => {
-    if (!settled) { settled = true; report(client, activity.id, 'failed', String(error) || 'os_failed') }
+    if (!settled) {
+      settled = true
+      report(client, activity.id, 'failed', String(error) || 'os_failed')
+    }
   })
   notification.on('click', () => openTarget(client, activity))
-  notification.on('close', () => { live.delete(activity.id) })
+  notification.on('close', () => {
+    live.delete(activity.id)
+  })
   notification.show()
 }
 
@@ -78,18 +104,26 @@ export function watchActivity(client: AdeClient): () => void {
     status = state.status
     if (!reconnected) return
     // Activity recorded while disconnected: the daemon claim prevents repeats.
-    void client.command<'activity.list'>({ op: 'activity.list', unread_only: true, limit: 50 })
-      .then((page) => { for (const activity of [...page.activities].reverse()) handle(client, activity) })
+    void client
+      .command<'activity.list'>({ op: 'activity.list', unread_only: true, limit: 50 })
+      .then((page) => {
+        for (const activity of [...page.activities].reverse()) handle(client, activity)
+      })
       .catch((error: unknown) => console.error('Activity catch-up failed', error))
   })
   const stopFeed = client.subscribeFeed((frame) => {
     if (frame.type !== 'activity_changed') return
     let decoded
-    try { decoded = decodeDailyUseFeedFrame(frame) } catch (error) {
+    try {
+      decoded = decodeDailyUseFeedFrame(frame)
+    } catch (error) {
       console.error('Activity frame failed its contract', error)
       return
     }
     if (decoded.type === 'activity_changed') handle(client, decoded.activity)
   })
-  return () => { stopState(); stopFeed() }
+  return () => {
+    stopState()
+    stopFeed()
+  }
 }

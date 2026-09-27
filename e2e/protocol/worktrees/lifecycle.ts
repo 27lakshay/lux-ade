@@ -32,27 +32,48 @@ export async function operation(profile: ScratchProfile, repositoryId: string, i
 }
 
 /** Wait until the operation has settled and return its full ledger row. */
-export async function settled(profile: ScratchProfile, repositoryId: string, id: string,
-  timeout = 30_000): Promise<Operation> {
+export async function settled(
+  profile: ScratchProfile,
+  repositoryId: string,
+  id: string,
+  timeout = 30_000,
+): Promise<Operation> {
   let row: Operation | undefined
-  await expect.poll(async () => {
-    row = await operation(profile, repositoryId, id)
-    return row.status
-  }, { timeout }).not.toBe('running')
+  await expect
+    .poll(
+      async () => {
+        row = await operation(profile, repositoryId, id)
+        return row.status
+      },
+      { timeout },
+    )
+    .not.toBe('running')
   return row!
 }
 
 /** Create a tree with `worktree.create`, wait for it, and return the settled operation. */
-export async function create(profile: ScratchProfile, repositoryId: string,
-  request: { name?: string; branch?: string; base?: string; path?: string; fetch?: { remote: string; ref: string } } = {},
-  id = operationId('create')): Promise<Operation> {
+export async function create(
+  profile: ScratchProfile,
+  repositoryId: string,
+  request: {
+    name?: string
+    branch?: string
+    base?: string
+    path?: string
+    fetch?: { remote: string; ref: string }
+  } = {},
+  id = operationId('create'),
+): Promise<Operation> {
   await profile.call('worktree.create', { repository_id: repositoryId, operation_id: id, ...request })
   return settled(profile, repositoryId, id)
 }
 
 /** Create a tree that must succeed, and return its path. */
-export async function createReady(profile: ScratchProfile, repositoryId: string,
-  request: Parameters<typeof create>[2] = {}): Promise<string> {
+export async function createReady(
+  profile: ScratchProfile,
+  repositoryId: string,
+  request: Parameters<typeof create>[2] = {},
+): Promise<string> {
   const row = await create(profile, repositoryId, request)
   expect(row, JSON.stringify(row)).toMatchObject({ status: 'succeeded' })
   expect(row.worktree_path).toBeTruthy()

@@ -32,7 +32,9 @@ termios.tcsetattr(0, termios.TCSADRAIN, saved)
 out('program-exit\r\n')
 `
 
-test('a full-screen program survives detach and a daemon kill, and xterm restores its screen and modes', async ({ profile }) => {
+test('a full-screen program survives detach and a daemon kill, and xterm restores its screen and modes', async ({
+  profile,
+}) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
   const script = join(profile.root, 'full_screen.py')
@@ -42,13 +44,23 @@ test('a full-screen program survives detach and a daemon kill, and xterm restore
   const runId = first.connection.incarnation()
   const before = (await terminalMetrics(profile, ...target))!
   first.connection.input(`python3 '${script}'\n`)
-  await first.until('the program to draw', (screen) => screen.buffer === 'alternate' &&
-    screen.lines.some((line) => line.trim().startsWith('pid:')))
+  await first.until(
+    'the program to draw',
+    (screen) => screen.buffer === 'alternate' && screen.lines.some((line) => line.trim().startsWith('pid:')),
+  )
   first.connection.input('x')
   const drawn = await first.until('the key to show', (screen) => screen.lines[7] === 'key:78')
-  const programPid = Number(drawn.lines.find((line) => line.trim().startsWith('pid:'))!.trim().slice(4))
-  expect(drawn).toMatchObject({ buffer: 'alternate', cursor: [6, 4],
-    modes: { bracketedPasteMode: true, applicationCursorKeysMode: true, mouseTrackingMode: 'vt200' } })
+  const programPid = Number(
+    drawn.lines
+      .find((line) => line.trim().startsWith('pid:'))!
+      .trim()
+      .slice(4),
+  )
+  expect(drawn).toMatchObject({
+    buffer: 'alternate',
+    cursor: [6, 4],
+    modes: { bracketedPasteMode: true, applicationCursorKeysMode: true, mouseTrackingMode: 'vt200' },
+  })
   expect(drawn.lines[0]).toBe('full-screen-program')
   expect(drawn.lines[2]).toBe('    wide:中文 e\u0301')
 
@@ -63,23 +75,36 @@ test('a full-screen program survives detach and a daemon kill, and xterm restore
   const second = await openView(profile, ...target)
   expect(second.connection.incarnation()).toBe(runId)
   expect(await second.screen()).toEqual(drawn)
-  expect(await terminalMetrics(profile, ...target)).toMatchObject({ run_id: runId, shell_pid: before.shell_pid, shell_running: true })
+  expect(await terminalMetrics(profile, ...target)).toMatchObject({
+    run_id: runId,
+    shell_pid: before.shell_pid,
+    shell_running: true,
+  })
 
   // The same program still reads keys, and leaving it restores the shell's screen and modes.
   second.connection.input('y')
   await second.until('the next key', (screen) => screen.lines[7] === 'key:79')
   second.connection.input('q')
-  const after = await second.until('the program to exit', (screen) => screen.buffer === 'normal' &&
-    screen.lines.some((line) => line === 'program-exit'))
-  expect(after.modes).toMatchObject({ bracketedPasteMode: false, applicationCursorKeysMode: false, mouseTrackingMode: 'none' })
+  const after = await second.until(
+    'the program to exit',
+    (screen) => screen.buffer === 'normal' && screen.lines.some((line) => line === 'program-exit'),
+  )
+  expect(after.modes).toMatchObject({
+    bracketedPasteMode: false,
+    applicationCursorKeysMode: false,
+    mouseTrackingMode: 'none',
+  })
   expect(after.lines.join('')).toContain(`python3 '${script}'`)
   await expect.poll(() => isRunning(programPid), { message: 'the program to exit' }).toBe(false)
 
   // Output arrived in order: a third view built from the replay alone matches the live one.
   const third = await openView(profile, ...target)
   // The shell's prompt may still be arriving; both views then show it.
-  await expect.poll(async () => JSON.stringify(await third.screen()) === JSON.stringify(await second.screen()),
-    { message: 'the replayed view to match the live one' }).toBe(true)
+  await expect
+    .poll(async () => JSON.stringify(await third.screen()) === JSON.stringify(await second.screen()), {
+      message: 'the replayed view to match the live one',
+    })
+    .toBe(true)
   expect((await third.screen()).lines).toContain('program-exit')
   second.connection.dispose()
   third.connection.dispose()

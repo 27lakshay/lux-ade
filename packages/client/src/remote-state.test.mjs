@@ -4,15 +4,35 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  admitRemoteRequest, classifySshExit, connectionKey, initialRemoteState, pairingRefusal, reduceRemote, remoteStatus,
-  pinnedKnownHosts, requestLostLink, retryDelay, sshForwardArgs, validateLocalSocket, validateTarget,
+  admitRemoteRequest,
+  classifySshExit,
+  connectionKey,
+  initialRemoteState,
+  pairingRefusal,
+  reduceRemote,
+  remoteStatus,
+  pinnedKnownHosts,
+  requestLostLink,
+  retryDelay,
+  sshForwardArgs,
+  validateLocalSocket,
+  validateTarget,
 } from '../dist/remote-state.js'
 
-const target = { hostId: 'build-box', profileId: 'p-1', destination: 'me@build.lan',
-  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock', hostPublicKey: null }
+const target = {
+  hostId: 'build-box',
+  profileId: 'p-1',
+  destination: 'me@build.lan',
+  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock',
+  hostPublicKey: null,
+}
 const hello = (runtimeSocket = '/home/me/.ade/profiles/p-1/runtime.sock', boot = 'boot-1') => ({
-  type: 'hello', application_protocol: 'ade-application-v1', session_protocol: 'ade-sessions-v1',
-  runtime_socket: runtimeSocket, boot_id: boot, build_id: null,
+  type: 'hello',
+  application_protocol: 'ade-application-v1',
+  session_protocol: 'ade-sessions-v1',
+  runtime_socket: runtimeSocket,
+  boot_id: boot,
+  build_id: null,
 })
 
 function run(state, ...events) {
@@ -26,15 +46,26 @@ function run(state, ...events) {
 }
 
 function connected() {
-  return run(initialRemoteState(target), { type: 'start' }, { type: 'forward_ready' },
-    { type: 'hello', hello: hello() }).state
+  return run(
+    initialRemoteState(target),
+    { type: 'start' },
+    { type: 'forward_ready' },
+    { type: 'hello', hello: hello() },
+  ).state
 }
 
 test('connects through forward, handshake and pins the profile runtime', () => {
-  const { state, effects } = run(initialRemoteState(target), { type: 'start' }, { type: 'forward_ready' },
-    { type: 'hello', hello: hello() })
+  const { state, effects } = run(
+    initialRemoteState(target),
+    { type: 'start' },
+    { type: 'forward_ready' },
+    { type: 'hello', hello: hello() },
+  )
   assert.equal(state.phase, 'connected')
-  assert.deepEqual(effects.map((effect) => effect.type), ['spawn_forward', 'send_hello'])
+  assert.deepEqual(
+    effects.map((effect) => effect.type),
+    ['spawn_forward', 'send_hello'],
+  )
   assert.equal(state.pinned.runtimeSocket, '/home/me/.ade/profiles/p-1/runtime.sock')
   assert.equal(remoteStatus(state), 'connected')
 })
@@ -61,7 +92,12 @@ test('requests are refused unsent while unknown, and never admitted for another 
 })
 
 test('a daemon restart on the same profile reconnects; a different profile fails closed', () => {
-  const lost = run(connected(), { type: 'link_lost', detail: 'x' }, { type: 'retry_due' }, { type: 'forward_ready' }).state
+  const lost = run(
+    connected(),
+    { type: 'link_lost', detail: 'x' },
+    { type: 'retry_due' },
+    { type: 'forward_ready' },
+  ).state
   const restarted = run(lost, { type: 'hello', hello: hello(undefined, 'boot-2') }).state
   assert.equal(restarted.phase, 'connected')
   assert.equal(restarted.current.bootId, 'boot-2')
@@ -70,8 +106,12 @@ test('a daemon restart on the same profile reconnects; a different profile fails
   assert.equal(moved.state.failure, 'identity_mismatch')
   assert.deepEqual(moved.effects, [{ type: 'kill_forward' }, { type: 'cancel_retry' }])
   // An explicit restart keeps the pin, so the wrong profile is still refused.
-  const again = run(moved.state, { type: 'start' }, { type: 'forward_ready' },
-    { type: 'hello', hello: hello('/home/other/.ade/profiles/p-9/runtime.sock') }).state
+  const again = run(
+    moved.state,
+    { type: 'start' },
+    { type: 'forward_ready' },
+    { type: 'hello', hello: hello('/home/other/.ade/profiles/p-9/runtime.sock') },
+  ).state
   assert.equal(again.failure, 'identity_mismatch')
 })
 
@@ -80,12 +120,18 @@ test('untrusted host keys and failed authentication stop instead of retrying', (
   const untrusted = run(started, { type: 'forward_failed', exitCode: 255, stderr: 'Host key verification failed.\n' })
   assert.equal(untrusted.state.failure, 'host_untrusted')
   assert.ok(!untrusted.effects.some((effect) => effect.type === 'schedule_retry'))
-  const denied = run(started, { type: 'forward_failed', exitCode: 255, stderr: 'me@build.lan: Permission denied (publickey).' })
+  const denied = run(started, {
+    type: 'forward_failed',
+    exitCode: 255,
+    stderr: 'me@build.lan: Permission denied (publickey).',
+  })
   assert.equal(denied.state.failure, 'auth_failed')
   const flaky = run(started, { type: 'forward_failed', exitCode: 255, stderr: 'Connection timed out' })
   assert.equal(flaky.state.phase, 'unknown')
-  assert.equal(classifySshExit('No ED25519 host key is known for build.lan and you have requested strict checking.'),
-    'host_untrusted')
+  assert.equal(
+    classifySshExit('No ED25519 host key is known for build.lan and you have requested strict checking.'),
+    'host_untrusted',
+  )
 })
 
 test('an incompatible daemon fails closed', () => {
@@ -100,8 +146,12 @@ test('stale events do not resurrect a stopped connection', () => {
   const stopped = run(connected(), { type: 'stop' })
   assert.equal(stopped.state.phase, 'stopped')
   assert.deepEqual(stopped.effects, [{ type: 'kill_forward' }, { type: 'cancel_retry' }])
-  for (const event of [{ type: 'retry_due' }, { type: 'forward_ready' }, { type: 'hello', hello: hello() },
-    { type: 'link_lost', detail: 'x' }]) {
+  for (const event of [
+    { type: 'retry_due' },
+    { type: 'forward_ready' },
+    { type: 'hello', hello: hello() },
+    { type: 'link_lost', detail: 'x' },
+  ]) {
     assert.equal(reduceRemote(stopped.state, event).state.phase, 'stopped')
   }
 })
@@ -152,9 +202,16 @@ test('a pinned target trusts only the key the daemon pinned, never the user know
     const index = args.indexOf(value)
     return index > 0 && args[index - 1] === '-o'
   }
-  for (const value of ['StrictHostKeyChecking=yes', 'BatchMode=yes', 'UserKnownHostsFile=/tmp/ade-remote-1/known_hosts',
-    'GlobalKnownHostsFile=/dev/null', 'HostKeyAlias=ade-remote-build', 'HostKeyAlgorithms=ssh-ed25519',
-    'UpdateHostKeys=no', 'KnownHostsCommand=none']) {
+  for (const value of [
+    'StrictHostKeyChecking=yes',
+    'BatchMode=yes',
+    'UserKnownHostsFile=/tmp/ade-remote-1/known_hosts',
+    'GlobalKnownHostsFile=/dev/null',
+    'HostKeyAlias=ade-remote-build',
+    'HostKeyAlgorithms=ssh-ed25519',
+    'UpdateHostKeys=no',
+    'KnownHostsCommand=none',
+  ]) {
     assert.ok(option(value), value)
   }
   assert.deepEqual(args.slice(-2), ['--', 'me@build.lan'])
@@ -193,11 +250,18 @@ test('a daemon-coded unavailable reply does not count as link loss', () => {
 
 test('a host that refuses the pairing stops the connection without a retry, keeping its pin', () => {
   const before = connected()
-  const { state, effects } = run(before, { type: 'refused', failure: 'pairing_revoked', detail: 'Pairing p was revoked' })
+  const { state, effects } = run(before, {
+    type: 'refused',
+    failure: 'pairing_revoked',
+    detail: 'Pairing p was revoked',
+  })
   assert.equal(state.phase, 'failed')
   assert.equal(state.failure, 'pairing_revoked')
   assert.deepEqual(state.pinned, before.pinned)
-  assert.deepEqual(effects.map((effect) => effect.type), ['kill_forward', 'cancel_retry'])
+  assert.deepEqual(
+    effects.map((effect) => effect.type),
+    ['kill_forward', 'cancel_retry'],
+  )
   assert.equal(admitRemoteRequest(state, target).admitted, false)
   // A refusal after a stop changes nothing.
   const stopped = run(before, { type: 'stop' }, { type: 'refused', failure: 'unauthorized', detail: 'x' }).state

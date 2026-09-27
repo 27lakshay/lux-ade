@@ -14,13 +14,22 @@ function provider(value: string | undefined): 'claude' | 'codex' {
   throw new CliError('usage', 'Import provider must be claude or codex.')
 }
 
-export async function runImportCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runImportCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'import') return undefined
   if (action === 'scan') {
     const options = namedOptions(rest.slice(1), ['--account', '--workspace', '--limit'], 'import scan')
-    const request: { op: 'history.import.scan'; provider: 'claude' | 'codex'; account_id?: string;
-      workspace_id?: string; limit?: number } = { op: 'history.import.scan', provider: provider(rest[0]) }
+    const request: {
+      op: 'history.import.scan'
+      provider: 'claude' | 'codex'
+      account_id?: string
+      workspace_id?: string
+      limit?: number
+    } = { op: 'history.import.scan', provider: provider(rest[0]) }
     if (options['--account'] !== undefined) request.account_id = options['--account']
     if (options['--workspace'] !== undefined) request.workspace_id = options['--workspace']
     if (options['--limit'] !== undefined) {
@@ -37,7 +46,10 @@ export async function runImportCommand(socketPath: string, area: string | undefi
     const options = namedOptions(rest.slice(2), ['--account', '--workspace'], 'import session')
     const workspace_id = required(options['--workspace'], '--workspace')
     return dailyUseCommand(socketPath, {
-      op: 'history.import.session', provider: provider(rest[0]), native_session_id, workspace_id,
+      op: 'history.import.session',
+      provider: provider(rest[0]),
+      native_session_id,
+      workspace_id,
       ...(options['--account'] !== undefined ? { account_id: options['--account'] } : {}),
     })
   }

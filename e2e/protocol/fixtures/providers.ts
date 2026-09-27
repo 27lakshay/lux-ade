@@ -62,7 +62,10 @@ export type MockCall = Record<string, unknown> & { pid: number; method: string }
 /** Every call a mock has recorded, oldest first; empty before its first call. */
 export async function mockCalls(profileRoot: string, provider: MockProvider): Promise<MockCall[]> {
   const log = await readFile(join(mockDirectory(profileRoot, provider), 'calls.jsonl'), 'utf8').catch(() => '')
-  return log.split('\n').filter(Boolean).map((line) => JSON.parse(line) as MockCall)
+  return log
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as MockCall)
 }
 
 /** Create the file a scripted mock waits for, such as `release-tool` or `expire-approval`. */

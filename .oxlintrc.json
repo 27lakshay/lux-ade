@@ -50,10 +50,7 @@
 
     // `const { dropped, ...kept } = value` is how a key is omitted. A leading underscore marks a
     // binding kept for its side effect, such as a Playwright fixture the test needs set up.
-    "no-unused-vars": [
-      "error",
-      { "ignoreRestSiblings": true, "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
-    ],
+    "no-unused-vars": ["error", { "ignoreRestSiblings": true, "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
     "no-fallthrough": "error",
     "oxc/no-accumulating-spread": "error",
     "unicorn/prefer-node-protocol": "error",

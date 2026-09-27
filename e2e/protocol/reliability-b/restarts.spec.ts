@@ -4,30 +4,48 @@
 // restarted gracefully. The provider run, its tool, a terminal program in a
 // shared checkout and that checkout's HostResources claim all keep their
 // identity; a new view restores the same state, and nothing is replayed.
-import { codexPrompts, expect, isRunning, prompts, send, test, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  codexPrompts,
+  expect,
+  isRunning,
+  prompts,
+  send,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { startHostProfiles } from '../fixtures/host-profiles'
 import { openConversationView, viewDigest } from '../fixtures/sync-view'
 import { terminalMetrics } from '../fixtures/terminals'
 import { adopt, claimsOn, externalTree, launchShell, removeTree } from '../resources/steps'
 
 async function turnStarts(profile: ScratchProfile): Promise<string[]> {
-  return (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')
-    .map((call) => ((call.params as { input: Array<{ text: string }> }).input[0]).text)
+  return (await profile.mockCalls('codex'))
+    .filter((call) => call.method === 'turn/start')
+    .map((call) => (call.params as { input: Array<{ text: string }> }).input[0].text)
 }
 
 async function toolPid(profile: ScratchProfile): Promise<number> {
   let pid = 0
-  await expect.poll(async () => {
-    pid = Number((await profile.mockCalls('codex')).find((call) => call.method === 'fixture/tool')?.tool_pid ?? 0)
-    return pid
-  }).toBeGreaterThan(0)
+  await expect
+    .poll(async () => {
+      pid = Number((await profile.mockCalls('codex')).find((call) => call.method === 'fixture/tool')?.tool_pid ?? 0)
+      return pid
+    })
+    .toBeGreaterThan(0)
   return pid
 }
 
-test('a closed view, a daemon kill and a graceful restart leave the run, its tool, a terminal and its claim running', async ({ ade, repo }) => {
+test('a closed view, a daemon kill and a graceful restart leave the run, its tool, a terminal and its claim running', async ({
+  ade,
+  repo,
+}) => {
   test.setTimeout(150_000)
-  const { profiles: [worker, observer] } = await startHostProfiles(ade, 2)
+  const {
+    profiles: [worker, observer],
+  } = await startHostProfiles(ade, 2)
   // The observer may remove the checkout; the worker works in it.
   const tree = await externalTree(ade, repo, 'kept')
   const repositoryId = await adopt(observer, repo.path, tree)
@@ -60,28 +78,52 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
     if (mode === 'kill') {
       await worker.killDaemon()
       // While no daemon runs, the claim is quarantined, never dropped: the other profile still may not remove the checkout.
-      expect(await claimsOn(observer, tree)).toEqual([expect.objectContaining({ id: claim.id, state: 'quarantined',
-        reason: 'owner_lost_during_use', owner_live: false })])
-      expect(await removeTree(observer, repositoryId, 'remove-while-down', tree))
-        .toMatchObject({ type: 'error', code: 'host_resource_conflict' })
+      expect(await claimsOn(observer, tree)).toEqual([
+        expect.objectContaining({
+          id: claim.id,
+          state: 'quarantined',
+          reason: 'owner_lost_during_use',
+          owner_live: false,
+        }),
+      ])
+      expect(await removeTree(observer, repositoryId, 'remove-while-down', tree)).toMatchObject({
+        type: 'error',
+        code: 'host_resource_conflict',
+      })
     }
     const after = await worker.restartDaemon(mode)
     expect(after.boot_id, mode).not.toBe(previous.boot_id)
     // The same runtime incarnation owns the work; nothing was reconciled.
     expect(after).toMatchObject({ runtime_instance: first.runtime_instance, runtime_pid: first.runtime_pid })
     expect((await worker.call('runtime.recovery', {})).reports, mode).toEqual([])
-    for (const pid of [providerPid, tool, shellBefore.shell_pid!]) expect(await isRunning(pid), `${mode}: ${pid}`).toBe(true)
-    expect(await terminalMetrics(worker, ...shell), mode).toMatchObject({ run_id: shellBefore.run_id,
-      shell_pid: shellBefore.shell_pid, shell_running: true })
+    for (const pid of [providerPid, tool, shellBefore.shell_pid!])
+      expect(await isRunning(pid), `${mode}: ${pid}`).toBe(true)
+    expect(await terminalMetrics(worker, ...shell), mode).toMatchObject({
+      run_id: shellBefore.run_id,
+      shell_pid: shellBefore.shell_pid,
+      shell_running: true,
+    })
     // The new daemon incarnation supersedes the claim with its own live one: the checkout stays protected throughout.
     const claims = await claimsOn(observer, tree)
-    expect(claims, mode).toEqual([expect.objectContaining({ state: 'active', owner_live: true, purpose: 'use',
-      owner_profile: claim.owner_profile, owner_pid: after.pid })])
-    expect(await removeTree(observer, repositoryId, `remove-${mode}`, tree), mode)
-      .toMatchObject({ type: 'error', code: 'host_resource_conflict' })
+    expect(claims, mode).toEqual([
+      expect.objectContaining({
+        state: 'active',
+        owner_live: true,
+        purpose: 'use',
+        owner_profile: claim.owner_profile,
+        owner_pid: after.pid,
+      }),
+    ])
+    expect(await removeTree(observer, repositoryId, `remove-${mode}`, tree), mode).toMatchObject({
+      type: 'error',
+      code: 'host_resource_conflict',
+    })
     const attached = await worker.call('conversation.get', { conversation_id: conversationId })
-    expect(attached.conversation, mode).toMatchObject({ status: 'running', runtime_run: before.conversation.runtime_run,
-      provider_thread_id: before.conversation.provider_thread_id })
+    expect(attached.conversation, mode).toMatchObject({
+      status: 'running',
+      runtime_run: before.conversation.runtime_run,
+      provider_thread_id: before.conversation.provider_thread_id,
+    })
   }
   // The closed view heard nothing after it closed.
   expect(view.states).toHaveLength(statesAtClose)
@@ -95,8 +137,11 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
     // A retried send is deduplicated; the turn is not started again.
     await send(worker, conversationId, codexPrompts.heldTool, requestId)
     await worker.releaseMock('codex', 'release-tool')
-    const done = await restored.settle((snapshot) => /^(idle|ready)$/.test(snapshot.conversation.status) &&
-      JSON.stringify(snapshot.messages).includes('tool completed once'))
+    const done = await restored.settle(
+      (snapshot) =>
+        /^(idle|ready)$/.test(snapshot.conversation.status) &&
+        JSON.stringify(snapshot.messages).includes('tool completed once'),
+    )
     const fresh = await worker.call('conversation.get', { conversation_id: conversationId, limit: 200 })
     expect(viewDigest(done)).toEqual(viewDigest(fresh))
     expect(fresh.messages.filter((message) => JSON.stringify(message).includes('tool completed once'))).toHaveLength(1)
@@ -110,7 +155,10 @@ test('a closed view, a daemon kill and a graceful restart leave the run, its too
   } finally {
     restored.dispose()
   }
-  expect(await terminalMetrics(worker, ...shell)).toMatchObject({ shell_pid: shellBefore.shell_pid, shell_running: true })
+  expect(await terminalMetrics(worker, ...shell)).toMatchObject({
+    shell_pid: shellBefore.shell_pid,
+    shell_running: true,
+  })
   // The claim goes only when the work that holds it stops: the shell and the provider run.
   await worker.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id })
   await worker.call('agent.disconnect', { conversation_id: conversationId })

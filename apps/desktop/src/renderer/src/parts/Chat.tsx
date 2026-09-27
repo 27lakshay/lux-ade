@@ -13,7 +13,8 @@ interface Transcript {
 const TRANSCRIPTS: Record<string, Transcript> = {
   'Design review pass': {
     meta: 'Claude Code · Opus 5.5 · Work account · lux-ade on main',
-    prompt: "Tighten the service start flow. An assigned port shouldn't read as listening until the child actually binds. Run the E2E when you're done.",
+    prompt:
+      "Tighten the service start flow. An assigned port shouldn't read as listening until the child actually binds. Run the E2E when you're done.",
     worked: 'Worked for 38s · read 1 file, edited 1, ran typecheck',
     reply:
       'The daemon already tracks the assigned port separately from the process, so the fix is in how we present it. I added a listening state that only appears after a bind is observed. Until then the service row says “assigned”.',
@@ -23,7 +24,8 @@ const TRANSCRIPTS: Record<string, Transcript> = {
     meta: 'Codex · GPT-5.5 · Personal · lux-ade on main',
     prompt: 'Package the desktop app with electron-builder and run the packaged smoke test.',
     worked: 'Working for 38s · ran pnpm build, running electron-builder',
-    reply: 'The renderer and main bundles built cleanly. electron-builder is signing the app now; the smoke test runs against the signed build next.',
+    reply:
+      'The renderer and main bundles built cleanly. electron-builder is signing the app now; the smoke test runs against the signed build next.',
   },
 }
 

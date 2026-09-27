@@ -70,8 +70,11 @@ export function generateHostKey(): HostKey {
 }
 
 /** One typed operation over a remote transport, checked against @ade/contracts both ways. */
-export function remoteCall<O extends Operation>(transport: RemoteDaemonTransport, op: O,
-  request: CallRequest<O>): Promise<Response<O>> {
+export function remoteCall<O extends Operation>(
+  transport: RemoteDaemonTransport,
+  op: O,
+  request: CallRequest<O>,
+): Promise<Response<O>> {
   return transport.command({ op, ...request } as never)
 }
 
@@ -79,9 +82,12 @@ let pythonDirectory: string | null | undefined
 function interpreterPath(): string {
   if (pythonDirectory === undefined) {
     try {
-      pythonDirectory = dirname(execFileSync('python3', ['-c', 'import sys; print(sys.executable)'],
-        { encoding: 'utf8' }).trim())
-    } catch { pythonDirectory = null }
+      pythonDirectory = dirname(
+        execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim(),
+      )
+    } catch {
+      pythonDirectory = null
+    }
   }
   return [dirname(process.execPath), pythonDirectory].filter(Boolean).join(':')
 }
@@ -92,8 +98,9 @@ export type RemoteTarget = ConstructorParameters<RemoteClientModule['RemoteDaemo
 let remoteModule: Promise<RemoteClientModule> | null = null
 /** The SDK's remote transport module (`@ade/client/remote`). */
 export function remoteClient(): Promise<RemoteClientModule> {
-  remoteModule ??= import(pathToFileURL(join(repositoryRoot, 'packages/client/dist/remote.js')).href) as
-    Promise<RemoteClientModule>
+  remoteModule ??= import(
+    pathToFileURL(join(repositoryRoot, 'packages/client/dist/remote.js')).href
+  ) as Promise<RemoteClientModule>
   return remoteModule
 }
 
@@ -108,7 +115,11 @@ export class RemoteHost {
   /** Each remote profile created here, with the ade-control that manages it. */
   private readonly profiles = new Map<string, string>()
 
-  constructor(readonly name: string, readonly root: string, key: HostKey) {
+  constructor(
+    readonly name: string,
+    readonly root: string,
+    key: HostKey,
+  ) {
     this.key = key
     this.binDirectory = join(root, 'bin')
     this.home = join(root, 'home')
@@ -172,14 +183,22 @@ export class RemoteHost {
   /** Run a program on this host, as its user would at a shell there. Never throws for a non-zero exit. */
   run(program: string, args: string[], timeoutMs = 30_000): Promise<CliResult> {
     return new Promise((resolveResult) => {
-      execFile(program, args, { cwd: this.home, env: this.env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+      execFile(
+        program,
+        args,
+        { cwd: this.home, env: this.env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
         (error, stdout, stderr) => {
           const failure = error as (Error & { code?: number | string }) | null
           const code = failure ? (typeof failure.code === 'number' ? failure.code : -1) : 0
           let json: Record<string, unknown> | null = null
-          try { json = JSON.parse(code === 0 ? stdout : stderr.trim().split('\n').pop() ?? '') } catch { json = null }
+          try {
+            json = JSON.parse(code === 0 ? stdout : (stderr.trim().split('\n').pop() ?? ''))
+          } catch {
+            json = null
+          }
           resolveResult({ code, stdout, stderr, json })
-        })
+        },
+      )
     })
   }
 
@@ -214,7 +233,13 @@ export class RemoteHost {
   /** The remote profile daemon's socket and, while one answers there, its hello. */
   async daemonStatus(profileId: string): Promise<{ socket: string; daemon: Record<string, unknown> | null } | null> {
     const home = this.runtimeHome(profileId)
-    if (!(await stat(home).then(() => true, () => false))) return null
+    if (
+      !(await stat(home).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return null
     const status = await this.run(controlBinary, ['runtime', 'status', '--home', home])
     if (typeof status.json?.socket !== 'string') return null
     return { socket: status.json.socket, daemon: (status.json.daemon as Record<string, unknown> | null) ?? null }
@@ -268,15 +293,22 @@ async function waitForExit(pid: number, what: string, timeoutMs = 10_000): Promi
   }
 }
 
-async function stopDaemonAndRuntime(ade: AdeHarness, socket: string, hello: Record<string, unknown>,
-  role: string): Promise<void> {
+async function stopDaemonAndRuntime(
+  ade: AdeHarness,
+  socket: string,
+  hello: Record<string, unknown>,
+  role: string,
+): Promise<void> {
   const daemonPid = hello.pid as number
   const runtimeSocket = hello.runtime_socket as string
   await ade.ledger.own(daemonPid, `${role} daemon`)
   await ade.ledger.own(hello.runtime_pid as number, `${role} runtime`)
   await ade.ledger.sweep()
-  await rpc(socket, { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`, boot_id: hello.boot_id },
-    5_000)
+  await rpc(
+    socket,
+    { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`, boot_id: hello.boot_id },
+    5_000,
+  )
   await waitForExit(daemonPid, 'remote daemon')
   const runtime = await rpc(runtimeSocket, { op: 'hello' }, 2_000).catch(() => null)
   if (!runtime) return
@@ -330,7 +362,8 @@ export class RemoteLab {
    */
   async host(name: string, options: { artifacts?: readonly Artifact[] } = {}): Promise<RemoteHost> {
     const host = new RemoteHost(name, join(this.ade.root, 'hosts', name), generateHostKey())
-    for (const directory of [host.root, host.binDirectory, host.home]) await mkdir(directory, { recursive: true, mode: 0o700 })
+    for (const directory of [host.root, host.binDirectory, host.home])
+      await mkdir(directory, { recursive: true, mode: 0o700 })
     await writeFile(join(host.root, 'host_key.pub'), `${host.hostKey.line} root@${name}\n`)
     await writeFile(join(host.home, '.gitconfig'), scratchGitConfig('ADE Remote E2E', 'remote@example.invalid'))
     await host.install(options.artifacts ?? allArtifacts)
@@ -342,8 +375,15 @@ export class RemoteLab {
   /** Profile options that put the fake ssh first on the daemon's and CLI's PATH. */
   profileOptions(options: ProfileOptions = {}): ProfileOptions {
     const path = scratchEnvironment(join(this.ade.root, 'unused-home')).PATH
-    return { ...options, env: { [pairingTokenEnv]: this.pairingToken, ADE_DEVBOX_TOKEN: this.pairingToken,
-      ...options.env, PATH: `${this.bin}:${path}` } }
+    return {
+      ...options,
+      env: {
+        [pairingTokenEnv]: this.pairingToken,
+        ADE_DEVBOX_TOKEN: this.pairingToken,
+        ...options.env,
+        PATH: `${this.bin}:${path}`,
+      },
+    }
   }
 
   /** A local scratch profile whose daemon and CLI reach remote hosts only through the fake ssh. */
@@ -354,7 +394,10 @@ export class RemoteLab {
   /** Every ssh and ssh-keyscan invocation so far, oldest first. */
   async calls(): Promise<SshCall[]> {
     const text = await readFile(join(this.bin, 'calls.jsonl'), 'utf8').catch(() => '')
-    return text.split('\n').filter(Boolean).map((line) => JSON.parse(line) as SshCall)
+    return text
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as SshCall)
   }
 
   /**
@@ -363,8 +406,11 @@ export class RemoteLab {
    */
   async transport(target: RemoteTarget): Promise<RemoteDaemonTransport> {
     const { RemoteDaemonTransport } = await remoteClient()
-    const transport = new RemoteDaemonTransport(target, { sshPath: this.ssh, forwardTimeoutMs: 10_000,
-      helloTimeoutMs: 5_000 })
+    const transport = new RemoteDaemonTransport(target, {
+      sshPath: this.ssh,
+      forwardTimeoutMs: 10_000,
+      helloTimeoutMs: 5_000,
+    })
     this.transports.push(transport)
     return transport
   }
@@ -374,9 +420,9 @@ export class RemoteLab {
     const failures: string[] = []
     // Forwards the SDK or CLI left behind count as leaks, like any other owned process.
     for (const call of await this.calls()) {
-      if (call.forwarding && await isRunning(call.pid)) await this.ade.ledger.own(call.pid, 'fake ssh forward')
+      if (call.forwarding && (await isRunning(call.pid))) await this.ade.ledger.own(call.pid, 'fake ssh forward')
     }
-    for (const host of this.hosts) failures.push(...await host.stop(this.ade))
+    for (const host of this.hosts) failures.push(...(await host.stop(this.ade)))
     if (failures.length) throw new Error(`Remote hosts did not stop cleanly:\n${failures.join('\n')}`)
   }
 

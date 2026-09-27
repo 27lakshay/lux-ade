@@ -69,10 +69,16 @@ export function ChangesPanel({ side }: { side: 'left' | 'right' }) {
         })}
       </div>
       <div className="flex gap-1.5 p-1.5">
-        <button type="button" className="flex h-8 flex-1 items-center justify-center rounded-md bg-selected font-medium">
+        <button
+          type="button"
+          className="flex h-8 flex-1 items-center justify-center rounded-md bg-selected font-medium"
+        >
           Review changes
         </button>
-        <button type="button" className="flex h-8 flex-1 items-center justify-center rounded-md bg-fg font-medium text-inverse">
+        <button
+          type="button"
+          className="flex h-8 flex-1 items-center justify-center rounded-md bg-fg font-medium text-inverse"
+        >
           Commit…
         </button>
       </div>

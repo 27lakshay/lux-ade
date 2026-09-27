@@ -20,27 +20,48 @@ type Forge = {
 }
 
 const forges: Forge[] = [
-  { name: 'an HTTPS forge', transport: 'https', ssh: false,
+  {
+    name: 'an HTTPS forge',
+    transport: 'https',
+    ssh: false,
     url: () => 'https://github.example/acme/app.git',
-    bare: (root) => join(root, 'forges', 'github.example', 'acme', 'app.git') },
-  { name: 'an SSH URL on a nested-group forge', transport: 'ssh', ssh: true,
+    bare: (root) => join(root, 'forges', 'github.example', 'acme', 'app.git'),
+  },
+  {
+    name: 'an SSH URL on a nested-group forge',
+    transport: 'ssh',
+    ssh: true,
     url: () => 'ssh://git@gitlab.example/group/sub/app.git',
-    bare: (root) => join(root, 'forges', 'gitlab.example', 'group', 'sub', 'app.git') },
-  { name: 'an scp-like URL on a self-hosted server', transport: 'scp_like', ssh: true,
+    bare: (root) => join(root, 'forges', 'gitlab.example', 'group', 'sub', 'app.git'),
+  },
+  {
+    name: 'an scp-like URL on a self-hosted server',
+    transport: 'scp_like',
+    ssh: true,
     url: () => 'git@git.internal.example:team/app.git',
-    bare: (root) => join(root, 'forges', 'git.internal.example', 'team', 'app.git') },
-  { name: 'a file URL on this machine', transport: 'file', ssh: false,
+    bare: (root) => join(root, 'forges', 'git.internal.example', 'team', 'app.git'),
+  },
+  {
+    name: 'a file URL on this machine',
+    transport: 'file',
+    ssh: false,
     url: (root) => `file://${join(root, 'forges', 'local', 'app.git')}`,
-    bare: (root) => join(root, 'forges', 'local', 'app.git') },
+    bare: (root) => join(root, 'forges', 'local', 'app.git'),
+  },
 ]
 
 async function forgeProfile(ade: { root: string; profile(): Promise<ScratchProfile> }) {
   const profile = await ade.profile()
   const ssh = await forgeSsh(join(ade.root, 'ssh-bin'), join(ade.root, 'forges'))
-  await profileGitConfig(profile, [
-    '[core]', `\tsshCommand = ${ssh.command}`,
-    `[url "file://${join(ade.root, 'forges', 'github.example')}/"]`, '\tinsteadOf = https://github.example/',
-  ].join('\n'))
+  await profileGitConfig(
+    profile,
+    [
+      '[core]',
+      `\tsshCommand = ${ssh.command}`,
+      `[url "file://${join(ade.root, 'forges', 'github.example')}/"]`,
+      '\tinsteadOf = https://github.example/',
+    ].join('\n'),
+  )
   return { profile, ssh }
 }
 
@@ -62,12 +83,24 @@ async function teammatePush(seed: ScratchRepo, bare: string, dir: string, file: 
 test('the coverage declaration names the ordinary Git transports and calls no forge API', async ({ profile }) => {
   const coverage = await profile.call('repository.coverage', {})
   const supported = Object.fromEntries(coverage.transports.map((row) => [row.transport, row.supported]))
-  expect(supported).toEqual({ https: true, ssh: true, scp_like: true, file: true,
-    http: false, git_daemon: false, remote_helper: false, local_path: false })
+  expect(supported).toEqual({
+    https: true,
+    ssh: true,
+    scp_like: true,
+    file: true,
+    http: false,
+    git_daemon: false,
+    remote_helper: false,
+    local_path: false,
+  })
   expect(coverage.forge_apis).toBe(false)
   expect(coverage.credentials).toMatch(/credential helpers, SSH agent and keys.*never prompts/)
-  expect(coverage.excluded).toEqual(expect.arrayContaining([expect.stringMatching(/Pull or merge request management and issue integration/),
-    expect.stringMatching(/Force push/)]))
+  expect(coverage.excluded).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(/Pull or merge request management and issue integration/),
+      expect.stringMatching(/Force push/),
+    ]),
+  )
   for (const form of forges) expect(supported[form.transport], form.transport).toBe(true)
   const cli = await profile.cli('repository', 'coverage')
   expect(cli.code).toBe(0)
@@ -92,34 +125,55 @@ for (const forge of forges) {
     // Commit through ADE and push to the forge.
     await writeFile(join(cloned.destination, 'feature.txt'), 'feature\n')
     let state = await status(profile, workspace_id)
-    expect(await git(profile, 'review.stage', { workspace_id, path: 'feature.txt', revision: state.revision })).toMatchObject({ status: 'succeeded' })
+    expect(
+      await git(profile, 'review.stage', { workspace_id, path: 'feature.txt', revision: state.revision }),
+    ).toMatchObject({ status: 'succeeded' })
     state = await status(profile, workspace_id)
-    const commit = await git(profile, 'review.commit', { workspace_id, message: 'Add feature', index_token: state.index_token })
-    const pushed = await git(profile, 'review.push', { workspace_id, index_token: (await status(profile, workspace_id)).index_token })
-    expect(pushed).toMatchObject({ status: 'succeeded', result: { remote: 'origin', remote_ref: 'refs/heads/main', verified: true } })
+    const commit = await git(profile, 'review.commit', {
+      workspace_id,
+      message: 'Add feature',
+      index_token: state.index_token,
+    })
+    const pushed = await git(profile, 'review.push', {
+      workspace_id,
+      index_token: (await status(profile, workspace_id)).index_token,
+    })
+    expect(pushed).toMatchObject({
+      status: 'succeeded',
+      result: { remote: 'origin', remote_ref: 'refs/heads/main', verified: true },
+    })
     expect(await remoteHead(seed, bare)).toBe(commit.result!.head)
 
     // A teammate pushes; fetch and pull bring it in.
     const theirs = await teammatePush(seed, bare, join(ade.root, 'teammate'), 'teammate.txt')
-    expect(await git(profile, 'review.fetch', { workspace_id })).toMatchObject({ status: 'succeeded',
-      result: { remote: 'origin', updated: ['refs/remotes/origin/main'] } })
-    expect(await git(profile, 'review.pull', { workspace_id, index_token: (await status(profile, workspace_id)).index_token }))
-      .toMatchObject({ status: 'succeeded', result: { head: theirs, fast_forward: true } })
+    expect(await git(profile, 'review.fetch', { workspace_id })).toMatchObject({
+      status: 'succeeded',
+      result: { remote: 'origin', updated: ['refs/remotes/origin/main'] },
+    })
+    expect(
+      await git(profile, 'review.pull', {
+        workspace_id,
+        index_token: (await status(profile, workspace_id)).index_token,
+      }),
+    ).toMatchObject({ status: 'succeeded', result: { head: theirs, fast_forward: true } })
     expect(existsSync(join(cloned.destination, 'teammate.txt'))).toBe(true)
 
     // SSH forms really went over the SSH command, for both directions.
     const calls = (await ssh.calls()).filter((call) => call.exit === undefined)
     if (forge.ssh) {
       const host = forge.bare(ade.root).split('/forges/')[1].split('/')[0]
-      expect(calls.filter((call) => call.host === host).map((call) => call.program))
-        .toEqual(expect.arrayContaining(['git-upload-pack', 'git-receive-pack']))
+      expect(calls.filter((call) => call.host === host).map((call) => call.program)).toEqual(
+        expect.arrayContaining(['git-upload-pack', 'git-receive-pack']),
+      )
     } else {
       expect(calls).toEqual([])
     }
   })
 }
 
-test('refused transports never reach Git, and a disabled or unauthorised remote fails with Git\'s message', async ({ ade }) => {
+test("refused transports never reach Git, and a disabled or unauthorised remote fails with Git's message", async ({
+  ade,
+}) => {
   const { profile } = await forgeProfile(ade)
   const seed = await ade.repo({ name: 'seed' })
   const bare = await bareRemote(seed, join(ade.root, 'forges', 'local', 'app.git'), {})
@@ -134,7 +188,10 @@ test('refused transports never reach Git, and a disabled or unauthorised remote 
     ['https://user:secret@github.example/acme/app.git', /contains a password/],
   ] as const) {
     const destination = join(ade.root, 'clones', `refused-${Math.random().toString(16).slice(2)}`)
-    await expect(profile.call('repository.clone', { operation_id: operationId('clone'), url, destination }), url).rejects.toThrow(pattern)
+    await expect(
+      profile.call('repository.clone', { operation_id: operationId('clone'), url, destination }),
+      url,
+    ).rejects.toThrow(pattern)
     expect(existsSync(destination), url).toBe(false)
   }
 
@@ -145,10 +202,16 @@ test('refused transports never reach Git, and a disabled or unauthorised remote 
   await repo.git('remote', 'add', 'origin', `file://${bare}`)
   const workspace_id = (await profile.call('workspace.open', { path: repo.path })).workspace.id
   const helper = await git(profile, 'review.fetch', { workspace_id, remote: 'helper' })
-  expect(helper).toMatchObject({ status: 'failed', error: expect.stringMatching(/git fetch failed: .*(not allowed|ext)/i) })
+  expect(helper).toMatchObject({
+    status: 'failed',
+    error: expect.stringMatching(/git fetch failed: .*(not allowed|ext)/i),
+  })
   expect(existsSync(marker)).toBe(false)
   // An SSH host that refuses the key fails; nothing prompts or hangs.
   const refused = await git(profile, 'review.fetch', { workspace_id, remote: 'stranger' })
-  expect(refused).toMatchObject({ status: 'failed', error: expect.stringMatching(/Permission denied \(publickey\)|Could not read from remote/) })
+  expect(refused).toMatchObject({
+    status: 'failed',
+    error: expect.stringMatching(/Permission denied \(publickey\)|Could not read from remote/),
+  })
   expect(await git(profile, 'review.fetch', { workspace_id, remote: 'origin' })).toMatchObject({ status: 'succeeded' })
 })

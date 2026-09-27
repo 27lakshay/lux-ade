@@ -29,15 +29,27 @@ export type FailingAgent = {
 let stages = 0
 
 /** Stage the agent, define it as a custom executable adapter on `profile` and probe it. */
-export async function defineFailingAgent(profile: ScratchProfile, root: string, id = 'e2e-failing'): Promise<FailingAgent> {
+export async function defineFailingAgent(
+  profile: ScratchProfile,
+  root: string,
+  id = 'e2e-failing',
+): Promise<FailingAgent> {
   const base = join(root, 'failing-agent', String(++stages))
   const dir = join(base, 'records')
   await mkdir(dir, { recursive: true })
   const command = join(base, 'failing_agent.sh')
   await writeFile(command, SCRIPT)
   await chmod(command, 0o755)
-  await profile.call('adapter.put', { definition: { id, name: 'E2E failing agent', kind: 'executable', command,
-    env: { FAILING_AGENT_DIR: dir }, executable: { prompt_input: 'stdin', timeout_seconds: 60 } } })
+  await profile.call('adapter.put', {
+    definition: {
+      id,
+      name: 'E2E failing agent',
+      kind: 'executable',
+      command,
+      env: { FAILING_AGENT_DIR: dir },
+      executable: { prompt_input: 'stdin', timeout_seconds: 60 },
+    },
+  })
   const probed = await profile.call('adapter.probe', { id })
   if (probed.adapter.readiness !== 'ready') throw new Error(`Adapter ${id} is ${probed.adapter.readiness}`)
   return { provider: probed.adapter.provider_id, dir }

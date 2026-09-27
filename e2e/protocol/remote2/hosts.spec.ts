@@ -17,11 +17,16 @@ function record(feed: Feed): FeedFrame[] {
 }
 
 function conversationFrames(frames: FeedFrame[], conversationId: string): FeedFrame[] {
-  return frames.filter((frame) => frame.type === 'conversation_changed' &&
-    (frame.conversation as { id?: string } | undefined)?.id === conversationId)
+  return frames.filter(
+    (frame) =>
+      frame.type === 'conversation_changed' &&
+      (frame.conversation as { id?: string } | undefined)?.id === conversationId,
+  )
 }
 
-test('two hosts at once keep their own feeds, cursors and provider accounts, and fail over nothing', async ({ remote }) => {
+test('two hosts at once keep their own feeds, cursors and provider accounts, and fail over nothing', async ({
+  remote,
+}) => {
   const profile = await remote.profile()
   const alpha = await startedHost(remote, profile, 'alpha')
   const beta = await startedHost(remote, profile, 'beta')
@@ -53,12 +58,20 @@ test('two hosts at once keep their own feeds, cursors and provider accounts, and
 
   // A frame from one host cannot advance another host's projection: its boot differs.
   const { reduceFrame } = await clientSync()
-  const alphaSnapshot = { ...(await remoteCall(alphaLink, 'conversation.get', { conversation_id: alphaTurn.conversation.id })),
-    boot_id: alphaFeed.getState().bootId!, revision: alphaFeed.getState().revision! }
-  const foreign = betaFrames.at(-1) ?? { type: 'catalog', boot_id: betaFeed.getState().bootId!, revision:
-    betaFeed.getState().revision! }
-  expect(reduceFrame(alphaSnapshot as never, foreign as never, alphaTurn.conversation.id))
-    .toEqual({ kind: 'resnapshot', reason: 'boot' })
+  const alphaSnapshot = {
+    ...(await remoteCall(alphaLink, 'conversation.get', { conversation_id: alphaTurn.conversation.id })),
+    boot_id: alphaFeed.getState().bootId!,
+    revision: alphaFeed.getState().revision!,
+  }
+  const foreign = betaFrames.at(-1) ?? {
+    type: 'catalog',
+    boot_id: betaFeed.getState().bootId!,
+    revision: betaFeed.getState().revision!,
+  }
+  expect(reduceFrame(alphaSnapshot as never, foreign as never, alphaTurn.conversation.id)).toEqual({
+    kind: 'resnapshot',
+    reason: 'boot',
+  })
 
   // Alpha loses its link. Beta keeps its connection and cursor and keeps receiving its own work.
   const betaRevision = betaFeed.getState().revision!
@@ -75,8 +88,9 @@ test('two hosts at once keep their own feeds, cursors and provider accounts, and
   expect(await remoteTurns(beta)).toBe(1)
   expect(await remoteTurns(alpha)).toBe(1)
   // Nothing of alpha's was sent to beta or to this profile while alpha was down.
-  await expect(remoteCall(alphaLink, 'conversation.get', { conversation_id: alphaTurn.conversation.id }))
-    .rejects.toMatchObject({ delivery: 'not_sent' })
+  await expect(
+    remoteCall(alphaLink, 'conversation.get', { conversation_id: alphaTurn.conversation.id }),
+  ).rejects.toMatchObject({ delivery: 'not_sent' })
   expect(JSON.stringify(betaFrames)).not.toContain(alphaTurn.conversation.id)
   expect(await profile.mockCalls('codex')).toEqual([])
 
@@ -88,8 +102,10 @@ test('two hosts at once keep their own feeds, cursors and provider accounts, and
   expect(alphaFeed.getState().catalog?.conversations.map((entry) => entry.id)).toContain(alphaTurn.conversation.id)
   expect(alphaFeed.getState().catalog?.conversations.map((entry) => entry.id)).not.toContain(betaTurn.conversation.id)
   expect(alphaFrames.every((frame) => frame.boot_id === alpha.daemon.boot_id)).toBe(true)
-  expect((await remoteCall(alphaLink, 'conversation.get', { conversation_id: alphaTurn.conversation.id }))
-    .conversation.status).toBe('running')
+  expect(
+    (await remoteCall(alphaLink, 'conversation.get', { conversation_id: alphaTurn.conversation.id })).conversation
+      .status,
+  ).toBe('running')
 
   // Alpha's daemon restarts: alpha's cursor moves to a new boot; beta's stays where it was.
   const betaBoot = betaFeed.getState().bootId
@@ -100,16 +116,23 @@ test('two hosts at once keep their own feeds, cursors and provider accounts, and
   expect(betaFeed.getState().status).toBe('connected')
 
   // Revoking alpha's pairing ends alpha's feed; beta's pairing, feed and grant are untouched.
-  const revoked = await profile.call('remote.host.revoke', { host_id: 'alpha', pairing_id: alpha.pairing.pairing_id },
-    { timeoutMs: 75_000 })
+  const revoked = await profile.call(
+    'remote.host.revoke',
+    { host_id: 'alpha', pairing_id: alpha.pairing.pairing_id },
+    { timeoutMs: 75_000 },
+  )
   expect(revoked.enforcement).toBe('remote_daemon')
   await expect.poll(() => alphaFeed.getState().status).toBe('unavailable')
-  expect(await hostGrants(beta)).toEqual([expect.objectContaining({ pairing_id: beta.pairing.pairing_id,
-    state: 'active' })])
+  expect(await hostGrants(beta)).toEqual([
+    expect.objectContaining({ pairing_id: beta.pairing.pairing_id, state: 'active' }),
+  ])
   expect(betaFeed.getState().status).toBe('connected')
   expect((await remoteCall(betaLink, 'catalog.get', {})).boot_id).toBe(beta.daemon.boot_id)
   const hosts = (await profile.call('remote.host.list', {})).hosts
-  expect(hosts.map((host) => [host.host_id, host.pairing?.state])).toEqual([['alpha', 'revoked'], ['beta', 'active']])
+  expect(hosts.map((host) => [host.host_id, host.pairing?.state])).toEqual([
+    ['alpha', 'revoked'],
+    ['beta', 'active'],
+  ])
 
   for (const [link, turn] of [[betaLink, betaTurn]] as const) {
     await remoteCall(link, 'agent.cancel', { conversation_id: turn.conversation.id })

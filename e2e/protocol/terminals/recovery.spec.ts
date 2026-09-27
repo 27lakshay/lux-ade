@@ -3,7 +3,14 @@
 // start with every resize, in order and without gaps. Past the bounded replay
 // the snapshot says recovery is incomplete instead of inventing a screen.
 import { expect, isRunning, test } from '../fixtures'
-import { attachThroughTty, clientSdk, replayText, terminalMetrics, TerminalStream, type TerminalFrame } from '../fixtures/terminals'
+import {
+  attachThroughTty,
+  clientSdk,
+  replayText,
+  terminalMetrics,
+  TerminalStream,
+  type TerminalFrame,
+} from '../fixtures/terminals'
 
 type ReplayEvent = { type: string; offset: number; bytes_base64?: string; cols?: number; rows?: number }
 
@@ -22,7 +29,9 @@ function expectContiguous(snapshot: TerminalFrame): ReplayEvent[] {
 }
 
 for (const mode of ['kill', 'graceful'] as const) {
-  test(`an interactive program keeps running and replays exactly after a ${mode} daemon restart`, async ({ profile }) => {
+  test(`an interactive program keeps running and replays exactly after a ${mode} daemon restart`, async ({
+    profile,
+  }) => {
     const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
     const target = [workspace.id, workspace.terminal_id] as const
     const stream = TerminalStream.open(profile, ...target)
@@ -56,8 +65,12 @@ for (const mode of ['kill', 'graceful'] as const) {
     const replay = replayText(snapshot)
     expect(replay).toMatch(/mode-\x1b\[\?2004h-on/)
     expect(replay).toMatch(/line-one/)
-    const beforeResize = Buffer.concat(events.slice(0, resizeAt).filter((event) => event.type === 'output')
-      .map((event) => Buffer.from(event.bytes_base64!, 'base64'))).toString('utf8')
+    const beforeResize = Buffer.concat(
+      events
+        .slice(0, resizeAt)
+        .filter((event) => event.type === 'output')
+        .map((event) => Buffer.from(event.bytes_base64!, 'base64')),
+    ).toString('utf8')
     expect(beforeResize).not.toMatch(/mode-|line-one/)
 
     // The same cat is still reading, and the same shell comes back after it.
@@ -70,12 +83,18 @@ for (const mode of ['kill', 'graceful'] as const) {
     // The CLI reads the same recovery format and incarnation.
     const inspected = await profile.cli('terminal', 'inspect', ...target)
     expect(inspected.code, inspected.stderr).toBe(0)
-    expect(inspected.json).toMatchObject({ type: 'snapshot', terminal_snapshot_format: 'xterm-replay-v1', run_id: runId })
+    expect(inspected.json).toMatchObject({
+      type: 'snapshot',
+      terminal_snapshot_format: 'xterm-replay-v1',
+      run_id: runId,
+    })
     reattached.close()
   })
 }
 
-test('replay past its bound reports incomplete recovery without replaying input or ending the shell', async ({ profile }) => {
+test('replay past its bound reports incomplete recovery without replaying input or ending the shell', async ({
+  profile,
+}) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
   const first = TerminalStream.open(profile, ...target)
@@ -87,8 +106,12 @@ test('replay past its bound reports incomplete recovery without replaying input 
 
   // Write past the replay bound with no attachment, as while every client is closed.
   const flood = limit + 512 * 1024
-  const writer = TerminalStream.open(profile, ...target, { op: 'input', data: `head -c ${flood} /dev/zero | tr '\\0' x; echo; echo "flo""od-done"\n` })
-  await expect.poll(async () => (await terminalMetrics(profile, ...target))!.terminal_bytes as number, { timeout: 30_000 })
+  const writer = TerminalStream.open(profile, ...target, {
+    op: 'input',
+    data: `head -c ${flood} /dev/zero | tr '\\0' x; echo; echo "flo""od-done"\n`,
+  })
+  await expect
+    .poll(async () => (await terminalMetrics(profile, ...target))!.terminal_bytes as number, { timeout: 30_000 })
     .toBeGreaterThan(flood)
   writer.close()
 
@@ -116,15 +139,30 @@ test('detach leaves the shell and its program running, from the SDK and from the
 
   // SDK: attach, claim the viewport, start a program, detach.
   const frames: TerminalFrame[] = []
-  const connection = openTerminalConnection(profile.socket, ...target, (frame) => frames.push(frame), () => undefined)
+  const connection = openTerminalConnection(
+    profile.socket,
+    ...target,
+    (frame) => frames.push(frame),
+    () => undefined,
+  )
   await expect.poll(() => connection.incarnation()).not.toBeNull()
   const runId = connection.incarnation()!
   connection.resize(110, 33, 0, 0, true)
   connection.input('sleep 600 & echo "bg""-pid:"$!\n')
-  await expect.poll(() => Buffer.concat(frames.filter((frame) => frame.type === 'terminal')
-    .map((frame) => Buffer.from(frame.bytes as number[]))).toString('utf8')).toMatch(/bg-pid:\d+/)
-  const background = Number(/bg-pid:(\d+)/.exec(Buffer.concat(frames.filter((frame) => frame.type === 'terminal')
-    .map((frame) => Buffer.from(frame.bytes as number[]))).toString('utf8'))![1])
+  await expect
+    .poll(() =>
+      Buffer.concat(
+        frames.filter((frame) => frame.type === 'terminal').map((frame) => Buffer.from(frame.bytes as number[])),
+      ).toString('utf8'),
+    )
+    .toMatch(/bg-pid:\d+/)
+  const background = Number(
+    /bg-pid:(\d+)/.exec(
+      Buffer.concat(
+        frames.filter((frame) => frame.type === 'terminal').map((frame) => Buffer.from(frame.bytes as number[])),
+      ).toString('utf8'),
+    )![1],
+  )
   await ade.ledger.own(background, 'background sleep')
   const before = (await terminalMetrics(profile, ...target))!
   expect(before.resize_owner).not.toBeNull()
@@ -136,13 +174,19 @@ test('detach leaves the shell and its program running, from the SDK and from the
 
   // CLI: attach under a TTY, type, press Ctrl-] to detach.
   const attached = await attachThroughTty(profile, ade.ledger, ...target)
-  await expect.poll(async () => (await terminalMetrics(profile, ...target))!.resize_owner, { timeout: 15_000 }).not.toBeNull()
+  await expect
+    .poll(async () => (await terminalMetrics(profile, ...target))!.resize_owner, { timeout: 15_000 })
+    .not.toBeNull()
   attached.child.stdin!.write('echo "via""-cli"\r')
   await expect.poll(attached.output, { timeout: 15_000 }).toMatch(/via-cli/)
   attached.child.stdin!.write('\x1d')
   expect(await attached.exited).toBe(0)
   await expect.poll(async () => (await terminalMetrics(profile, ...target))!.resize_owner).toBeNull()
-  expect((await terminalMetrics(profile, ...target))!).toMatchObject({ shell_running: true, shell_pid: before.shell_pid, run_id: runId })
+  expect((await terminalMetrics(profile, ...target))!).toMatchObject({
+    shell_running: true,
+    shell_pid: before.shell_pid,
+    run_id: runId,
+  })
   expect(await isRunning(background)).toBe(true)
 
   // Reattach: the output the CLI produced is part of the same shell's history.

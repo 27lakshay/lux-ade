@@ -18,7 +18,9 @@ async function deviceClaims(profile: ScratchProfile) {
 
 async function sharedHost(ade: Parameters<typeof startHostProfiles>[0]) {
   const host = await DeviceHost.create(ade.root)
-  const { profiles: [first, second] } = await startHostProfiles(ade, 2, { env: host.env() })
+  const {
+    profiles: [first, second],
+  } = await startHostProfiles(ade, 2, { env: host.env() })
   return { host, first, second, id: await hostId(first) }
 }
 
@@ -30,8 +32,9 @@ test('a run hold in one profile keeps another profile off the device until it is
   expect(claim).toMatchObject({ resource: 'device', holder: 'run-a', state: 'active', mine: true })
 
   // The other profile sees the hold and its boot is refused before any receipt.
-  expect((await deviceClaims(second)).map((entry) => ({ id: entry.id, mine: entry.mine })))
-    .toEqual([{ id: claim.id, mine: false }])
+  expect((await deviceClaims(second)).map((entry) => ({ id: entry.id, mine: entry.mine }))).toEqual([
+    { id: claim.id, mine: false },
+  ])
   const refused = await send(second, boot(id, iphone, 'boot-b'))
   expect(refused).toMatchObject({ type: 'error' })
   expect(refused.message).toContain(claim.id)
@@ -57,8 +60,13 @@ test('an effect in flight in one profile refuses the same device to another prof
 
   const claims = await deviceClaims(second)
   expect(claims).toHaveLength(1)
-  expect(claims[0]).toMatchObject({ device_id: iphone, operation_id: 'boot-a', mode: 'exclusive', mine: false,
-    state: 'active' })
+  expect(claims[0]).toMatchObject({
+    device_id: iphone,
+    operation_id: 'boot-a',
+    mode: 'exclusive',
+    mine: false,
+    state: 'active',
+  })
   const refused = await send(second, boot(id, iphone, 'boot-b'))
   expect(refused.message).toContain(claims[0].id)
   const app = await host.app('Demo', 'com.example.demo', '1')
@@ -87,7 +95,10 @@ test('a crash mid-effect quarantines the device claim until the owner replays th
   // The owner comes back and replays the same ID: reconciliation observes the
   // simulator booted, settles the receipt and releases the claim.
   await first.restartDaemon()
-  expect(await send(first, boot(id, iphone, 'boot-crash'))).toMatchObject({ type: 'device_booted', already_booted: false })
+  expect(await send(first, boot(id, iphone, 'boot-crash'))).toMatchObject({
+    type: 'device_booted',
+    already_booted: false,
+  })
   await expect.poll(async () => (await deviceClaims(second)).length).toBe(0)
   expect(await send(second, boot(id, iphone, 'boot-b'))).toMatchObject({ type: 'device_booted', already_booted: true })
   expect((await host.calls('xcrun', 'bootstatus')).filter((call) => !call.abandoned)).toHaveLength(1)

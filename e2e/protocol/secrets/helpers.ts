@@ -43,7 +43,12 @@ export async function ownerId(profile: ScratchProfile): Promise<string> {
 /** A matcher for a reference to an item `profile` made under `scope`. */
 export async function ownedReference(profile: ScratchProfile, scope: string): Promise<unknown> {
   const escaped = `${await ownerId(profile)}/${scope}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return { keychain: { service: ADE_KEYCHAIN_SERVICE, account: expect.stringMatching(new RegExp(`^${escaped}/[0-9a-f]{32}$`)) } }
+  return {
+    keychain: {
+      service: ADE_KEYCHAIN_SERVICE,
+      account: expect.stringMatching(new RegExp(`^${escaped}/[0-9a-f]{32}$`)),
+    },
+  }
 }
 
 /** Whether the secret store file holds `secret` in plain text; it must not, since it is encrypted at rest. */

@@ -16,12 +16,18 @@ export async function warnPendingSends(window?: BrowserWindow): Promise<void> {
     return
   }
   const options = window
-    ? { type: 'warning' as const, title: 'Prompt delivery is unconfirmed',
+    ? {
+        type: 'warning' as const,
+        title: 'Prompt delivery is unconfirmed',
         message: 'This window is staying open until the prompt is reconciled.',
-        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' }
-    : { type: 'warning' as const, title: 'Prompt delivery is unconfirmed',
+        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.',
+      }
+    : {
+        type: 'warning' as const,
+        title: 'Prompt delivery is unconfirmed',
         message: 'ADE is staying open until the prompt is reconciled.',
-        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' }
+        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.',
+      }
   if (window) await dialog.showMessageBox(window, options)
   else await dialog.showMessageBox(options)
 }
@@ -41,9 +47,13 @@ export const draftQuitGuard: QuitGuard = () => {
     const results = await Promise.allSettled(pending.map(flushDraft))
     if (results.some((result) => result.status === 'rejected')) {
       if (process.env.ADE_E2E_USER_DATA_DIR) console.error('Draft was not saved during app quit')
-      else await dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
-        message: 'ADE is staying open because a draft could not be saved.',
-        detail: 'Restore the profile daemon and try closing ADE again.' })
+      else
+        await dialog.showMessageBox({
+          type: 'error',
+          title: 'Draft was not saved',
+          message: 'ADE is staying open because a draft could not be saved.',
+          detail: 'Restore the profile daemon and try closing ADE again.',
+        })
       return false
     }
     if (await unsafePending(owned)) {

@@ -25,7 +25,9 @@ import { mockDirectory } from './providers'
 
 export { expect } from './index'
 
-const packagedApp = resolve(process.env.ADE_E2E_PACKAGE_APP ?? join(repositoryRoot, 'dist/electron/mac-arm64/Lux ADE.app'))
+const packagedApp = resolve(
+  process.env.ADE_E2E_PACKAGE_APP ?? join(repositoryRoot, 'dist/electron/mac-arm64/Lux ADE.app'),
+)
 
 /** Paths inside a bundle at `app`. */
 export function bundlePaths(app: string) {
@@ -68,20 +70,29 @@ export async function relocateBundle(app: string): Promise<BundlePaths> {
     if (name !== 'bin') await symlink(join(bundle.resources, name), join(moved.resources, name))
   }
   for (const name of await readdir(join(bundle.app, 'Contents'))) {
-    if (name !== 'MacOS' && name !== 'Resources') await symlink(join(bundle.app, 'Contents', name), join(app, 'Contents', name))
+    if (name !== 'MacOS' && name !== 'Resources')
+      await symlink(join(bundle.app, 'Contents', name), join(app, 'Contents', name))
   }
   return moved
 }
 
 function clone(from: string, to: string): Promise<void> {
   return new Promise((resolveClone, rejectClone) => {
-    execFile('/bin/cp', ['-c', '-p', from, to], (error) => error ? rejectClone(error) : resolveClone())
+    execFile('/bin/cp', ['-c', '-p', from, to], (error) => (error ? rejectClone(error) : resolveClone()))
   })
 }
 
 /** Why packaged specs cannot run, or null when the bundle is there. */
-export const bundleMissing: string | null = [bundle.cli, bundle.control, bundle.daemon, bundle.runtime, bundle.electron, bundle.node]
-  .every((path) => existsSync(path)) ? null : `No packaged app at ${packagedApp}; run pnpm package:mac first`
+export const bundleMissing: string | null = [
+  bundle.cli,
+  bundle.control,
+  bundle.daemon,
+  bundle.runtime,
+  bundle.electron,
+  bundle.node,
+].every((path) => existsSync(path))
+  ? null
+  : `No packaged app at ${packagedApp}; run pnpm package:mac first`
 
 /** The only PATH packaged processes start with: no node, cargo, pnpm or bun. */
 export const minimalPath = '/usr/bin:/bin'
@@ -165,7 +176,10 @@ serve(fakeSdk(directory));
 }
 
 /** Copy the provider fixtures out of the repository so no packaged process reads the checkout. */
-export async function stageProviderFixtures(directory: string, paths: BundlePaths = bundle): Promise<Launcher['providers']> {
+export async function stageProviderFixtures(
+  directory: string,
+  paths: BundlePaths = bundle,
+): Promise<Launcher['providers']> {
   await mkdir(directory, { recursive: true })
   const codexMock = join(directory, 'codex_mock.py')
   const fakeSdk = join(directory, 'claude-fake-sdk.mjs')

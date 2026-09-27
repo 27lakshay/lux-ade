@@ -68,18 +68,23 @@ export class FakeProviderClis {
    * probe's own timeout ends it.
    */
   async install(provider: FakeCliProvider, version: string, options: { hangs?: boolean } = {}): Promise<void> {
-    const answer = (text: string) => options.hangs ? 'exec tail -f /dev/null' : `echo ${quoted(text)}; exit 0`
-    const body = provider === 'codex'
-      ? ['#!/bin/sh',
-        `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then ${answer(`codex-cli ${version}`)}; fi`,
-        `ADE_MOCK_DIR=${quoted(this.mockDirectory)} exec ${quoted(pythonPath())} ${quoted(join(__dirname, 'fake_codex.py'))} "$@"`]
-      : ['#!/bin/sh',
-        `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then ${answer(`${version} (Claude Code)`)}; fi`,
-        'if [ "$3" = auth ] && [ "$4" = status ]; then',
-        `  if [ -f "$CLAUDE_CONFIG_DIR/${credentialFile.claude}" ]; then cat "$CLAUDE_CONFIG_DIR/${credentialFile.claude}"; exit 0; fi`,
-        '  echo \'{"loggedIn":false}\'; exit 1',
-        'fi',
-        'echo "The fixture Claude CLI scripts only --version and auth status" >&2; exit 2']
+    const answer = (text: string) => (options.hangs ? 'exec tail -f /dev/null' : `echo ${quoted(text)}; exit 0`)
+    const body =
+      provider === 'codex'
+        ? [
+            '#!/bin/sh',
+            `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then ${answer(`codex-cli ${version}`)}; fi`,
+            `ADE_MOCK_DIR=${quoted(this.mockDirectory)} exec ${quoted(pythonPath())} ${quoted(join(__dirname, 'fake_codex.py'))} "$@"`,
+          ]
+        : [
+            '#!/bin/sh',
+            `if [ "$#" -eq 1 ] && [ "$1" = --version ]; then ${answer(`${version} (Claude Code)`)}; fi`,
+            'if [ "$3" = auth ] && [ "$4" = status ]; then',
+            `  if [ -f "$CLAUDE_CONFIG_DIR/${credentialFile.claude}" ]; then cat "$CLAUDE_CONFIG_DIR/${credentialFile.claude}"; exit 0; fi`,
+            '  echo \'{"loggedIn":false}\'; exit 1',
+            'fi',
+            'echo "The fixture Claude CLI scripts only --version and auth status" >&2; exit 2',
+          ]
     const target = this.path(provider)
     // Write a new file and move it over the old one, as a package manager does.
     await writeFile(`${target}.new`, `${body.join('\n')}\n`, { mode: 0o755 })
@@ -92,9 +97,22 @@ export class FakeProviderClis {
 
   /** Sign an account home in as `identity`, with the private credential file the probe requires. */
   async signIn(provider: FakeCliProvider, nativeHome: string, identity: FixtureIdentity): Promise<void> {
-    await this.writeCredential(provider, nativeHome, JSON.stringify(provider === 'codex' ? identity : {
-      loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', configDirectory: nativeHome,
-      email: identity.email, orgId: identity.account_id }))
+    await this.writeCredential(
+      provider,
+      nativeHome,
+      JSON.stringify(
+        provider === 'codex'
+          ? identity
+          : {
+              loggedIn: true,
+              authMethod: 'claude.ai',
+              apiProvider: 'firstParty',
+              configDirectory: nativeHome,
+              email: identity.email,
+              orgId: identity.account_id,
+            },
+      ),
+    )
   }
 
   /** Leave a credential the provider no longer accepts: a revoked Codex login, a signed-out Claude status. */
@@ -127,5 +145,8 @@ export class FakeProviderClis {
 
 async function jsonLines<T>(path: string): Promise<T[]> {
   const text = await readFile(path, 'utf8').catch(() => '')
-  return text.split('\n').filter(Boolean).map((line) => JSON.parse(line) as T)
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as T)
 }

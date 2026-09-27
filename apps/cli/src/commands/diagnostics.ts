@@ -21,8 +21,9 @@ function eventCount(value: string | undefined): number | undefined {
 /** Writes the bundle to a new file readable only by this user; never overwrites. */
 async function writeBundle(path: string, text: string): Promise<void> {
   let handle: FileHandle
-  try { handle = await open(path, 'wx', 0o600) }
-  catch (error) {
+  try {
+    handle = await open(path, 'wx', 0o600)
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
       throw new CliError('conflict', 'The output path already exists; diagnostics export never overwrites a file.')
     }
@@ -40,8 +41,12 @@ async function writeBundle(path: string, text: string): Promise<void> {
   }
 }
 
-export async function runDiagnosticsCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runDiagnosticsCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'diagnostics') return undefined
   if (action === 'status') {
     if (rest.length) throw new CliError('usage', 'diagnostics status does not accept arguments.')
@@ -50,16 +55,24 @@ export async function runDiagnosticsCommand(socketPath: string, area: string | u
   if (action === 'export') {
     const options = namedOptions(rest, ['--output', '--events'], 'diagnostics export')
     const maxEvents = eventCount(options['--events'])
-    const bundle = await dailyUseCommand<'diagnostics.export'>(socketPath, { op: 'diagnostics.export',
-      ...(maxEvents === undefined ? {} : { max_events: maxEvents }) })
+    const bundle = await dailyUseCommand<'diagnostics.export'>(socketPath, {
+      op: 'diagnostics.export',
+      ...(maxEvents === undefined ? {} : { max_events: maxEvents }),
+    })
     const output = options['--output']
     if (output === undefined) return bundle
     const path = resolve(output)
     const text = `${JSON.stringify(bundle, null, 2)}\n`
     await writeBundle(path, text)
-    return { type: 'diagnostics_exported', path, bytes: Buffer.byteLength(text),
-      sha256: createHash('sha256').update(text).digest('hex'), events: bundle.events.length,
-      events_truncated: bundle.events_truncated, redaction: bundle.redaction }
+    return {
+      type: 'diagnostics_exported',
+      path,
+      bytes: Buffer.byteLength(text),
+      sha256: createHash('sha256').update(text).digest('hex'),
+      events: bundle.events.length,
+      events_truncated: bundle.events_truncated,
+      redaction: bundle.redaction,
+    }
   }
   return undefined
 }

@@ -19,18 +19,44 @@ export class ScratchVolume {
   private profiles: ScratchProfile[] = []
   private readonly filler: string
 
-  private constructor(readonly image: string, readonly mountPoint: string) {
+  private constructor(
+    readonly image: string,
+    readonly mountPoint: string,
+  ) {
     this.filler = join(mountPoint, 'filler.bin')
   }
 
   /** Create a `sizeMb` image in `directory` and attach it at `mountPoint`. */
   static async attach(directory: string, mountPoint: string, sizeMb = 64): Promise<ScratchVolume> {
     const image = join(directory, 'scratch-volume.dmg')
-    await run('hdiutil', ['create', '-quiet', '-size', `${sizeMb}m`, '-fs', 'HFS+', '-volname', 'ade-e2e',
-      '-type', 'UDIF', '-layout', 'NONE', image])
+    await run('hdiutil', [
+      'create',
+      '-quiet',
+      '-size',
+      `${sizeMb}m`,
+      '-fs',
+      'HFS+',
+      '-volname',
+      'ade-e2e',
+      '-type',
+      'UDIF',
+      '-layout',
+      'NONE',
+      image,
+    ])
     await mkdir(mountPoint, { recursive: true })
-    await run('hdiutil', ['attach', '-quiet', '-nobrowse', '-noverify', '-noautoopen', '-owners', 'on',
-      '-mountpoint', mountPoint, image])
+    await run('hdiutil', [
+      'attach',
+      '-quiet',
+      '-nobrowse',
+      '-noverify',
+      '-noautoopen',
+      '-owners',
+      'on',
+      '-mountpoint',
+      mountPoint,
+      image,
+    ])
     return new ScratchVolume(image, mountPoint)
   }
 
@@ -57,7 +83,11 @@ export class ScratchVolume {
       }
       // Take the last partial blocks as well.
       for (let size = 64 * 1024; size >= 512; size /= 2) {
-        try { written += (await file.write(Buffer.alloc(size, 0x61))).bytesWritten } catch { /* Full at this size. */ }
+        try {
+          written += (await file.write(Buffer.alloc(size, 0x61))).bytesWritten
+        } catch {
+          /* Full at this size. */
+        }
       }
     } finally {
       await file.close().catch(() => undefined)

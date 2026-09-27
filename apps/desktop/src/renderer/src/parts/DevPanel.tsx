@@ -39,7 +39,11 @@ export function DevPanel(p: Props) {
       </div>
       <label className={row}>
         Theme
-        <select value={p.theme} onChange={(e) => p.onTheme(e.target.value as Theme)} className="rounded bg-panel px-1.5 py-1">
+        <select
+          value={p.theme}
+          onChange={(e) => p.onTheme(e.target.value as Theme)}
+          className="rounded bg-panel px-1.5 py-1"
+        >
           <option value="dark">Dark</option>
           <option value="light">Light</option>
         </select>
@@ -48,16 +52,30 @@ export function DevPanel(p: Props) {
         Glass (translucent window)
         <input type="checkbox" checked={p.glass} onChange={(e) => p.onGlass(e.target.checked)} />
       </label>
-      {p.reduceTransparency ? <p className="m-0 text-fg-muted">macOS Reduce transparency is on, so glass starts off.</p> : null}
+      {p.reduceTransparency ? (
+        <p className="m-0 text-fg-muted">macOS Reduce transparency is on, so glass starts off.</p>
+      ) : null}
       {p.glass ? (
         <>
           <label className={row}>
             Background {percent(p.background)}% opaque
-            <input type="range" min={0} max={100} value={percent(p.background)} onChange={(e) => p.onBackground(Number(e.target.value) / 100)} />
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={percent(p.background)}
+              onChange={(e) => p.onBackground(Number(e.target.value) / 100)}
+            />
           </label>
           <label className={row}>
             Pane transparency {percent(p.transparency)}%
-            <input type="range" min={0} max={100} value={percent(p.transparency)} onChange={(e) => p.onTransparency(Number(e.target.value) / 100)} />
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={percent(p.transparency)}
+              onChange={(e) => p.onTransparency(Number(e.target.value) / 100)}
+            />
           </label>
           {/* 100% puts every pane at its contrast floor; the slider cannot go further. */}
           <p className="m-0 text-fg-muted">
@@ -70,7 +88,11 @@ export function DevPanel(p: Props) {
       ) : null}
       <label className={row}>
         Sidebar hide
-        <select value={p.sideHide} onChange={(e) => p.onSideHide(e.target.value as 'slide' | 'cover')} className="rounded bg-panel px-1.5 py-1">
+        <select
+          value={p.sideHide}
+          onChange={(e) => p.onSideHide(e.target.value as 'slide' | 'cover')}
+          className="rounded bg-panel px-1.5 py-1"
+        >
           <option value="slide">Slide out</option>
           <option value="cover">Cover with panes</option>
         </select>

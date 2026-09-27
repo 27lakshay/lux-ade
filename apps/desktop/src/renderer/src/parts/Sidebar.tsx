@@ -4,11 +4,53 @@ import { IconButton } from './IconButton'
 
 type Kind = 'attention' | 'running' | 'review' | 'idle'
 
-const GROUPS: { label: string; items: { kind: Kind; title: string; activity: string; where: string; time: string; selected?: boolean }[] }[] = [
-  { label: 'Needs you', items: [{ kind: 'attention', title: 'Design review pass', activity: 'Wants to run pnpm test:e2e', where: 'lux-ade · main', time: '2m', selected: true }] },
-  { label: 'Working', items: [{ kind: 'running', title: 'Packaging E2E', activity: 'Running electron-builder', where: 'lux-ade · main', time: '38s' }] },
-  { label: 'Ready to review', items: [{ kind: 'review', title: 'Service ports', activity: 'Finished · 3 files changed', where: 'lux-ade · feat/services', time: '6m' }] },
-  { label: 'Idle', items: [{ kind: 'idle', title: 'Notes cleanup', activity: 'Waiting for your next message', where: 'notes', time: '1h' }] },
+const GROUPS: {
+  label: string
+  items: { kind: Kind; title: string; activity: string; where: string; time: string; selected?: boolean }[]
+}[] = [
+  {
+    label: 'Needs you',
+    items: [
+      {
+        kind: 'attention',
+        title: 'Design review pass',
+        activity: 'Wants to run pnpm test:e2e',
+        where: 'lux-ade · main',
+        time: '2m',
+        selected: true,
+      },
+    ],
+  },
+  {
+    label: 'Working',
+    items: [
+      {
+        kind: 'running',
+        title: 'Packaging E2E',
+        activity: 'Running electron-builder',
+        where: 'lux-ade · main',
+        time: '38s',
+      },
+    ],
+  },
+  {
+    label: 'Ready to review',
+    items: [
+      {
+        kind: 'review',
+        title: 'Service ports',
+        activity: 'Finished · 3 files changed',
+        where: 'lux-ade · feat/services',
+        time: '6m',
+      },
+    ],
+  },
+  {
+    label: 'Idle',
+    items: [
+      { kind: 'idle', title: 'Notes cleanup', activity: 'Waiting for your next message', where: 'notes', time: '1h' },
+    ],
+  },
 ]
 
 function StatusMark({ kind }: { kind: Kind }) {
@@ -25,8 +67,11 @@ function StatusMark({ kind }: { kind: Kind }) {
         aria-label="Running"
       />
     )
-  if (kind === 'review') return <CircleCheck size={14} className="mt-[2px] shrink-0 text-success" aria-label="Ready to review" />
-  return <span className="mt-[4px] block h-[7px] w-[7px] shrink-0 rounded-full border border-fg-muted" aria-label="Idle" />
+  if (kind === 'review')
+    return <CircleCheck size={14} className="mt-[2px] shrink-0 text-success" aria-label="Ready to review" />
+  return (
+    <span className="mt-[4px] block h-[7px] w-[7px] shrink-0 rounded-full border border-fg-muted" aria-label="Idle" />
+  )
 }
 
 export function Sidebar() {
@@ -36,7 +81,9 @@ export function Sidebar() {
           over it. It holds nothing itself, so all of it drags the window. */}
       <div className="drag shrink-0" style={{ height: STRIP_H }} />
       <button type="button" className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-panel">
-        <span className="flex h-5 w-5 items-center justify-center rounded-[5px] bg-muted text-[11px] font-semibold">P</span>
+        <span className="flex h-5 w-5 items-center justify-center rounded-[5px] bg-muted text-[11px] font-semibold">
+          P
+        </span>
         <span className="flex-1 font-semibold">Personal</span>
         <ChevronsUpDown size={14} className="text-fg-muted" />
       </button>
@@ -45,7 +92,11 @@ export function Sidebar() {
           [SquarePen, 'New conversation', '⌘N'],
           [Search, 'Search', '⌘K'],
         ].map(([Icon, label, kbd]) => (
-          <button key={label as string} type="button" className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-panel">
+          <button
+            key={label as string}
+            type="button"
+            className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-panel"
+          >
             <Icon size={16} className="text-fg-muted" />
             <span className="flex-1">{label as string}</span>
             <span className="font-mono text-[11px] text-fg-muted">{kbd as string}</span>
@@ -68,9 +119,15 @@ export function Sidebar() {
                 <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
                   <span className="flex items-center gap-1.5">
                     <span className="flex-1 truncate font-medium">{it.title}</span>
-                    <span className={`text-[11px] ${it.kind === 'attention' ? 'text-attention' : 'text-fg-muted'}`}>{it.time}</span>
+                    <span className={`text-[11px] ${it.kind === 'attention' ? 'text-attention' : 'text-fg-muted'}`}>
+                      {it.time}
+                    </span>
                   </span>
-                  <span className={`truncate text-[12px] ${it.kind === 'attention' ? 'text-attention' : 'text-fg-muted'}`}>{it.activity}</span>
+                  <span
+                    className={`truncate text-[12px] ${it.kind === 'attention' ? 'text-attention' : 'text-fg-muted'}`}
+                  >
+                    {it.activity}
+                  </span>
                   <span className="truncate font-mono text-[11px] text-fg-muted">{it.where}</span>
                 </span>
               </button>

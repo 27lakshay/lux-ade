@@ -9,14 +9,21 @@ export function operationId(label: string): string {
 }
 
 /** Register `host` under `hostId` by pinning its current key's fingerprint, then pair it. */
-export async function addAndPair(profile: ScratchProfile, host: RemoteHost, hostId: string,
-  options: { remoteProfileId?: string; label?: string } = {}) {
-  const added = await profile.call('remote.host.add', { host_id: hostId, ssh_target: host.name,
-    expected_fingerprint: host.hostKey.fingerprint, ...(options.label ? { label: options.label } : {}),
-    ...(options.remoteProfileId ? { remote_profile_id: options.remoteProfileId } : {}) })
+export async function addAndPair(
+  profile: ScratchProfile,
+  host: RemoteHost,
+  hostId: string,
+  options: { remoteProfileId?: string; label?: string } = {},
+) {
+  const added = await profile.call('remote.host.add', {
+    host_id: hostId,
+    ssh_target: host.name,
+    expected_fingerprint: host.hostKey.fingerprint,
+    ...(options.label ? { label: options.label } : {}),
+    ...(options.remoteProfileId ? { remote_profile_id: options.remoteProfileId } : {}),
+  })
   // The lab profile holds the token in this variable; a start grants it on the host.
-  const paired = await profile.call('remote.host.pair', { host_id: hostId,
-    token_reference: { env: pairingTokenEnv } })
+  const paired = await profile.call('remote.host.pair', { host_id: hostId, token_reference: { env: pairingTokenEnv } })
   expect(paired.pairing.state).toBe('active')
   return { host: added.host, pairing: paired.pairing }
 }
@@ -39,6 +46,11 @@ export async function startedHost(remote: RemoteLab, profile: ScratchProfile, na
 
 /** The SDK transport target for a started host: the registry's SSH target and pinned key, the started socket. */
 export function targetOf(started: Awaited<ReturnType<typeof startedHost>>): RemoteTarget {
-  return { hostId: started.hostId, profileId: started.remoteProfileId, destination: started.registered.ssh_target,
-    remoteSocket: started.daemon.socket, hostPublicKey: started.registered.host_public_key }
+  return {
+    hostId: started.hostId,
+    profileId: started.remoteProfileId,
+    destination: started.registered.ssh_target,
+    remoteSocket: started.daemon.socket,
+    hostPublicKey: started.registered.host_public_key,
+  }
 }

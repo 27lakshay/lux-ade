@@ -3,8 +3,18 @@
 // retained and the session continues. A lost reply is read back after a crash
 // without a second native call. ADE never claims a context state the provider
 // did not report.
-import { conversationStatus, expect, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  conversationStatus,
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 import { snapshot } from './helpers'
 
@@ -14,15 +24,23 @@ async function nativeCompactions(profile: ScratchProfile) {
 
 const compactionText = 'Codex compacted the conversation context.'
 
-test('F040: a Codex compaction keeps its native provenance and the earlier history, and the session continues', async ({ profile }) => {
+test('F040: a Codex compaction keeps its native provenance and the earlier history, and the session continues', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
   const before = await snapshot(profile, conversationId)
-  expect((await profile.call('conversation.controls', { conversation_id: conversationId })).controls
-    .find((entry) => entry.control === 'compact')).toMatchObject({ available: true, mechanism: 'thread/compact/start' })
+  expect(
+    (await profile.call('conversation.controls', { conversation_id: conversationId })).controls.find(
+      (entry) => entry.control === 'compact',
+    ),
+  ).toMatchObject({ available: true, mechanism: 'thread/compact/start' })
 
-  const reply = await profile.call('conversation.compact', { operation_id: 'compact-keep', conversation_id: conversationId })
+  const reply = await profile.call('conversation.compact', {
+    operation_id: 'compact-keep',
+    conversation_id: conversationId,
+  })
   // Acknowledged means the provider started; ADE claims nothing more until the provider reports it.
   expect(reply).toMatchObject({ outcome: 'acknowledged', control: 'compact', reason: null, turn_id: null, files: null })
   await waitForMessage(profile, conversationId, compactionText)
@@ -31,8 +49,13 @@ test('F040: a Codex compaction keeps its native provenance and the earlier histo
 
   const after = await snapshot(profile, conversationId)
   const record = after.messages.find((message) => message.kind === 'contextCompaction')!
-  expect(record).toMatchObject({ role: 'tool', status: 'completed', text: compactionText,
-    provider_item_id: expect.stringMatching(/^compaction-/), turn_id: expect.stringMatching(/^compact-turn-/) })
+  expect(record).toMatchObject({
+    role: 'tool',
+    status: 'completed',
+    text: compactionText,
+    provider_item_id: expect.stringMatching(/^compaction-/),
+    turn_id: expect.stringMatching(/^compact-turn-/),
+  })
   // The earlier history is retained in order, before the compaction record.
   expect(after.messages.slice(0, before.messages.length)).toEqual(before.messages)
   expect(record.sequence).toBeGreaterThan(before.messages.at(-1)!.sequence)
@@ -51,11 +74,18 @@ test('F040: a Codex compaction keeps its native provenance and the earlier histo
   const cli = await profile.cli('conversation', 'compact', conversationId, '--request-id', 'compact-cli')
   expect(cli.code, cli.stderr).toBe(0)
   expect(cli.json).toMatchObject({ outcome: 'acknowledged' })
-  await expect.poll(async () => (await snapshot(profile, conversationId)).messages
-    .filter((message) => message.kind === 'contextCompaction').length).toBe(2)
+  await expect
+    .poll(
+      async () =>
+        (await snapshot(profile, conversationId)).messages.filter((message) => message.kind === 'contextCompaction')
+          .length,
+    )
+    .toBe(2)
 })
 
-test('R001: a compaction whose reply was lost is read back after a daemon crash without a second native call', async ({ profile }) => {
+test('R001: a compaction whose reply was lost is read back after a daemon crash without a second native call', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
@@ -65,19 +95,29 @@ test('R001: a compaction whose reply was lost is read back after a daemon crash 
   await waitForMessage(profile, conversationId, compactionText)
   await profile.restartDaemon('kill')
   expect(await profile.call('conversation.compact', compact)).toMatchObject({ outcome: 'acknowledged' })
-  await expect(profile.call('conversation.compact', { ...compact, conversation_id: 'conversation_other' })).rejects.toThrow()
+  await expect(
+    profile.call('conversation.compact', { ...compact, conversation_id: 'conversation_other' }),
+  ).rejects.toThrow()
   expect(await nativeCompactions(profile)).toHaveLength(1)
-  expect((await snapshot(profile, conversationId)).messages.filter((message) => message.kind === 'contextCompaction'))
-    .toHaveLength(1)
+  expect(
+    (await snapshot(profile, conversationId)).messages.filter((message) => message.kind === 'contextCompaction'),
+  ).toHaveLength(1)
 })
 
-test('F040: an unsupported provider or a busy Conversation reports why and records no compaction', async ({ profile }) => {
+test('F040: an unsupported provider or a busy Conversation reports why and records no compaction', async ({
+  profile,
+}) => {
   const claude = (await startConversation(profile, 'claude')).conversationId
   await send(profile, claude, prompts.turn)
   await waitForIdle(profile, claude)
-  const unsupported = await profile.call('conversation.compact', { operation_id: 'compact-claude', conversation_id: claude })
-  expect(unsupported).toMatchObject({ outcome: 'unavailable',
-    reason: "ADE's Claude adapter does not issue Claude Code's compaction command yet" })
+  const unsupported = await profile.call('conversation.compact', {
+    operation_id: 'compact-claude',
+    conversation_id: claude,
+  })
+  expect(unsupported).toMatchObject({
+    outcome: 'unavailable',
+    reason: "ADE's Claude adapter does not issue Claude Code's compaction command yet",
+  })
   const cli = await profile.cli('conversation', 'compact', claude, '--request-id', 'compact-claude-cli')
   expect(cli.code).not.toBe(0)
   expect(cli.stderr).toContain('compaction command')
@@ -85,10 +125,13 @@ test('F040: an unsupported provider or a busy Conversation reports why and recor
   const codex = (await startConversation(profile, 'codex')).conversationId
   await send(profile, codex, prompts.hold)
   await expect.poll(() => conversationStatus(profile, codex)).toBe('running')
-  expect(await profile.call('conversation.compact', { operation_id: 'compact-busy', conversation_id: codex }))
-    .toMatchObject({ outcome: 'unavailable', reason: 'A turn is running; compact when it finishes' })
+  expect(
+    await profile.call('conversation.compact', { operation_id: 'compact-busy', conversation_id: codex }),
+  ).toMatchObject({ outcome: 'unavailable', reason: 'A turn is running; compact when it finishes' })
   for (const conversation of [claude, codex]) {
-    expect((await snapshot(profile, conversation)).messages.some((message) => message.kind === 'contextCompaction')).toBe(false)
+    expect(
+      (await snapshot(profile, conversation)).messages.some((message) => message.kind === 'contextCompaction'),
+    ).toBe(false)
   }
   expect(await nativeCompactions(profile)).toEqual([])
 })

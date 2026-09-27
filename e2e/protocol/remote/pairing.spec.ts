@@ -12,12 +12,18 @@ import { addAndPair, operationId, startedHost, targetOf } from './steps'
 
 const execFileAsync = promisify(execFile)
 
-test('pairing is explicit, revocation refuses start, placement and preview, and remote work keeps running', async ({ remote }) => {
+test('pairing is explicit, revocation refuses start, placement and preview, and remote work keeps running', async ({
+  remote,
+}) => {
   const profile = await remote.profile()
   const host = await remote.host('devbox')
   const remoteProfileId = await host.createProfile()
-  await profile.call('remote.host.add', { host_id: 'devbox', ssh_target: 'devbox',
-    expected_fingerprint: host.hostKey.fingerprint, remote_profile_id: remoteProfileId })
+  await profile.call('remote.host.add', {
+    host_id: 'devbox',
+    ssh_target: 'devbox',
+    expected_fingerprint: host.hostKey.fingerprint,
+    remote_profile_id: remoteProfileId,
+  })
 
   // Unpaired: nothing starts and nothing runs on the host.
   const unpaired = await profile.cli('remote', 'start', 'devbox', '--request-id', operationId('unpaired'))
@@ -30,30 +36,47 @@ test('pairing is explicit, revocation refuses start, placement and preview, and 
   expect(raw.code).not.toBe(0)
   const paired = await profile.cli('remote', 'pair', 'devbox', '--token-env', 'ADE_DEVBOX_TOKEN')
   expect(paired.code).toBe(0)
-  expect(paired.json).toMatchObject({ host_id: 'devbox', enforcement: 'local_profile',
-    pairing: { state: 'active', token_reference: { env: 'ADE_DEVBOX_TOKEN' }, revoked_at_ms: null } })
+  expect(paired.json).toMatchObject({
+    host_id: 'devbox',
+    enforcement: 'local_profile',
+    pairing: { state: 'active', token_reference: { env: 'ADE_DEVBOX_TOKEN' }, revoked_at_ms: null },
+  })
   const pairingId = (paired.json?.pairing as { pairing_id: string }).pairing_id
   // Pairing again with the same reference converges; another reference is refused while one is active.
-  const repeat = await profile.call('remote.host.pair', { host_id: 'devbox', token_reference: { env: 'ADE_DEVBOX_TOKEN' } })
+  const repeat = await profile.call('remote.host.pair', {
+    host_id: 'devbox',
+    token_reference: { env: 'ADE_DEVBOX_TOKEN' },
+  })
   expect(repeat.pairing.pairing_id).toBe(pairingId)
-  await expect(profile.call('remote.host.pair', { host_id: 'devbox', token_reference: { env: 'ADE_OTHER_TOKEN' } }))
-    .rejects.toThrow(/already has active pairing/)
+  await expect(
+    profile.call('remote.host.pair', { host_id: 'devbox', token_reference: { env: 'ADE_OTHER_TOKEN' } }),
+  ).rejects.toThrow(/already has active pairing/)
 
-  const started = await profile.call('remote.host.start', { host_id: 'devbox', operation_id: operationId('paired') },
-    { timeoutMs: 120_000 })
+  const started = await profile.call(
+    'remote.host.start',
+    { host_id: 'devbox', operation_id: operationId('paired') },
+    { timeoutMs: 120_000 },
+  )
   expect(started.outcome).toBe('running')
   const daemon = started.daemon!
 
   // Remote work: a workspace opened on the host through the SDK transport.
   const registered = (await profile.call('remote.host.list', {})).hosts[0]
-  const transport = await remote.transport({ hostId: 'devbox', profileId: remoteProfileId, destination: 'devbox',
-    remoteSocket: daemon.socket, hostPublicKey: registered.host_public_key })
+  const transport = await remote.transport({
+    hostId: 'devbox',
+    profileId: remoteProfileId,
+    destination: 'devbox',
+    remoteSocket: daemon.socket,
+    hostPublicKey: registered.host_public_key,
+  })
   transport.start()
   await transport.waitUntilConnected(15_000)
   const repo = await host.repo('app')
   const opened = await remoteCall(transport, 'workspace.open', { path: repo.path })
-  await profile.call('placement.record', { host: { kind: 'remote', host_id: 'devbox' },
-    resource: { kind: 'workspace', workspace_id: opened.workspace.id } })
+  await profile.call('placement.record', {
+    host: { kind: 'remote', host_id: 'devbox' },
+    resource: { kind: 'workspace', workspace_id: opened.workspace.id },
+  })
   transport.stop()
 
   // A host with an active pairing cannot be removed.
@@ -68,15 +91,20 @@ test('pairing is explicit, revocation refuses start, placement and preview, and 
 
   // Revocation survives a daemon crash.
   await profile.restartDaemon('kill')
-  expect((await profile.call('remote.host.list', {})).hosts[0].pairing).toMatchObject({ pairing_id: pairingId,
-    state: 'revoked' })
+  expect((await profile.call('remote.host.list', {})).hosts[0].pairing).toMatchObject({
+    pairing_id: pairingId,
+    state: 'revoked',
+  })
 
   const commandsBefore = (await remote.calls()).length
   const refusedStart = await profile.cli('remote', 'start', 'devbox', '--request-id', operationId('revoked'))
   expect(refusedStart.code).not.toBe(0)
   expect(refusedStart.json?.message).toContain(`Pairing ${pairingId} with devbox was revoked`)
-  const check = await profile.call('placement.check', { host: { kind: 'remote', host_id: 'devbox' },
-    resource: 'conversation', workspace_id: opened.workspace.id })
+  const check = await profile.call('placement.check', {
+    host: { kind: 'remote', host_id: 'devbox' },
+    resource: 'conversation',
+    workspace_id: opened.workspace.id,
+  })
   expect(check).toMatchObject({ admitted: false, host: { kind: 'remote', host_id: 'devbox' } })
   expect(check.reason).toMatch(/revoked/i)
   const entry = (await profile.call('placement.hosts', {})).hosts.find((candidate) => candidate.host.kind === 'remote')
@@ -92,25 +120,34 @@ test('pairing is explicit, revocation refuses start, placement and preview, and 
   const status = await host.daemonStatus(remoteProfileId)
   expect(status?.daemon).toMatchObject({ pid: daemon.pid })
   expect((await host.control('runtime', 'status', '--home', host.runtimeHome(remoteProfileId))).code).toBe(0)
-  expect((await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: opened.workspace.id } }))
-    .placement.host).toEqual({ kind: 'remote', host_id: 'devbox' })
+  expect(
+    (await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: opened.workspace.id } }))
+      .placement.host,
+  ).toEqual({ kind: 'remote', host_id: 'devbox' })
 
   // The host stays registered while its placements are recorded; pairing again is a new, explicit pairing.
   await expect(profile.call('remote.host.remove', { host_id: 'devbox' })).rejects.toThrow(/recorded placement/)
-  const repaired = await profile.call('remote.host.pair', { host_id: 'devbox', token_reference: { env: 'ADE_DEVBOX_TOKEN' } })
+  const repaired = await profile.call('remote.host.pair', {
+    host_id: 'devbox',
+    token_reference: { env: 'ADE_DEVBOX_TOKEN' },
+  })
   expect(repaired.pairing.pairing_id).not.toBe(pairingId)
   expect(repaired.pairing.state).toBe('active')
 })
 
-test('the remote daemon listens only on an owner-only Unix socket reached through the pinned SSH forward', async ({ remote }) => {
+test('the remote daemon listens only on an owner-only Unix socket reached through the pinned SSH forward', async ({
+  remote,
+}) => {
   const profile = await remote.profile()
   const started = await startedHost(remote, profile, 'devbox')
 
   // No TCP listener on the remote daemon or its runtime.
   const runtimePid = (await started.host.daemonHello(started.remoteProfileId))?.runtime_pid as number
   for (const pid of [started.daemon.pid, runtimePid]) {
-    const listening = await execFileAsync('lsof', ['-nP', '-a', '-p', String(pid), '-iTCP', '-sTCP:LISTEN'])
-      .then(({ stdout }) => stdout.trim(), () => '')
+    const listening = await execFileAsync('lsof', ['-nP', '-a', '-p', String(pid), '-iTCP', '-sTCP:LISTEN']).then(
+      ({ stdout }) => stdout.trim(),
+      () => '',
+    )
     expect(listening).toBe('')
   }
   const socket = await stat(started.daemon.socket)
@@ -122,12 +159,22 @@ test('the remote daemon listens only on an owner-only Unix socket reached throug
   const transport = await remote.transport(targetOf(started))
   transport.start()
   const state = await transport.waitUntilConnected(15_000)
-  expect(state.current?.runtimeSocket).toBe(
-    (await started.host.daemonHello(started.remoteProfileId))?.runtime_socket)
+  expect(state.current?.runtimeSocket).toBe((await started.host.daemonHello(started.remoteProfileId))?.runtime_socket)
   const forward = (await remote.calls()).find((call) => call.forwarding)!
-  expect(forward.args).toEqual(expect.arrayContaining(['-N', 'StrictHostKeyChecking=yes', 'BatchMode=yes',
-    'HostKeyAlias=ade-remote-devbox', 'GlobalKnownHostsFile=/dev/null', 'StreamLocalBindMask=0177',
-    'ExitOnForwardFailure=yes', 'ControlPath=none', '--', 'devbox']))
+  expect(forward.args).toEqual(
+    expect.arrayContaining([
+      '-N',
+      'StrictHostKeyChecking=yes',
+      'BatchMode=yes',
+      'HostKeyAlias=ade-remote-devbox',
+      'GlobalKnownHostsFile=/dev/null',
+      'StreamLocalBindMask=0177',
+      'ExitOnForwardFailure=yes',
+      'ControlPath=none',
+      '--',
+      'devbox',
+    ]),
+  )
   const local = forward.forwarding![0].split(':')[0]
   expect(forward.forwarding![0]).toBe(`${local}:${started.daemon.socket}`)
   expect((await stat(local)).mode & 0o077).toBe(0)
@@ -147,23 +194,35 @@ test('the remote daemon listens only on an owner-only Unix socket reached throug
 test('the remote daemon rejects a connection that presents a revoked pairing', async ({ remote }) => {
   const profile = await remote.profile()
   const started = await startedHost(remote, profile, 'devbox')
-  const revoked = await profile.call('remote.host.revoke', { host_id: 'devbox', pairing_id: started.pairing.pairing_id },
-    { timeoutMs: 75_000 })
+  const revoked = await profile.call(
+    'remote.host.revoke',
+    { host_id: 'devbox', pairing_id: started.pairing.pairing_id },
+    { timeoutMs: 75_000 },
+  )
   expect(revoked.enforcement).toBe('remote_daemon')
-  const transport = await remote.transport({ ...targetOf(started), remoteSocket: started.daemon.paired_socket!,
-    pairing: { pairingId: started.pairing.pairing_id, token: remote.pairingToken } })
+  const transport = await remote.transport({
+    ...targetOf(started),
+    remoteSocket: started.daemon.paired_socket!,
+    pairing: { pairingId: started.pairing.pairing_id, token: remote.pairingToken },
+  })
   transport.start()
   await expect(transport.waitUntilConnected(10_000)).rejects.toMatchObject({ code: 'pairing_revoked' })
 })
 
-test('a pairing is recorded for an explicit host only and revoking an unknown pairing is refused', async ({ remote }) => {
+test('a pairing is recorded for an explicit host only and revoking an unknown pairing is refused', async ({
+  remote,
+}) => {
   const profile = await remote.profile()
   const host = await remote.host('devbox')
-  await expect(profile.call('remote.host.pair', { host_id: 'ghost', token_reference: { env: 'ADE_GHOST_TOKEN' } }))
-    .rejects.toThrow(/Unknown remote host ghost/)
+  await expect(
+    profile.call('remote.host.pair', { host_id: 'ghost', token_reference: { env: 'ADE_GHOST_TOKEN' } }),
+  ).rejects.toThrow(/Unknown remote host ghost/)
   const { pairing } = await addAndPair(profile, host, 'devbox')
-  await expect(profile.call('remote.host.revoke', { host_id: 'devbox', pairing_id: 'not-a-pairing' }))
-    .rejects.toThrow(/Unknown pairing/)
-  expect((await profile.call('remote.host.list', {})).hosts[0].pairing).toMatchObject({ pairing_id: pairing.pairing_id,
-    state: 'active' })
+  await expect(profile.call('remote.host.revoke', { host_id: 'devbox', pairing_id: 'not-a-pairing' })).rejects.toThrow(
+    /Unknown pairing/,
+  )
+  expect((await profile.call('remote.host.list', {})).hosts[0].pairing).toMatchObject({
+    pairing_id: pairing.pairing_id,
+    state: 'active',
+  })
 })

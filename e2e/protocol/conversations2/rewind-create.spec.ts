@@ -5,8 +5,16 @@
 // Conversation rewind that is unavailable is not attempted, so it records no
 // receipt at all.
 // conversation.create replays under its operation ID, also after a crash.
-import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile,
-  type ScratchRepo } from '../fixtures'
+import {
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  waitForIdle,
+  type ScratchProfile,
+  type ScratchRepo,
+} from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 
 async function checkpointed(profile: ScratchProfile, repo: ScratchRepo) {
@@ -14,24 +22,39 @@ async function checkpointed(profile: ScratchProfile, repo: ScratchRepo) {
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
   await repo.dirty('README.md', '# Scratch repository\n\nAt the checkpoint.\n')
-  const { checkpoint } = await profile.call('checkpoint.create', { operation_id: `cp-${conversationId}`,
-    workspace_id: workspaceId })
+  const { checkpoint } = await profile.call('checkpoint.create', {
+    operation_id: `cp-${conversationId}`,
+    workspace_id: workspaceId,
+  })
   await repo.dirty('README.md', '# Scratch repository\n\nAfter the checkpoint.\n')
-  const preview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId, scope: 'files',
-    checkpoint_id: checkpoint.checkpoint_id })
+  const preview = await profile.call('conversation.rewind.preview', {
+    conversation_id: conversationId,
+    scope: 'files',
+    checkpoint_id: checkpoint.checkpoint_id,
+  })
   expect(preview.availability).toMatchObject({ available: true })
   return { workspaceId, conversationId, checkpoint, state: preview.files!.state_token }
 }
 
 async function safetyCheckpoints(profile: ScratchProfile, workspaceId: string): Promise<number> {
-  return (await profile.call('checkpoint.list', { workspace_id: workspaceId })).checkpoints
-    .filter((entry) => entry.kind === 'safety').length
+  return (await profile.call('checkpoint.list', { workspace_id: workspaceId })).checkpoints.filter(
+    (entry) => entry.kind === 'safety',
+  ).length
 }
 
-test('R001 and R002: a file rewind whose reply was lost restores once and a retry after a crash reads its outcome', async ({ profile, repo }) => {
+test('R001 and R002: a file rewind whose reply was lost restores once and a retry after a crash reads its outcome', async ({
+  profile,
+  repo,
+}) => {
   const { workspaceId, conversationId, checkpoint, state } = await checkpointed(profile, repo)
-  const rewind = { operation_id: 'rewind-files', conversation_id: conversationId, scope: 'files' as const,
-    checkpoint_id: checkpoint.checkpoint_id, expected_state: state, confirm_overwrite: true }
+  const rewind = {
+    operation_id: 'rewind-files',
+    conversation_id: conversationId,
+    scope: 'files' as const,
+    checkpoint_id: checkpoint.checkpoint_id,
+    expected_state: state,
+    confirm_overwrite: true,
+  }
   await sendAndLoseReply(profile, { op: 'conversation.rewind', ...rewind })
   await expect.poll(() => repo.read('README.md')).toContain('At the checkpoint')
   await expect.poll(() => safetyCheckpoints(profile, workspaceId)).toBe(1)
@@ -43,18 +66,29 @@ test('R001 and R002: a file rewind whose reply was lost restores once and a retr
   expect(reply).toMatchObject({ outcome: 'restored', control: 'rewind_files', operation_id: 'rewind-files' })
   expect(reply.files?.checkpoint_id).toBe(checkpoint.checkpoint_id)
   expect(await profile.call('conversation.rewind', rewind)).toEqual(reply)
-  const cli = await profile.cli('conversation', 'rewind', conversationId, 'files', checkpoint.checkpoint_id, state,
-    '--request-id', 'rewind-files', '--confirm-overwrite')
+  const cli = await profile.cli(
+    'conversation',
+    'rewind',
+    conversationId,
+    'files',
+    checkpoint.checkpoint_id,
+    state,
+    '--request-id',
+    'rewind-files',
+    '--confirm-overwrite',
+  )
   expect(cli.code, cli.stderr).toBe(0)
   expect(await repo.read('README.md')).toContain('Edited after the rewind')
   expect(await safetyCheckpoints(profile, workspaceId)).toBe(1)
 
   // The same operation ID with another payload conflicts and writes nothing.
-  await expect(profile.call('conversation.rewind', { ...rewind, confirm_overwrite: false }))
-    .rejects.toThrow(/already used for a different request/)
+  await expect(profile.call('conversation.rewind', { ...rewind, confirm_overwrite: false })).rejects.toThrow(
+    /already used for a different request/,
+  )
   const other = await startConversation(profile, 'codex', repo.path)
-  await expect(profile.call('conversation.rewind', { ...rewind, conversation_id: other.conversationId }))
-    .rejects.toThrow(/already used for a different request/)
+  await expect(
+    profile.call('conversation.rewind', { ...rewind, conversation_id: other.conversationId }),
+  ).rejects.toThrow(/already used for a different request/)
   expect(await repo.read('README.md')).toContain('Edited after the rewind')
   expect(await safetyCheckpoints(profile, workspaceId)).toBe(1)
 })
@@ -66,39 +100,57 @@ test('R002: an unavailable Conversation rewind reports its limitation and record
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
   await profile.call('agent.disconnect', { conversation_id: conversationId })
-  const rewind = { operation_id: 'rewind-conversation', conversation_id: conversationId, scope: 'conversation' as const,
-    confirm_overwrite: false }
-  expect(await profile.call('conversation.rewind', rewind)).toMatchObject({ outcome: 'unavailable',
-    reason: expect.stringContaining('not connected') })
+  const rewind = {
+    operation_id: 'rewind-conversation',
+    conversation_id: conversationId,
+    scope: 'conversation' as const,
+    confirm_overwrite: false,
+  }
+  expect(await profile.call('conversation.rewind', rewind)).toMatchObject({
+    outcome: 'unavailable',
+    reason: expect.stringContaining('not connected'),
+  })
   expect(await profile.call('conversation.rewind', rewind)).toMatchObject({ outcome: 'unavailable' })
   // Nothing was recorded under the ID, so it stays free for a real operation.
   await profile.call('agent.resume', { conversation_id: conversationId })
   await waitForIdle(profile, conversationId)
-  expect(await profile.call('conversation.compact', { operation_id: 'rewind-conversation', conversation_id: conversationId }))
-    .toMatchObject({ outcome: 'acknowledged' })
+  expect(
+    await profile.call('conversation.compact', {
+      operation_id: 'rewind-conversation',
+      conversation_id: conversationId,
+    }),
+  ).toMatchObject({ outcome: 'acknowledged' })
 })
 
 test('R002: a conversation.create retried under the same operation ID makes one Conversation', async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const request = { op: 'conversation.create', operation_id: 'create-once', workspace_id: workspace.id, provider: 'codex' }
+  const request = {
+    op: 'conversation.create',
+    operation_id: 'create-once',
+    workspace_id: workspace.id,
+    provider: 'codex',
+  }
   await sendAndLoseReply(profile, request)
   // Retry until the lost attempt has settled: while it runs the retry reads
   // "still running". A kill before settlement is envelope.spec.ts's case.
   let first: { conversation: { id: string } } | undefined
-  await expect.poll(async () => {
-    try {
-      first = await profile.rpc(request) as { conversation: { id: string } }
-      return 'settled'
-    } catch (error) {
-      if (/still running/.test(String(error))) return 'running'
-      throw error
-    }
-  }).toBe('settled')
+  await expect
+    .poll(async () => {
+      try {
+        first = (await profile.rpc(request)) as { conversation: { id: string } }
+        return 'settled'
+      } catch (error) {
+        if (/still running/.test(String(error))) return 'running'
+        throw error
+      }
+    })
+    .toBe('settled')
   await profile.restartDaemon('kill')
-  const second = await profile.rpc(request) as { conversation: { id: string } }
+  const second = (await profile.rpc(request)) as { conversation: { id: string } }
   expect(second.conversation.id).toBe(first!.conversation.id)
   await expect(profile.rpc({ ...request, provider: 'claude' })).rejects.toThrow(/different request/)
   const { catalog } = await profile.call('catalog.get', {})
-  expect(catalog.conversations.filter((item) => item.workspace_id === workspace.id).map((item) => item.id))
-    .toEqual([first!.conversation.id])
+  expect(catalog.conversations.filter((item) => item.workspace_id === workspace.id).map((item) => item.id)).toEqual([
+    first!.conversation.id,
+  ])
 })

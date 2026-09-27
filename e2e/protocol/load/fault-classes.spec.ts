@@ -12,14 +12,20 @@ import { repositoryRoot } from '../fixtures/environment'
 import { faultClasses } from '../fault-suite'
 
 type Listed = { file: string; title: string; fixme: boolean }
-type JsonSuite = { title: string; file?: string; specs?: Array<{ title: string; file: string;
-  tests?: Array<{ annotations?: Array<{ type: string }> }> }>; suites?: JsonSuite[] }
+type JsonSuite = {
+  title: string
+  file?: string
+  specs?: Array<{ title: string; file: string; tests?: Array<{ annotations?: Array<{ type: string }> }> }>
+  suites?: JsonSuite[]
+}
 
 /** Every test the fault suite runs, as its file under e2e/protocol and its full title. */
 async function faultSuiteTests(): Promise<Listed[]> {
-  const { stdout } = await promisify(execFile)(join(repositoryRoot, 'node_modules/.bin/playwright'),
+  const { stdout } = await promisify(execFile)(
+    join(repositoryRoot, 'node_modules/.bin/playwright'),
     ['test', '--config', 'playwright.faults.config.ts', '--list', '--reporter=json'],
-    { cwd: repositoryRoot, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, FORCE_COLOR: '0' } })
+    { cwd: repositoryRoot, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, FORCE_COLOR: '0' } },
+  )
   const report = JSON.parse(stdout) as { suites: JsonSuite[] }
   const listed: Listed[] = []
   const walk = (suite: JsonSuite, path: string[]) => {
@@ -38,13 +44,22 @@ test('every fault class of architecture section 12 has tests that run in the fau
   expect(listed.length).toBeGreaterThan(200)
   for (const entry of faultClasses) {
     for (const fault of entry.faults) {
-      if (!fault.gap) expect.soft(fault.tests.length, `class ${entry.id}: ${fault.fault} names no test`).toBeGreaterThan(0)
+      if (!fault.gap)
+        expect.soft(fault.tests.length, `class ${entry.id}: ${fault.fault} names no test`).toBeGreaterThan(0)
       for (const named of fault.tests) {
         const found = listed.filter((item) => item.file === named.file && item.title.includes(named.title))
-        expect.soft(found.length > 0, `class ${entry.id} (${fault.fault}): "${named.title}" in ${named.file} is not in the fault suite`)
+        expect
+          .soft(
+            found.length > 0,
+            `class ${entry.id} (${fault.fault}): "${named.title}" in ${named.file} is not in the fault suite`,
+          )
           .toBe(true)
         // A fixme is listed but never runs, so it cannot cover a fault; name the gap instead.
-        expect.soft(found.some((item) => !item.fixme), `class ${entry.id} (${fault.fault}): "${named.title}" in ${named.file} is a fixme`)
+        expect
+          .soft(
+            found.some((item) => !item.fixme),
+            `class ${entry.id} (${fault.fault}): "${named.title}" in ${named.file} is a fixme`,
+          )
           .toBe(found.length > 0)
       }
     }

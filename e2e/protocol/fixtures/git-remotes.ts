@@ -16,8 +16,7 @@ import type { ScratchRepo } from './git'
 import type { ScratchProfile } from './profile'
 
 /** A new bare repository at `path`. With `seed`, pushes `seed`'s `branch` into it. */
-export async function bareRemote(repo: ScratchRepo, path: string,
-  seed?: { branch?: string }): Promise<string> {
+export async function bareRemote(repo: ScratchRepo, path: string, seed?: { branch?: string }): Promise<string> {
   await mkdir(dirname(path), { recursive: true })
   await repo.git('init', '--quiet', '--bare', '--initial-branch=main', path)
   if (seed) await repo.git('push', '--quiet', path, `${seed.branch ?? 'main'}:refs/heads/${seed.branch ?? 'main'}`)
@@ -81,7 +80,10 @@ export async function forgeSsh(dir: string, root: string): Promise<ForgeSsh> {
     root,
     async calls() {
       const text = await readFile(join(dir, 'calls.jsonl'), 'utf8').catch(() => '')
-      return text.split('\n').filter(Boolean).map((line) => JSON.parse(line))
+      return text
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
     },
   }
 }

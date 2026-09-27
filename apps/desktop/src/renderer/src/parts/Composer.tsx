@@ -28,7 +28,11 @@ function ContextRing({ used }: { used: number }) {
 
 function Chip({ children, label }: { children: React.ReactNode; label: string }) {
   return (
-    <button type="button" aria-label={label} className="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 text-fg-muted hover:bg-panel hover:text-fg">
+    <button
+      type="button"
+      aria-label={label}
+      className="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 text-fg-muted hover:bg-panel hover:text-fg"
+    >
       {children}
       <ChevronDown size={12} className="opacity-60" />
     </button>

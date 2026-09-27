@@ -8,21 +8,32 @@ import { isRunning } from '../fixtures'
 import { expect, test } from '../fixtures/managed-profiles'
 import { processTable } from '../fixtures/processes'
 
-test('the CLI cold-starts a registered profile through ade-control, detached, and later clients attach to it', async ({ host }) => {
+test('the CLI cold-starts a registered profile through ade-control, detached, and later clients attach to it', async ({
+  host,
+}) => {
   const work = await host.create('Work')
 
   // Registered, but nothing runs before first use.
   const listed = await host.cli('profile', 'list')
   expect(listed.code, listed.stderr).toBe(0)
-  expect(listed.json).toMatchObject({ type: 'profiles', selected_id: work.id,
-    profiles: [{ id: work.id, name: 'Work', home: work.runtimeHome, selected: true }] })
+  expect(listed.json).toMatchObject({
+    type: 'profiles',
+    selected_id: work.id,
+    profiles: [{ id: work.id, name: 'Work', home: work.runtimeHome, selected: true }],
+  })
   expect(await work.hello()).toBeNull()
 
   // The first command starts the daemon and its runtime.
   const status = await work.cli('status')
   expect(status.code, status.stderr).toBe(0)
-  const first = status.json as { type: string; pid: number; boot_id: string; runtime_pid: number; runtime_socket: string;
-    runtime_instance: string }
+  const first = status.json as {
+    type: string
+    pid: number
+    boot_id: string
+    runtime_pid: number
+    runtime_socket: string
+    runtime_instance: string
+  }
   expect(first.type).toBe('hello')
   expect(await isRunning(first.pid)).toBe(true)
   expect(await isRunning(first.runtime_pid)).toBe(true)
@@ -64,7 +75,9 @@ test('concurrent first commands on one profile start exactly one daemon', async 
   expect(await work.hello()).toMatchObject({ pid: [...pids][0], boot_id: [...boots][0] })
 })
 
-test('an unknown, malformed or conflicting profile selection is refused without starting anything', async ({ host }) => {
+test('an unknown, malformed or conflicting profile selection is refused without starting anything', async ({
+  host,
+}) => {
   const work = await host.create('Work')
 
   const unknown = await work.cliWith({ profile: randomUUID() }, 'status')
@@ -87,7 +100,10 @@ test('an unknown, malformed or conflicting profile selection is refused without 
   expect(await work.hello()).toBeNull()
 })
 
-test('after a daemon crash the next command starts a replacement that adopts the live runtime, and after a host crash a fresh one', async ({ host, repo }) => {
+test('after a daemon crash the next command starts a replacement that adopts the live runtime, and after a host crash a fresh one', async ({
+  host,
+  repo,
+}) => {
   const work = await host.create('Work')
   const opened = await work.cli('workspace', 'open', repo.path)
   expect(opened.code, opened.stderr).toBe(0)
@@ -120,7 +136,10 @@ test('after a daemon crash the next command starts a replacement that adopts the
   expect(await isRunning(fresh.runtime_pid)).toBe(true)
 })
 
-test('a stopped profile leaves nothing running, and the next command starts it again on the same data', async ({ host, repo }) => {
+test('a stopped profile leaves nothing running, and the next command starts it again on the same data', async ({
+  host,
+  repo,
+}) => {
   const work = await host.create('Work')
   const opened = await work.cli('workspace', 'open', repo.path)
   expect(opened.code, opened.stderr).toBe(0)

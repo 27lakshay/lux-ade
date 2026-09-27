@@ -16,10 +16,19 @@ test('several hosts are labelled apart, keep their own resources and reconnect i
   const { hosts } = await profile.call('placement.hosts', {})
   expect(hosts.map((entry) => entry.host)).toEqual([{ kind: 'local' }, remoteHost('alpha'), remoteHost('beta')])
   const [, alphaEntry, betaEntry] = hosts
-  expect(alphaEntry).toMatchObject({ label: 'alpha', readiness: 'started', remote_socket: alpha.daemon.socket,
-    remote_profile_id: alpha.remoteProfileId, capabilities: { previews: 'ssh_forward', devices: 'unsupported' } })
-  expect(betaEntry).toMatchObject({ label: 'beta', readiness: 'started', remote_socket: beta.daemon.socket,
-    remote_profile_id: beta.remoteProfileId })
+  expect(alphaEntry).toMatchObject({
+    label: 'alpha',
+    readiness: 'started',
+    remote_socket: alpha.daemon.socket,
+    remote_profile_id: alpha.remoteProfileId,
+    capabilities: { previews: 'ssh_forward', devices: 'unsupported' },
+  })
+  expect(betaEntry).toMatchObject({
+    label: 'beta',
+    readiness: 'started',
+    remote_socket: beta.daemon.socket,
+    remote_profile_id: beta.remoteProfileId,
+  })
   expect(alpha.daemon.socket).not.toBe(beta.daemon.socket)
   expect(alpha.daemon.boot_id).not.toBe(beta.daemon.boot_id)
 
@@ -32,18 +41,29 @@ test('several hosts are labelled apart, keep their own resources and reconnect i
   expect(alphaState.key).not.toBe(betaState.key)
   expect(alphaState.pinned?.runtimeSocket).not.toBe(betaState.pinned?.runtimeSocket)
 
-  const alphaWorkspace = (await remoteCall(alphaLink, 'workspace.open', { path: (await alpha.host.repo('a')).path })).workspace
-  const betaWorkspace = (await remoteCall(betaLink, 'workspace.open', { path: (await beta.host.repo('b')).path })).workspace
-  await profile.call('placement.record', { host: remoteHost('alpha'),
-    resource: { kind: 'workspace', workspace_id: alphaWorkspace.id } })
-  await profile.call('placement.record', { host: remoteHost('beta'),
-    resource: { kind: 'workspace', workspace_id: betaWorkspace.id } })
+  const alphaWorkspace = (await remoteCall(alphaLink, 'workspace.open', { path: (await alpha.host.repo('a')).path }))
+    .workspace
+  const betaWorkspace = (await remoteCall(betaLink, 'workspace.open', { path: (await beta.host.repo('b')).path }))
+    .workspace
+  await profile.call('placement.record', {
+    host: remoteHost('alpha'),
+    resource: { kind: 'workspace', workspace_id: alphaWorkspace.id },
+  })
+  await profile.call('placement.record', {
+    host: remoteHost('beta'),
+    resource: { kind: 'workspace', workspace_id: betaWorkspace.id },
+  })
   // A resource belongs to one host: recording it on another is refused.
-  await expect(profile.call('placement.record', { host: remoteHost('beta'),
-    resource: { kind: 'workspace', workspace_id: alphaWorkspace.id } })).rejects.toThrow(/alpha/)
+  await expect(
+    profile.call('placement.record', {
+      host: remoteHost('beta'),
+      resource: { kind: 'workspace', workspace_id: alphaWorkspace.id },
+    }),
+  ).rejects.toThrow(/alpha/)
   const alphaOnly = await profile.call('placement.list', { host_id: 'alpha' })
   expect(alphaOnly.placements.map((placement) => placement.resource)).toEqual([
-    { kind: 'workspace', workspace_id: alphaWorkspace.id }])
+    { kind: 'workspace', workspace_id: alphaWorkspace.id },
+  ])
   // Each daemon holds only its own workspace.
   const alphaCatalog = (await remoteCall(alphaLink, 'catalog.get', {})).catalog.workspaces.map((entry) => entry.id)
   const betaCatalog = (await remoteCall(betaLink, 'catalog.get', {})).catalog.workspaces.map((entry) => entry.id)
@@ -68,19 +88,28 @@ test('several hosts are labelled apart, keep their own resources and reconnect i
   await profile.restartDaemon()
   const restored = (await profile.call('placement.hosts', {})).hosts
   expect(restored.map((entry) => entry.readiness)).toEqual(['ready', 'started', 'started'])
-  expect(restored.slice(1).map((entry) => [entry.label, entry.remote_socket]))
-    .toEqual([['alpha', alpha.daemon.socket], ['beta', beta.daemon.socket]])
-  expect((await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: betaWorkspace.id } }))
-    .placement.host).toEqual(remoteHost('beta'))
+  expect(restored.slice(1).map((entry) => [entry.label, entry.remote_socket])).toEqual([
+    ['alpha', alpha.daemon.socket],
+    ['beta', beta.daemon.socket],
+  ])
+  expect(
+    (await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: betaWorkspace.id } }))
+      .placement.host,
+  ).toEqual(remoteHost('beta'))
 })
 
-test('placement names its host explicitly, survives retries and is refused on an unavailable or incompatible host', async ({ remote }) => {
+test('placement names its host explicitly, survives retries and is refused on an unavailable or incompatible host', async ({
+  remote,
+}) => {
   const profile = await remote.profile()
   const alpha = await startedHost(remote, profile, 'alpha')
   const bare = await remote.host('bare', { artifacts: [] })
   await addAndPair(profile, bare, 'bare')
-  const failed = await profile.call('remote.host.start', { host_id: 'bare', operation_id: operationId('bare') },
-    { timeoutMs: 120_000 })
+  const failed = await profile.call(
+    'remote.host.start',
+    { host_id: 'bare', operation_id: operationId('bare') },
+    { timeoutMs: 120_000 },
+  )
   expect(failed.outcome).toBe('failed')
   const { admitPlacement } = await remoteClient()
 
@@ -96,22 +125,37 @@ test('placement names its host explicitly, survives retries and is refused on an
   expect(link.admitPlacement(check)).toMatchObject({ admitted: false })
   link.start()
   await link.waitUntilConnected(15_000)
-  expect(link.admitPlacement(check)).toMatchObject({ admitted: true, via: 'remote_transport', host: remoteHost('alpha') })
+  expect(link.admitPlacement(check)).toMatchObject({
+    admitted: true,
+    via: 'remote_transport',
+    host: remoteHost('alpha'),
+  })
   const workspace = (await remoteCall(link, 'workspace.open', { path: (await alpha.host.repo('app')).path })).workspace
-  const recorded = await profile.call('placement.record', { host: remoteHost('alpha'),
-    resource: { kind: 'workspace', workspace_id: workspace.id } })
+  const recorded = await profile.call('placement.record', {
+    host: remoteHost('alpha'),
+    resource: { kind: 'workspace', workspace_id: workspace.id },
+  })
 
   // Retries keep the choice: the same check and record converge.
   for (let attempt = 0; attempt < 2; attempt++) {
-    expect(await profile.call('placement.check', { host: remoteHost('alpha'), resource: 'conversation',
-      workspace_id: workspace.id })).toMatchObject({ admitted: true, host: remoteHost('alpha') })
-    const again = await profile.call('placement.record', { host: remoteHost('alpha'),
-      resource: { kind: 'workspace', workspace_id: workspace.id } })
+    expect(
+      await profile.call('placement.check', {
+        host: remoteHost('alpha'),
+        resource: 'conversation',
+        workspace_id: workspace.id,
+      }),
+    ).toMatchObject({ admitted: true, host: remoteHost('alpha') })
+    const again = await profile.call('placement.record', {
+      host: remoteHost('alpha'),
+      resource: { kind: 'workspace', workspace_id: workspace.id },
+    })
     expect(again.placement).toEqual(recorded.placement)
   }
   await profile.restartDaemon('kill')
-  expect((await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: workspace.id } }))
-    .placement).toEqual(recorded.placement)
+  expect(
+    (await profile.call('placement.resolve', { resource: { kind: 'workspace', workspace_id: workspace.id } }))
+      .placement,
+  ).toEqual(recorded.placement)
 
   // Unregistered, failed and incompatible placements are refused, naming the chosen host and nothing else.
   const ghost = await profile.cli('placement', 'check', 'ghost', 'workspace')
@@ -123,17 +167,26 @@ test('placement names its host explicitly, survives retries and is refused on an
   expect(unavailable.reason).toContain('The last start failed')
   expect(unavailable.reason).toContain('Nothing was placed')
   expect(unavailable.reason).not.toMatch(/local|this Mac/i)
-  const wrongHost = await profile.call('placement.check', { host: remoteHost('bare'), resource: 'conversation',
-    workspace_id: workspace.id })
+  const wrongHost = await profile.call('placement.check', {
+    host: remoteHost('bare'),
+    resource: 'conversation',
+    workspace_id: workspace.id,
+  })
   expect(wrongHost).toMatchObject({ admitted: false })
   expect(wrongHost.reason).toContain('The workspace runs on remote host alpha')
-  const localInRemote = await profile.call('placement.check', { host: { kind: 'local' }, resource: 'terminal',
-    workspace_id: workspace.id })
+  const localInRemote = await profile.call('placement.check', {
+    host: { kind: 'local' },
+    resource: 'terminal',
+    workspace_id: workspace.id,
+  })
   expect(localInRemote).toMatchObject({ admitted: false })
   expect(localInRemote.reason).toContain('remote host alpha')
-  await expect(profile.call('placement.record', { host: remoteHost('bare'),
-    resource: { kind: 'conversation', workspace_id: workspace.id, conversation_id: 'conversation_x' } }))
-    .rejects.toThrow()
+  await expect(
+    profile.call('placement.record', {
+      host: remoteHost('bare'),
+      resource: { kind: 'conversation', workspace_id: workspace.id, conversation_id: 'conversation_x' },
+    }),
+  ).rejects.toThrow()
 
   // A link loss makes the host unusable for new work until it reconnects; nothing goes local.
   await alpha.host.linkDown()
@@ -146,24 +199,44 @@ test('placement names its host explicitly, survives retries and is refused on an
   expect(link.admitPlacement(check)).toMatchObject({ admitted: true, via: 'remote_transport' })
 })
 
-test('the remote preview capability forwards only the chosen host\'s loopback service and reports device control unsupported', async ({ remote }) => {
+test("the remote preview capability forwards only the chosen host's loopback service and reports device control unsupported", async ({
+  remote,
+}) => {
   const profile = await remote.profile()
   const alpha = await startedHost(remote, profile, 'alpha')
   await startedHost(remote, profile, 'beta')
 
   const local = await profile.cli('placement', 'preview', 'local', 'http://localhost:3000/')
   expect(local.code).toBe(0)
-  expect(local.json).toMatchObject({ preview: { host: { kind: 'local' }, transport: 'direct', available: true },
-    devices: { host: { kind: 'local' }, access: 'local_host' } })
+  expect(local.json).toMatchObject({
+    preview: { host: { kind: 'local' }, transport: 'direct', available: true },
+    devices: { host: { kind: 'local' }, access: 'local_host' },
+  })
 
-  const forwarded = await profile.cli('placement', 'preview', 'alpha', 'http://127.0.0.1:5173/app', '--timeout-ms', '15000')
+  const forwarded = await profile.cli(
+    'placement',
+    'preview',
+    'alpha',
+    'http://127.0.0.1:5173/app',
+    '--timeout-ms',
+    '15000',
+  )
   expect(forwarded.code, forwarded.stderr).toBe(0)
   expect(forwarded.json).toMatchObject({
-    preview: { host: remoteHost('alpha'), transport: 'ssh_forward', supported: true, available: true,
-      remoteHost: '127.0.0.1', remotePort: 5173, reason: null },
+    preview: {
+      host: remoteHost('alpha'),
+      transport: 'ssh_forward',
+      supported: true,
+      available: true,
+      remoteHost: '127.0.0.1',
+      remotePort: 5173,
+      reason: null,
+    },
     devices: { host: remoteHost('alpha'), access: 'unsupported', available: false },
   })
-  expect((forwarded.json?.devices as { reason: string }).reason).toContain('nothing is redirected to a device on this Mac')
+  expect((forwarded.json?.devices as { reason: string }).reason).toContain(
+    'nothing is redirected to a device on this Mac',
+  )
   // The capability came from a forward to alpha's own daemon, not beta's and not a local one.
   const forwards = (await remote.calls()).filter((call) => call.forwarding)
   expect(forwards).toHaveLength(1)
@@ -179,8 +252,9 @@ test('the remote preview capability forwards only the chosen host\'s loopback se
   await alpha.host.linkDown()
   const down = await profile.cli('placement', 'preview', 'alpha', 'http://127.0.0.1:5173/', '--timeout-ms', '3000')
   expect(down.code).toBe(0)
-  expect(down.json).toMatchObject({ preview: { host: remoteHost('alpha'), transport: 'ssh_forward', supported: true,
-    available: false } })
+  expect(down.json).toMatchObject({
+    preview: { host: remoteHost('alpha'), transport: 'ssh_forward', supported: true, available: false },
+  })
   expect((down.json?.preview as { reason: string }).reason).toMatch(/alpha/)
 
   // A host that was never started offers no preview.

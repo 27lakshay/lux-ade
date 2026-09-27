@@ -12,7 +12,9 @@ import { bundle, bundleMissing, expect, test } from '../fixtures/packaged'
 test.skip(bundleMissing !== null, bundleMissing ?? '')
 
 async function digest(path: string): Promise<string> {
-  return createHash('sha256').update(await readFile(path)).digest('hex')
+  return createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex')
 }
 
 test('bundled ade-control cold-starts a profile daemon and runtime from the bundle', async ({ host }) => {
@@ -38,8 +40,10 @@ test('bundled ade-control cold-starts a profile daemon and runtime from the bund
   expect(hello.build_id).toBe(await digest(bundle.daemon))
   const version = await host.control(['version'])
   expect(version.code, version.stderr).toBe(0)
-  expect(hello).toMatchObject({ application_protocol: version.json!.application_protocol,
-    runtime_protocol: version.json!.runtime_protocol })
+  expect(hello).toMatchObject({
+    application_protocol: version.json!.application_protocol,
+    runtime_protocol: version.json!.runtime_protocol,
+  })
 
   // The runtime serves the profile's own data directory under the scratch profiles home.
   const runtime = (await work.runtimeHello(hello.runtime_socket))!
@@ -49,7 +53,7 @@ test('bundled ade-control cold-starts a profile daemon and runtime from the bund
   // A second start attaches to the running daemon instead of starting another.
   const again = await host.control(['profiles', 'start', work.id], work.env)
   expect(again.code, again.stderr).toBe(0)
-  expect((again.json!.daemon as Record<string, unknown>)).toMatchObject({ pid: hello.pid, boot_id: hello.boot_id })
+  expect(again.json!.daemon as Record<string, unknown>).toMatchObject({ pid: hello.pid, boot_id: hello.boot_id })
 
   // Clients reach it through the SDK and the bundled CLI.
   const catalog = await work.call('catalog.get', {})
@@ -87,7 +91,12 @@ test('bundled ade-control and CLI leave an incompatible live owner running and e
     expect(server.listening).toBe(true)
     expect(await readFile(join(host.home, 'registry.json'), 'utf8')).toBe(registryBefore)
     // A launch opens daemon.log first; the refusal came before any launch.
-    expect(await access(join(future.runtimeHome, 'daemon.log')).then(() => true, () => false)).toBe(false)
+    expect(
+      await access(join(future.runtimeHome, 'daemon.log')).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(false)
     expect(await future.rpc({ op: 'hello' })).toMatchObject({ application_protocol: 'future-v2' })
   } finally {
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()))

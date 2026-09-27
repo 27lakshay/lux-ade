@@ -18,18 +18,29 @@ export const runsUsage = `  runs start PARENT_ID TASK --run PROVIDER:inherit|amb
 
 type RunSpec = DailyUseRequest<'orchestration.group.start'>['runs'][number]
 
-const startOptions = ['--run', '--workspace', '--repository-id', '--branch-prefix', '--title', '--as-agent',
-  '--operation-id']
+const startOptions = [
+  '--run',
+  '--workspace',
+  '--repository-id',
+  '--branch-prefix',
+  '--title',
+  '--as-agent',
+  '--operation-id',
+]
 
 /** Reads `runs start` flags; only --run may repeat. */
-function startFlags(words: string[]): { runs: string[], options: Record<string, string> } {
+function startFlags(words: string[]): { runs: string[]; options: Record<string, string> } {
   const runs: string[] = []
   const options: Record<string, string> = {}
   for (let index = 0; index < words.length; index += 2) {
     const key = words[index]
     const value = words[index + 1]
-    if (!startOptions.includes(key) || !value || value.startsWith('--') ||
-      (key !== '--run' && options[key] !== undefined)) {
+    if (
+      !startOptions.includes(key) ||
+      !value ||
+      value.startsWith('--') ||
+      (key !== '--run' && options[key] !== undefined)
+    ) {
       throw new CliError('usage', 'Invalid runs start option. Run ade --help for usage.')
     }
     if (key === '--run') runs.push(value)
@@ -40,15 +51,17 @@ function startFlags(words: string[]): { runs: string[], options: Record<string, 
 }
 
 /** `PROVIDER:inherit`, `PROVIDER:ambient` or `PROVIDER:ACCOUNT_ID`; the account is never implied. */
-function account(run: string): { provider: string, account: RunSpec['account'] } {
+function account(run: string): { provider: string; account: RunSpec['account'] } {
   const split = run.indexOf(':')
   const provider = run.slice(0, split)
   const choice = run.slice(split + 1)
   if (split < 1 || !choice) {
     throw new CliError('usage', `--run ${run} must be PROVIDER:inherit, PROVIDER:ambient or PROVIDER:ACCOUNT_ID.`)
   }
-  return { provider, account: choice === 'inherit' || choice === 'ambient' ? { mode: choice }
-    : { mode: 'managed', account_id: choice } }
+  return {
+    provider,
+    account: choice === 'inherit' || choice === 'ambient' ? { mode: choice } : { mode: 'managed', account_id: choice },
+  }
 }
 
 /**
@@ -62,8 +75,11 @@ async function parentRepository(socketPath: string, parent: string): Promise<str
   if (!conversation) throw new CliError('usage', `Unknown conversation ${parent}.`)
   const workspace = catalog.workspaces.find((item) => item.id === conversation.workspace_id)
   if (!workspace?.repository_id) {
-    throw new CliError('usage', 'The parent workspace is not in a known repository. Pass --repository-id, ' +
-      'or --workspace same to share the parent workspace.')
+    throw new CliError(
+      'usage',
+      'The parent workspace is not in a known repository. Pass --repository-id, ' +
+        'or --workspace same to share the parent workspace.',
+    )
   }
   return (await command(socketPath, 'worktree.repository', { path: workspace.root })).repository.id
 }
@@ -83,27 +99,41 @@ async function start(socketPath: string, rest: string[]): Promise<CommandResult>
     }
     runs = choices.map((choice) => ({ ...choice, workspace: { mode: 'same' } }))
   } else if (mode === 'new-worktree') {
-    const repository = options['--repository-id'] ?? await parentRepository(socketPath, parent)
+    const repository = options['--repository-id'] ?? (await parentRepository(socketPath, parent))
     // Branches and worktree operation IDs derive from the group's operation ID,
     // so a retry resumes the same worktrees instead of making new ones.
-    const prefix = options['--branch-prefix'] ??
-      `ade/runs/${createHash('sha256').update(id).digest('hex').slice(0, 10)}`
+    const prefix =
+      options['--branch-prefix'] ?? `ade/runs/${createHash('sha256').update(id).digest('hex').slice(0, 10)}`
     runs = []
     for (const [index, choice] of choices.entries()) {
       const branch = `${prefix}/${index + 1}-${choice.provider.replace(/[^A-Za-z0-9._-]/g, '-')}`
-      runs.push({ ...choice, workspace: { mode: 'new_worktree',
-        ...await newWorktree(socketPath, repository, branch, `${id}:worktree:${index}`) } })
+      runs.push({
+        ...choice,
+        workspace: {
+          mode: 'new_worktree',
+          ...(await newWorktree(socketPath, repository, branch, `${id}:worktree:${index}`)),
+        },
+      })
     }
   } else {
     throw new CliError('usage', '--workspace must be new-worktree or same.')
   }
-  return command(socketPath, 'orchestration.group.start', { operation_id: id, parent_conversation_id: parent,
-    caller: caller(options['--as-agent']), task, runs,
-    ...(options['--title'] ? { title: options['--title'] } : {}) })
+  return command(socketPath, 'orchestration.group.start', {
+    operation_id: id,
+    parent_conversation_id: parent,
+    caller: caller(options['--as-agent']),
+    task,
+    runs,
+    ...(options['--title'] ? { title: options['--title'] } : {}),
+  })
 }
 
-export async function runRunsCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runRunsCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'runs') return undefined
   if (action === 'start') return start(socketPath, rest)
   if (action === 'list' && rest.length === 1) {

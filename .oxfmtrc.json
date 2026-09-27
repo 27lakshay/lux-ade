@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 120,
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "**/*.md",
+    "**/*.yml",
+    "**/*.yaml",
+    "pnpm-lock.yaml",
+    "packages/contracts/src/generated/**",
+    "packages/contracts/schema/**",
+    ".scratch/**",
+    "target/**",
+    ".ade/**"
+  ]
+}

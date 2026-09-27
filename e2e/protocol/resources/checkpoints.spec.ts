@@ -36,21 +36,43 @@ async function openWorkspace(profile: ScratchProfile, repo: ScratchRepo): Promis
   return (await profile.call('workspace.open', { path: repo.path })).workspace.id
 }
 
-test('a checkpoint records the tree and index, discloses its coverage and leaves the user\'s Git state alone', async ({ profile, repo }) => {
+test("a checkpoint records the tree and index, discloses its coverage and leaves the user's Git state alone", async ({
+  profile,
+  repo,
+}) => {
   await mixedTree(repo)
   const workspaceId = await openWorkspace(profile, repo)
   const before = await userState(repo)
 
-  const created = await profile.cli('checkpoint', 'create', workspaceId, '--request-id', 'cp-create-1', '--label', 'before refactor')
+  const created = await profile.cli(
+    'checkpoint',
+    'create',
+    workspaceId,
+    '--request-id',
+    'cp-create-1',
+    '--label',
+    'before refactor',
+  )
   expect(created.code, created.stderr).toBe(0)
-  const checkpoint = (created.json as { checkpoint: { checkpoint_id: string; commit: string; kind: string; label: string;
-    ref_name: string; coverage: { untracked_files: number; ignored_entries: number; not_covered: string[] } } }).checkpoint
+  const checkpoint = (
+    created.json as {
+      checkpoint: {
+        checkpoint_id: string
+        commit: string
+        kind: string
+        label: string
+        ref_name: string
+        coverage: { untracked_files: number; ignored_entries: number; not_covered: string[] }
+      }
+    }
+  ).checkpoint
   expect(checkpoint).toMatchObject({ kind: 'manual', label: 'before refactor' })
   expect(checkpoint.ref_name).toBe(`refs/ade/checkpoints/${workspaceId}/${checkpoint.checkpoint_id}`)
   expect(checkpoint.coverage.untracked_files).toBe(2)
   expect(checkpoint.coverage.ignored_entries).toBeGreaterThanOrEqual(1)
-  expect(checkpoint.coverage.not_covered).toEqual(expect.arrayContaining(['ignored files',
-    'running processes, terminals and services']))
+  expect(checkpoint.coverage.not_covered).toEqual(
+    expect.arrayContaining(['ignored files', 'running processes, terminals and services']),
+  )
 
   // The user's branch, index, stash and refs are untouched.
   expect(await userState(repo)).toEqual(before)
@@ -60,11 +82,18 @@ test('a checkpoint records the tree and index, discloses its coverage and leaves
   expect(shown.split('\n').sort()).toEqual(['.gitignore', 'README.md', 'image.bin', 'staged.txt', 'untracked.txt'])
 
   // A duplicate request replays the stored reply; the same ID with other parameters conflicts.
-  const replay = await profile.call('checkpoint.create', { operation_id: 'cp-create-1', workspace_id: workspaceId,
-    label: 'before refactor' })
+  const replay = await profile.call('checkpoint.create', {
+    operation_id: 'cp-create-1',
+    workspace_id: workspaceId,
+    label: 'before refactor',
+  })
   expect(replay.checkpoint.checkpoint_id).toBe(checkpoint.checkpoint_id)
-  const reused = await rawReply(profile, { op: 'checkpoint.create', operation_id: 'cp-create-1', workspace_id: workspaceId,
-    label: 'something else' })
+  const reused = await rawReply(profile, {
+    op: 'checkpoint.create',
+    operation_id: 'cp-create-1',
+    workspace_id: workspaceId,
+    label: 'something else',
+  })
   expect(reused.type).toBe('error')
   expect(reused.message).toContain('different parameters')
 
@@ -78,10 +107,16 @@ test('a checkpoint records the tree and index, discloses its coverage and leaves
   expect(afterCrash.checkpoints.map((entry) => entry.checkpoint_id)).toEqual([checkpoint.checkpoint_id])
 })
 
-test('restore refuses to overwrite unsaved changes without confirmation or after they changed, then restores exactly', async ({ profile, repo }) => {
+test('restore refuses to overwrite unsaved changes without confirmation or after they changed, then restores exactly', async ({
+  profile,
+  repo,
+}) => {
   await mixedTree(repo)
   const workspaceId = await openWorkspace(profile, repo)
-  const { checkpoint } = await profile.call('checkpoint.create', { operation_id: 'cp-restore-1', workspace_id: workspaceId })
+  const { checkpoint } = await profile.call('checkpoint.create', {
+    operation_id: 'cp-restore-1',
+    workspace_id: workspaceId,
+  })
   const checkpointStatus = await repo.status()
   const checkpointIndex = await repo.git('diff', '--cached')
 
@@ -91,36 +126,62 @@ test('restore refuses to overwrite unsaved changes without confirmation or after
   await repo.write('later.txt', 'written after the checkpoint\n')
   await repo.git('reset', '--quiet', '--', 'staged.txt')
 
-  const preview = await profile.call('checkpoint.restore.preview', { workspace_id: workspaceId,
-    checkpoint_id: checkpoint.checkpoint_id })
+  const preview = await profile.call('checkpoint.restore.preview', {
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+  })
   expect(preview.verdict).toBe('needs_confirmation')
   expect(preview.uncommitted_overwritten).toEqual(expect.arrayContaining(['README.md', 'later.txt']))
   expect(preview.changes.map((change) => change.path)).toEqual(expect.arrayContaining(['README.md', 'untracked.txt']))
   expect(preview.head_changed).toBe(false)
 
   // Without confirmation: refused, nothing written.
-  const unconfirmed = await rawReply(profile, { op: 'checkpoint.restore', operation_id: 'restore-unconfirmed',
-    workspace_id: workspaceId, checkpoint_id: checkpoint.checkpoint_id, expected_state: preview.state_token })
+  const unconfirmed = await rawReply(profile, {
+    op: 'checkpoint.restore',
+    operation_id: 'restore-unconfirmed',
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+    expected_state: preview.state_token,
+  })
   expect(unconfirmed.type).toBe('error')
   expect(unconfirmed.message).toContain('confirm_overwrite')
   expect(await repo.read('README.md')).toContain('Unsaved edit two')
 
   // The tree changes after the preview: the preview is stale and the restore refuses, even confirmed.
   await repo.dirty('README.md', '# Scratch repository\n\nUnsaved edit three.\n')
-  const stale = await rawReply(profile, { op: 'checkpoint.restore', operation_id: 'restore-stale',
-    workspace_id: workspaceId, checkpoint_id: checkpoint.checkpoint_id, expected_state: preview.state_token,
-    confirm_overwrite: true })
+  const stale = await rawReply(profile, {
+    op: 'checkpoint.restore',
+    operation_id: 'restore-stale',
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+    expected_state: preview.state_token,
+    confirm_overwrite: true,
+  })
   expect(stale.type).toBe('error')
   expect(await repo.read('README.md')).toContain('Unsaved edit three')
 
-  const fresh = await profile.call('checkpoint.restore.preview', { workspace_id: workspaceId,
-    checkpoint_id: checkpoint.checkpoint_id })
+  const fresh = await profile.call('checkpoint.restore.preview', {
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+  })
   expect(fresh.state_token).not.toBe(preview.state_token)
-  const restored = await profile.cli('checkpoint', 'restore', workspaceId, checkpoint.checkpoint_id, fresh.state_token,
-    '--request-id', 'restore-confirmed', '--confirm-overwrite')
+  const restored = await profile.cli(
+    'checkpoint',
+    'restore',
+    workspaceId,
+    checkpoint.checkpoint_id,
+    fresh.state_token,
+    '--request-id',
+    'restore-confirmed',
+    '--confirm-overwrite',
+  )
   expect(restored.code, restored.stderr).toBe(0)
-  const reply = restored.json as { outcome: string; verified: boolean; problems: string[];
-    safety_checkpoint: { checkpoint_id: string; kind: string } | null }
+  const reply = restored.json as {
+    outcome: string
+    verified: boolean
+    problems: string[]
+    safety_checkpoint: { checkpoint_id: string; kind: string } | null
+  }
   expect(reply).toMatchObject({ outcome: 'restored', verified: true, problems: [] })
   expect(reply.safety_checkpoint?.kind).toBe('safety')
 
@@ -133,18 +194,30 @@ test('restore refuses to overwrite unsaved changes without confirmation or after
 
   // A duplicate restore replays its reply and writes nothing again.
   await repo.dirty('README.md', '# Scratch repository\n\nEdited after the restore.\n')
-  const replay = await profile.call('checkpoint.restore', { operation_id: 'restore-confirmed', workspace_id: workspaceId,
-    checkpoint_id: checkpoint.checkpoint_id, expected_state: fresh.state_token, confirm_overwrite: true })
+  const replay = await profile.call('checkpoint.restore', {
+    operation_id: 'restore-confirmed',
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+    expected_state: fresh.state_token,
+    confirm_overwrite: true,
+  })
   expect(replay.safety_checkpoint?.checkpoint_id).toBe(reply.safety_checkpoint?.checkpoint_id)
   expect(await repo.read('README.md')).toContain('Edited after the restore')
 
   // Nothing was lost: the safety checkpoint brings the replaced work back.
   const listed = await profile.call('checkpoint.list', { workspace_id: workspaceId })
   expect(listed.checkpoints.map((entry) => entry.kind).sort()).toEqual(['manual', 'safety'])
-  const back = await profile.call('checkpoint.restore.preview', { workspace_id: workspaceId,
-    checkpoint_id: reply.safety_checkpoint!.checkpoint_id })
-  await profile.call('checkpoint.restore', { operation_id: 'restore-safety', workspace_id: workspaceId,
-    checkpoint_id: reply.safety_checkpoint!.checkpoint_id, expected_state: back.state_token, confirm_overwrite: true })
+  const back = await profile.call('checkpoint.restore.preview', {
+    workspace_id: workspaceId,
+    checkpoint_id: reply.safety_checkpoint!.checkpoint_id,
+  })
+  await profile.call('checkpoint.restore', {
+    operation_id: 'restore-safety',
+    workspace_id: workspaceId,
+    checkpoint_id: reply.safety_checkpoint!.checkpoint_id,
+    expected_state: back.state_token,
+    confirm_overwrite: true,
+  })
   expect(await repo.read('README.md')).toContain('Unsaved edit three')
   expect(await repo.read('later.txt')).toBe('written after the checkpoint\n')
 })
@@ -152,20 +225,30 @@ test('restore refuses to overwrite unsaved changes without confirmation or after
 test('restore refuses to overwrite an ignored file in its way and leaves it intact', async ({ profile, repo }) => {
   const workspaceId = await openWorkspace(profile, repo)
   await repo.write('cache/data.txt', 'checkpointed\n')
-  const { checkpoint } = await profile.call('checkpoint.create', { operation_id: 'cp-ignored', workspace_id: workspaceId })
+  const { checkpoint } = await profile.call('checkpoint.create', {
+    operation_id: 'cp-ignored',
+    workspace_id: workspaceId,
+  })
 
   await rm(join(repo.path, 'cache'), { recursive: true })
   await mkdir(join(repo.path, '.git', 'info'), { recursive: true })
   await writeFile(join(repo.path, '.git', 'info', 'exclude'), 'cache/\n')
   await repo.write('cache/data.txt', 'ignored local data\n')
 
-  const preview = await profile.call('checkpoint.restore.preview', { workspace_id: workspaceId,
-    checkpoint_id: checkpoint.checkpoint_id })
+  const preview = await profile.call('checkpoint.restore.preview', {
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+  })
   expect(preview.verdict).toBe('blocked')
   expect(preview.ignored_overwritten).toEqual(['cache/data.txt'])
-  const refused = await rawReply(profile, { op: 'checkpoint.restore', operation_id: 'restore-ignored',
-    workspace_id: workspaceId, checkpoint_id: checkpoint.checkpoint_id, expected_state: preview.state_token,
-    confirm_overwrite: true })
+  const refused = await rawReply(profile, {
+    op: 'checkpoint.restore',
+    operation_id: 'restore-ignored',
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+    expected_state: preview.state_token,
+    confirm_overwrite: true,
+  })
   expect(refused.type).toBe('error')
   expect(await repo.read('cache/data.txt')).toBe('ignored local data\n')
 })
@@ -173,18 +256,37 @@ test('restore refuses to overwrite an ignored file in its way and leaves it inta
 test('delete needs the commit the caller saw and replays a duplicate request', async ({ profile, repo }) => {
   const workspaceId = await openWorkspace(profile, repo)
   await repo.dirty()
-  const { checkpoint } = await profile.call('checkpoint.create', { operation_id: 'cp-delete', workspace_id: workspaceId })
+  const { checkpoint } = await profile.call('checkpoint.create', {
+    operation_id: 'cp-delete',
+    workspace_id: workspaceId,
+  })
 
-  const wrong = await rawReply(profile, { op: 'checkpoint.delete', operation_id: 'delete-wrong', workspace_id: workspaceId,
-    checkpoint_id: checkpoint.checkpoint_id, expected_commit: await repo.head() })
+  const wrong = await rawReply(profile, {
+    op: 'checkpoint.delete',
+    operation_id: 'delete-wrong',
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+    expected_commit: await repo.head(),
+  })
   expect(wrong.type).toBe('error')
   expect((await profile.call('checkpoint.list', { workspace_id: workspaceId })).checkpoints).toHaveLength(1)
 
-  const deleted = await profile.cli('checkpoint', 'delete', workspaceId, checkpoint.checkpoint_id, checkpoint.commit,
-    '--request-id', 'delete-right')
+  const deleted = await profile.cli(
+    'checkpoint',
+    'delete',
+    workspaceId,
+    checkpoint.checkpoint_id,
+    checkpoint.commit,
+    '--request-id',
+    'delete-right',
+  )
   expect(deleted.code, deleted.stderr).toBe(0)
   expect((await profile.call('checkpoint.list', { workspace_id: workspaceId })).checkpoints).toEqual([])
-  const replay = await profile.call('checkpoint.delete', { operation_id: 'delete-right', workspace_id: workspaceId,
-    checkpoint_id: checkpoint.checkpoint_id, expected_commit: checkpoint.commit })
+  const replay = await profile.call('checkpoint.delete', {
+    operation_id: 'delete-right',
+    workspace_id: workspaceId,
+    checkpoint_id: checkpoint.checkpoint_id,
+    expected_commit: checkpoint.commit,
+  })
   expect(replay.ref_name).toBe(checkpoint.ref_name)
 })

@@ -26,8 +26,12 @@ function positional(rest: string[], count: number, command: string): string[] {
 }
 
 /** HostResources commands: inspect claims, recover explicitly and hold devices for a run. */
-export async function runResourcesCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runResourcesCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'resources') return undefined
   switch (action) {
     case 'inspect': {
@@ -36,21 +40,30 @@ export async function runResourcesCommand(socketPath: string, area: string | und
       if (kind !== undefined && !kinds.includes(kind as Kind)) {
         throw new CliError('usage', `--kind takes ${kinds.join(', ')}.`)
       }
-      return dailyUseCommand(socketPath, { op: 'resources.inspect', ...(options['--path'] ? { path: options['--path'] } : {}),
-        ...(kind ? { resource: kind as Kind } : {}) })
+      return dailyUseCommand(socketPath, {
+        op: 'resources.inspect',
+        ...(options['--path'] ? { path: options['--path'] } : {}),
+        ...(kind ? { resource: kind as Kind } : {}),
+      })
     }
     case 'resolve': {
       const [claim, confirm] = positional(rest, 2, 'resolve')
       const options = namedOptions(rest.slice(2), ['--request-id'], 'resources resolve')
-      return dailyUseCommand(socketPath, { op: 'resources.claim.resolve',
-        operation_id: required(options['--request-id'], '--request-id'), claim_id: required(claim, 'CLAIM_ID'),
-        confirm_path: required(confirm, 'CONFIRM') })
+      return dailyUseCommand(socketPath, {
+        op: 'resources.claim.resolve',
+        operation_id: required(options['--request-id'], '--request-id'),
+        claim_id: required(claim, 'CLAIM_ID'),
+        confirm_path: required(confirm, 'CONFIRM'),
+      })
     }
     case 'accept': {
       const [registry] = positional(rest, 1, 'accept')
       const options = namedOptions(rest.slice(1), ['--request-id'], 'resources accept')
-      return dailyUseCommand(socketPath, { op: 'resources.registry.accept',
-        operation_id: required(options['--request-id'], '--request-id'), confirm_registry: required(registry, 'REGISTRY_PATH') })
+      return dailyUseCommand(socketPath, {
+        op: 'resources.registry.accept',
+        operation_id: required(options['--request-id'], '--request-id'),
+        confirm_registry: required(registry, 'REGISTRY_PATH'),
+      })
     }
     case 'device': {
       const [verb, device, holder, ...extra] = rest

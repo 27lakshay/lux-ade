@@ -6,10 +6,18 @@ import { expect, test } from '../fixtures'
 import { openWorkspace } from './steps'
 
 const LIMIT = 256 * 1024
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64')
+const png = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
+  'base64',
+)
 const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(60, 1), Buffer.from([0xff, 0xd9])])
 const gif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
-const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.from([26, 0, 0, 0]), Buffer.from('WEBPVP8L'), Buffer.alloc(14, 0)])
+const webp = Buffer.concat([
+  Buffer.from('RIFF'),
+  Buffer.from([26, 0, 0, 0]),
+  Buffer.from('WEBPVP8L'),
+  Buffer.alloc(14, 0),
+])
 
 test('previews text and the supported image formats with their MIME type and size', async ({ ade, profile }) => {
   const root = join(ade.root, 'media')
@@ -18,7 +26,11 @@ test('previews text and the supported image formats with their MIME type and siz
     'notes.md': '# Notes\n\nUnicode: é中😀\n',
     'src/main.ts': 'export const answer = 42\n',
     'empty.txt': '',
-    'img/pixel.png': png, 'img/photo.JPG': jpeg, 'img/photo.jpeg': jpeg, 'img/anim.gif': gif, 'img/modern.webp': webp,
+    'img/pixel.png': png,
+    'img/photo.JPG': jpeg,
+    'img/photo.jpeg': jpeg,
+    'img/anim.gif': gif,
+    'img/modern.webp': webp,
   }
   for (const [path, content] of Object.entries(files)) {
     await mkdir(join(root, path, '..'), { recursive: true })
@@ -27,13 +39,29 @@ test('previews text and the supported image formats with their MIME type and siz
   const workspace_id = await openWorkspace(profile, root)
   const preview = (path: string) => profile.call('file.preview', { workspace_id, path })
 
-  expect(await preview('notes.md')).toEqual({ type: 'file_preview', path: 'notes.md', kind: 'text', mime: 'text/plain',
-    text: files['notes.md'], size: Buffer.byteLength(files['notes.md']), truncated: false })
-  expect(await preview('src/main.ts')).toMatchObject({ kind: 'text', text: 'export const answer = 42\n', truncated: false })
+  expect(await preview('notes.md')).toEqual({
+    type: 'file_preview',
+    path: 'notes.md',
+    kind: 'text',
+    mime: 'text/plain',
+    text: files['notes.md'],
+    size: Buffer.byteLength(files['notes.md']),
+    truncated: false,
+  })
+  expect(await preview('src/main.ts')).toMatchObject({
+    kind: 'text',
+    text: 'export const answer = 42\n',
+    truncated: false,
+  })
   expect(await preview('empty.txt')).toMatchObject({ kind: 'text', text: '', size: 0, truncated: false })
 
-  const images: Array<[string, string, Buffer]> = [['img/pixel.png', 'image/png', png], ['img/photo.JPG', 'image/jpeg', jpeg],
-    ['img/photo.jpeg', 'image/jpeg', jpeg], ['img/anim.gif', 'image/gif', gif], ['img/modern.webp', 'image/webp', webp]]
+  const images: Array<[string, string, Buffer]> = [
+    ['img/pixel.png', 'image/png', png],
+    ['img/photo.JPG', 'image/jpeg', jpeg],
+    ['img/photo.jpeg', 'image/jpeg', jpeg],
+    ['img/anim.gif', 'image/gif', gif],
+    ['img/modern.webp', 'image/webp', webp],
+  ]
   for (const [path, mime, bytes] of images) {
     const image = await preview(path)
     expect(image, path).toMatchObject({ kind: 'image', mime, size: bytes.length, truncated: false })
@@ -47,7 +75,10 @@ test('previews text and the supported image formats with their MIME type and siz
   expect(cli.json).toMatchObject({ kind: 'image', mime: 'image/png', bytes_base64: png.toString('base64') })
 })
 
-test('large, binary, mislabelled and unsupported files show their limit or kind without content', async ({ ade, profile }) => {
+test('large, binary, mislabelled and unsupported files show their limit or kind without content', async ({
+  ade,
+  profile,
+}) => {
   const root = join(ade.root, 'limits')
   await mkdir(root, { recursive: true })
   const big = `${'a'.repeat(LIMIT - 1)}étail that is never shown`
@@ -71,8 +102,20 @@ test('large, binary, mislabelled and unsupported files show their limit or kind 
 
   // An image is shown only whole and only when its bytes match its type.
   const huge = await preview('huge.png')
-  expect(huge).toEqual({ type: 'file_preview', path: 'huge.png', kind: 'unsupported', size: png.length + LIMIT, truncated: true })
-  expect(await preview('fake.png')).toEqual({ type: 'file_preview', path: 'fake.png', kind: 'unsupported', size: 17, truncated: false })
+  expect(huge).toEqual({
+    type: 'file_preview',
+    path: 'huge.png',
+    kind: 'unsupported',
+    size: png.length + LIMIT,
+    truncated: true,
+  })
+  expect(await preview('fake.png')).toEqual({
+    type: 'file_preview',
+    path: 'fake.png',
+    kind: 'unsupported',
+    size: 17,
+    truncated: false,
+  })
 
   // Binary and non-UTF-8 content is unsupported, never shown as text.
   for (const path of ['binary.dat', 'latin1.txt', 'archive.zip']) {
@@ -107,8 +150,13 @@ test('active content is never returned in a renderable form', async ({ ade, prof
 
   for (const path of Object.keys(active)) {
     const result = await profile.call('file.preview', { workspace_id, path })
-    expect(result, path).toEqual({ type: 'file_preview', path, kind: 'unsupported',
-      size: Buffer.byteLength(active[path]), truncated: false })
+    expect(result, path).toEqual({
+      type: 'file_preview',
+      path,
+      kind: 'unsupported',
+      size: Buffer.byteLength(active[path]),
+      truncated: false,
+    })
     expect(JSON.stringify(result), path).not.toContain('bridge')
   }
   const text = await profile.call('file.preview', { workspace_id, path: 'looks-like.txt' })

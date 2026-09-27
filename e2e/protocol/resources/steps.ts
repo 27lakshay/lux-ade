@@ -11,21 +11,30 @@ type Profile = ScratchProfile
 let refreshes = 0
 
 export async function exists(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false)
+  return access(path).then(
+    () => true,
+    () => false,
+  )
 }
 
 /** Wait for a worktree lifecycle operation to leave `running` and return it. */
 export async function settledOperation(profile: Profile, repositoryId: string, operationId: string, timeout = 30_000) {
   let operation: Awaited<ReturnType<typeof readOperation>> | undefined
-  await expect.poll(async () => {
-    operation = await readOperation(profile, repositoryId, operationId)
-    return operation.status
-  }, { timeout }).not.toBe('running')
+  await expect
+    .poll(
+      async () => {
+        operation = await readOperation(profile, repositoryId, operationId)
+        return operation.status
+      },
+      { timeout },
+    )
+    .not.toBe('running')
   return operation!
 }
 
 async function readOperation(profile: Profile, repositoryId: string, operationId: string) {
-  return (await profile.call('worktree.operation', { repository_id: repositoryId, operation_id: operationId })).operation
+  return (await profile.call('worktree.operation', { repository_id: repositoryId, operation_id: operationId }))
+    .operation
 }
 
 /** A linked tree made with plain Git, outside ADE, on a new branch. Returns its canonical path. */
@@ -68,8 +77,13 @@ export async function startShell(profile: Profile, workspace: { id: string; term
 
 /** `worktree.remove` over the raw protocol, so the typed error code is visible. */
 export function removeTree(profile: Profile, repositoryId: string, operationId: string, tree: string) {
-  return rawReply(profile, { op: 'worktree.remove', repository_id: repositoryId, operation_id: operationId,
-    path: tree, confirm_path: tree })
+  return rawReply(profile, {
+    op: 'worktree.remove',
+    repository_id: repositoryId,
+    operation_id: operationId,
+    path: tree,
+    confirm_path: tree,
+  })
 }
 
 /** Checkout claims on, inside or around `path`, as `profile` sees them. */

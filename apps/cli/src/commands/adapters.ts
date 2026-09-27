@@ -32,7 +32,10 @@ function parseSet(id: string, words: string[]): DailyUseRequest<'adapter.put'> {
     const key = words[index]
     const value = words[index + 1]
     if (value === undefined) throw new CliError('usage', `${key} requires a value. Run ade --help for usage.`)
-    if (key === '--arg') { args.push(value); continue }
+    if (key === '--arg') {
+      args.push(value)
+      continue
+    }
     if (key === '--env') {
       const split = value.indexOf('=')
       if (split <= 0) throw new CliError('usage', '--env takes NAME=VALUE.')
@@ -49,7 +52,7 @@ function parseSet(id: string, words: string[]): DailyUseRequest<'adapter.put'> {
   }
   const kind = required(single['--kind'], '--kind')
   if (kind !== 'acp' && kind !== 'executable') throw new CliError('usage', '--kind must be acp or executable.')
-  let executable: { prompt_input: 'stdin' | 'argument', timeout_seconds: number } | undefined
+  let executable: { prompt_input: 'stdin' | 'argument'; timeout_seconds: number } | undefined
   if (kind === 'executable') {
     const input = required(single['--prompt-input'], '--prompt-input')
     if (input !== 'stdin' && input !== 'argument') {
@@ -80,8 +83,12 @@ function parseSet(id: string, words: string[]): DailyUseRequest<'adapter.put'> {
   }
 }
 
-export async function runAdapterCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runAdapterCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'adapter') return undefined
   if (action === 'list' && rest.length === 0) return dailyUseCommand(socketPath, { op: 'adapter.list' })
   if (action === 'set' && rest.length >= 1) {

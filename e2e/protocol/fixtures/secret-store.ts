@@ -85,8 +85,12 @@ export class ScratchSecretStore {
   private async save(items: Item[]): Promise<void> {
     const nonce = randomBytes(32)
     const data = this.keystream(nonce, Buffer.from(JSON.stringify(items)))
-    const envelope: Envelope = { version: 1, nonce: nonce.toString('hex'), data: data.toString('hex'),
-      tag: this.tag(nonce, data).toString('hex') }
+    const envelope: Envelope = {
+      version: 1,
+      nonce: nonce.toString('hex'),
+      data: data.toString('hex'),
+      tag: this.tag(nonce, data).toString('hex'),
+    }
     const temporary = `${this.path}.tmp-${randomBytes(8).toString('hex')}`
     await writeFile(temporary, JSON.stringify(envelope), { mode: 0o600, flag: 'wx' })
     await rename(temporary, this.path)
@@ -113,7 +117,10 @@ export class ScratchSecretStore {
 
   /** The accounts of every item under `service`, sorted. */
   async accounts(service: string): Promise<string[]> {
-    return (await this.load()).filter((item) => item.service === service).map((item) => item.account).sort()
+    return (await this.load())
+      .filter((item) => item.service === service)
+      .map((item) => item.account)
+      .sort()
   }
 
   /** The raw bytes of the store file, empty when it does not exist; for at-rest checks. */

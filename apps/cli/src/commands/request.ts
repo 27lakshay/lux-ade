@@ -8,8 +8,12 @@ export const requestUsage = `  operations [DOMAIN]                   List every 
 `
 
 /** `operations` discovers the command API; `request` calls any operation through the typed SDK call. */
-export async function runRequestCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runRequestCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area === 'request') {
     if (rest.length > 1) throw new CliError('usage', 'request accepts OP [JSON_OBJECT].')
     const op = required(action, 'OP')

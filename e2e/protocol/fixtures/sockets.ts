@@ -7,8 +7,11 @@ import { stat } from 'node:fs/promises'
 export type SocketOutcome = { frame: Record<string, unknown> | null; closed: boolean }
 
 /** Send one line to `path` and resolve with the first reply line, or with `frame: null` if the peer closed first. */
-export async function socketReply(path: string, request: Record<string, unknown>,
-  timeoutMs = 10_000): Promise<SocketOutcome> {
+export async function socketReply(
+  path: string,
+  request: Record<string, unknown>,
+  timeoutMs = 10_000,
+): Promise<SocketOutcome> {
   return new Promise<SocketOutcome>((resolveReply, rejectReply) => {
     const peer = createConnection(path)
     let text = ''

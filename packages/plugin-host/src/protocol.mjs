@@ -173,8 +173,8 @@ export function createHost(options = {}) {
     state = 'activating'
     generation = requested
     pluginId = id
-    declared = new Set((commands))
-    subscribed = new Set((hooks))
+    declared = new Set(commands)
+    subscribed = new Set(hooks)
     const context = Object.freeze({
       pluginId: id,
       generation: requested,
@@ -183,7 +183,7 @@ export function createHost(options = {}) {
       commands: Object.freeze({ register }),
       hooks: Object.freeze({ on }),
       /** @param {...unknown} parts */
-      log: (...parts) => log(parts.map((part) => typeof part === 'string' ? part : describe(part)).join(' ')),
+      log: (...parts) => log(parts.map((part) => (typeof part === 'string' ? part : describe(part))).join(' ')),
     })
     try {
       backend = await load(pathToFileURL(path).href)
@@ -213,7 +213,8 @@ export function createHost(options = {}) {
    * @param {string} id @param {(args: unknown, meta: object) => unknown} handler
    */
   function register(id, handler) {
-    if (state !== 'activating' && state !== 'active') throw new Error(`Plugin ${pluginId} is ${state}; it cannot register commands`)
+    if (state !== 'activating' && state !== 'active')
+      throw new Error(`Plugin ${pluginId} is ${state}; it cannot register commands`)
     if (typeof handler !== 'function') throw new Error(`Command ${id} needs a handler function`)
     if (!declared.has(id)) throw new Error(`Command ${id} is not declared in the plugin manifest`)
     if (handlers.has(id)) throw new Error(`Command ${id} is already registered`)
@@ -231,7 +232,8 @@ export function createHost(options = {}) {
    * @param {string} event @param {(payload: unknown, meta: object) => unknown} handler
    */
   function on(event, handler) {
-    if (state !== 'activating' && state !== 'active') throw new Error(`Plugin ${pluginId} is ${state}; it cannot register hooks`)
+    if (state !== 'activating' && state !== 'active')
+      throw new Error(`Plugin ${pluginId} is ${state}; it cannot register hooks`)
     if (typeof handler !== 'function') throw new Error(`Hook ${event} needs a handler function`)
     if (!subscribed.has(event)) throw new Error(`Hook ${event} is not declared in the plugin manifest`)
     if (hookHandlers.has(event)) throw new Error(`Hook ${event} already has a handler`)
@@ -328,7 +330,8 @@ export function createHost(options = {}) {
    */
   async function handle(message) {
     if (!isObject(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
-      const id = isObject(message) && (typeof message.id === 'number' || typeof message.id === 'string') ? message.id : null
+      const id =
+        isObject(message) && (typeof message.id === 'number' || typeof message.id === 'string') ? message.id : null
       return { jsonrpc: '2.0', id, error: { code: INVALID_REQUEST, message: 'Invalid JSON-RPC request' } }
     }
     const id = typeof message.id === 'number' || typeof message.id === 'string' ? message.id : null
@@ -358,8 +361,11 @@ export function createHost(options = {}) {
       return { jsonrpc: '2.0', id: null, error: { code: INVALID_REQUEST, message: 'Request line is too long' } }
     }
     let message
-    try { message = JSON.parse(line) }
-    catch { return { jsonrpc: '2.0', id: null, error: { code: PARSE_ERROR, message: 'Request is not valid JSON' } } }
+    try {
+      message = JSON.parse(line)
+    } catch {
+      return { jsonrpc: '2.0', id: null, error: { code: PARSE_ERROR, message: 'Request is not valid JSON' } }
+    }
     return handle(message)
   }
 

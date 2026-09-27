@@ -17,7 +17,8 @@ async function create(profile: ScratchProfile, provider: string) {
 
 async function assistantTexts(profile: ScratchProfile, conversationId: string) {
   return (await profile.call('conversation.get', { conversation_id: conversationId })).messages
-    .filter((message) => message.role === 'assistant').map((message) => message.text)
+    .filter((message) => message.role === 'assistant')
+    .map((message) => message.text)
 }
 
 async function generations(profile: ScratchProfile, pluginId: string) {
@@ -48,25 +49,37 @@ async function stageProvider(root: string, control: string, reply: string, manif
       }, 20)
 `
   const edited = original
-    .replace("import { createInterface } from 'node:readline'",
-      "import { createInterface } from 'node:readline'\nimport { existsSync, writeFileSync } from 'node:fs'")
+    .replace(
+      "import { createInterface } from 'node:readline'",
+      "import { createInterface } from 'node:readline'\nimport { existsSync, writeFileSync } from 'node:fs'",
+    )
     .replace("text: 'Hello plugin'", `text: ${JSON.stringify(reply)}`)
-    .replace(`      event({ type: 'item', session, item: user })
+    .replace(
+      `      event({ type: 'item', session, item: user })
       event({ type: 'item', session, item: reply })
       event({ type: 'finished', session, turn, status: 'completed', error: null })
-`, held)
-  expect(edited).toContain('params.text !== \'hold\'')
+`,
+      held,
+    )
+  expect(edited).toContain("params.text !== 'hold'")
   await writeFile(worker, edited)
   return source
 }
 
-test('a provider Conversation mid-turn finishes on the old version while the plugin updates', async ({ ade, profile }) => {
+test('a provider Conversation mid-turn finishes on the old version while the plugin updates', async ({
+  ade,
+  profile,
+}) => {
   const control = join(ade.root, 'provider-control')
   await mkdir(control, { recursive: true })
   const { pluginId } = await installAndEnable(profile, await stageProvider(ade.root, control, 'Hello from v1'))
   const provider = `plugin:${pluginId}`
-  const record = await profile.call('plugin.record.put', { plugin_id: pluginId, namespace: 'notes', key: 'first',
-    value: { written_by: 'v1' } })
+  const record = await profile.call('plugin.record.put', {
+    plugin_id: pluginId,
+    namespace: 'notes',
+    key: 'first',
+    value: { written_by: 'v1' },
+  })
   expect(record.record).toMatchObject({ data_schema: 1, revision: 1 })
 
   // A turn is running on version 1 when the update starts.
@@ -77,14 +90,24 @@ test('a provider Conversation mid-turn finishes on the old version while the plu
 
   // An enabled plugin must be disabled (drained of new work) before its artifact is replaced.
   const v2 = await stageProvider(ade.root, control, 'Hello from v2', { version: '2.0.0' })
-  await expect(profile.call('plugin.install', { operation_id: 'update-enabled', source: { kind: 'local', path: v2 } }))
-    .rejects.toMatchObject({ code: 'conflict', message: expect.stringMatching(/disable it/) })
+  await expect(
+    profile.call('plugin.install', { operation_id: 'update-enabled', source: { kind: 'local', path: v2 } }),
+  ).rejects.toMatchObject({ code: 'conflict', message: expect.stringMatching(/disable it/) })
   await profile.call('plugin.disable', { plugin_id: pluginId })
   // The old worker still uses the plugin's records, so raising the data schema
   // waits until the leased sessions end. Nothing is replaced.
-  await expect(profile.call('plugin.install', { operation_id: 'update-schema', source: { kind: 'local',
-    path: await stageProvider(ade.root, control, 'Hello from v2', { version: '2.0.0', data_schema: 2 }) } }))
-    .rejects.toMatchObject({ code: 'conflict', message: expect.stringMatching(/raises it to 2 while 1 provider session/) })
+  await expect(
+    profile.call('plugin.install', {
+      operation_id: 'update-schema',
+      source: {
+        kind: 'local',
+        path: await stageProvider(ade.root, control, 'Hello from v2', { version: '2.0.0', data_schema: 2 }),
+      },
+    }),
+  ).rejects.toMatchObject({
+    code: 'conflict',
+    message: expect.stringMatching(/raises it to 2 while 1 provider session/),
+  })
   expect((await profile.call('plugin.inspect', { plugin_id: pluginId })).plugin.version).toBe('1.0.0')
   // A compatible update (same data schema) is admitted beside the running worker.
   const updated = await profile.call('plugin.install', { operation_id: 'update', source: { kind: 'local', path: v2 } })
@@ -101,8 +124,9 @@ test('a provider Conversation mid-turn finishes on the old version while the plu
   await expect.poll(() => assistantTexts(profile, old)).toEqual(['Hello from v1', 'Hello from v1'])
   await waitForIdle(profile, old)
   // Data written by version 1 is still there for version 2.
-  expect((await profile.call('plugin.record.get', { plugin_id: pluginId, namespace: 'notes', key: 'first' })).record)
-    .toMatchObject({ value: { written_by: 'v1' }, data_schema: 1 })
+  expect(
+    (await profile.call('plugin.record.get', { plugin_id: pluginId, namespace: 'notes', key: 'first' })).record,
+  ).toMatchObject({ value: { written_by: 'v1' }, data_schema: 1 })
 
   // New work starts on version 2.
   const fresh = await create(profile, provider)
@@ -138,24 +162,42 @@ test('a provider Conversation mid-turn finishes on the old version while the plu
 let invocations = 0
 
 function invoke(profile: ScratchProfile, pluginId: string, commandId: string, args: unknown = null) {
-  return profile.call('plugin.command.invoke', { operation_id: `update-${process.pid}-${++invocations}`, plugin_id: pluginId,
-    command_id: commandId, args }, { timeoutMs: 60_000 })
+  return profile.call(
+    'plugin.command.invoke',
+    { operation_id: `update-${process.pid}-${++invocations}`, plugin_id: pluginId, command_id: commandId, args },
+    { timeoutMs: 60_000 },
+  )
 }
 
 async function setVersion(source: string, version: string): Promise<void> {
   const path = join(source, 'backend.mjs')
-  await writeFile(path, (await readFile(path, 'utf8')).replace(/^const VERSION = '.*'$/m, `const VERSION = '${version}'`))
+  await writeFile(
+    path,
+    (await readFile(path, 'utf8')).replace(/^const VERSION = '.*'$/m, `const VERSION = '${version}'`),
+  )
 }
 
-test('a backend command running on the old host finishes there while the plugin updates, and late cleanup keeps the new commands', async ({ ade, profile }) => {
+test('a backend command running on the old host finishes there while the plugin updates, and late cleanup keeps the new commands', async ({
+  ade,
+  profile,
+}) => {
   const { pluginId, outDir } = await installAndEnable(profile, await stagePlugin(ade.root, 'backend'))
-  const first = (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as { value: { version: string; pid: number } }
+  const first = (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as {
+    value: { version: string; pid: number }
+  }
   expect(first.value.version).toBe('v1')
-  await profile.call('plugin.record.put', { plugin_id: pluginId, namespace: 'notes', key: 'before', value: { by: 'v1' } })
+  await profile.call('plugin.record.put', {
+    plugin_id: pluginId,
+    namespace: 'notes',
+    key: 'before',
+    value: { by: 'v1' },
+  })
 
   // A call holds the version 1 host while the plugin is disabled, replaced and enabled again.
   const held = invoke(profile, pluginId, 'e2e.backend.hold', { release: 'release-update' })
-  await expect.poll(async () => (await pluginLines(outDir, 'lifecycle.jsonl')).some((line) => line.event === 'hold-started')).toBe(true)
+  await expect
+    .poll(async () => (await pluginLines(outDir, 'lifecycle.jsonl')).some((line) => line.event === 'hold-started'))
+    .toBe(true)
   await profile.call('plugin.disable', { plugin_id: pluginId })
   const v2 = await stagePlugin(ade.root, 'backend', { version: '2.0.0', data_schema: 2 })
   await setVersion(v2, 'v2')
@@ -164,7 +206,9 @@ test('a backend command running on the old host finishes there while the plugin 
   await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'out_dir', value: outDir })
 
   // New work reaches version 2 in a new host; the old host still runs the held call.
-  const fresh = (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as { value: { version: string; pid: number } }
+  const fresh = (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as {
+    value: { version: string; pid: number }
+  }
   expect(fresh.value.version).toBe('v2')
   expect(fresh.value.pid).not.toBe(first.value.pid)
   expect(await isRunning(first.value.pid)).toBe(true)
@@ -178,18 +222,32 @@ test('a backend command running on the old host finishes there while the plugin 
   expect(events.indexOf('deactivate:v1')).toBeGreaterThan(events.indexOf('hold-started:v1'))
   const status = await profile.call('plugin.host.status', { plugin_id: pluginId })
   expect(JSON.stringify(status)).toContain('e2e.backend.echo')
-  const after = (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as { value: { version: string; pid: number } }
+  const after = (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as {
+    value: { version: string; pid: number }
+  }
   expect(after.value).toMatchObject({ version: 'v2', pid: fresh.value.pid })
   expect(await isRunning(fresh.value.pid)).toBe(true)
 
   // No provider session leased the plugin, so its data schema rose to 2. Old
   // records stay readable, and rolling the code back never rolls data back.
-  expect((await profile.call('plugin.record.get', { plugin_id: pluginId, namespace: 'notes', key: 'before' })).record)
-    .toMatchObject({ value: { by: 'v1' }, data_schema: 1 })
-  expect((await profile.call('plugin.record.put', { plugin_id: pluginId, namespace: 'notes', key: 'after',
-    value: { by: 'v2' } })).record).toMatchObject({ data_schema: 2 })
+  expect(
+    (await profile.call('plugin.record.get', { plugin_id: pluginId, namespace: 'notes', key: 'before' })).record,
+  ).toMatchObject({ value: { by: 'v1' }, data_schema: 1 })
+  expect(
+    (
+      await profile.call('plugin.record.put', {
+        plugin_id: pluginId,
+        namespace: 'notes',
+        key: 'after',
+        value: { by: 'v2' },
+      })
+    ).record,
+  ).toMatchObject({ data_schema: 2 })
   await profile.call('plugin.disable', { plugin_id: pluginId })
-  await expect(profile.call('plugin.install', { operation_id: 'backend-rollback', source: { kind: 'local',
-    path: await stagePlugin(ade.root, 'backend') } }))
-    .rejects.toMatchObject({ code: 'invalid_request', message: expect.stringMatching(/does not roll back data/) })
+  await expect(
+    profile.call('plugin.install', {
+      operation_id: 'backend-rollback',
+      source: { kind: 'local', path: await stagePlugin(ade.root, 'backend') },
+    }),
+  ).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringMatching(/does not roll back data/) })
 })

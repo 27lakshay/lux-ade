@@ -55,8 +55,11 @@ export class Outbox<R> {
   private tail: Promise<void> = Promise.resolve()
   private unsafe = false
 
-  private constructor(private readonly storage: OutboxStorage, private readonly codec: OutboxCodec<R>,
-    records: Map<string, R>) {
+  private constructor(
+    private readonly storage: OutboxStorage,
+    private readonly codec: OutboxCodec<R>,
+    records: Map<string, R>,
+  ) {
     this.records = records
   }
 
@@ -93,8 +96,11 @@ export class Outbox<R> {
    * `compatible` with the new one, or the call is refused with `refusal` and
    * nothing changes.
    */
-  put(record: R, compatible: (previous: R, next: R) => boolean,
-    refusal = `Another operation owns this ${this.codec.name} record`): Promise<void> {
+  put(
+    record: R,
+    compatible: (previous: R, next: R) => boolean,
+    refusal = `Another operation owns this ${this.codec.name} record`,
+  ): Promise<void> {
     const next = structuredClone(record)
     return this.mutate((records) => {
       const key = this.codec.key(next)
@@ -187,11 +193,16 @@ export function decideSendRecovery(input: SendRecoveryInput): SendRecoveryAction
       return { kind: 'conflict', reason: 'A different prompt is awaiting reconciliation for this draft' }
     }
     switch (daemon.outcome) {
-      case 'held': return { kind: 'hold' }
-      case 'accepted': return { kind: 'acknowledge' }
-      case 'rejected': return { kind: 'release' }
-      case 'prepared': return { kind: 'deliver' }
-      case 'conflict': return { kind: 'conflict', reason: 'The daemon holds an accepted message for a rejected prompt' }
+      case 'held':
+        return { kind: 'hold' }
+      case 'accepted':
+        return { kind: 'acknowledge' }
+      case 'rejected':
+        return { kind: 'release' }
+      case 'prepared':
+        return { kind: 'deliver' }
+      case 'conflict':
+        return { kind: 'conflict', reason: 'The daemon holds an accepted message for a rejected prompt' }
     }
   }
   // The daemon lists no unresolved intent. A record that never reached admission
@@ -202,9 +213,11 @@ export function decideSendRecovery(input: SendRecoveryInput): SendRecoveryAction
 }
 
 /** Finds one Conversation's unresolved send in `draft.send.list` pages. */
-export async function findPendingSend(conversationId: string,
+export async function findPendingSend(
+  conversationId: string,
   page: (after: string | undefined) => Promise<{ sends: PendingSend[]; next_cursor: string | null }>,
-  maxPages = 16): Promise<PendingSend | null> {
+  maxPages = 16,
+): Promise<PendingSend | null> {
   let after: string | undefined
   for (let index = 0; index < maxPages; index++) {
     const reply = await page(after)
@@ -231,16 +244,30 @@ export type GitAdmission = { kind: 'admit' } | { kind: 'refuse'; reason: string;
  * interrupted one nobody acknowledged. A retry of the same request passes, but
  * only with the same payload.
  */
-export function decideGitAdmission(requestId: string, samePayload: boolean, local: { request_id: string } | null,
-  listed: ReviewOperationEntry[]): GitAdmission {
+export function decideGitAdmission(
+  requestId: string,
+  samePayload: boolean,
+  local: { request_id: string } | null,
+  listed: ReviewOperationEntry[],
+): GitAdmission {
   if (local) {
     if (local.request_id !== requestId) {
-      return { kind: 'refuse', reason: 'Another Git operation needs reconciliation in this workspace', blocking: local.request_id }
+      return {
+        kind: 'refuse',
+        reason: 'Another Git operation needs reconciliation in this workspace',
+        blocking: local.request_id,
+      }
     }
-    if (!samePayload) return { kind: 'refuse', reason: 'Git operation ID belongs to another request', blocking: requestId }
+    if (!samePayload)
+      return { kind: 'refuse', reason: 'Git operation ID belongs to another request', blocking: requestId }
   }
   const other = listed.find((entry) => entry.acknowledged_at === null && entry.operation.id !== requestId)
-  if (other) return { kind: 'refuse', reason: 'Another Git operation needs reconciliation in this workspace', blocking: other.operation.id }
+  if (other)
+    return {
+      kind: 'refuse',
+      reason: 'Another Git operation needs reconciliation in this workspace',
+      blocking: other.operation.id,
+    }
   return { kind: 'admit' }
 }
 
@@ -249,8 +276,10 @@ export function decideGitAdmission(requestId: string, samePayload: boolean, loca
  * because only it keeps the parameters a retry needs; otherwise the newest daemon
  * operation that still needs the person.
  */
-export function pendingGitOperation<L extends { request_id: string }>(local: L | null,
-  listed: ReviewOperationEntry[]): { source: 'local'; record: L } | { source: 'daemon'; entry: ReviewOperationEntry } | null {
+export function pendingGitOperation<L extends { request_id: string }>(
+  local: L | null,
+  listed: ReviewOperationEntry[],
+): { source: 'local'; record: L } | { source: 'daemon'; entry: ReviewOperationEntry } | null {
   if (local) return { source: 'local', record: local }
   const entry = listed.find((item) => item.acknowledged_at === null)
   return entry ? { source: 'daemon', entry } : null

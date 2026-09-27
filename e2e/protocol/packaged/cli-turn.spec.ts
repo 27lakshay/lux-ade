@@ -20,20 +20,34 @@ function field(result: { stdout: string }, pattern: RegExp): string {
 
 async function launches(profile: ManagedProfile, provider: MockProvider): Promise<Array<Record<string, unknown>>> {
   const log = await readFile(join(mockDirectory(profile.root, provider), 'launch.jsonl'), 'utf8').catch(() => '')
-  return log.split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>)
+  return log
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 async function turn(profile: ManagedProfile, workspaceId: string, provider: MockProvider): Promise<void> {
   const created = await profile.cli('conversation', 'create', workspaceId, provider)
   expect(created.code, created.stderr).toBe(0)
   const conversationId = field(created, /"id":"(conversation[^"]*)"/)
-  const sent = await profile.cli('conversation', 'send', conversationId, prompts.turn, '--request-id', `packaged-${provider}`)
+  const sent = await profile.cli(
+    'conversation',
+    'send',
+    conversationId,
+    prompts.turn,
+    '--request-id',
+    `packaged-${provider}`,
+  )
   expect(sent.code, sent.stderr).toBe(0)
-  await expect.poll(async () => (await profile.cli('conversation', 'inspect', conversationId)).stdout,
-    { timeout: 20_000 }).toContain(turnReply[provider])
+  await expect
+    .poll(async () => (await profile.cli('conversation', 'inspect', conversationId)).stdout, { timeout: 20_000 })
+    .toContain(turnReply[provider])
 }
 
-test('the installed CLI cold-starts a profile and runs Codex and Claude turns through bundled Bun and Node', async ({ host, ade }) => {
+test('the installed CLI cold-starts a profile and runs Codex and Claude turns through bundled Bun and Node', async ({
+  host,
+  ade,
+}) => {
   const work = await host.create('Daily')
   const project = join(ade.root, 'project')
   await mkdir(project)
@@ -63,7 +77,10 @@ test('the installed CLI cold-starts a profile and runs Codex and Claude turns th
   expect(claude[0]).toMatchObject({ execPath: bundle.electron, electronRunAsNode: '1' })
 })
 
-test('a daemon cold-started by bundled ade-control alone runs Claude and Codex turns under the bundle\'s Node and Bun', async ({ host, ade }) => {
+test("a daemon cold-started by bundled ade-control alone runs Claude and Codex turns under the bundle's Node and Bun", async ({
+  host,
+  ade,
+}) => {
   const work = await host.create('Direct')
   const project = join(ade.root, 'project')
   await mkdir(project)
@@ -82,11 +99,15 @@ test('a daemon cold-started by bundled ade-control alone runs Claude and Codex t
   const codex = await startConversation(work.asScratch(), 'codex', project)
   await send(work.asScratch(), codex.conversationId, prompts.turn)
   await waitForMessage(work.asScratch(), codex.conversationId, turnReply.codex)
-  expect(String((await launches(work, 'codex'))[0]?.parent))
-    .toBe(`${bundle.bun} ${join(bundle.resources, 'providers/codex/shared-server.mjs')}`)
+  expect(String((await launches(work, 'codex'))[0]?.parent)).toBe(
+    `${bundle.bun} ${join(bundle.resources, 'providers/codex/shared-server.mjs')}`,
+  )
 })
 
-test('a terminal on the installed profile runs a login shell without the bundle\'s Node switch', async ({ host, ade }) => {
+test("a terminal on the installed profile runs a login shell without the bundle's Node switch", async ({
+  host,
+  ade,
+}) => {
   const work = await host.create('Shell')
   const project = join(ade.root, 'project')
   await mkdir(project)
@@ -95,12 +116,21 @@ test('a terminal on the installed profile runs a login shell without the bundle\
   const workspaceId = field(opened, /"id":"(workspace[^"]*)"/)
   const terminalId = field(opened, /"terminal_id":"([^"]+)"/)
   const output = join(ade.root, 'terminal-env.txt')
-  const sent = await work.cli('terminal', 'send', workspaceId, terminalId,
-    `env > '${output}.partial' && mv '${output}.partial' '${output}'`)
+  const sent = await work.cli(
+    'terminal',
+    'send',
+    workspaceId,
+    terminalId,
+    `env > '${output}.partial' && mv '${output}.partial' '${output}'`,
+  )
   expect(sent.code, sent.stderr).toBe(0)
   await expect.poll(() => readFile(output, 'utf8').catch(() => ''), { timeout: 20_000 }).toContain('PATH=')
-  const env = Object.fromEntries((await readFile(output, 'utf8')).split('\n').filter((line) => line.includes('='))
-    .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]))
+  const env = Object.fromEntries(
+    (await readFile(output, 'utf8'))
+      .split('\n')
+      .filter((line) => line.includes('='))
+      .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+  )
   expect(env.HOME).toBe(host.userHome)
   // ELECTRON_RUN_AS_NODE turns every Electron app the user starts from this shell into Node.
   expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()
@@ -125,10 +155,13 @@ test('a bundle moved to a folder with spaces runs its own executables and resour
     const workspaceId = field(opened, /"id":"(workspace[^"]*)"/)
     await turn(work, workspaceId, 'codex')
     await turn(work, workspaceId, 'claude')
-    expect(String((await launches(work, 'codex'))[0]?.parent))
-      .toBe(`${moved.bun} ${join(moved.resources, 'providers/codex/shared-server.mjs')}`)
-    expect((await launches(work, 'claude'))[0]).toMatchObject({ execPath: await realpath(moved.electron),
-      electronRunAsNode: '1' })
+    expect(String((await launches(work, 'codex'))[0]?.parent)).toBe(
+      `${moved.bun} ${join(moved.resources, 'providers/codex/shared-server.mjs')}`,
+    )
+    expect((await launches(work, 'claude'))[0]).toMatchObject({
+      execPath: await realpath(moved.electron),
+      electronRunAsNode: '1',
+    })
   } finally {
     await movedHost.teardown(testInfo)
   }

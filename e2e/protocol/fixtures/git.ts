@@ -8,11 +8,17 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 
 export class ScratchRepo {
-  private constructor(readonly path: string, private readonly env: Record<string, string>) {}
+  private constructor(
+    readonly path: string,
+    private readonly env: Record<string, string>,
+  ) {}
 
   /** `git init` a new repository at `path` with one initial commit. */
-  static async create(path: string, env: Record<string, string>,
-    options: { branch?: string; initialFiles?: Record<string, string> } = {}): Promise<ScratchRepo> {
+  static async create(
+    path: string,
+    env: Record<string, string>,
+    options: { branch?: string; initialFiles?: Record<string, string> } = {},
+  ): Promise<ScratchRepo> {
     await mkdir(path, { recursive: true })
     const repo = new ScratchRepo(await realpath(path), env)
     await repo.git('init', '--quiet', `--initial-branch=${options.branch ?? 'main'}`)

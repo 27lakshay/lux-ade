@@ -3,12 +3,19 @@
 // generated contracts, the request is validated before anything is sent, and
 // the reply is validated with `decodeResponse` before it is returned.
 import { randomUUID } from 'node:crypto'
-import { decodeRequest, decodeResponse, isOperation, operationIdOperations, type Operation, type Request,
-  type Response } from '@ade/contracts'
+import {
+  decodeRequest,
+  decodeResponse,
+  isOperation,
+  operationIdOperations,
+  type Operation,
+  type Request,
+  type Response,
+} from '@ade/contracts'
 import { DaemonRequestError, requestDaemon, type RequestOptions } from './request.js'
 
 /** The effect commands whose request carries a caller-supplied `operation_id`. */
-export type OperationIdOperation = typeof operationIdOperations[number]
+export type OperationIdOperation = (typeof operationIdOperations)[number]
 
 /**
  * An operation's request body: its contract without the `op` tag. An effect
@@ -40,12 +47,19 @@ export function encodeCall(op: unknown, request: unknown): { op: Operation; fiel
   if ('op' in request) {
     throw new DaemonRequestError('invalid_request', `Pass ${op} as the operation, not as a request field.`, 'not_sent')
   }
-  const body = takesOperationId(op) && (request as Record<string, unknown>).operation_id === undefined
-    ? { ...request, operation_id: randomUUID() } : request
+  const body =
+    takesOperationId(op) && (request as Record<string, unknown>).operation_id === undefined
+      ? { ...request, operation_id: randomUUID() }
+      : request
   let wire: Record<string, unknown>
-  try { wire = decodeRequest({ ...body, op }) as unknown as Record<string, unknown> }
-  catch (error) {
-    throw new DaemonRequestError('invalid_request', `The ${op} request failed its contract: ${errorText(error)}`, 'not_sent')
+  try {
+    wire = decodeRequest({ ...body, op }) as unknown as Record<string, unknown>
+  } catch (error) {
+    throw new DaemonRequestError(
+      'invalid_request',
+      `The ${op} request failed its contract: ${errorText(error)}`,
+      'not_sent',
+    )
   }
   const fields = { ...wire }
   delete fields.op
@@ -58,18 +72,23 @@ export function encodeCall(op: unknown, request: unknown): { op: Operation; fiel
  * inspect before retrying an effect.
  */
 export function decodeCallReply<O extends Operation>(op: O, reply: unknown): Response<O> {
-  try { return decodeResponse(op, reply) }
-  catch (error) {
+  try {
+    return decodeResponse(op, reply)
+  } catch (error) {
     throw new DaemonRequestError('protocol', `Daemon ${op} reply failed its contract: ${errorText(error)}`, 'unknown')
   }
 }
 
 /** Call one operation on the profile daemon at `endpoint` and return its validated reply. */
-export async function call<O extends Operation>(endpoint: string, op: O, request: CallRequest<O>,
-  options: RequestOptions = {}): Promise<Response<O>> {
+export async function call<O extends Operation>(
+  endpoint: string,
+  op: O,
+  request: CallRequest<O>,
+  options: RequestOptions = {},
+): Promise<Response<O>> {
   const encoded = encodeCall(op, request)
-  const operationId = typeof encoded.fields.operation_id === 'string' && takesOperationId(op)
-    ? encoded.fields.operation_id : undefined
+  const operationId =
+    typeof encoded.fields.operation_id === 'string' && takesOperationId(op) ? encoded.fields.operation_id : undefined
   try {
     const reply = await requestDaemon(endpoint, encoded.op, encoded.fields, options)
     return decodeCallReply(op, reply)

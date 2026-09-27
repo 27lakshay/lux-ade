@@ -7,12 +7,17 @@ import { operationIdOperations, operations } from '@ade/contracts'
 import { call, decodeCallReply, encodeCall, takesOperationId } from '../dist/call.js'
 
 function rejects(fn, code, delivery) {
-  assert.throws(fn, (error) => error.name === 'DaemonRequestError' && error.code === code && error.delivery === delivery)
+  assert.throws(
+    fn,
+    (error) => error.name === 'DaemonRequestError' && error.code === code && error.delivery === delivery,
+  )
 }
 
 test('a valid request becomes wire fields without its op', () => {
-  assert.deepEqual(encodeCall('queue.pause', { operation_id: 'pause-1', conversation_id: 'c1', paused: true }),
-    { op: 'queue.pause', fields: { operation_id: 'pause-1', conversation_id: 'c1', paused: true } })
+  assert.deepEqual(encodeCall('queue.pause', { operation_id: 'pause-1', conversation_id: 'c1', paused: true }), {
+    op: 'queue.pause',
+    fields: { operation_id: 'pause-1', conversation_id: 'c1', paused: true },
+  })
   assert.deepEqual(encodeCall('hello', {}), { op: 'hello', fields: {} })
 })
 
@@ -33,10 +38,14 @@ test('an effect command without an operation ID gets a fresh one; a query never 
 })
 
 test('an error from an effect command names the operation ID it was sent under', async () => {
-  await assert.rejects(call('/nonexistent/ade.sock', 'agent.cancel', { conversation_id: 'c1' }),
-    (error) => error.code === 'unavailable' && typeof error.operationId === 'string')
-  await assert.rejects(call('/nonexistent/ade.sock', 'agent.cancel', { operation_id: 'mine', conversation_id: 'c1' }),
-    (error) => error.operationId === 'mine')
+  await assert.rejects(
+    call('/nonexistent/ade.sock', 'agent.cancel', { conversation_id: 'c1' }),
+    (error) => error.code === 'unavailable' && typeof error.operationId === 'string',
+  )
+  await assert.rejects(
+    call('/nonexistent/ade.sock', 'agent.cancel', { operation_id: 'mine', conversation_id: 'c1' }),
+    (error) => error.operationId === 'mine',
+  )
 })
 
 test('undefined fields are dropped as JSON would drop them', () => {
@@ -55,8 +64,10 @@ test('unknown operations, non-object bodies, op fields and contract failures are
 
 test('call rejects an invalid request before it connects', async () => {
   // The socket does not exist: a request that reached it would fail as unavailable.
-  await assert.rejects(call('/nonexistent/ade.sock', 'queue.pause', { conversation_id: 'c1' }),
-    (error) => error.code === 'invalid_request' && error.delivery === 'not_sent')
+  await assert.rejects(
+    call('/nonexistent/ade.sock', 'queue.pause', { conversation_id: 'c1' }),
+    (error) => error.code === 'invalid_request' && error.delivery === 'not_sent',
+  )
 })
 
 test('a reply that fails its contract leaves the outcome unknown', () => {

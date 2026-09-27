@@ -3,10 +3,21 @@
 // daemon (the process that stands in for the UI) across graceful and killed
 // restarts.
 import { expect, isRunning, test } from '../fixtures'
-import { configureService, httpGet, inspectService, logText, nodeService, serviceState, waitForReadiness,
-  writeServicePrograms } from '../fixtures/services'
+import {
+  configureService,
+  httpGet,
+  inspectService,
+  logText,
+  nodeService,
+  serviceState,
+  waitForReadiness,
+  writeServicePrograms,
+} from '../fixtures/services'
 
-test('a configured HTTP service starts, reports readiness, logs and health, and stops with its port free', async ({ profile, repo }) => {
+test('a configured HTTP service starts, reports readiness, logs and health, and stops with its port free', async ({
+  profile,
+  repo,
+}) => {
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
   const config = nodeService(files.server, {
@@ -20,7 +31,12 @@ test('a configured HTTP service starts, reports readiness, logs and health, and 
   expect(configured.hostname).toMatch(/^web-[0-9a-f]{12}\.localhost$/)
 
   // The same configuration again converges on the stored service.
-  const again = await profile.call('service.configure', { workspace_id: workspace.id, name: 'web', revision: 0, config })
+  const again = await profile.call('service.configure', {
+    workspace_id: workspace.id,
+    name: 'web',
+    revision: 0,
+    config,
+  })
   expect(again.service).toEqual(configured)
   expect(await serviceState(profile, workspace.id, 'web')).toBe('stopped')
   expect((await inspectService(profile, workspace.id, 'web')).readiness.state).toBe('stopped')
@@ -41,27 +57,48 @@ test('a configured HTTP service starts, reports readiness, logs and health, and 
   expect(direct.json).toMatchObject({ service: 'web', pid: shellPid, port, path: '/hello' })
 
   // Output reaches both the live tail and the durable run log.
-  await expect.poll(async () => logText((await inspectService(profile, workspace.id, 'web')).logs)).toContain(`listening on ${port}`)
-  await expect.poll(async () => logText((await inspectService(profile, workspace.id, 'web')).durable_logs)).toContain(`listening on ${port}`)
+  await expect
+    .poll(async () => logText((await inspectService(profile, workspace.id, 'web')).logs))
+    .toContain(`listening on ${port}`)
+  await expect
+    .poll(async () => logText((await inspectService(profile, workspace.id, 'web')).durable_logs))
+    .toContain(`listening on ${port}`)
 
-  const probed = await profile.call('service.inspect', { workspace_id: workspace.id, name: 'web',
-    health_check: { port_variable: 'PORT', path: '/health', timeout_ms: 1_000 } })
+  const probed = await profile.call('service.inspect', {
+    workspace_id: workspace.id,
+    name: 'web',
+    health_check: { port_variable: 'PORT', path: '/health', timeout_ms: 1_000 },
+  })
   expect(probed.health).toMatchObject({ state: 'healthy', basis: 'http_status', status_code: 200 })
   const sample = await profile.call('service.health.sample', { workspace_id: workspace.id, name: 'web' })
   expect(sample.health_monitor).toMatchObject({ state: 'healthy', status_code: 200 })
 
   // listener.list attributes the listener to this managed service.
   const listeners = await profile.call('listener.list', {})
-  expect(listeners.listeners.find((row) => row.port === port)).toMatchObject({ pid: shellPid,
-    ownership: 'managed_service', workspace_id: workspace.id, service_name: 'web' })
-  expect(listeners.assignments.find((row) => row.port === port)).toMatchObject({ service_name: 'web',
-    variable: 'PORT', observation: 'verified_managed' })
+  expect(listeners.listeners.find((row) => row.port === port)).toMatchObject({
+    pid: shellPid,
+    ownership: 'managed_service',
+    workspace_id: workspace.id,
+    service_name: 'web',
+  })
+  expect(listeners.assignments.find((row) => row.port === port)).toMatchObject({
+    service_name: 'web',
+    variable: 'PORT',
+    observation: 'verified_managed',
+  })
 
   // A running service cannot be edited or removed.
-  await expect(profile.call('service.configure', { workspace_id: workspace.id, name: 'web', revision: 1,
-    config: { ...config, env: { GREETING: 'changed' } } })).rejects.toThrow(/Stop the service before editing it/)
-  await expect(profile.call('service.remove', { workspace_id: workspace.id, name: 'web', revision: 1 }))
-    .rejects.toThrow(/Stop the service before removing it/)
+  await expect(
+    profile.call('service.configure', {
+      workspace_id: workspace.id,
+      name: 'web',
+      revision: 1,
+      config: { ...config, env: { GREETING: 'changed' } },
+    }),
+  ).rejects.toThrow(/Stop the service before editing it/)
+  await expect(
+    profile.call('service.remove', { workspace_id: workspace.id, name: 'web', revision: 1 }),
+  ).rejects.toThrow(/Stop the service before removing it/)
 
   const stopped = await profile.call('service.stop', { workspace_id: workspace.id, name: 'web' })
   expect(stopped.service.terminal_owner).toBeNull()
@@ -73,19 +110,25 @@ test('a configured HTTP service starts, reports readiness, logs and health, and 
   // The durable log keeps the stopped run's output.
   expect(logText(after.durable_logs)).toContain(`listening on ${port}`)
   await expect(httpGet(`http://127.0.0.1:${port}/`)).rejects.toThrow()
-  expect((await profile.call('listener.list', {})).assignments.find((row) => row.port === port))
-    .toMatchObject({ observation: 'unobserved' })
+  expect((await profile.call('listener.list', {})).assignments.find((row) => row.port === port)).toMatchObject({
+    observation: 'unobserved',
+  })
 
   // A second stop converges on the stopped service.
   const repeated = await profile.call('service.stop', { workspace_id: workspace.id, name: 'web' })
   expect(repeated.service.terminal_owner).toBeNull()
 
   // Edits and removal work once stopped, and a stale revision is refused.
-  const edited = await profile.call('service.configure', { workspace_id: workspace.id, name: 'web', revision: 1,
-    config: { ...config, env: { GREETING: 'changed' } } })
+  const edited = await profile.call('service.configure', {
+    workspace_id: workspace.id,
+    name: 'web',
+    revision: 1,
+    config: { ...config, env: { GREETING: 'changed' } },
+  })
   expect(edited.service).toMatchObject({ revision: 2, identity: configured.identity, ports: { PORT: port } })
-  await expect(profile.call('service.remove', { workspace_id: workspace.id, name: 'web', revision: 1 }))
-    .rejects.toThrow(/Service changed; reload before removing/)
+  await expect(
+    profile.call('service.remove', { workspace_id: workspace.id, name: 'web', revision: 1 }),
+  ).rejects.toThrow(/Service changed; reload before removing/)
   await profile.call('service.remove', { workspace_id: workspace.id, name: 'web', revision: 2 })
   expect((await profile.call('service.list', { workspace_id: workspace.id })).services).toEqual([])
 })
@@ -111,8 +154,7 @@ test('a duplicate start returns the live run instead of launching a second one',
 
   const repeated = await profile.call('service.start', { workspace_id: workspace.id, name: 'api' })
   expect(repeated.service.terminal_owner).toEqual(running.terminal_owner)
-  const owners = new Set(fulfilled.map((result) => JSON.stringify((result).value
-    .service.terminal_owner)))
+  const owners = new Set(fulfilled.map((result) => JSON.stringify(result.value.service.terminal_owner)))
   expect(owners).toEqual(new Set([JSON.stringify(running.terminal_owner)]))
   const listeners = (await profile.call('listener.list', {})).listeners.filter((row) => row.port === running.ports.PORT)
   expect(new Set(listeners.map((row) => row.pid)).size).toBe(1)
@@ -123,8 +165,13 @@ test('a duplicate start returns the live run instead of launching a second one',
 test('the CLI configures, starts, inspects and stops a service', async ({ profile, repo }) => {
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
-  const configured = await profile.cli('service', 'configure', workspace.id, 'cli-web',
-    JSON.stringify(nodeService(files.server)))
+  const configured = await profile.cli(
+    'service',
+    'configure',
+    workspace.id,
+    'cli-web',
+    JSON.stringify(nodeService(files.server)),
+  )
   expect(configured.code).toBe(0)
   const port = (configured.json as { service: { ports: { PORT: number } } }).service.ports.PORT
 
@@ -168,31 +215,48 @@ for (const mode of ['graceful', 'kill'] as const) {
     expect(repeated.service.terminal_owner).toEqual(started.service.terminal_owner)
 
     // The port claim taken by the previous daemon is still held for the run.
-    expect((await profile.call('resources.inspect', { resource: 'port' })).claims
-      .filter((claim) => claim.port === service.ports.PORT)).toHaveLength(1)
+    expect(
+      (await profile.call('resources.inspect', { resource: 'port' })).claims.filter(
+        (claim) => claim.port === service.ports.PORT,
+      ),
+    ).toHaveLength(1)
 
     await profile.call('service.stop', { workspace_id: workspace.id, name: 'web' })
     expect(await isRunning(shellPid)).toBe(false)
     expect(await serviceState(profile, workspace.id, 'web')).toBe('stopped')
     // The new daemon's verified stop settles the claim its predecessor took.
-    expect((await profile.call('resources.inspect', { resource: 'port' })).claims
-      .filter((claim) => claim.port === service.ports.PORT)).toEqual([])
+    expect(
+      (await profile.call('resources.inspect', { resource: 'port' })).claims.filter(
+        (claim) => claim.port === service.ports.PORT,
+      ),
+    ).toEqual([])
   })
 }
 
 test('a configured health policy is sampled without being asked and follows the run', async ({ profile, repo }) => {
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
-  await configureService(profile, workspace.id, 'web', nodeService(files.server, {
-    health: { port_variable: 'PORT', path: '/health', timeout_ms: 200, interval_ms: 500 } }))
+  await configureService(
+    profile,
+    workspace.id,
+    'web',
+    nodeService(files.server, {
+      health: { port_variable: 'PORT', path: '/health', timeout_ms: 200, interval_ms: 500 },
+    }),
+  )
   expect((await inspectService(profile, workspace.id, 'web')).health_monitor).toMatchObject({ state: 'not_running' })
   await profile.call('service.start', { workspace_id: workspace.id, name: 'web' })
-  await expect.poll(async () => ((await inspectService(profile, workspace.id, 'web')).health_monitor as { state: string }).state,
-    { timeout: 15_000 }).toBe('healthy')
+  await expect
+    .poll(
+      async () => ((await inspectService(profile, workspace.id, 'web')).health_monitor as { state: string }).state,
+      { timeout: 15_000 },
+    )
+    .toBe('healthy')
   await profile.call('service.stop', { workspace_id: workspace.id, name: 'web' })
   expect((await inspectService(profile, workspace.id, 'web')).health_monitor).toMatchObject({ state: 'not_running' })
   // A service without a policy has no monitor to sample.
   await configureService(profile, workspace.id, 'plain', nodeService(files.server))
-  await expect(profile.call('service.health.sample', { workspace_id: workspace.id, name: 'plain' }))
-    .rejects.toThrow(/Service has no configured HTTP health policy/)
+  await expect(profile.call('service.health.sample', { workspace_id: workspace.id, name: 'plain' })).rejects.toThrow(
+    /Service has no configured HTTP health policy/,
+  )
 })

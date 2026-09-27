@@ -9,28 +9,57 @@ import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  decodeResponse, type ExecutionHost, type ExecutionHostEntry, type Operation, type PlacementDecision,
+  decodeResponse,
+  type ExecutionHost,
+  type ExecutionHostEntry,
+  type Operation,
+  type PlacementDecision,
   type Response,
 } from '@ade/contracts'
 import { encodeCall, type CallRequest } from './call.js'
 import { AdeClient } from './index.js'
 import { DaemonRequestError, requestDaemon, type DaemonResponse, type RequestOptions } from './request.js'
 import {
-  admitRemoteRequest, connectionKey, pairingRefusal, requestLostLink, initialRemoteState, pinnedKnownHosts,
-  reduceRemote, sshForwardArgs, validateLocalSocket,
-  type RemoteEffect, type RemoteEvent, type RemoteState, type RemoteTarget,
+  admitRemoteRequest,
+  connectionKey,
+  pairingRefusal,
+  requestLostLink,
+  initialRemoteState,
+  pinnedKnownHosts,
+  reduceRemote,
+  sshForwardArgs,
+  validateLocalSocket,
+  type RemoteEffect,
+  type RemoteEvent,
+  type RemoteState,
+  type RemoteTarget,
 } from './remote-state.js'
 import {
-  admitPlacement, previewCapability, sshPreviewForwardArgs, type PlacementAdmission, type PreviewCapability,
+  admitPlacement,
+  previewCapability,
+  sshPreviewForwardArgs,
+  type PlacementAdmission,
+  type PreviewCapability,
 } from './placement.js'
 
 export {
-  admitPlacement, deviceCapability, previewCapability, sshPreviewForwardArgs,
-  type DeviceCapability, type PlacementAdmission, type PreviewCapability,
+  admitPlacement,
+  deviceCapability,
+  previewCapability,
+  sshPreviewForwardArgs,
+  type DeviceCapability,
+  type PlacementAdmission,
+  type PreviewCapability,
 } from './placement.js'
 export {
-  connectionKey, remoteStatus, validateTarget,
-  type RemoteFailure, type RemoteIdentity, type RemotePairingCredential, type RemotePhase, type RemoteState,
+  connectionKey,
+  remoteStatus,
+  validateTarget,
+  type RemoteFailure,
+  type RemoteIdentity,
+  type RemotePairingCredential,
+  type RemotePhase,
+  type RemoteState,
   type RemoteTarget,
 } from './remote-state.js'
 
@@ -84,7 +113,10 @@ export class RemoteDaemonTransport {
   private readonly previews = new Set<RemotePreview>()
   private readonly feeds = new Set<AdeClient>()
 
-  constructor(readonly target: RemoteTarget, private readonly options: RemoteTransportOptions = {}) {
+  constructor(
+    readonly target: RemoteTarget,
+    private readonly options: RemoteTransportOptions = {},
+  ) {
     this.target = Object.freeze({ ...target })
     this.state = initialRemoteState(this.target)
     // mkdtemp creates the directory with mode 0700, so only this user can reach the forward.
@@ -110,7 +142,9 @@ export class RemoteDaemonTransport {
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
     listener(this.state)
-    return () => { this.listeners.delete(listener) }
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
   start(): void {
@@ -144,14 +178,25 @@ export class RemoteDaemonTransport {
         if (error) reject(error)
         else resolve(state)
       }
-      const timer = setTimeout(() => finish(new DaemonRequestError('timeout',
-        `Remote host did not connect in time: ${this.state.detail}`), this.state), timeoutMs)
+      const timer = setTimeout(
+        () =>
+          finish(
+            new DaemonRequestError('timeout', `Remote host did not connect in time: ${this.state.detail}`),
+            this.state,
+          ),
+        timeoutMs,
+      )
       unsubscribe = this.subscribe((state) => {
         if (state.phase === 'connected') finish(null, state)
         else if (state.phase === 'failed') {
-          const code = state.failure === 'incompatible' ? 'incompatible'
-            : state.failure === 'pairing_revoked' ? 'pairing_revoked'
-              : state.failure === 'unauthorized' ? 'unauthenticated' : 'unavailable'
+          const code =
+            state.failure === 'incompatible'
+              ? 'incompatible'
+              : state.failure === 'pairing_revoked'
+                ? 'pairing_revoked'
+                : state.failure === 'unauthorized'
+                  ? 'unauthenticated'
+                  : 'unavailable'
           finish(new DaemonRequestError(code, state.detail), state)
         } else if (state.phase === 'stopped') finish(new DaemonRequestError('unavailable', state.detail), state)
       })
@@ -163,7 +208,11 @@ export class RemoteDaemonTransport {
    * connection is up. A lost reply keeps its `unknown` delivery; this transport
    * never retries it, so the caller reconciles with its own operation ID.
    */
-  async request(op: string, fields: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<DaemonResponse> {
+  async request(
+    op: string,
+    fields: Record<string, unknown> = {},
+    options: RequestOptions = {},
+  ): Promise<DaemonResponse> {
     const admission = admitRemoteRequest(this.state, this.target)
     if (!admission.admitted) throw new DaemonRequestError('unavailable', admission.reason, 'not_sent')
     try {
@@ -172,7 +221,8 @@ export class RemoteDaemonTransport {
       if (error instanceof DaemonRequestError) {
         const refused = pairingRefusal(error)
         if (refused) this.dispatch({ type: 'refused', failure: refused, detail: error.message })
-        else if (requestLostLink(error)) this.dispatch({ type: 'link_lost', detail: 'The forwarded remote socket closed.' })
+        else if (requestLostLink(error))
+          this.dispatch({ type: 'link_lost', detail: 'The forwarded remote socket closed.' })
       }
       throw error
     }
@@ -198,11 +248,18 @@ export class RemoteDaemonTransport {
    * reports it available now: the entry is this host's, the URL is that
    * host's own loopback address, and the transport is connected.
    */
-  async openPreview(entry: ExecutionHostEntry, url: string, options: { timeoutMs?: number } = {}): Promise<RemotePreview> {
+  async openPreview(
+    entry: ExecutionHostEntry,
+    url: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<RemotePreview> {
     const capability = this.previewCapability(entry, url)
     if (!capability.available || capability.remoteHost === null || capability.remotePort === null) {
-      throw new DaemonRequestError('unavailable', `${capability.reason ?? 'This preview cannot be forwarded.'} ` +
-        'Nothing was forwarded.', 'not_sent')
+      throw new DaemonRequestError(
+        'unavailable',
+        `${capability.reason ?? 'This preview cannot be forwarded.'} ` + 'Nothing was forwarded.',
+        'not_sent',
+      )
     }
     const localPort = await freeLoopbackPort()
     const args = sshPreviewForwardArgs(this.target, capability, localPort, this.knownHostsFile)
@@ -213,7 +270,9 @@ export class RemoteDaemonTransport {
     })
     let open = true
     let settle: (reason: string) => void = () => {}
-    const closed = new Promise<string>((resolve) => { settle = resolve })
+    const closed = new Promise<string>((resolve) => {
+      settle = resolve
+    })
     const end = (reason: string): void => {
       if (!open) return
       open = false
@@ -221,14 +280,24 @@ export class RemoteDaemonTransport {
       settle(reason)
     }
     child.once('error', (error) => end(`The preview forward could not run: ${error.message}`))
-    child.once('exit', (code) => end(code === 0 || code === null ? 'The preview forward was closed.'
-      : `The preview forward to ${this.target.hostId} ended: ${stderr.trim() || `exit ${code}`}`))
+    child.once('exit', (code) =>
+      end(
+        code === 0 || code === null
+          ? 'The preview forward was closed.'
+          : `The preview forward to ${this.target.hostId} ended: ${stderr.trim() || `exit ${code}`}`,
+      ),
+    )
     const local = new URL(url)
     local.hostname = '127.0.0.1'
     local.port = String(localPort)
     const preview: RemotePreview = {
-      host: capability.host, url, localUrl: local.toString(), localPort,
-      remoteHost: capability.remoteHost, remotePort: capability.remotePort, closed,
+      host: capability.host,
+      url,
+      localUrl: local.toString(),
+      localPort,
+      remoteHost: capability.remoteHost,
+      remotePort: capability.remotePort,
+      closed,
       isOpen: () => open,
       close: () => {
         if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
@@ -240,8 +309,11 @@ export class RemoteDaemonTransport {
     while (open && !(await acceptsConnections(localPort))) {
       if (Date.now() >= deadline) {
         preview.close()
-        throw new DaemonRequestError('timeout', `The preview forward to ${this.target.hostId} did not open in time.`,
-          'not_sent')
+        throw new DaemonRequestError(
+          'timeout',
+          `The preview forward to ${this.target.hostId} did not open in time.`,
+          'not_sent',
+        )
       }
       await new Promise((resolve) => setTimeout(resolve, FORWARD_PROBE_MS))
     }
@@ -266,13 +338,17 @@ export class RemoteDaemonTransport {
    * A typed command with the same contract checks as a local `dailyUseCommand`;
    * an effect command without an `operation_id` is sent under a fresh one.
    */
-  async command<O extends Operation>(request: { op: O } & CallRequest<O>, options: RequestOptions = {}): Promise<Response<O>> {
+  async command<O extends Operation>(
+    request: { op: O } & CallRequest<O>,
+    options: RequestOptions = {},
+  ): Promise<Response<O>> {
     const { op: requested, ...body } = request as unknown as { op: O } & Record<string, unknown>
     const { fields } = encodeCall(requested, body)
     const op = requested
     const response = await this.request(op, fields, options)
-    try { return decodeResponse(op, response) }
-    catch (error) {
+    try {
+      return decodeResponse(op, response)
+    } catch (error) {
       throw new DaemonRequestError('protocol', `Remote ${op} reply failed its contract: ${String(error)}`, 'unknown')
     }
   }
@@ -288,9 +364,12 @@ export class RemoteDaemonTransport {
 
   private run(effect: RemoteEffect): void {
     switch (effect.type) {
-      case 'spawn_forward': return this.spawnForward()
-      case 'kill_forward': return this.killForward()
-      case 'send_hello': return this.sendHello()
+      case 'spawn_forward':
+        return this.spawnForward()
+      case 'kill_forward':
+        return this.killForward()
+      case 'send_hello':
+        return this.sendHello()
       case 'schedule_retry':
         if (this.retryTimer) clearTimeout(this.retryTimer)
         this.retryTimer = setTimeout(() => {
@@ -312,8 +391,9 @@ export class RemoteDaemonTransport {
     let stderr = ''
     let child: ChildProcess
     try {
-      child = spawn(this.options.sshPath ?? 'ssh', sshForwardArgs(this.target, this.localSocket, this.knownHostsFile),
-        { stdio: ['ignore', 'ignore', 'pipe'] })
+      child = spawn(this.options.sshPath ?? 'ssh', sshForwardArgs(this.target, this.localSocket, this.knownHostsFile), {
+        stdio: ['ignore', 'ignore', 'pipe'],
+      })
     } catch (error) {
       queueMicrotask(() => this.dispatch({ type: 'forward_failed', exitCode: null, stderr: String(error) }))
       return
@@ -335,7 +415,11 @@ export class RemoteDaemonTransport {
       this.probeTimer = null
       if (generation !== this.childGeneration) return
       let bound = false
-      try { bound = lstatSync(this.localSocket).isSocket() } catch { bound = false }
+      try {
+        bound = lstatSync(this.localSocket).isSocket()
+      } catch {
+        bound = false
+      }
       if (bound) return this.dispatch({ type: 'forward_ready' })
       if (Date.now() >= deadline) {
         return this.dispatch({ type: 'link_lost', detail: 'The SSH forward did not open in time.' })
@@ -368,14 +452,22 @@ export class RemoteDaemonTransport {
 
   private sendHello(): void {
     const generation = this.childGeneration
-    requestDaemon(this.localSocket, 'hello', {}, { timeoutMs: this.options.helloTimeoutMs ?? 10_000,
-      pairing: this.target.pairing ?? null }).then(
+    requestDaemon(
+      this.localSocket,
+      'hello',
+      {},
+      { timeoutMs: this.options.helloTimeoutMs ?? 10_000, pairing: this.target.pairing ?? null },
+    ).then(
       (hello) => {
         if (generation !== this.childGeneration) return
-        try { decodeResponse('hello', hello) }
-        catch (error) {
-          return this.dispatch({ type: 'hello_failed', incompatible: true,
-            detail: `Remote hello failed its contract: ${String(error)}` })
+        try {
+          decodeResponse('hello', hello)
+        } catch (error) {
+          return this.dispatch({
+            type: 'hello_failed',
+            incompatible: true,
+            detail: `Remote hello failed its contract: ${String(error)}`,
+          })
         }
         this.dispatch({ type: 'hello', hello })
       },
@@ -384,8 +476,11 @@ export class RemoteDaemonTransport {
         const refused = error instanceof DaemonRequestError ? pairingRefusal(error) : null
         if (refused) return this.dispatch({ type: 'refused', failure: refused, detail: (error as Error).message })
         const incompatible = error instanceof DaemonRequestError && error.code === 'incompatible'
-        this.dispatch({ type: 'hello_failed', incompatible,
-          detail: error instanceof Error ? error.message : String(error) })
+        this.dispatch({
+          type: 'hello_failed',
+          incompatible,
+          detail: error instanceof Error ? error.message : String(error),
+        })
       },
     )
   }
@@ -398,8 +493,11 @@ function freeLoopbackPort(): Promise<number> {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', () => {
       const address = server.address()
-      server.close(() => typeof address === 'object' && address ? resolve(address.port)
-        : reject(new Error('No loopback port was assigned.')))
+      server.close(() =>
+        typeof address === 'object' && address
+          ? resolve(address.port)
+          : reject(new Error('No loopback port was assigned.')),
+      )
     })
   })
 }
@@ -407,7 +505,10 @@ function freeLoopbackPort(): Promise<number> {
 function acceptsConnections(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const probe = createConnection({ host: '127.0.0.1', port })
-    probe.once('connect', () => { probe.destroy(); resolve(true) })
+    probe.once('connect', () => {
+      probe.destroy()
+      resolve(true)
+    })
     probe.once('error', () => resolve(false))
   })
 }
@@ -425,11 +526,16 @@ export class RemoteConnections {
     const key = connectionKey(target)
     const existing = this.transports.get(key)
     if (existing) {
-      if (existing.target.destination !== target.destination || existing.target.remoteSocket !== target.remoteSocket ||
+      if (
+        existing.target.destination !== target.destination ||
+        existing.target.remoteSocket !== target.remoteSocket ||
         existing.target.hostPublicKey !== target.hostPublicKey ||
-        existing.target.pairing?.pairingId !== target.pairing?.pairingId) {
-        throw new DaemonRequestError('conflict',
-          'This host and profile is already bound to a different SSH destination, remote socket, host key or pairing.')
+        existing.target.pairing?.pairingId !== target.pairing?.pairingId
+      ) {
+        throw new DaemonRequestError(
+          'conflict',
+          'This host and profile is already bound to a different SSH destination, remote socket, host key or pairing.',
+        )
       }
       return existing
     }

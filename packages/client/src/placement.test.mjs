@@ -6,16 +6,33 @@ import { test } from 'node:test'
 import { admitPlacement, deviceCapability, previewCapability, sshPreviewForwardArgs } from '../dist/placement.js'
 import { initialRemoteState, reduceRemote } from '../dist/remote-state.js'
 
-const target = { hostId: 'devbox', profileId: 'p-1', destination: 'me@devbox.lan',
-  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock', hostPublicKey: null }
+const target = {
+  hostId: 'devbox',
+  profileId: 'p-1',
+  destination: 'me@devbox.lan',
+  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock',
+  hostPublicKey: null,
+}
 const remoteHost = { kind: 'remote', host_id: 'devbox' }
 const local = { kind: 'local' }
 
 function connected(forTarget = target) {
   let state = initialRemoteState(forTarget)
-  for (const event of [{ type: 'start' }, { type: 'forward_ready' }, { type: 'hello', hello: {
-    type: 'hello', application_protocol: 'ade-application-v1', session_protocol: 'ade-sessions-v1',
-    runtime_socket: '/home/me/.ade/profiles/p-1/runtime.sock', boot_id: 'b1', build_id: null } }]) {
+  for (const event of [
+    { type: 'start' },
+    { type: 'forward_ready' },
+    {
+      type: 'hello',
+      hello: {
+        type: 'hello',
+        application_protocol: 'ade-application-v1',
+        session_protocol: 'ade-sessions-v1',
+        runtime_socket: '/home/me/.ade/profiles/p-1/runtime.sock',
+        boot_id: 'b1',
+        build_id: null,
+      },
+    },
+  ]) {
     state = reduceRemote(state, event).state
   }
   assert.equal(state.phase, 'connected')
@@ -27,15 +44,30 @@ function lost() {
 }
 
 function decision(host, admitted, reason = null) {
-  return { type: 'placement_decision', host, resource: 'workspace', admitted, reason,
-    requires_remote_transport: host.kind === 'remote' }
+  return {
+    type: 'placement_decision',
+    host,
+    resource: 'workspace',
+    admitted,
+    reason,
+    requires_remote_transport: host.kind === 'remote',
+  }
 }
 
 function entry(host, readiness = 'started') {
-  return { host, label: 'x', readiness, reason: readiness === 'started' ? null : 'The pairing was revoked',
-    capabilities: { resources: ['workspace'], previews: host.kind === 'local' ? 'direct' : 'ssh_forward',
-      devices: host.kind === 'local' ? 'local_host' : 'unsupported' },
-    remote_socket: null, remote_profile_id: null }
+  return {
+    host,
+    label: 'x',
+    readiness,
+    reason: readiness === 'started' ? null : 'The pairing was revoked',
+    capabilities: {
+      resources: ['workspace'],
+      previews: host.kind === 'local' ? 'direct' : 'ssh_forward',
+      devices: host.kind === 'local' ? 'local_host' : 'unsupported',
+    },
+    remote_socket: null,
+    remote_profile_id: null,
+  }
 }
 
 test('a refused daemon decision stays refused for the host the caller named', () => {
@@ -46,8 +78,11 @@ test('a refused daemon decision stays refused for the host the caller named', ()
 })
 
 test('a remote placement needs a connected transport to that same host', () => {
-  assert.deepEqual(admitPlacement(decision(remoteHost, true), connected(), target),
-    { admitted: true, host: remoteHost, via: 'remote_transport' })
+  assert.deepEqual(admitPlacement(decision(remoteHost, true), connected(), target), {
+    admitted: true,
+    host: remoteHost,
+    via: 'remote_transport',
+  })
   for (const [connection, forTarget, pattern] of [
     [null, null, /No remote transport/],
     [lost(), target, /state is unknown/],
@@ -63,8 +98,11 @@ test('a remote placement needs a connected transport to that same host', () => {
 })
 
 test('a local placement never runs through a remote transport', () => {
-  assert.deepEqual(admitPlacement(decision(local, true), null, null),
-    { admitted: true, host: local, via: 'local_daemon' })
+  assert.deepEqual(admitPlacement(decision(local, true), null, null), {
+    admitted: true,
+    host: local,
+    via: 'local_daemon',
+  })
   assert.equal(admitPlacement(decision(local, true), connected(), target).admitted, false)
 })
 
@@ -135,8 +173,12 @@ test('the preview forward binds loopback and reaches only the capability it was 
   const unavailable = previewCapability(entry(remoteHost), 'http://localhost:5173', lost(), target)
   assert.throws(() => sshPreviewForwardArgs(target, unavailable, 41000, null), /unknown/)
   // A host with a pinned key forwards previews under that key only.
-  const key = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from('ssh-ed25519'), Buffer.from([0, 0, 0, 32]),
-    Buffer.alloc(32, 1)]).toString('base64')
+  const key = Buffer.concat([
+    Buffer.from([0, 0, 0, 11]),
+    Buffer.from('ssh-ed25519'),
+    Buffer.from([0, 0, 0, 32]),
+    Buffer.alloc(32, 1),
+  ]).toString('base64')
   const pinned = { ...target, hostPublicKey: `ssh-ed25519 ${key}` }
   const pinnedCapability = previewCapability(entry(remoteHost), 'http://localhost:5173', connected(), pinned)
   const pinnedArgs = sshPreviewForwardArgs(pinned, pinnedCapability, 41000, '/tmp/ade-remote-1/known_hosts')

@@ -12,7 +12,12 @@ import { treeSnapshot } from '../fixtures/tree'
 let operation = 0
 const nextOperation = (label: string) => `e2e-skill-retention-${label}-${process.pid}-${++operation}`
 
-async function writeSkill(directory: string, name: string, body: string, extra: Record<string, string> = {}): Promise<void> {
+async function writeSkill(
+  directory: string,
+  name: string,
+  body: string,
+  extra: Record<string, string> = {},
+): Promise<void> {
   const files = { 'SKILL.md': `---\nname: ${name}\ndescription: Retention fixture.\n---\n\n${body}\n`, ...extra }
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(directory, path)), { recursive: true })
@@ -24,9 +29,16 @@ async function call(profile: ScratchProfile, op: string, request: Record<string,
   return profile.call(op as never, request as never)
 }
 
-async function install(profile: ScratchProfile, source: string, replace?: string): Promise<{ hash: string; bytes: number }> {
-  const reply = await call(profile, 'skill.install', { operation_id: nextOperation('install'), source_path: source,
-    ...(replace ? { replace_content_hash: replace } : {}) })
+async function install(
+  profile: ScratchProfile,
+  source: string,
+  replace?: string,
+): Promise<{ hash: string; bytes: number }> {
+  const reply = await call(profile, 'skill.install', {
+    operation_id: nextOperation('install'),
+    source_path: source,
+    ...(replace ? { replace_content_hash: replace } : {}),
+  })
   return { hash: reply.skill.content_hash, bytes: reply.skill.total_bytes }
 }
 
@@ -45,10 +57,16 @@ async function apply(profile: ScratchProfile, generation: string) {
 type Preview = Awaited<ReturnType<typeof preview>>
 
 function skillBlobs(reply: Preview): string[] {
-  return reply.candidates.filter((candidate) => candidate.kind === 'skill_blob').map((candidate) => candidate.id).sort()
+  return reply.candidates
+    .filter((candidate) => candidate.kind === 'skill_blob')
+    .map((candidate) => candidate.id)
+    .sort()
 }
 
-test('uninstalled and replaced bundle files are previewed by generation, and apply removes exactly those', async ({ ade, profile }) => {
+test('uninstalled and replaced bundle files are previewed by generation, and apply removes exactly those', async ({
+  ade,
+  profile,
+}) => {
   const home = profile.home
 
   // Installed and kept: never a candidate.
@@ -68,24 +86,39 @@ test('uninstalled and replaced bundle files are previewed by generation, and app
   const goneSource = join(ade.root, 'sources', 'gone')
   await writeSkill(goneSource, 'gone', 'Uninstalled.', { 'scripts/run.sh': '#!/bin/sh\necho gone\n' })
   const gone = await install(profile, goneSource)
-  const placed = await call(profile, 'skill.place', { operation_id: nextOperation('place'), name: 'gone',
-    expected_content_hash: gone.hash, provider: 'claude', scope: 'global' })
+  const placed = await call(profile, 'skill.place', {
+    operation_id: nextOperation('place'),
+    name: 'gone',
+    expected_content_hash: gone.hash,
+    provider: 'claude',
+    scope: 'global',
+  })
   expect(placed).toMatchObject({ outcome: 'created', path: join(home, '.claude/skills/gone') })
 
   // An external skill adopted and then released, and one only discovered.
   await writeSkill(join(home, '.claude/skills/pdf'), 'pdf', 'Reads PDFs.', { 'reference.md': 'external bytes\n' })
   await writeSkill(join(home, '.codex/skills/lint'), 'lint', 'Lints code.')
   const discovered = await call(profile, 'skill.discover', {})
-  const pdf = discovered.references.find((reference: any) => reference.provider === 'claude' && reference.entry === 'pdf')
-  expect(discovered.references.some((reference: any) => reference.provider === 'codex' && reference.entry === 'lint')).toBe(true)
-  const adopted = await call(profile, 'skill.adopt', { operation_id: nextOperation('adopt'), path: pdf.path,
-    expected_content_hash: pdf.content_hash })
+  const pdf = discovered.references.find(
+    (reference: any) => reference.provider === 'claude' && reference.entry === 'pdf',
+  )
+  expect(
+    discovered.references.some((reference: any) => reference.provider === 'codex' && reference.entry === 'lint'),
+  ).toBe(true)
+  const adopted = await call(profile, 'skill.adopt', {
+    operation_id: nextOperation('adopt'),
+    path: pdf.path,
+    expected_content_hash: pdf.content_hash,
+  })
   const pdfBytes: number = adopted.skill.total_bytes
 
   const released = await remove(profile, 'gone', gone.hash)
   expect(released.released_paths).toEqual([placed.path])
   expect((await remove(profile, 'pdf', pdf.content_hash)).released_paths).toEqual([pdf.path])
-  expect((await call(profile, 'skill.list', {})).skills.map((skill: any) => skill.name).sort()).toEqual(['keep', 'notes'])
+  expect((await call(profile, 'skill.list', {})).skills.map((skill: any) => skill.name).sort()).toEqual([
+    'keep',
+    'notes',
+  ])
 
   const external = {
     claude: await treeSnapshot(join(home, '.claude')),
@@ -118,10 +151,15 @@ test('uninstalled and replaced bundle files are previewed by generation, and app
   expect(cli.json).toMatchObject({ type: 'retention_preview', generation: planned.generation })
 
   const applied = await apply(profile, planned.generation)
-  expect(applied).toMatchObject({ generation: planned.generation, replayed: false, complete: true,
-    removed_bytes: planned.reclaimable_bytes })
-  expect(applied.results.map((result) => [result.kind, result.id, result.outcome, result.bytes]).sort())
-    .toEqual(planned.candidates.map((candidate) => [candidate.kind, candidate.id, 'removed', candidate.bytes]).sort())
+  expect(applied).toMatchObject({
+    generation: planned.generation,
+    replayed: false,
+    complete: true,
+    removed_bytes: planned.reclaimable_bytes,
+  })
+  expect(applied.results.map((result) => [result.kind, result.id, result.outcome, result.bytes]).sort()).toEqual(
+    planned.candidates.map((candidate) => [candidate.kind, candidate.id, 'removed', candidate.bytes]).sort(),
+  )
 
   // The orphaned files are gone; the installed bundles still verify in full.
   const after = await preview(profile)
@@ -148,7 +186,10 @@ test('uninstalled and replaced bundle files are previewed by generation, and app
   expect((await preview(profile)).candidates).toEqual([])
 })
 
-test('a racing install or removal after the preview is protected: the stale generation is refused and nothing is removed', async ({ ade, profile }) => {
+test('a racing install or removal after the preview is protected: the stale generation is refused and nothing is removed', async ({
+  ade,
+  profile,
+}) => {
   const source = join(ade.root, 'sources', 'race')
   await writeSkill(source, 'race', 'Races retention.', { 'data/table.csv': 'a,b\n1,2\n' })
   const race = await install(profile, source)
@@ -186,7 +227,10 @@ test('a racing install or removal after the preview is protected: the stale gene
     expect(skillBlobs(planned)).toContain(race.hash)
     expect(generations.has(planned.generation)).toBe(false)
     generations.add(planned.generation)
-    const [applied, installed] = await Promise.allSettled([apply(profile, planned.generation), install(profile, source)])
+    const [applied, installed] = await Promise.allSettled([
+      apply(profile, planned.generation),
+      install(profile, source),
+    ])
     expect(installed.status).toBe('fulfilled')
     if (applied.status === 'fulfilled') {
       // The apply ran first: it removed the files, and the install wrote them again.

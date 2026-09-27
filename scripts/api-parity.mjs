@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url'
  * `ade request OP JSON` unless its reason says otherwise.
  */
 export const cliExemptions = {
-  'session.subscribe': 'A stream: `ade request` returns its first catalog frame; AdeClient.subscribeFeed follows the feed',
+  'session.subscribe':
+    'A stream: `ade request` returns its first catalog frame; AdeClient.subscribeFeed follows the feed',
   'browser.owner.register': 'Only the Electron main process registers itself as the browser owner',
   'browser.owner.unregister': 'Only the Electron main process unregisters itself as the browser owner',
   'notification.delivery.claim': 'Called by a notification-showing client (the desktop) for its own delivery channel',
@@ -29,7 +30,8 @@ export const cliExemptions = {
 }
 
 // A literal in an operation position: `op: '…'`, or the second argument of a request helper.
-const OP_SITE = /(?:\bop:\s*|\b(?:requestDaemon|call|serviceRequest|dailyUseCommand|decodeReply|decodeDailyUseResponse)(?:<[^>]*>)?\([^,()]+,\s*)(['"])([^'"\n]+)\1/g
+const OP_SITE =
+  /(?:\bop:\s*|\b(?:requestDaemon|call|serviceRequest|dailyUseCommand|decodeReply|decodeDailyUseResponse)(?:<[^>]*>)?\([^,()]+,\s*)(['"])([^'"\n]+)\1/g
 const LITERAL = /(['"`])([a-z_]+(?:\.[a-z_]+)*)\1/g
 // A template literal that builds an operation name, such as `agent.${action}`.
 const DYNAMIC = /`[a-z_]+(?:\.[a-z_]+)*\.\$\{/g
@@ -57,16 +59,22 @@ export function computeParity({ operations, cliSources, validators, exemptions, 
   }
   for (const [name, reason] of Object.entries(exemptions)) {
     if (!names.has(name)) failures.push(`exemption ${name} names no operation; remove it`)
-    else if (commands.get(name).size) failures.push(`exemption ${name} is stale: ${[...commands.get(name)].join(', ')} exposes it`)
+    else if (commands.get(name).size)
+      failures.push(`exemption ${name} is stale: ${[...commands.get(name)].join(', ')} exposes it`)
     else if (!reason) failures.push(`exemption ${name} needs a reason`)
   }
   const rows = [...names].sort().map((name) => {
     const spec = operations[name]
     const sdk = validators.has(spec.request) && validators.has(spec.response)
-    if (!sdk) failures.push(`${name}: no generated validator for ${spec.request} or ${spec.response}; @ade/client call cannot check it`)
+    if (!sdk)
+      failures.push(
+        `${name}: no generated validator for ${spec.request} or ${spec.response}; @ade/client call cannot check it`,
+      )
     const cli = [...commands.get(name)].sort()
     if (!cli.length && !Object.hasOwn(exemptions, name)) {
-      failures.push(`${name}: no CLI command exposes it; add one in apps/cli/src/commands or an exemption with a reason`)
+      failures.push(
+        `${name}: no CLI command exposes it; add one in apps/cli/src/commands or an exemption with a reason`,
+      )
     }
     return { name, domain: spec.domain, tier: spec.tier, cli, exemption: exemptions[name] ?? null, sdk }
   })
@@ -93,7 +101,8 @@ export function sdkIndependence(packageJson, sources) {
 function markdownTable(rows) {
   const lines = ['| Operation | Domain | Tier | CLI | SDK `call` |', '|---|---|---|---|---|']
   for (const row of rows) {
-    const cli = row.cli.length ? row.cli.map((path) => path.replace(/^apps\/cli\/src\/(commands\/)?/, '')).join(', ')
+    const cli = row.cli.length
+      ? row.cli.map((path) => path.replace(/^apps\/cli\/src\/(commands\/)?/, '')).join(', ')
       : `exempt: ${row.exemption}`
     lines.push(`| \`${row.name}\` | ${row.domain} | ${row.tier} | ${cli} | ${row.sdk ? 'yes' : 'NO'} |`)
   }
@@ -116,20 +125,32 @@ function main() {
   const operations = Object.fromEntries(bundle.operations.map((operation) => [operation.name, operation]))
   const validatorSource = readFileSync(join(root, 'packages/contracts/src/generated/validators.js'), 'utf8')
   const validators = new Set([...validatorSource.matchAll(/export const (\w+)\s*=/g)].map((match) => match[1]))
-  const { rows, failures } = computeParity({ operations, validators, exemptions: cliExemptions,
-    cliSources: sourceFiles(root, join(root, 'apps/cli/src')), genericModule: 'apps/cli/src/commands/request.ts' })
+  const { rows, failures } = computeParity({
+    operations,
+    validators,
+    exemptions: cliExemptions,
+    cliSources: sourceFiles(root, join(root, 'apps/cli/src')),
+    genericModule: 'apps/cli/src/commands/request.ts',
+  })
   const clientRoot = join(root, 'packages/client')
-  failures.push(...sdkIndependence(JSON.parse(readFileSync(join(clientRoot, 'package.json'), 'utf8')),
-    sourceFiles(root, join(clientRoot, 'src'))))
+  failures.push(
+    ...sdkIndependence(
+      JSON.parse(readFileSync(join(clientRoot, 'package.json'), 'utf8')),
+      sourceFiles(root, join(clientRoot, 'src')),
+    ),
+  )
   const index = readFileSync(join(clientRoot, 'src/index.ts'), 'utf8')
-  if (!/export \{[^}]*\bcall\b[^}]*\} from '\.\/call\.js'/.test(index)) failures.push('@ade/client does not export call')
+  if (!/export \{[^}]*\bcall\b[^}]*\} from '\.\/call\.js'/.test(index))
+    failures.push('@ade/client does not export call')
   if (process.argv.includes('--table')) process.stdout.write(markdownTable(rows))
   if (failures.length) {
     console.error(`API parity failed:\n  ${failures.join('\n  ')}`)
     process.exit(1)
   }
   const exempt = rows.filter((row) => !row.cli.length).length
-  console.error(`API parity: ${rows.length} operations; ${rows.length - exempt} with a CLI command, ${exempt} exempt; all callable through @ade/client call`)
+  console.error(
+    `API parity: ${rows.length} operations; ${rows.length - exempt} with a CLI command, ${exempt} exempt; all callable through @ade/client call`,
+  )
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

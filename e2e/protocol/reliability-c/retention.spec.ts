@@ -8,7 +8,16 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { conversationStatus, expect, isRunning, prompts, send, startConversation, test, type ScratchProfile } from '../fixtures'
+import {
+  conversationStatus,
+  expect,
+  isRunning,
+  prompts,
+  send,
+  startConversation,
+  test,
+  type ScratchProfile,
+} from '../fixtures'
 import { control, nextProfileDataDirectory } from '../fixtures/control'
 import { configureService, nodeService, waitForReadiness, writeServicePrograms } from '../fixtures/services'
 import { exists } from './steps'
@@ -34,21 +43,35 @@ function ageUpload(profile: ScratchProfile, attachmentId: string, days: number):
   try {
     db.exec('PRAGMA busy_timeout = 5000')
     db.prepare('UPDATE attachments SET created_at=? WHERE id=?').run(Date.now() - days * DAY_MS, attachmentId)
-  } finally { db.close() }
+  } finally {
+    db.close()
+  }
 }
 
 let uploads = 0
 async function upload(profile: ScratchProfile, conversationId: string, text: string) {
-  return (await profile.call('attachment.put', { conversation_id: conversationId, request_id: `retention-upload-${++uploads}`,
-    name: `upload-${uploads}.txt`, data: Buffer.from(text).toString('base64') })).attachment
+  return (
+    await profile.call('attachment.put', {
+      conversation_id: conversationId,
+      request_id: `retention-upload-${++uploads}`,
+      name: `upload-${uploads}.txt`,
+      data: Buffer.from(text).toString('base64'),
+    })
+  ).attachment
 }
 
 async function stillThere(profile: ScratchProfile, conversationId: string, attachmentId: string): Promise<boolean> {
-  return profile.call('attachment.inspect', { conversation_id: conversationId, attachment_id: attachmentId })
-    .then(() => true, () => false)
+  return profile.call('attachment.inspect', { conversation_id: conversationId, attachment_id: attachmentId }).then(
+    () => true,
+    () => false,
+  )
 }
 
-test('retention during a backup, upload finalization and active execution removes only unreferenced idle items', async ({ ade, profile, repo }) => {
+test('retention during a backup, upload finalization and active execution removes only unreferenced idle items', async ({
+  ade,
+  profile,
+  repo,
+}) => {
   // Active execution: a held agent turn, a terminal shell and a service with an old log.
   const held = await startConversation(profile, 'codex')
   await send(profile, held.conversationId, prompts.hold)
@@ -63,10 +86,12 @@ test('retention during a backup, upload finalization and active execution remove
   await profile.call('service.start', { workspace_id: workspace.id, name: 'web' })
   await waitForReadiness(profile, workspace.id, 'web', 'tcp_listening')
   let liveLogs: string[] = []
-  await expect.poll(async () => {
-    liveLogs = (await logNames(profile)).filter((name) => !logsBefore.has(name))
-    return liveLogs.length
-  }).toBeGreaterThan(0)
+  await expect
+    .poll(async () => {
+      liveLogs = (await logNames(profile)).filter((name) => !logsBefore.has(name))
+      return liveLogs.length
+    })
+    .toBeGreaterThan(0)
   for (const name of await logNames(profile)) await age(join(serviceLogs(profile), name), 10)
 
   // Two uploads left unreferenced for two days, and an orphaned log idle for eight.
@@ -89,17 +114,35 @@ test('retention during a backup, upload finalization and active execution remove
 
   // Blob finalization races an explicit reclaim: the upload is referenced by a
   // draft after its reclaim preview, so the reclaim is refused and the upload stays.
-  const reclaimable = await profile.call('attachment.reclaim.preview', { conversation_id: idle.conversationId,
-    attachment_id: finalized.id })
+  const reclaimable = await profile.call('attachment.reclaim.preview', {
+    conversation_id: idle.conversationId,
+    attachment_id: finalized.id,
+  })
   expect(reclaimable.preview).toMatchObject({ reclaimable: true, protected_by: [] })
   expect(reclaimable.automatic_gc_eligible).toBe(false)
-  await profile.call('draft.save', { conversation_id: idle.conversationId, window_id: 'retention-window', revision: 1,
-    text: 'draft with a file', attachments: [finalized] })
-  await expect(profile.call('attachment.reclaim.apply', { conversation_id: idle.conversationId, attachment_id: finalized.id,
-    expected_generation: reclaimable.preview.generation })).rejects.toThrow()
+  await profile.call('draft.save', {
+    conversation_id: idle.conversationId,
+    window_id: 'retention-window',
+    revision: 1,
+    text: 'draft with a file',
+    attachments: [finalized],
+  })
+  await expect(
+    profile.call('attachment.reclaim.apply', {
+      conversation_id: idle.conversationId,
+      attachment_id: finalized.id,
+      expected_generation: reclaimable.preview.generation,
+    }),
+  ).rejects.toThrow()
   expect(await stillThere(profile, idle.conversationId, finalized.id)).toBe(true)
-  expect((await profile.call('attachment.reclaim.preview', { conversation_id: idle.conversationId, attachment_id: finalized.id }))
-    .preview).toMatchObject({ reclaimable: false, protected_by: ['draft'] })
+  expect(
+    (
+      await profile.call('attachment.reclaim.preview', {
+        conversation_id: idle.conversationId,
+        attachment_id: finalized.id,
+      })
+    ).preview,
+  ).toMatchObject({ reclaimable: false, protected_by: ['draft'] })
 
   // A retention candidate that changes after its preview is refused as well.
   await writeFile(join(serviceLogs(profile), `${planted}.0`), 'late orphan\n')
@@ -111,20 +154,26 @@ test('retention during a backup, upload finalization and active execution remove
 
   // Retention and a reclaim run at the same time as a backup of the live
   // profile and five new uploads.
-  const unreferencedPreview = await profile.call('attachment.reclaim.preview', { conversation_id: idle.conversationId,
-    attachment_id: unreferenced.id })
+  const unreferencedPreview = await profile.call('attachment.reclaim.preview', {
+    conversation_id: idle.conversationId,
+    attachment_id: unreferenced.id,
+  })
   const bundle = join(ade.root, 'backups', 'during-retention')
   await mkdir(join(ade.root, 'backups'), { recursive: true })
   const [applied, reclaimed, backup, fresh] = await Promise.all([
     profile.call('retention.apply', { generation: second.generation }),
-    profile.call('attachment.reclaim.apply', { conversation_id: idle.conversationId, attachment_id: unreferenced.id,
-      expected_generation: unreferencedPreview.preview.generation }),
+    profile.call('attachment.reclaim.apply', {
+      conversation_id: idle.conversationId,
+      attachment_id: unreferenced.id,
+      expected_generation: unreferencedPreview.preview.generation,
+    }),
     control(ade, ['backup', 'create', '--data-dir', profile.dataDirectory, '--out', bundle]),
     Promise.all(Array.from({ length: 5 }, (_, index) => upload(profile, idle.conversationId, `in flight ${index}\n`))),
   ])
   expect(applied).toMatchObject({ complete: true, replayed: false })
-  expect(applied.results.map((result) => `${result.kind}:${result.id}:${result.outcome}`).sort())
-    .toEqual([`service_log:${orphan}:removed`, `service_log:${planted}:removed`].sort())
+  expect(applied.results.map((result) => `${result.kind}:${result.id}:${result.outcome}`).sort()).toEqual(
+    [`service_log:${orphan}:removed`, `service_log:${planted}:removed`].sort(),
+  )
   expect(reclaimed.attachment).toMatchObject({ state: 'discarded' })
   expect(backup.code, backup.stderr).toBe(0)
 

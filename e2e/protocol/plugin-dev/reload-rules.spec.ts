@@ -16,7 +16,10 @@ import { current, echoed, editManifest, generations, lastReloadAt, nextReload, s
 
 const execFileAsync = promisify(execFile)
 
-test('an unchanged copy changes nothing; a renamed plugin or a lowered data schema is refused and the current generation keeps serving', async ({ ade, profile }) => {
+test('an unchanged copy changes nothing; a renamed plugin or a lowered data schema is refused and the current generation keeps serving', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(90_000)
   const source = await stagePlugin(ade.root, 'backend', { data_schema: 2 })
   const { pluginId } = await installAndEnable(profile, source)
@@ -46,8 +49,11 @@ test('an unchanged copy changes nothing; a renamed plugin or a lowered data sche
     const contributes = next.contributes as { commands: Array<{ id: string }> }
     for (const command of contributes.commands) command.id = command.id.replace('e2e.backend.', 'e2e.renamed.')
   })
-  expect(await nextReload(profile, pluginId, at)).toMatchObject({ status: 'refused', generation: null,
-    message: expect.stringContaining('now declares plugin e2e.renamed') })
+  expect(await nextReload(profile, pluginId, at)).toMatchObject({
+    status: 'refused',
+    generation: null,
+    message: expect.stringContaining('now declares plugin e2e.renamed'),
+  })
   await servesUnchanged()
 
   // Code rollback does not roll data back: a lower data schema is refused.
@@ -55,47 +61,73 @@ test('an unchanged copy changes nothing; a renamed plugin or a lowered data sche
   await editManifest(source, (next) => {
     Object.assign(next, JSON.parse(manifest), { data_schema: 1 })
   })
-  expect(await nextReload(profile, pluginId, at)).toMatchObject({ status: 'refused',
-    message: expect.stringContaining('Plugin data is at schema 2; the source declares 1') })
+  expect(await nextReload(profile, pluginId, at)).toMatchObject({
+    status: 'refused',
+    message: expect.stringContaining('Plugin data is at schema 2; the source declares 1'),
+  })
   await servesUnchanged()
 
   // With no provider session leasing it, a higher data schema is accepted and recorded.
   at = await lastReloadAt(profile, pluginId)
   await setVersion(source, 'v3')
-  await editManifest(source, (next) => { next.data_schema = 3 })
-  await expect.poll(async () => (await generations(profile, pluginId)).dev?.last_reload, { timeout: 20_000 })
+  await editManifest(source, (next) => {
+    next.data_schema = 3
+  })
+  await expect
+    .poll(async () => (await generations(profile, pluginId)).dev?.last_reload, { timeout: 20_000 })
     .toMatchObject({ status: 'activated', generation: before + 1 })
   expect(await lastReloadAt(profile, pluginId)).toBeGreaterThan(at)
   expect(await echoed(profile, pluginId)).toMatchObject({ value: { version: 'v3', generation: before + 1 } })
-  expect((await profile.call('plugin.inspect', { plugin_id: pluginId })).plugin)
-    .toMatchObject({ data_schema: 3, stored_data_schema: 3 })
+  expect((await profile.call('plugin.inspect', { plugin_id: pluginId })).plugin).toMatchObject({
+    data_schema: 3,
+    stored_data_schema: 3,
+  })
 
   // Going back to schema 2 is now refused too; generation before+1 keeps serving.
   at = await lastReloadAt(profile, pluginId)
-  await editManifest(source, (next) => { next.data_schema = 2 })
-  expect(await nextReload(profile, pluginId, at)).toMatchObject({ status: 'refused',
-    message: expect.stringContaining('Plugin data is at schema 3; the source declares 2') })
+  await editManifest(source, (next) => {
+    next.data_schema = 2
+  })
+  expect(await nextReload(profile, pluginId, at)).toMatchObject({
+    status: 'refused',
+    message: expect.stringContaining('Plugin data is at schema 3; the source declares 2'),
+  })
   expect(await current(profile, pluginId)).toBe(before + 1)
   expect(await echoed(profile, pluginId)).toMatchObject({ value: { version: 'v3', generation: before + 1 } })
 })
 
-test('development mode accepts only an enabled plugin from a local directory, with a bounded debounce; disabling ends it', async ({ ade, profile }) => {
+test('development mode accepts only an enabled plugin from a local directory, with a bounded debounce; disabling ends it', async ({
+  ade,
+  profile,
+}) => {
   const source = await stagePlugin(ade.root, 'backend')
   const { pluginId } = await installAndEnable(profile, source)
   for (const debounce of [49, 10_001]) {
-    await expect(profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: debounce }))
-      .rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('debounce_ms must be 50 to 10000') })
+    await expect(
+      profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: debounce }),
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('debounce_ms must be 50 to 10000'),
+    })
   }
   // The default debounce applies when none is given; entering again only retunes it.
-  expect((await profile.call('plugin.dev.enter', { plugin_id: pluginId })).dev).toMatchObject({ debounce_ms: 300, watching: true })
-  expect((await profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: 120 })).dev)
-    .toMatchObject({ debounce_ms: 120, watching: true, source_path: source })
+  expect((await profile.call('plugin.dev.enter', { plugin_id: pluginId })).dev).toMatchObject({
+    debounce_ms: 300,
+    watching: true,
+  })
+  expect((await profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: 120 })).dev).toMatchObject({
+    debounce_ms: 120,
+    watching: true,
+    source_path: source,
+  })
 
   // Disabling ends development mode, and enabling again does not resume it.
   await profile.call('plugin.disable', { plugin_id: pluginId })
   expect((await generations(profile, pluginId)).dev).toBeNull()
-  await expect(profile.call('plugin.dev.enter', { plugin_id: pluginId }))
-    .rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('is not enabled') })
+  await expect(profile.call('plugin.dev.enter', { plugin_id: pluginId })).rejects.toMatchObject({
+    code: 'invalid_request',
+    message: expect.stringContaining('is not enabled'),
+  })
   await profile.call('plugin.enable', { plugin_id: pluginId })
   expect((await generations(profile, pluginId)).dev).toBeNull()
 
@@ -110,14 +142,21 @@ test('development mode accepts only an enabled plugin from a local directory, wi
   await cp(packaged, join(ade.root, 'pack', 'package'), { recursive: true })
   const archive = join(ade.root, 'packed.tgz')
   await execFileAsync('tar', ['-czf', archive, '-C', join(ade.root, 'pack'), 'package'])
-  const sha256 = createHash('sha256').update(await readFile(archive)).digest('hex')
+  const sha256 = createHash('sha256')
+    .update(await readFile(archive))
+    .digest('hex')
   await profile.call('plugin.install', { operation_id: 'packed', source: { kind: 'package', path: archive, sha256 } })
   await profile.call('plugin.enable', { plugin_id: 'e2e.packed' })
-  await expect(profile.call('plugin.dev.enter', { plugin_id: 'e2e.packed' }))
-    .rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('development mode needs a local directory') })
+  await expect(profile.call('plugin.dev.enter', { plugin_id: 'e2e.packed' })).rejects.toMatchObject({
+    code: 'invalid_request',
+    message: expect.stringContaining('development mode needs a local directory'),
+  })
 })
 
-test('a source that never goes quiet still reloads at the 10 s cap, and a retuned debounce applies at once', async ({ ade, profile }) => {
+test('a source that never goes quiet still reloads at the 10 s cap, and a retuned debounce applies at once', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(90_000)
   const source = await stagePlugin(ade.root, 'backend')
   const { pluginId } = await installAndEnable(profile, source)
@@ -156,7 +195,10 @@ test('a source that never goes quiet still reloads at the 10 s cap, and a retune
   await expect.poll(async () => (await echoed(profile, pluginId)).value.version, { timeout: 15_000 }).toBe(`w${writes}`)
 })
 
-test('a source directory that disappears is reported as a watch error while the current generation serves; its return reloads', async ({ ade, profile }) => {
+test('a source directory that disappears is reported as a watch error while the current generation serves; its return reloads', async ({
+  ade,
+  profile,
+}) => {
   const source = await stagePlugin(ade.root, 'backend')
   const { pluginId } = await installAndEnable(profile, source)
   await profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: 100 })
@@ -164,13 +206,16 @@ test('a source directory that disappears is reported as a watch error while the 
   const before = await current(profile, pluginId)
 
   await rename(source, `${source}.away`)
-  await expect.poll(async () => (await generations(profile, pluginId)).dev?.watch_error ?? '').toContain('Could not read')
+  await expect
+    .poll(async () => (await generations(profile, pluginId)).dev?.watch_error ?? '')
+    .toContain('Could not read')
   expect(await echoed(profile, pluginId)).toMatchObject({ value: { version: 'v1', generation: before } })
   expect((await generations(profile, pluginId)).dev).toMatchObject({ watching: true })
 
   await rename(`${source}.away`, source)
   await setVersion(source, 'v2')
-  await expect.poll(async () => (await echoed(profile, pluginId)).value, { timeout: 20_000 })
+  await expect
+    .poll(async () => (await echoed(profile, pluginId)).value, { timeout: 20_000 })
     .toMatchObject({ version: 'v2', generation: before + 1 })
   expect((await generations(profile, pluginId)).dev?.watch_error).toBeNull()
 })

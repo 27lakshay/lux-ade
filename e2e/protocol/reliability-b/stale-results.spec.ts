@@ -6,8 +6,18 @@
 // never return another context's data.
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { codexPrompts, expect, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  codexPrompts,
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { openConversationView, sdkModules, viewDigest } from '../fixtures/sync-view'
 
 async function fresh(profile: ScratchProfile, conversationId: string) {
@@ -47,8 +57,13 @@ test('a profile switch drops the old profile late snapshot and frames', async ({
     await waitForIdle(first, a.conversationId)
     await send(second, b.conversationId, prompts.turn)
     await waitForIdle(second, b.conversationId)
-    await expect.poll(async () => JSON.stringify(viewDigest(newView.latest()!.snapshot!)) ===
-      JSON.stringify(viewDigest(await fresh(second, b.conversationId)))).toBe(true)
+    await expect
+      .poll(
+        async () =>
+          JSON.stringify(viewDigest(newView.latest()!.snapshot!)) ===
+          JSON.stringify(viewDigest(await fresh(second, b.conversationId))),
+      )
+      .toBe(true)
 
     // Nothing from the first profile reached the old view after it closed, or the new view at all.
     expect(oldView.states).toHaveLength(heardBeforeSwitch)
@@ -69,7 +84,9 @@ test('a stopped client hears nothing more from its daemon', async ({ profile }) 
   const { client } = await sdkModules()
   const old = new client.AdeClient(profile.socket)
   const heard: string[] = []
-  old.subscribeFeed((frame) => { heard.push(`${frame.type}:${frame.revision}`) })
+  old.subscribeFeed((frame) => {
+    heard.push(`${frame.type}:${frame.revision}`)
+  })
   old.start()
   await expect.poll(() => old.getState().status).toBe('connected')
   const { conversationId } = await startConversation(profile, 'codex')
@@ -114,20 +131,35 @@ test('switching conversations across workspaces keeps the other conversation out
     await waitForIdle(profile, x.conversationId)
     // Y's view saw every frame X produced, and took none of X's content.
     await expect.poll(() => yView.forwarded.at(-1)?.revision).toBe(yView.client()!.getState().revision)
-    expect(yView.forwarded.some((frame) => frame.type === 'conversation_changed' &&
-      (frame.conversation as { id: string }).id === x.conversationId)).toBe(true)
-    expect(yView.states.every((entry) => entry.state.snapshot === null ||
-      entry.state.snapshot.conversation.id === y.conversationId)).toBe(true)
+    expect(
+      yView.forwarded.some(
+        (frame) =>
+          frame.type === 'conversation_changed' && (frame.conversation as { id: string }).id === x.conversationId,
+      ),
+    ).toBe(true)
+    expect(
+      yView.states.every(
+        (entry) => entry.state.snapshot === null || entry.state.snapshot.conversation.id === y.conversationId,
+      ),
+    ).toBe(true)
     const shown = yView.latest()!.snapshot!
     expect(shown.conversation.id).toBe(y.conversationId)
-    expect(shown.messages.every((message) => message.id.startsWith(y.conversationId) ||
-      !JSON.stringify(message).includes(x.conversationId))).toBe(true)
+    expect(
+      shown.messages.every(
+        (message) => message.id.startsWith(y.conversationId) || !JSON.stringify(message).includes(x.conversationId),
+      ),
+    ).toBe(true)
     expect(JSON.stringify(shown.messages)).not.toContain('tool completed once')
     expect(viewDigest(shown)).toEqual(viewDigest(await fresh(profile, y.conversationId)))
     // Search scoped to Y's workspace never returns X's messages.
-    await expect.poll(async () => (await profile.call('history.search', { query: 'tool completed', limit: 50 })).results.length)
+    await expect
+      .poll(async () => (await profile.call('history.search', { query: 'tool completed', limit: 50 })).results.length)
       .toBeGreaterThan(0)
-    const scoped = await profile.call('history.search', { query: 'tool completed', workspace_id: y.workspaceId, limit: 50 })
+    const scoped = await profile.call('history.search', {
+      query: 'tool completed',
+      workspace_id: y.workspaceId,
+      limit: 50,
+    })
     expect(scoped.results).toEqual([])
   } finally {
     yView.dispose()
@@ -161,12 +193,18 @@ test('late pages and cursors from another context never return that context', as
   expect(all.messages.map((message) => message.id).slice(0, merged.length)).toEqual(merged)
 
   // A search cursor issued by one profile, replayed on another, only ever pages that other profile.
-  await expect.poll(async () => (await first.call('history.search', { query: 'wombat', limit: 50 })).results.length).toBe(5)
-  await expect.poll(async () => (await second.call('history.search', { query: 'wombat', limit: 50 })).results.length).toBe(4)
+  await expect
+    .poll(async () => (await first.call('history.search', { query: 'wombat', limit: 50 })).results.length)
+    .toBe(5)
+  await expect
+    .poll(async () => (await second.call('history.search', { query: 'wombat', limit: 50 })).results.length)
+    .toBe(4)
   const page = await first.call('history.search', { query: 'wombat', limit: 1 })
   expect(page.next_cursor).toBeTruthy()
-  const crossed = await second.call('history.search', { query: 'wombat', limit: 50, cursor: page.next_cursor! })
-    .then((reply) => reply.results, (error: Error) => error.message)
+  const crossed = await second.call('history.search', { query: 'wombat', limit: 50, cursor: page.next_cursor! }).then(
+    (reply) => reply.results,
+    (error: Error) => error.message,
+  )
   if (Array.isArray(crossed)) {
     expect(crossed.every((result) => result.provenance.conversation_id === b.conversationId)).toBe(true)
   } else {

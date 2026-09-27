@@ -2,12 +2,21 @@
 // or a tool output past 1 MiB is stored cut on a character boundary and
 // ends with an explicit truncation marker. It never fails the Conversation,
 // the marker survives a daemon restart, and the next turn runs normally.
-import { expect, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { conversationFaults } from '../fixtures/conversation-faults'
 
 const LIMIT = 1024 * 1024
-const MARKER = '[ADE truncated this message at 1 MiB. The rest of the provider\'s output was not stored.]'
+const MARKER = "[ADE truncated this message at 1 MiB. The rest of the provider's output was not stored.]"
 
 async function snapshot(profile: ScratchProfile, conversationId: string) {
   return profile.call('conversation.get', { conversation_id: conversationId })
@@ -19,7 +28,9 @@ function large(messages: Awaited<ReturnType<typeof snapshot>>['messages']) {
   return { answer, tool }
 }
 
-test('F031: a message and a tool output past 1 MiB are kept truncated with a marker and the turn completes', async ({ ade }) => {
+test('F031: a message and a tool output past 1 MiB are kept truncated with a marker and the turn completes', async ({
+  ade,
+}) => {
   test.setTimeout(90_000)
   const profile = await ade.profile({ env: conversationFaults.env })
   const { conversationId } = await startConversation(profile, 'codex')
@@ -57,8 +68,13 @@ test('F031: a message and a tool output past 1 MiB are kept truncated with a mar
 
 test('F031: a prompt past 1 MiB is still refused before dispatch', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
-  await expect(profile.call('agent.send', { conversation_id: conversationId, request_id: 'huge-prompt',
-    text: 'x'.repeat(LIMIT + 1) })).rejects.toThrow()
+  await expect(
+    profile.call('agent.send', {
+      conversation_id: conversationId,
+      request_id: 'huge-prompt',
+      text: 'x'.repeat(LIMIT + 1),
+    }),
+  ).rejects.toThrow()
   const state = await snapshot(profile, conversationId)
   expect(state.messages).toEqual([])
   expect((await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')).toEqual([])

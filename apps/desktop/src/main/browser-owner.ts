@@ -10,9 +10,18 @@ import { captureDesignContext } from './browser-capture'
 import { browserInputMutation, evaluateInTab, screenshotTab, waitInTab } from './browser-automation'
 
 const maxRequestBytes = 64 * 1024
-const browserTools = new Set(['browser.diagnostics.attach', 'browser.diagnostics.detach', 'browser.diagnostics.read',
-  'browser.recording.start', 'browser.recording.stop', 'browser.recording.get', 'browser.context.capture',
-  'browser.evaluate', 'browser.wait', 'browser.screenshot'])
+const browserTools = new Set([
+  'browser.diagnostics.attach',
+  'browser.diagnostics.detach',
+  'browser.diagnostics.read',
+  'browser.recording.start',
+  'browser.recording.stop',
+  'browser.recording.get',
+  'browser.context.capture',
+  'browser.evaluate',
+  'browser.wait',
+  'browser.screenshot',
+])
 /** A request's time on the socket once its frame arrived; automation may wait on the page. */
 const handlingTimeoutMs = 30_000
 
@@ -25,8 +34,13 @@ function toolErrorCode(error: unknown): string {
 }
 
 export class BrowserOwner {
-  private constructor(readonly profileId: string, private readonly browserProfileId: string, readonly ownerId: string,
-    readonly socketPath: string, private readonly server: Server) {}
+  private constructor(
+    readonly profileId: string,
+    private readonly browserProfileId: string,
+    readonly ownerId: string,
+    readonly socketPath: string,
+    private readonly server: Server,
+  ) {}
   private endpoint: string | null = null
   private registeredBootId: string | null = null
   private readonly peers = new Set<Socket>()
@@ -36,8 +50,11 @@ export class BrowserOwner {
     const directory = join('/tmp', `ade-browser-owner-${process.getuid?.() ?? 'unknown'}`)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const details = await lstat(directory)
-    if (!details.isDirectory() || (details.mode & 0o077) !== 0 ||
-      (process.getuid && details.uid !== process.getuid())) {
+    if (
+      !details.isDirectory() ||
+      (details.mode & 0o077) !== 0 ||
+      (process.getuid && details.uid !== process.getuid())
+    ) {
       throw new Error('Browser owner directory is not private')
     }
     const ownerId = randomUUID()
@@ -70,7 +87,10 @@ export class BrowserOwner {
     let frame = ''
     peer.on('data', (chunk: string) => {
       frame += chunk
-      if (Buffer.byteLength(frame) > maxRequestBytes) { peer.destroy(); return }
+      if (Buffer.byteLength(frame) > maxRequestBytes) {
+        peer.destroy()
+        return
+      }
       const end = frame.indexOf('\n')
       if (end < 0) return
       peer.removeAllListeners('data')
@@ -91,12 +111,22 @@ export class BrowserOwner {
         throw new Error('Browser owner changed')
       }
       if (typeof value.op === 'string' && browserTools.has(value.op)) {
-        try { return { ...identity, ...(await this.tool(value.op, value)) } }
-        catch (error) { return { type: 'error', code: toolErrorCode(error), message: String(error), ...identity } }
+        try {
+          return { ...identity, ...(await this.tool(value.op, value)) }
+        } catch (error) {
+          return { type: 'error', code: toolErrorCode(error), message: String(error), ...identity }
+        }
       }
-      if (value.op !== 'browser.list' && value.op !== 'browser.inspect' && value.op !== 'browser.operation' &&
-        value.op !== 'browser.open' && value.op !== 'browser.navigate' && value.op !== 'browser.close' &&
-        value.op !== 'browser.click' && value.op !== 'browser.type') {
+      if (
+        value.op !== 'browser.list' &&
+        value.op !== 'browser.inspect' &&
+        value.op !== 'browser.operation' &&
+        value.op !== 'browser.open' &&
+        value.op !== 'browser.navigate' &&
+        value.op !== 'browser.close' &&
+        value.op !== 'browser.click' &&
+        value.op !== 'browser.type'
+      ) {
         throw new Error('Unsupported browser operation')
       }
       if (value.op === 'browser.operation') {
@@ -104,25 +134,43 @@ export class BrowserOwner {
         return { ...identity, ...result }
       }
       if (value.op === 'browser.list' || value.op === 'browser.inspect') {
-        const result = await readBrowserOwner(this.browserProfileId, value.op,
-          typeof value.tab_id === 'string' ? value.tab_id : undefined)
+        const result = await readBrowserOwner(
+          this.browserProfileId,
+          value.op,
+          typeof value.tab_id === 'string' ? value.tab_id : undefined,
+        )
         return { ...identity, ...result }
       }
       const mutation = { request_id: value.request_id, payload_fingerprint: value.payload_fingerprint }
       try {
-        const result = value.op === 'browser.click' || value.op === 'browser.type'
-          ? await browserInputMutation(this.browserProfileId, this.profileId, this.ownerId, value.op, value)
-          : await mutateBrowserOwner(this.browserProfileId, this.profileId, this.ownerId,
-            value.op, value.request_id, value.payload_fingerprint, value.tab_id, value.url, value.partition_id)
+        const result =
+          value.op === 'browser.click' || value.op === 'browser.type'
+            ? await browserInputMutation(this.browserProfileId, this.profileId, this.ownerId, value.op, value)
+            : await mutateBrowserOwner(
+                this.browserProfileId,
+                this.profileId,
+                this.ownerId,
+                value.op,
+                value.request_id,
+                value.payload_fingerprint,
+                value.tab_id,
+                value.url,
+                value.partition_id,
+              )
         return { ...identity, ...mutation, ...result }
       } catch (error) {
         const message = String(error)
-        const code = message.includes('outcome_unknown:') ? 'outcome_unknown'
-          : message.includes('not_applied:') ? 'not_applied'
-          : message.includes('conflicts with a different target') || message.includes('conflict:') ? 'conflict'
-            : message.includes('Invalid browser') || message.includes('fingerprint does not match') ||
-              message.includes('invalid_request:') ? 'invalid_request'
-              : 'unavailable'
+        const code = message.includes('outcome_unknown:')
+          ? 'outcome_unknown'
+          : message.includes('not_applied:')
+            ? 'not_applied'
+            : message.includes('conflicts with a different target') || message.includes('conflict:')
+              ? 'conflict'
+              : message.includes('Invalid browser') ||
+                  message.includes('fingerprint does not match') ||
+                  message.includes('invalid_request:')
+                ? 'invalid_request'
+                : 'unavailable'
         return { type: 'error', code, message, ...identity, ...mutation }
       }
     } catch (error) {
@@ -137,7 +185,8 @@ export class BrowserOwner {
     if (op === 'browser.context.capture') {
       return captureDesignContext(this.browserProfileId, value.tab_id, value.selector, value.screenshot)
     }
-    if (op === 'browser.evaluate') return evaluateInTab(this.browserProfileId, value.tab_id, value.expression, value.timeout_ms)
+    if (op === 'browser.evaluate')
+      return evaluateInTab(this.browserProfileId, value.tab_id, value.expression, value.timeout_ms)
     if (op === 'browser.wait') {
       return waitInTab(this.browserProfileId, value.tab_id, value.selector, value.state, value.timeout_ms)
     }
@@ -153,10 +202,14 @@ export class BrowserOwner {
     // A crash of this owner's predecessor or of the daemon can leave receipts
     // pending. Settle them from the tabs before the daemon routes new work here.
     // A failure leaves them unknown; each lookup retries the reconciliation.
-    await reconcileBrowserReceipts(this.browserProfileId, this.profileId)
-      .catch((error) => console.error('Browser receipt reconciliation failed', error))
-    await dailyUseCommand(endpoint, { op: 'browser.owner.register',
-      profile_id: this.profileId, owner_id: this.ownerId, socket_path: this.socketPath,
+    await reconcileBrowserReceipts(this.browserProfileId, this.profileId).catch((error) =>
+      console.error('Browser receipt reconciliation failed', error),
+    )
+    await dailyUseCommand(endpoint, {
+      op: 'browser.owner.register',
+      profile_id: this.profileId,
+      owner_id: this.ownerId,
+      socket_path: this.socketPath,
     })
     this.endpoint = endpoint
     this.registeredBootId = bootId
@@ -170,8 +223,11 @@ export class BrowserOwner {
     for (const peer of this.peers) peer.destroy()
     await new Promise<void>((done) => this.server.close(() => done()))
     await unlink(this.socketPath).catch(() => undefined)
-    if (endpoint) await dailyUseCommand(endpoint, { op: 'browser.owner.unregister',
-      profile_id: this.profileId, owner_id: this.ownerId,
-    }).catch(() => undefined)
+    if (endpoint)
+      await dailyUseCommand(endpoint, {
+        op: 'browser.owner.unregister',
+        profile_id: this.profileId,
+        owner_id: this.ownerId,
+      }).catch(() => undefined)
   }
 }

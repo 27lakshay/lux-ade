@@ -24,8 +24,11 @@ export function opId(label: string): string {
 }
 
 /** One `orchestration.child.wait` observation. */
-export async function waitOnce(profile: ScratchProfile, child: string,
-  options: { messageId?: string; timeoutMs?: number; deadlineMs?: number } = {}): Promise<Wait> {
+export async function waitOnce(
+  profile: ScratchProfile,
+  child: string,
+  options: { messageId?: string; timeoutMs?: number; deadlineMs?: number } = {},
+): Promise<Wait> {
   return await profile.call('orchestration.child.wait', {
     child_conversation_id: child,
     ...(options.messageId ? { message_id: options.messageId } : {}),
@@ -35,13 +38,22 @@ export async function waitOnce(profile: ScratchProfile, child: string,
 }
 
 /** Repeat the wait until it reports `state` (and `outcome`, when given), and return that reply. */
-export async function waitForChild(profile: ScratchProfile, child: string, state: string,
-  options: { messageId?: string; outcome?: string; timeout?: number } = {}): Promise<Wait> {
+export async function waitForChild(
+  profile: ScratchProfile,
+  child: string,
+  state: string,
+  options: { messageId?: string; outcome?: string; timeout?: number } = {},
+): Promise<Wait> {
   let last: Wait | undefined
-  await expect.poll(async () => {
-    last = await waitOnce(profile, child, { messageId: options.messageId, timeoutMs: 0 })
-    return options.outcome ? `${last.state}:${last.outcome}` : last.state
-  }, { timeout: options.timeout ?? 20_000 }).toBe(options.outcome ? `${state}:${options.outcome}` : state)
+  await expect
+    .poll(
+      async () => {
+        last = await waitOnce(profile, child, { messageId: options.messageId, timeoutMs: 0 })
+        return options.outcome ? `${last.state}:${last.outcome}` : last.state
+      },
+      { timeout: options.timeout ?? 20_000 },
+    )
+    .toBe(options.outcome ? `${state}:${options.outcome}` : state)
   return last as Wait
 }
 
@@ -53,11 +65,21 @@ export async function parentIn(profile: ScratchProfile, path: string, provider: 
 }
 
 /** Delegate `task` from `parent` to a Codex child in the parent's workspace, as the user. */
-export async function delegate(profile: ScratchProfile, parent: string, task: string = prompts.turn,
-  extra: { provider?: string; account?: 'inherit' | 'ambient' } = {}) {
-  const { child } = await profile.call('orchestration.delegate', { operation_id: opId('delegate'),
-    parent_conversation_id: parent, caller: { kind: 'user' }, provider: extra.provider ?? 'codex',
-    account: { mode: extra.account ?? 'inherit' }, workspace: { mode: 'same' }, task })
+export async function delegate(
+  profile: ScratchProfile,
+  parent: string,
+  task: string = prompts.turn,
+  extra: { provider?: string; account?: 'inherit' | 'ambient' } = {},
+) {
+  const { child } = await profile.call('orchestration.delegate', {
+    operation_id: opId('delegate'),
+    parent_conversation_id: parent,
+    caller: { kind: 'user' },
+    provider: extra.provider ?? 'codex',
+    account: { mode: extra.account ?? 'inherit' },
+    workspace: { mode: 'same' },
+    task,
+  })
   return child
 }
 
@@ -70,9 +92,14 @@ export async function childView(profile: ScratchProfile, parent: string, child: 
 }
 
 /** Wait until the Conversation's status matches `status`. */
-export async function waitForStatus(profile: ScratchProfile, conversation: string, status: RegExp | string,
-  timeout = 20_000): Promise<void> {
-  const read = async () => (await profile.call('conversation.get', { conversation_id: conversation })).conversation.status
+export async function waitForStatus(
+  profile: ScratchProfile,
+  conversation: string,
+  status: RegExp | string,
+  timeout = 20_000,
+): Promise<void> {
+  const read = async () =>
+    (await profile.call('conversation.get', { conversation_id: conversation })).conversation.status
   if (typeof status === 'string') await expect.poll(read, { timeout }).toBe(status)
   else await expect.poll(read, { timeout }).toMatch(status)
 }

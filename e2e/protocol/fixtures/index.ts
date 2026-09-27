@@ -13,8 +13,16 @@ export { expect }
 export { ScratchProfile, type CliResult, type Hello, type ProfileOptions } from './profile'
 export { ScratchRepo } from './git'
 export { codexPrompts, prompts, turnReply, type MockCall, type MockProvider } from './providers'
-export { conversationStatus, fixtureAnswers, send, startConversation, waitForIdle, waitForMessage,
-  waitForPendingRequest, type PendingRequest } from './conversations'
+export {
+  conversationStatus,
+  fixtureAnswers,
+  send,
+  startConversation,
+  waitForIdle,
+  waitForMessage,
+  waitForPendingRequest,
+  type PendingRequest,
+} from './conversations'
 export { isRunning } from './processes'
 
 /** Owns everything one test starts: its temp root, profiles, repositories and processes. */
@@ -22,7 +30,10 @@ export class AdeHarness {
   readonly ledger = new ProcessLedger()
   private readonly profiles: ScratchProfile[] = []
   private repositories = 0
-  private constructor(readonly root: string, private readonly testInfo: TestInfo) {}
+  private constructor(
+    readonly root: string,
+    private readonly testInfo: TestInfo,
+  ) {}
 
   static async create(testInfo: TestInfo): Promise<AdeHarness> {
     // Short prefix: Unix socket paths under it must stay below 104 bytes on macOS.
@@ -31,12 +42,15 @@ export class AdeHarness {
 
   /** Start another scratch profile with its own daemon and runtime. */
   async profile(options: ProfileOptions = {}): Promise<ScratchProfile> {
-    return ScratchProfile.start(join(this.root, `p${this.profiles.length + 1}`), this.ledger, options,
-      (profile) => this.profiles.push(profile))
+    return ScratchProfile.start(join(this.root, `p${this.profiles.length + 1}`), this.ledger, options, (profile) =>
+      this.profiles.push(profile),
+    )
   }
 
   /** A new scratch Git repository with one commit on `main`. */
-  async repo(options: { name?: string; branch?: string; initialFiles?: Record<string, string> } = {}): Promise<ScratchRepo> {
+  async repo(
+    options: { name?: string; branch?: string; initialFiles?: Record<string, string> } = {},
+  ): Promise<ScratchRepo> {
     const name = options.name ?? `repo-${++this.repositories}`
     const home = join(this.root, 'git-home')
     await mkdir(home, { recursive: true })
@@ -51,15 +65,26 @@ export class AdeHarness {
   async teardown(): Promise<void> {
     const failures: string[] = []
     for (const profile of this.profiles) {
-      try { await profile.stop() } catch (error) { failures.push(String(error)) }
+      try {
+        await profile.stop()
+      } catch (error) {
+        failures.push(String(error))
+      }
     }
     const survivors = await this.settledSurvivors()
     if (survivors.length) {
       for (const survivor of survivors) {
-        try { process.kill(survivor.pid, 'SIGKILL') } catch { /* It exited meanwhile. */ }
+        try {
+          process.kill(survivor.pid, 'SIGKILL')
+        } catch {
+          /* It exited meanwhile. */
+        }
       }
-      failures.push(`Processes owned by this test were still running after teardown and were killed:\n${
-        survivors.map((survivor) => `  ${survivor.pid} (${survivor.role}): ${survivor.command}`).join('\n')}`)
+      failures.push(
+        `Processes owned by this test were still running after teardown and were killed:\n${survivors
+          .map((survivor) => `  ${survivor.pid} (${survivor.role}): ${survivor.command}`)
+          .join('\n')}`,
+      )
     }
     const failed = failures.length > 0 || this.testInfo.status !== this.testInfo.expectedStatus
     if (failed) await this.attachDiagnostics(failures)
@@ -83,15 +108,26 @@ export class AdeHarness {
   private async attachDiagnostics(failures: string[]): Promise<void> {
     await this.testInfo.attach('scratch-root.txt', { body: `${this.root}\n`, contentType: 'text/plain' })
     await this.testInfo.attach('owned-processes.json', {
-      body: JSON.stringify(this.ledger.all(), null, 2), contentType: 'application/json' })
-    if (failures.length) await this.testInfo.attach('teardown-failures.txt', { body: failures.join('\n\n'), contentType: 'text/plain' })
+      body: JSON.stringify(this.ledger.all(), null, 2),
+      contentType: 'application/json',
+    })
+    if (failures.length)
+      await this.testInfo.attach('teardown-failures.txt', { body: failures.join('\n\n'), contentType: 'text/plain' })
     for (const [index, profile] of this.profiles.entries()) {
       for (const file of profile.diagnosticFiles()) {
-        if (!(await access(file.path).then(() => true, () => false))) continue
+        if (
+          !(await access(file.path).then(
+            () => true,
+            () => false,
+          ))
+        )
+          continue
         const body = await readFile(file.path)
         // Keep attachments bounded; the full file stays in the retained root.
         await this.testInfo.attach(`p${index + 1}-${file.name}`, {
-          body: body.length > 1024 * 1024 ? body.subarray(body.length - 1024 * 1024) : body, contentType: 'text/plain' })
+          body: body.length > 1024 * 1024 ? body.subarray(body.length - 1024 * 1024) : body,
+          contentType: 'text/plain',
+        })
       }
     }
   }

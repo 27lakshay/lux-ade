@@ -8,7 +8,9 @@
 import { expect, test } from '../fixtures'
 import { capability, deviceProfile, family, inventory, send } from '../devices/steps'
 
-test('F098: computer availability is explicit and stable across listings, the CLI and a daemon restart; application targets and display input are refused', async ({ ade }) => {
+test('F098: computer availability is explicit and stable across listings, the CLI and a daemon restart; application targets and display input are refused', async ({
+  ade,
+}) => {
   const { profile } = await deviceProfile(ade)
   const first = await inventory(profile, 'computer')
   const computer = family(first, 'computer')
@@ -24,8 +26,16 @@ test('F098: computer availability is explicit and stable across listings, the CL
   const summary = (list: typeof first) => ({
     host: list.host.host_id,
     permissions: family(list, 'computer').permissions.map(({ permission, state }) => ({ permission, state })),
-    displays: list.devices.filter((entry) => entry.family === 'computer').map((entry) => ({ id: entry.device_id,
-      capabilities: entry.capabilities.map(({ capability: name, available, reason }) => ({ name, available, code: reason?.code ?? null })) })),
+    displays: list.devices
+      .filter((entry) => entry.family === 'computer')
+      .map((entry) => ({
+        id: entry.device_id,
+        capabilities: entry.capabilities.map(({ capability: name, available, reason }) => ({
+          name,
+          available,
+          code: reason?.code ?? null,
+        })),
+      })),
   })
   expect(summary(await inventory(profile, 'computer'))).toEqual(summary(first))
   const cli = await profile.cli('device', 'list', '--family', 'computer')
@@ -40,8 +50,14 @@ test('F098: computer availability is explicit and stable across listings, the CL
     const input = capability(display, 'input')
     expect(input.available).toBe(false)
     expect(['permission_denied', 'not_supported']).toContain(input.reason?.code)
-    const refused = await send(profile, { op: 'device.input', operation_id: `f098-${display.device_id}`, host_id: host,
-      device_id: display.device_id, caller: { kind: 'user' }, action: { kind: 'tap', x: 1, y: 1 } })
+    const refused = await send(profile, {
+      op: 'device.input',
+      operation_id: `f098-${display.device_id}`,
+      host_id: host,
+      device_id: display.device_id,
+      caller: { kind: 'user' },
+      action: { kind: 'tap', x: 1, y: 1 },
+    })
     expect(refused).toMatchObject({ type: 'error' })
     expect(refused.message).toContain(`(${input.reason?.code})`)
   }
@@ -50,8 +66,14 @@ test('F098: computer availability is explicit and stable across listings, the CL
   // never redirected to a display or to the focused application.
   for (const target of ['app:com.apple.TextEdit', 'window:1', 'focused']) {
     for (const request of [
-      { op: 'device.input', operation_id: `f098-app-${target}`, host_id: host, device_id: target, caller: { kind: 'user' },
-        action: { kind: 'text', text: 'never typed' } },
+      {
+        op: 'device.input',
+        operation_id: `f098-app-${target}`,
+        host_id: host,
+        device_id: target,
+        caller: { kind: 'user' },
+        action: { kind: 'text', text: 'never typed' },
+      },
       { op: 'device.screenshot', host_id: host, device_id: target },
     ]) {
       const refused = await send(profile, request)
@@ -62,8 +84,14 @@ test('F098: computer availability is explicit and stable across listings, the CL
   // A refusal keeps no receipt: the same operation ID aimed at a display gets that display's own reason.
   if (displays.length > 0) {
     const reason = capability(displays[0], 'input').reason?.code
-    const reused = await send(profile, { op: 'device.input', operation_id: 'f098-app-app:com.apple.TextEdit', host_id: host,
-      device_id: displays[0].device_id, caller: { kind: 'user' }, action: { kind: 'tap', x: 1, y: 1 } })
+    const reused = await send(profile, {
+      op: 'device.input',
+      operation_id: 'f098-app-app:com.apple.TextEdit',
+      host_id: host,
+      device_id: displays[0].device_id,
+      caller: { kind: 'user' },
+      action: { kind: 'tap', x: 1, y: 1 },
+    })
     expect(reused.message).toContain(`(${reason})`)
   }
 })

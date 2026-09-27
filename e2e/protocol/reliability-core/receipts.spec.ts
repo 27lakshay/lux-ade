@@ -47,12 +47,17 @@ function unknown(effect: EffectCase, outcome: Record<string, unknown>): boolean 
 }
 
 async function exists(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false)
+  return access(path).then(
+    () => true,
+    () => false,
+  )
 }
 
 for (const effect of effectCases) {
   test.describe(effect.op, () => {
-    test(`R002: ${effect.op} replays one ID and refuses it for another payload, also after a daemon crash`, async ({ ade }) => {
+    test(`R002: ${effect.op} replays one ID and refuses it for another payload, also after a daemon crash`, async ({
+      ade,
+    }) => {
       const ctx = await context(ade)
       const state = await effect.setup(ctx)
       const base = await effect.effect(ctx, state)
@@ -60,7 +65,9 @@ for (const effect of effectCases) {
       const first = await attempt(effect, ctx, state, 'reliability-1', request)
       expect(unknown(effect, first), JSON.stringify(first)).toBe(false)
       // Some commands act after they reply (a hook delivery, a provider turn).
-      await expect.poll(() => effect.effect(ctx, state), { timeout: 30_000, message: JSON.stringify(first) }).toBe(base + 1)
+      await expect
+        .poll(() => effect.effect(ctx, state), { timeout: 30_000, message: JSON.stringify(first) })
+        .toBe(base + 1)
 
       expect(await attempt(effect, ctx, state, 'reliability-1', request)).toEqual(first)
       await expect(call(ctx.profile, effect.op, effect.request(state, 'reliability-1', true))).rejects.toThrow(CONFLICT)
@@ -87,26 +94,32 @@ for (const effect of effectCases) {
         const outcome = await attempt(effect, ctx, state, 'reliability-lost', request)
         if (!unknown(effect, outcome)) {
           // A known outcome took effect exactly once, possibly after its reply.
-          await expect.poll(() => effect.effect(ctx, state), { timeout: 30_000, message: JSON.stringify(outcome) })
+          await expect
+            .poll(() => effect.effect(ctx, state), { timeout: 30_000, message: JSON.stringify(outcome) })
             .toBe(base + 1)
         }
-        const applied = await effect.effect(ctx, state) - base
+        const applied = (await effect.effect(ctx, state)) - base
         if (/nothing changed/.test(String(outcome.unknown))) expect(applied, JSON.stringify(outcome)).toBe(0)
         else expect(applied, JSON.stringify(outcome)).toBeLessThanOrEqual(1)
         // A further retry reads the same outcome and applies nothing more.
         expect(await attempt(effect, ctx, state, 'reliability-lost', request)).toEqual(outcome)
-        expect(await effect.effect(ctx, state) - base).toBe(applied)
-        await expect(call(ctx.profile, effect.op, effect.request(state, 'reliability-lost', true))).rejects.toThrow(CONFLICT)
+        expect((await effect.effect(ctx, state)) - base).toBe(applied)
+        await expect(call(ctx.profile, effect.op, effect.request(state, 'reliability-lost', true))).rejects.toThrow(
+          CONFLICT,
+        )
       })
     }
 
     if (effect.pause) {
-      test(`R001: ${effect.op} dispatched to a Git worker when the daemon crashes is reported unknown and never rerun`, async ({ ade }) => {
+      test(`R001: ${effect.op} dispatched to a Git worker when the daemon crashes is reported unknown and never rerun`, async ({
+        ade,
+      }) => {
         const ctx = await context(ade)
         const state = await effect.setup(ctx)
         const base = await effect.effect(ctx, state)
-        const pause = pauseEnvironment(ade.root)[effect.pause === 'review' ? 'ADE_E2E_REVIEW_PAUSE_DIR'
-          : 'ADE_E2E_WORKER_PAUSE_DIR']
+        const pause = pauseEnvironment(ade.root)[
+          effect.pause === 'review' ? 'ADE_E2E_REVIEW_PAUSE_DIR' : 'ADE_E2E_WORKER_PAUSE_DIR'
+        ]
         await mkdir(pause, { recursive: true })
         await writeFile(join(pause, 'armed'), '')
         const request = effect.request(state, 'reliability-held', false)
@@ -125,15 +138,25 @@ for (const effect of effectCases) {
           // The unknown stays listed for the person until acknowledged; acknowledging never reruns it.
           const workspaceId = request.workspace_id as string
           const listed = await ctx.profile.call('review.operation.list', { workspace_id: workspaceId })
-          expect(listed.operations.map((entry) => [entry.operation.id, entry.operation.status]))
-            .toContainEqual(['reliability-held', 'interrupted'])
-          await ctx.profile.call('review.operation.acknowledge', { workspace_id: workspaceId, operation_id: 'reliability-held' })
-          expect((await ctx.profile.call('review.operation.list', { workspace_id: workspaceId })).operations
-            .map((entry) => entry.operation.id)).not.toContain('reliability-held')
+          expect(listed.operations.map((entry) => [entry.operation.id, entry.operation.status])).toContainEqual([
+            'reliability-held',
+            'interrupted',
+          ])
+          await ctx.profile.call('review.operation.acknowledge', {
+            workspace_id: workspaceId,
+            operation_id: 'reliability-held',
+          })
+          expect(
+            (await ctx.profile.call('review.operation.list', { workspace_id: workspaceId })).operations.map(
+              (entry) => entry.operation.id,
+            ),
+          ).not.toContain('reliability-held')
         }
         expect(await attempt(effect, ctx, state, 'reliability-held', request)).toEqual(outcome)
-        expect(await effect.effect(ctx, state) - base).toBeLessThanOrEqual(1)
-        await expect(call(ctx.profile, effect.op, effect.request(state, 'reliability-held', true))).rejects.toThrow(CONFLICT)
+        expect((await effect.effect(ctx, state)) - base).toBeLessThanOrEqual(1)
+        await expect(call(ctx.profile, effect.op, effect.request(state, 'reliability-held', true))).rejects.toThrow(
+          CONFLICT,
+        )
       })
     }
   })

@@ -41,12 +41,18 @@ function holdWriteLock(profile: ScratchProfile): { release(): void } {
 }
 
 function expectTruthfulBusy(refused: Refusal): void {
-  expect(refused, `${refused.message} ${JSON.stringify(refused)}`).toMatchObject({ code: 'storage_busy', recovery: 'retry', replied: true })
+  expect(refused, `${refused.message} ${JSON.stringify(refused)}`).toMatchObject({
+    code: 'storage_busy',
+    recovery: 'retry',
+    replied: true,
+  })
   expect(refused.message).toContain('busy')
   expect(refused.message).not.toMatch(/disk space/i)
 }
 
-test('a held profile database refuses a save as storage_busy, never as a full disk, and the retry saves it @fault', async ({ profile }) => {
+test('a held profile database refuses a save as storage_busy, never as a full disk, and the retry saves it @fault', async ({
+  profile,
+}) => {
   test.setTimeout(120_000)
   const before = await profile.call('notification.preferences.get', {})
   const wanted = { desktop: !before.desktop, muted_kinds: [] }
@@ -68,16 +74,25 @@ test('a held profile database refuses a save as storage_busy, never as a full di
   expect((await profile.call('notification.preferences.get', {})).desktop).toBe(wanted.desktop)
 })
 
-test('a parallel run group started while another writer holds the database is refused as busy, then starts under the same operation ID @fault', async ({ profile, repo }) => {
+test('a parallel run group started while another writer holds the database is refused as busy, then starts under the same operation ID @fault', async ({
+  profile,
+  repo,
+}) => {
   // The incident's path: orchestration.group.start in parallel-runs.spec.ts.
   // Its transaction read before writing, so SQLite refused the write at once
   // instead of waiting, and the refusal blamed the disk.
   test.setTimeout(120_000)
   const { parent } = await parentIn(profile, repo.path)
-  const request = { operation_id: opId('busy-group'), parent_conversation_id: parent,
-    caller: { kind: 'agent' as const, conversation_id: parent }, task: prompts.turn, runs: [
+  const request = {
+    operation_id: opId('busy-group'),
+    parent_conversation_id: parent,
+    caller: { kind: 'agent' as const, conversation_id: parent },
+    task: prompts.turn,
+    runs: [
       { provider: 'codex' as const, account: { mode: 'inherit' as const }, workspace: { mode: 'same' as const } },
-      { provider: 'claude' as const, account: { mode: 'ambient' as const }, workspace: { mode: 'same' as const } }] }
+      { provider: 'claude' as const, account: { mode: 'ambient' as const }, workspace: { mode: 'same' as const } },
+    ],
+  }
 
   const lock = holdWriteLock(profile)
   let refused: Refusal

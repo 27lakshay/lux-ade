@@ -7,9 +7,19 @@ import { installAndEnable, pluginLines, stagePlugin } from '../fixtures/plugins'
 let operations = 0
 const echo = 'e2e.backend.echo'
 
-function invoke(profile: ScratchProfile, pluginId: string, commandId: string, args: unknown = null,
-  operationId = `invoke-${process.pid}-${++operations}`) {
-  return profile.call('plugin.command.invoke', { operation_id: operationId, plugin_id: pluginId, command_id: commandId, args })
+function invoke(
+  profile: ScratchProfile,
+  pluginId: string,
+  commandId: string,
+  args: unknown = null,
+  operationId = `invoke-${process.pid}-${++operations}`,
+) {
+  return profile.call('plugin.command.invoke', {
+    operation_id: operationId,
+    plugin_id: pluginId,
+    command_id: commandId,
+    args,
+  })
 }
 
 async function hostStatus(profile: ScratchProfile, pluginId: string) {
@@ -18,21 +28,34 @@ async function hostStatus(profile: ScratchProfile, pluginId: string) {
 
 /** Wait for the supervisor to bring a host back after a crash, and return its status. */
 async function waitForRunning(profile: ScratchProfile, pluginId: string, attempt: number, timeout = 10_000) {
-  await expect.poll(async () => {
-    const host = await hostStatus(profile, pluginId)
-    return `${host.state}:${host.attempt}`
-  }, { timeout }).toBe(`running:${attempt}`)
+  await expect
+    .poll(
+      async () => {
+        const host = await hostStatus(profile, pluginId)
+        return `${host.state}:${host.attempt}`
+      },
+      { timeout },
+    )
+    .toBe(`running:${attempt}`)
   return hostStatus(profile, pluginId)
 }
 
-test('runs backend commands in a headless host with settings, replays by operation ID and reports failures', async ({ ade, profile }) => {
+test('runs backend commands in a headless host with settings, replays by operation ID and reports failures', async ({
+  ade,
+  profile,
+}) => {
   const { pluginId, outDir } = await installAndEnable(profile, await stagePlugin(ade.root, 'backend'))
   // The host starts lazily, on the first invocation.
   expect(await hostStatus(profile, pluginId)).toMatchObject({ state: 'idle', pid: null })
 
   const first = await invoke(profile, pluginId, echo, { x: 1 }, 'echo-1')
-  expect(first).toMatchObject({ plugin_id: pluginId, command_id: echo, generation: 1, attempt: 1,
-    outcome: { status: 'completed', value: { args: { x: 1 }, version: 'v1', generation: 1 } } })
+  expect(first).toMatchObject({
+    plugin_id: pluginId,
+    command_id: echo,
+    generation: 1,
+    attempt: 1,
+    outcome: { status: 'completed', value: { args: { x: 1 }, version: 'v1', generation: 1 } },
+  })
   const value = (first.outcome as { value: { pid: number } }).value
   const host = await hostStatus(profile, pluginId)
   expect(host).toMatchObject({ state: 'running', generation: 1, pid: value.pid, crashes: 0 })
@@ -41,21 +64,35 @@ test('runs backend commands in a headless host with settings, replays by operati
   expect(row?.command).toMatch(/packages\/plugin-host\/src\/host\.mjs/)
   expect(row?.command).not.toMatch(/Electron/i)
   // Plugin console output goes to the bounded log tail, never the protocol stream.
-  await expect.poll(async () => (await hostStatus(profile, pluginId)).log_tail.some((line) => line.includes('fixture echo v1')))
+  await expect
+    .poll(async () => (await hostStatus(profile, pluginId)).log_tail.some((line) => line.includes('fixture echo v1')))
     .toBe(true)
   // The out_dir setting reached activate: the plugin wrote there.
-  expect(await pluginLines(outDir, 'lifecycle.jsonl')).toEqual([expect.objectContaining({ event: 'activate', generation: 1 })])
+  expect(await pluginLines(outDir, 'lifecycle.jsonl')).toEqual([
+    expect.objectContaining({ event: 'activate', generation: 1 }),
+  ])
 
   // A replay returns the stored result; the same ID with other arguments is a conflict.
   expect(await invoke(profile, pluginId, echo, { x: 1 }, 'echo-1')).toEqual(first)
   await expect(invoke(profile, pluginId, echo, { x: 2 }, 'echo-1')).rejects.toMatchObject({ code: 'conflict' })
 
-  expect((await invoke(profile, pluginId, 'e2e.backend.fail')).outcome)
-    .toEqual({ status: 'failed', message: expect.stringContaining('fixture command failed') })
+  expect((await invoke(profile, pluginId, 'e2e.backend.fail')).outcome).toEqual({
+    status: 'failed',
+    message: expect.stringContaining('fixture command failed'),
+  })
   await expect(invoke(profile, pluginId, 'e2e.backend.undeclared')).rejects.toMatchObject({ code: 'invalid_request' })
 
   // The CLI reaches the same host.
-  const cli = await profile.cli('plugin', 'invoke', pluginId, echo, '--request-id', 'cli-echo', '--args', '{"via":"cli"}')
+  const cli = await profile.cli(
+    'plugin',
+    'invoke',
+    pluginId,
+    echo,
+    '--request-id',
+    'cli-echo',
+    '--args',
+    '{"via":"cli"}',
+  )
   expect(cli.code).toBe(0)
   expect(cli.json).toMatchObject({ outcome: { status: 'completed', value: { args: { via: 'cli' }, pid: value.pid } } })
 
@@ -66,7 +103,10 @@ test('runs backend commands in a headless host with settings, replays by operati
   await expect(invoke(profile, pluginId, echo)).rejects.toMatchObject({ code: 'invalid_request' })
 })
 
-test('a crashing host keeps the core available, restarts after 500 ms, 2 s and 5 s, then stays errored', async ({ ade, profile }) => {
+test('a crashing host keeps the core available, restarts after 500 ms, 2 s and 5 s, then stays errored', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(90_000)
   const { pluginId, outDir } = await installAndEnable(profile, await stagePlugin(ade.root, 'backend'))
   await invoke(profile, pluginId, echo)
@@ -75,9 +115,15 @@ test('a crashing host keeps the core available, restarts after 500 ms, 2 s and 5
   for (const [index, delay] of delays.entries()) {
     const crashId = `crash-${index + 1}`
     // The handler may have run: the outcome is unknown, and a replay never runs it again.
-    await expect(invoke(profile, pluginId, 'e2e.backend.crash', null, crashId)).rejects.toMatchObject({ code: 'outcome_unknown' })
-    await expect(invoke(profile, pluginId, 'e2e.backend.crash', null, crashId)).rejects.toMatchObject({ code: 'outcome_unknown' })
-    expect((await pluginLines(outDir, 'lifecycle.jsonl')).filter((line) => line.event === 'crash')).toHaveLength(index + 1)
+    await expect(invoke(profile, pluginId, 'e2e.backend.crash', null, crashId)).rejects.toMatchObject({
+      code: 'outcome_unknown',
+    })
+    await expect(invoke(profile, pluginId, 'e2e.backend.crash', null, crashId)).rejects.toMatchObject({
+      code: 'outcome_unknown',
+    })
+    expect((await pluginLines(outDir, 'lifecycle.jsonl')).filter((line) => line.event === 'crash')).toHaveLength(
+      index + 1,
+    )
 
     const down = await hostStatus(profile, pluginId)
     expect(down.crashes).toBe(index + 1)
@@ -104,21 +150,32 @@ test('a crashing host keeps the core available, restarts after 500 ms, 2 s and 5
   }
 
   // A fourth consecutive crash leaves the host errored until an explicit restart.
-  await expect(invoke(profile, pluginId, 'e2e.backend.crash', null, 'crash-4')).rejects.toMatchObject({ code: 'outcome_unknown' })
+  await expect(invoke(profile, pluginId, 'e2e.backend.crash', null, 'crash-4')).rejects.toMatchObject({
+    code: 'outcome_unknown',
+  })
   await expect.poll(async () => (await hostStatus(profile, pluginId)).state).toBe('errored')
   const errored = await hostStatus(profile, pluginId)
   expect(errored).toMatchObject({ crashes: 4, pid: null, retry_at: null })
-  const refused = await invoke(profile, pluginId, echo).then(() => null, (error: unknown) => error as { code: string; message: string })
+  const refused = await invoke(profile, pluginId, echo).then(
+    () => null,
+    (error: unknown) => error as { code: string; message: string },
+  )
   expect(refused?.code).toBe('not_applied')
   expect(refused?.message).toMatch(/restart/i)
   expect((await profile.call('plugin.record.list', { plugin_id: pluginId, namespace: 'core' })).records).toHaveLength(3)
 
   const restarted = (await profile.call('plugin.host.restart', { plugin_id: pluginId })).host
   expect(restarted).toMatchObject({ state: 'running', crashes: 0 })
-  expect((await invoke(profile, pluginId, echo, 'after')).outcome).toMatchObject({ status: 'completed', value: { args: 'after' } })
+  expect((await invoke(profile, pluginId, echo, 'after')).outcome).toMatchObject({
+    status: 'completed',
+    value: { args: 'after' },
+  })
 })
 
-test('a host killed from outside counts as a crash, and a killed daemon takes its hosts with it', async ({ ade, profile }) => {
+test('a host killed from outside counts as a crash, and a killed daemon takes its hosts with it', async ({
+  ade,
+  profile,
+}) => {
   const { pluginId } = await installAndEnable(profile, await stagePlugin(ade.root, 'backend'))
   const first = (await invoke(profile, pluginId, echo)).outcome as { value: { pid: number } }
   process.kill(first.value.pid, 'SIGKILL')

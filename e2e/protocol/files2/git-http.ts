@@ -26,8 +26,13 @@ export class HttpForge {
   /** Accepted Basic credentials; change them to rotate a token. */
   credentials: { user: string; password: string }
   readonly requests: ForgeRequest[] = []
-  private constructor(readonly root: string, readonly port: number, private readonly env: Record<string, string>,
-    private readonly close: () => Promise<void>, credentials: { user: string; password: string }) {
+  private constructor(
+    readonly root: string,
+    readonly port: number,
+    private readonly env: Record<string, string>,
+    private readonly close: () => Promise<void>,
+    credentials: { user: string; password: string },
+  ) {
     this.credentials = credentials
   }
 
@@ -40,8 +45,11 @@ export class HttpForge {
   }
 
   /** Serve bare repositories under `root` to requests carrying `credentials`. */
-  static async start(root: string, env: Record<string, string>,
-    credentials: { user: string; password: string }): Promise<HttpForge> {
+  static async start(
+    root: string,
+    env: Record<string, string>,
+    credentials: { user: string; password: string },
+  ): Promise<HttpForge> {
     let forge: HttpForge | undefined
     const server = createServer((request, response) => {
       void forge!.handle(request, response).catch((error) => {
@@ -51,17 +59,18 @@ export class HttpForge {
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const port = (server.address() as AddressInfo).port
-    const close = () => new Promise<void>((resolve) => {
-      server.closeAllConnections()
-      server.close(() => resolve())
-    })
+    const close = () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections()
+        server.close(() => resolve())
+      })
     forge = new HttpForge(root, port, env, close, credentials)
     return forge
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://forge.invalid')
-    const service = url.searchParams.get('service') ?? (url.pathname.match(/\/(git-[a-z-]+)$/)?.[1] ?? null)
+    const service = url.searchParams.get('service') ?? url.pathname.match(/\/(git-[a-z-]+)$/)?.[1] ?? null
     const header = request.headers.authorization ?? ''
     const decoded = header.startsWith('Basic ') ? Buffer.from(header.slice(6), 'base64').toString('utf8') : ''
     const user = decoded.includes(':') ? decoded.slice(0, decoded.indexOf(':')) : null
@@ -86,7 +95,9 @@ export class HttpForge {
         REMOTE_USER: user ?? '',
         REMOTE_ADDR: '127.0.0.1',
         ...(request.headers['content-length'] ? { CONTENT_LENGTH: request.headers['content-length'] } : {}),
-        ...(request.headers['content-encoding'] ? { HTTP_CONTENT_ENCODING: String(request.headers['content-encoding']) } : {}),
+        ...(request.headers['content-encoding']
+          ? { HTTP_CONTENT_ENCODING: String(request.headers['content-encoding']) }
+          : {}),
         ...(request.headers['git-protocol'] ? { GIT_PROTOCOL: String(request.headers['git-protocol']) } : {}),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -124,7 +135,9 @@ export type CredentialHelper = {
 export async function credentialHelper(dir: string, secretFile: string): Promise<CredentialHelper> {
   const path = join(dir, 'forge-credentials.mjs')
   const log = join(dir, 'credential-calls.jsonl')
-  await writeFile(path, `#!/usr/bin/env node
+  await writeFile(
+    path,
+    `#!/usr/bin/env node
 // Scratch Git credential helper for E2E. See e2e/protocol/files2/git-http.ts.
 import { appendFileSync, readFileSync } from 'node:fs'
 const action = process.argv[2] ?? ''
@@ -140,13 +153,17 @@ process.stdin.on('end', () => {
     process.stdout.write('username=' + user + '\\npassword=' + password + '\\n')
   }
 })
-`)
+`,
+  )
   await chmod(path, 0o755)
   return {
     path,
     async calls() {
       const text = await readFile(log, 'utf8').catch(() => '')
-      return text.split('\n').filter(Boolean).map((line) => JSON.parse(line))
+      return text
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
     },
   }
 }
@@ -158,12 +175,17 @@ process.stdin.on('end', () => {
  */
 export async function effectiveHelpers(profile: ScratchProfile, cwd: string): Promise<string[]> {
   const env = Object.fromEntries(Object.entries(profile.env).filter(([name]) => !name.startsWith('GIT_CONFIG_')))
-  const { stdout } = await execFileAsync('git', ['config', '--show-origin', '--get-all', 'credential.helper'],
-    { cwd, env }).catch((error: { code?: number; stdout?: string }) => {
+  const { stdout } = await execFileAsync('git', ['config', '--show-origin', '--get-all', 'credential.helper'], {
+    cwd,
+    env,
+  }).catch((error: { code?: number; stdout?: string }) => {
     if (error.code === 1) return { stdout: '' }
     throw error
   })
-  const values = stdout.split('\n').filter(Boolean).map((line) => line.slice(line.indexOf('\t') + 1))
+  const values = stdout
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.slice(line.indexOf('\t') + 1))
   const reset = values.lastIndexOf('')
   return values.slice(reset + 1)
 }

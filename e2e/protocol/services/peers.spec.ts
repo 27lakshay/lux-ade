@@ -4,22 +4,35 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test } from '../fixtures'
-import { configureService, httpGet, inspectService, nodeService, startForeignListener, waitForReadiness,
-  writeServicePrograms } from '../fixtures/services'
+import {
+  configureService,
+  httpGet,
+  inspectService,
+  nodeService,
+  startForeignListener,
+  waitForReadiness,
+  writeServicePrograms,
+} from '../fixtures/services'
 
 test('a service receives its running peer endpoint and reports when the peer goes away', async ({ profile, repo }) => {
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
   const api = await configureService(profile, workspace.id, 'api', nodeService(files.server))
-  const web = await configureService(profile, workspace.id, 'web', nodeService(files.server, {
-    env: { MODE: 'development' },
-    peers: { API_URL: { service: 'api', port_variable: 'PORT' } },
-  }))
+  const web = await configureService(
+    profile,
+    workspace.id,
+    'web',
+    nodeService(files.server, {
+      env: { MODE: 'development' },
+      peers: { API_URL: { service: 'api', port_variable: 'PORT' } },
+    }),
+  )
   expect(web.config.peers).toEqual({ API_URL: { service: 'api', port_variable: 'PORT' } })
 
   // The dependency is not running: the start is refused rather than wired to a guess.
-  await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'web' }))
-    .rejects.toThrow(/Peer service api is stopped/)
+  await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'web' })).rejects.toThrow(
+    /Peer service api is stopped/,
+  )
   const idle = await inspectService(profile, workspace.id, 'web')
   expect(idle.peer_error).toMatch(/Peer service api is stopped/)
   expect(idle.effective_peers).toEqual({})
@@ -37,8 +50,11 @@ test('a service receives its running peer endpoint and reports when the peer goe
   expect((await httpGet(`${apiUrl}/from-web`)).json).toMatchObject({ service: 'api' })
 
   const wired = await inspectService(profile, workspace.id, 'web')
-  expect(wired).toMatchObject({ effective_peers: { API_URL: apiUrl }, current_peer_endpoints: { API_URL: apiUrl },
-    peer_error: null })
+  expect(wired).toMatchObject({
+    effective_peers: { API_URL: apiUrl },
+    current_peer_endpoints: { API_URL: apiUrl },
+    peer_error: null,
+  })
   // The effective, nonsecret configuration is visible with the run.
   expect(wired.service.config.env).toEqual({ MODE: 'development' })
   expect(wired.service.launch_peers).toEqual({ API_URL: apiUrl })
@@ -63,41 +79,81 @@ test('peer declarations refuse cycles, unknown services and missing ports', asyn
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
   await configureService(profile, workspace.id, 'api', nodeService(files.server))
-  await configureService(profile, workspace.id, 'web', nodeService(files.server, {
-    peers: { API_URL: { service: 'api', port_variable: 'PORT' } } }))
+  await configureService(
+    profile,
+    workspace.id,
+    'web',
+    nodeService(files.server, {
+      peers: { API_URL: { service: 'api', port_variable: 'PORT' } },
+    }),
+  )
 
   // api -> web -> api is a cycle.
-  await expect(profile.call('service.configure', { workspace_id: workspace.id, name: 'api', revision: 1,
-    config: nodeService(files.server, { peers: { WEB_URL: { service: 'web', port_variable: 'PORT' } } }) }))
-    .rejects.toThrow(/Service peer dependency cycle/)
+  await expect(
+    profile.call('service.configure', {
+      workspace_id: workspace.id,
+      name: 'api',
+      revision: 1,
+      config: nodeService(files.server, { peers: { WEB_URL: { service: 'web', port_variable: 'PORT' } } }),
+    }),
+  ).rejects.toThrow(/Service peer dependency cycle/)
 
-  await configureService(profile, workspace.id, 'ghost-user', nodeService(files.server, {
-    peers: { GHOST_URL: { service: 'ghost', port_variable: 'PORT' } } }))
-  await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'ghost-user' }))
-    .rejects.toThrow(/Peer service ghost is unavailable/)
+  await configureService(
+    profile,
+    workspace.id,
+    'ghost-user',
+    nodeService(files.server, {
+      peers: { GHOST_URL: { service: 'ghost', port_variable: 'PORT' } },
+    }),
+  )
+  await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'ghost-user' })).rejects.toThrow(
+    /Peer service ghost is unavailable/,
+  )
 
-  await configureService(profile, workspace.id, 'admin', nodeService(files.server, {
-    peers: { API_URL: { service: 'api', port_variable: 'ADMIN_PORT' } } }))
-  await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'admin' }))
-    .rejects.toThrow(/Peer service api has no ADMIN_PORT port/)
-  expect((await profile.call('service.list', { workspace_id: workspace.id })).services
-    .every((service) => service.terminal_owner === null)).toBe(true)
+  await configureService(
+    profile,
+    workspace.id,
+    'admin',
+    nodeService(files.server, {
+      peers: { API_URL: { service: 'api', port_variable: 'ADMIN_PORT' } },
+    }),
+  )
+  await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'admin' })).rejects.toThrow(
+    /Peer service api has no ADMIN_PORT port/,
+  )
+  expect(
+    (await profile.call('service.list', { workspace_id: workspace.id })).services.every(
+      (service) => service.terminal_owner === null,
+    ),
+  ).toBe(true)
 })
 
 test('a peer whose port a foreign process holds is not wired', async ({ ade, profile, repo }) => {
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
   const gate = join(ade.root, 'api-gate')
-  const api = await configureService(profile, workspace.id, 'api', nodeService(files.server, { env: { E2E_GATE: gate } }))
-  await configureService(profile, workspace.id, 'web', nodeService(files.server, {
-    peers: { API_URL: { service: 'api', port_variable: 'PORT' } } }))
+  const api = await configureService(
+    profile,
+    workspace.id,
+    'api',
+    nodeService(files.server, { env: { E2E_GATE: gate } }),
+  )
+  await configureService(
+    profile,
+    workspace.id,
+    'web',
+    nodeService(files.server, {
+      peers: { API_URL: { service: 'api', port_variable: 'PORT' } },
+    }),
+  )
   await profile.call('service.start', { workspace_id: workspace.id, name: 'api' })
   const foreign = await startForeignListener(ade.ledger, api.ports.PORT)
   try {
     await writeFile(gate, '')
     await waitForReadiness(profile, workspace.id, 'api', 'port_conflict')
-    await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'web' }))
-      .rejects.toThrow(/Peer service api does not own a verified loopback listener on PORT/)
+    await expect(profile.call('service.start', { workspace_id: workspace.id, name: 'web' })).rejects.toThrow(
+      /Peer service api does not own a verified loopback listener on PORT/,
+    )
   } finally {
     await foreign.close()
   }

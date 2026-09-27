@@ -7,8 +7,17 @@
 // existing execution and reconcile later"). Saturated command receipts are
 // covered by recovery/receipt-saturation.spec.ts.
 import { join } from 'node:path'
-import { expect, isRunning, prompts, send, startConversation, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  isRunning,
+  prompts,
+  send,
+  startConversation,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { connectOutcome, expectNoneLost, fillBacklog } from '../control-lane/backlog'
 import { mockDirectory } from '../fixtures/providers'
 import { recoveryFixtures, waitForPidFile } from '../fixtures/recovery'
@@ -20,27 +29,43 @@ async function conversation(profile: ScratchProfile, conversationId: string) {
   return (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
 }
 
-async function runningTurn(profile: ScratchProfile, conversationId: string, text: string = prompts.hold): Promise<string> {
+async function runningTurn(
+  profile: ScratchProfile,
+  conversationId: string,
+  text: string = prompts.hold,
+): Promise<string> {
   await send(profile, conversationId, text)
   let turn: string | null = null
-  await expect.poll(async () => {
-    const current = await conversation(profile, conversationId)
-    turn = current.status === 'running' ? current.active_turn_id ?? null : null
-    return turn
-  }, { timeout: 20_000 }).not.toBeNull()
+  await expect
+    .poll(
+      async () => {
+        const current = await conversation(profile, conversationId)
+        turn = current.status === 'running' ? (current.active_turn_id ?? null) : null
+        return turn
+      },
+      { timeout: 20_000 },
+    )
+    .not.toBeNull()
   return turn!
 }
 
 async function interrupts(profile: ScratchProfile): Promise<Array<string | undefined>> {
-  return (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/interrupt')
+  return (await profile.mockCalls('codex'))
+    .filter((call) => call.method === 'turn/interrupt')
     .map((call) => (call.params as { turnId?: string }).turnId)
 }
 
 async function refusal(action: Promise<unknown>): Promise<string> {
-  return action.then((reply) => `accepted: ${JSON.stringify(reply)}`, (error: unknown) => String(error))
+  return action.then(
+    (reply) => `accepted: ${JSON.stringify(reply)}`,
+    (error: unknown) => String(error),
+  )
 }
 
-test('with the data volume full, new work is refused and a running turn is still stopped', async ({ ade, volume }, testInfo) => {
+test('with the data volume full, new work is refused and a running turn is still stopped', async ({
+  ade,
+  volume,
+}, testInfo) => {
   test.setTimeout(120_000)
   // The first profile's data directory is `p1/data` under the test root; the volume is mounted there first.
   const disk = await volume(join(ade.root, 'p1', 'data'), 48)
@@ -56,10 +81,18 @@ test('with the data volume full, new work is refused and a running turn is still
   let full = ''
   let refusedInARow = 0
   for (let attempt = 0; attempt < 5_000 && refusedInARow < 5; attempt++) {
-    const outcome = await refusal(profile.call('conversation.create', { workspace_id: idle.workspaceId, provider: 'codex',
-      title: full ? 'f' : `filler ${attempt} ${'x'.repeat(180)}` }))
+    const outcome = await refusal(
+      profile.call('conversation.create', {
+        workspace_id: idle.workspaceId,
+        provider: 'codex',
+        title: full ? 'f' : `filler ${attempt} ${'x'.repeat(180)}`,
+      }),
+    )
     if (outcome.startsWith('accepted')) refusedInARow = 0
-    else { full ||= outcome; refusedInARow++ }
+    else {
+      full ||= outcome
+      refusedInARow++
+    }
   }
   expect(full).toMatch(STORAGE_FULL)
   expect(refusedInARow).toBe(5)
@@ -67,7 +100,14 @@ test('with the data volume full, new work is refused and a running turn is still
   // New unsafe admission is refused, through the SDK and the CLI, and nothing reaches the provider.
   const starts = (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start').length
   expect(await refusal(send(profile, idle.conversationId, prompts.turn, 'refused-while-full'))).toMatch(STORAGE_FULL)
-  const cli = await profile.cli('conversation', 'send', idle.conversationId, prompts.turn, '--request-id', 'refused-cli')
+  const cli = await profile.cli(
+    'conversation',
+    'send',
+    idle.conversationId,
+    prompts.turn,
+    '--request-id',
+    'refused-cli',
+  )
   expect(cli.code).not.toBe(0)
   expect(cli.stderr).toMatch(STORAGE_FULL)
   expect((await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')).toHaveLength(starts)
@@ -79,7 +119,9 @@ test('with the data volume full, new work is refused and a running turn is still
   // commit durably where a new Conversation could not. Which one happens
   // depends on page layout, not on the product. An ack must therefore mean
   // the cancellation is recorded; a refusal must name the storage failure.
-  const cancelled = await refusal(profile.call('agent.cancel', { conversation_id: running.conversationId, turn_id: turn }))
+  const cancelled = await refusal(
+    profile.call('agent.cancel', { conversation_id: running.conversationId, turn_id: turn }),
+  )
   testInfo.annotations.push({ type: 'cancel-while-full', description: cancelled })
   if (cancelled.startsWith('accepted')) {
     expect(['cancelling', 'interrupted']).toContain((await conversation(profile, running.conversationId)).status)
@@ -92,7 +134,8 @@ test('with the data volume full, new work is refused and a running turn is still
 
   // Once storage accepts writes again, the stopped turn is reconciled and new work is admitted.
   await disk.free()
-  await expect.poll(async () => (await conversation(profile, running.conversationId)).status, { timeout: 30_000 })
+  await expect
+    .poll(async () => (await conversation(profile, running.conversationId)).status, { timeout: 30_000 })
     .toBe('interrupted')
   await send(profile, idle.conversationId, prompts.turn, 'accepted-after-free')
   await waitForMessage(profile, idle.conversationId, turnReply.codex)
@@ -114,13 +157,27 @@ async function cancelWhenConnected(profile: ScratchProfile, request: { conversat
 
 /** A burst of ordinary commands: reads, and steers refused because they name another turn. */
 function burst(profile: ScratchProfile, conversationId: string, size: number): Promise<string[]> {
-  return Promise.all(Array.from({ length: size }, (_, index) => (index % 2
-    ? profile.call('conversation.get', { conversation_id: conversationId })
-    : profile.call('conversation.steer', { operation_id: `burst-${index}`, conversation_id: conversationId,
-      turn_id: 'not-this-turn', text: 'x' })).then(() => 'ok', (error: unknown) => String(error))))
+  return Promise.all(
+    Array.from({ length: size }, (_, index) =>
+      (index % 2
+        ? profile.call('conversation.get', { conversation_id: conversationId })
+        : profile.call('conversation.steer', {
+            operation_id: `burst-${index}`,
+            conversation_id: conversationId,
+            turn_id: 'not-this-turn',
+            text: 'x',
+          })
+      ).then(
+        () => 'ok',
+        (error: unknown) => String(error),
+      ),
+    ),
+  )
 }
 
-test('an output flood and a burst of ordinary commands do not keep cancellation from stopping the turn', async ({ ade }) => {
+test('an output flood and a burst of ordinary commands do not keep cancellation from stopping the turn', async ({
+  ade,
+}) => {
   test.setTimeout(120_000)
   const profile = await ade.profile({ env: { ADE_CODEX_BIN: recoveryFixtures.floodCodex } })
   const { conversationId } = await startConversation(profile, 'codex')
@@ -131,26 +188,35 @@ test('an output flood and a burst of ordinary commands do not keep cancellation 
   const answered = burst(profile, conversationId, 400)
   await cancelWhenConnected(profile, { conversation_id: conversationId, turn_id: turn })
   await expect.poll(() => interrupts(profile), { timeout: 30_000 }).toEqual([turn])
-  await expect.poll(async () => (await conversation(profile, conversationId)).status, { timeout: 60_000 })
+  await expect
+    .poll(async () => (await conversation(profile, conversationId)).status, { timeout: 60_000 })
     .toBe('interrupted')
   // Every ordinary command was answered, refused for its own reason, or
   // refused at the socket before it was sent; none was lost after sending.
-  expect((await answered).filter((reply) => reply !== 'ok'
-    && !/no longer the running turn|send a message instead|not running|unavailable at the selected socket/.test(reply)))
-    .toEqual([])
+  expect(
+    (await answered).filter(
+      (reply) =>
+        reply !== 'ok' &&
+        !/no longer the running turn|send a message instead|not running|unavailable at the selected socket/.test(reply),
+    ),
+  ).toEqual([])
 })
 
 // The control lane (e2e/protocol/control-lane): cancellation has its own
 // socket and listen backlog, so a connection flood that fills the profile
 // socket's backlog (128 on macOS) cannot refuse it. `fillBacklog` pauses the
 // daemon and floods the profile socket until the kernel refuses connections.
-test('a cancel sent during a connection flood past the socket backlog is admitted on its first attempt', async ({ ade }) => {
+test('a cancel sent during a connection flood past the socket backlog is admitted on its first attempt', async ({
+  ade,
+}) => {
   const profile = await ade.profile()
   const { conversationId } = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, conversationId)
   const full = await fillBacklog(profile, conversationId, 2_000)
-  const cancelled = profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn })
-    .then((reply) => ({ reply }), (error: unknown) => ({ error }))
+  const cancelled = profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn }).then(
+    (reply) => ({ reply }),
+    (error: unknown) => ({ error }),
+  )
   try {
     expect(await connectOutcome(profile.socket)).toBe('ECONNREFUSED')
   } finally {

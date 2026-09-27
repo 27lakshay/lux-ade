@@ -5,7 +5,10 @@
 import { expect, test } from '../fixtures'
 import { TerminalStream } from '../fixtures/terminals'
 
-test('terminal create returns a receipt that a duplicate, a lookup and a daemon crash all resolve to one terminal', async ({ profile, repo }) => {
+test('terminal create returns a receipt that a duplicate, a lookup and a daemon crash all resolve to one terminal', async ({
+  profile,
+  repo,
+}) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
 
   const created = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'create-once')
@@ -24,13 +27,18 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
 
   const receipt = await profile.cli('terminal', 'operation', workspace.id, 'create-once')
   expect(receipt.code, receipt.stderr).toBe(0)
-  expect(receipt.json).toMatchObject({ type: 'terminal_operation', workspace_id: workspace.id,
-    request_id: 'create-once', terminal_id: terminalId })
+  expect(receipt.json).toMatchObject({
+    type: 'terminal_operation',
+    workspace_id: workspace.id,
+    request_id: 'create-once',
+    terminal_id: terminalId,
+  })
 
   const listed = await profile.cli('terminal', 'list')
   expect(listed.code, listed.stderr).toBe(0)
-  const ours = (listed.json!.terminals as Array<{ workspace_id: string; terminal_id: string }>)
-    .filter((entry) => entry.workspace_id === workspace.id)
+  const ours = (listed.json!.terminals as Array<{ workspace_id: string; terminal_id: string }>).filter(
+    (entry) => entry.workspace_id === workspace.id,
+  )
   expect(ours.map((entry) => entry.terminal_id).sort()).toEqual([workspace.terminal_id, terminalId].sort())
 
   // The same ID for another workspace is a conflict and creates nothing there.
@@ -61,7 +69,9 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
   stream.close()
 })
 
-test('terminal create without an operation ID makes a new terminal each time, and an unknown receipt is refused', async ({ profile }) => {
+test('terminal create without an operation ID makes a new terminal each time, and an unknown receipt is refused', async ({
+  profile,
+}) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const first = await profile.call('terminal.create', { workspace_id: workspace.id })
   const second = await profile.call('terminal.create', { workspace_id: workspace.id })
@@ -76,10 +86,14 @@ test('terminal create without an operation ID makes a new terminal each time, an
   expect(usage.stderr).toMatch(/--request-id/)
 
   // A null operation ID is refused rather than treated as absent.
-  const refused = await profile.rpc({ op: 'terminal.create', workspace_id: workspace.id, operation_id: null })
-    .then(() => null, (error: Error) => error.message)
+  const refused = await profile.rpc({ op: 'terminal.create', workspace_id: workspace.id, operation_id: null }).then(
+    () => null,
+    (error: Error) => error.message,
+  )
   expect(refused).toMatch(/request ID/i)
   const catalog = await profile.call('catalog.get', {})
-  expect(catalog.catalog.workspaces.find((entry) => entry.id === workspace.id)?.extra_terminals)
-    .toEqual([first.terminal_id, second.terminal_id])
+  expect(catalog.catalog.workspaces.find((entry) => entry.id === workspace.id)?.extra_terminals).toEqual([
+    first.terminal_id,
+    second.terminal_id,
+  ])
 })

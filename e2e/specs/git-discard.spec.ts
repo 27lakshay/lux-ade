@@ -15,7 +15,11 @@ async function git(checkout: string, ...args: string[]): Promise<string> {
   return (await run('git', ['-C', checkout, ...args])).stdout.trim()
 }
 
-async function reviewedFile(socket: string, workspaceId: string, path: string): Promise<{ revision: string; diffToken: string }> {
+async function reviewedFile(
+  socket: string,
+  workspaceId: string,
+  path: string,
+): Promise<{ revision: string; diffToken: string }> {
   const status = await rpc(socket, { op: 'review.status', workspace_id: workspaceId, force: true })
   const diff = await rpc(socket, { op: 'review.diff', workspace_id: workspaceId, path, staged: false })
   return { revision: status.revision as string, diffToken: diff.token as string }
@@ -23,11 +27,13 @@ async function reviewedFile(socket: string, workspaceId: string, path: string): 
 
 async function operation(socket: string, workspaceId: string, requestId: string): Promise<Record<string, unknown>> {
   let result: Record<string, unknown> | undefined
-  await expect.poll(async () => {
-    result = (await rpc(socket, { op: 'review.operation', workspace_id: workspaceId,
-      request_id: requestId })).operation as Record<string, unknown>
-    return result.status
-  }).toMatch(/^(succeeded|failed|interrupted)$/)
+  await expect
+    .poll(async () => {
+      result = (await rpc(socket, { op: 'review.operation', workspace_id: workspaceId, request_id: requestId }))
+        .operation as Record<string, unknown>
+      return result.status
+    })
+    .toMatch(/^(succeeded|failed|interrupted)$/)
   return result!
 }
 
@@ -45,7 +51,9 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
   await git(checkout, 'commit', '-qm', 'baseline')
   const daemon = await startDaemon()
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
+    const workspaceId = (
+      (await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }
+    ).id
 
     // A reviewed file may have both staged and unstaged changes. Discard must
     // restore the worktree from the index without replacing the staged bytes.
@@ -54,8 +62,14 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
     await writeFile(join(checkout, 'tracked.txt'), 'unstaged\n')
     const preview = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
     const indexBefore = await git(checkout, 'rev-parse', ':tracked.txt')
-    const discard = { op: 'review.discard', workspace_id: workspaceId, request_id: 'discard-reviewed',
-      path: 'tracked.txt', revision: preview.revision, diff_token: preview.diffToken }
+    const discard = {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-reviewed',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    }
     await rpc(daemon.socket, discard)
     const firstReceipt = await operation(daemon.socket, workspaceId, 'discard-reviewed')
     expect(firstReceipt.status).toBe('succeeded')
@@ -65,16 +79,26 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
 
     await writeFile(join(checkout, 'binary.dat'), Buffer.from([0, 5, 6, 7, 8]))
     const binaryPreview = await reviewedFile(daemon.socket, workspaceId, 'binary.dat')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-binary', path: 'binary.dat', revision: binaryPreview.revision,
-      diff_token: binaryPreview.diffToken })
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-binary',
+      path: 'binary.dat',
+      revision: binaryPreview.revision,
+      diff_token: binaryPreview.diffToken,
+    })
     expect((await operation(daemon.socket, workspaceId, 'discard-binary')).status).toBe('succeeded')
     expect(await readFile(join(checkout, 'binary.dat'))).toEqual(binaryBaseline)
     await rm(join(checkout, 'binary.dat'))
     const deletedPreview = await reviewedFile(daemon.socket, workspaceId, 'binary.dat')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-deleted', path: 'binary.dat', revision: deletedPreview.revision,
-      diff_token: deletedPreview.diffToken })
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-deleted',
+      path: 'binary.dat',
+      revision: deletedPreview.revision,
+      diff_token: deletedPreview.diffToken,
+    })
     const restored = await operation(daemon.socket, workspaceId, 'discard-deleted')
     expect(restored.status).toBe('succeeded')
     expect(restored.backup_path).toBeUndefined()
@@ -83,13 +107,25 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
     await expect(rpc(daemon.socket, { ...discard, path: 'other.txt' })).rejects.toThrow(/different parameters/i)
 
     await writeFile(join(checkout, 'tracked.txt'), 'CLI draft\n')
-    const cliStatus = JSON.parse((await run(process.execPath, [cli, '--socket', daemon.socket,
-      'git', 'status', workspaceId])).stdout) as { revision: string }
-    const cliDiff = JSON.parse((await run(process.execPath, [cli, '--socket', daemon.socket,
-      'git', 'diff', workspaceId, 'tracked.txt'])).stdout) as { token: string }
-    const cliResult = await run(process.execPath, [cli, '--socket', daemon.socket, 'git', 'discard',
-      workspaceId, 'tracked.txt', cliStatus.revision, cliDiff.token,
-      '--request-id', 'discard-cli'])
+    const cliStatus = JSON.parse(
+      (await run(process.execPath, [cli, '--socket', daemon.socket, 'git', 'status', workspaceId])).stdout,
+    ) as { revision: string }
+    const cliDiff = JSON.parse(
+      (await run(process.execPath, [cli, '--socket', daemon.socket, 'git', 'diff', workspaceId, 'tracked.txt'])).stdout,
+    ) as { token: string }
+    const cliResult = await run(process.execPath, [
+      cli,
+      '--socket',
+      daemon.socket,
+      'git',
+      'discard',
+      workspaceId,
+      'tracked.txt',
+      cliStatus.revision,
+      cliDiff.token,
+      '--request-id',
+      'discard-cli',
+    ])
     expect(JSON.parse(cliResult.stdout)).toMatchObject({ request_id: 'discard-cli', workspace_id: workspaceId })
     expect((await operation(daemon.socket, workspaceId, 'discard-cli')).status).toBe('succeeded')
     expect(await readFile(join(checkout, 'tracked.txt'), 'utf8')).toBe('staged\n')
@@ -98,17 +134,28 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
     await writeFile(join(checkout, 'tracked.txt'), 'first draft\n')
     const stale = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
     await writeFile(join(checkout, 'tracked.txt'), 'newer draft\n')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-stale', path: 'tracked.txt', revision: stale.revision, diff_token: stale.diffToken })
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-stale',
+      path: 'tracked.txt',
+      revision: stale.revision,
+      diff_token: stale.diffToken,
+    })
     expect((await operation(daemon.socket, workspaceId, 'discard-stale')).status).toBe('failed')
     expect(await readFile(join(checkout, 'tracked.txt'), 'utf8')).toBe('newer draft\n')
     expect(await git(checkout, 'rev-parse', ':tracked.txt')).toBe(indexBefore)
 
     await writeFile(join(checkout, 'new.txt'), 'do not delete\n')
     const untracked = await reviewedFile(daemon.socket, workspaceId, 'new.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-untracked', path: 'new.txt', revision: untracked.revision,
-      diff_token: untracked.diffToken })
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-untracked',
+      path: 'new.txt',
+      revision: untracked.revision,
+      diff_token: untracked.diffToken,
+    })
     expect((await operation(daemon.socket, workspaceId, 'discard-untracked')).status).toBe('failed')
     expect(await readFile(join(checkout, 'new.txt'), 'utf8')).toBe('do not delete\n')
 
@@ -126,16 +173,26 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
     await git(checkout, 'commit', '-qm', 'add submodule')
     await writeFile(join(checkout, 'vendor', 'nested.txt'), 'nested draft\n')
     const submodule = await reviewedFile(daemon.socket, workspaceId, 'vendor')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-submodule', path: 'vendor', revision: submodule.revision,
-      diff_token: submodule.diffToken })
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-submodule',
+      path: 'vendor',
+      revision: submodule.revision,
+      diff_token: submodule.diffToken,
+    })
     expect((await operation(daemon.socket, workspaceId, 'discard-submodule')).status).toBe('failed')
     expect(await readFile(join(checkout, 'vendor', 'nested.txt'), 'utf8')).toBe('nested draft\n')
 
     // Traversal is invalid even if a caller supplies otherwise valid review tokens.
-    const traversal = { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-traversal', path: '../outside.txt', revision: stale.revision,
-      diff_token: stale.diffToken }
+    const traversal = {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-traversal',
+      path: '../outside.txt',
+      revision: stale.revision,
+      diff_token: stale.diffToken,
+    }
     try {
       await rpc(daemon.socket, traversal)
       expect((await operation(daemon.socket, workspaceId, 'discard-traversal')).status).toBe('failed')
@@ -156,9 +213,14 @@ test('discard restores only reviewed tracked worktree bytes and refuses changed 
     await git(checkout, 'commit', '-qam', 'side change')
     await run('git', ['-C', checkout, 'merge', 'main']).catch(() => undefined)
     const conflicted = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-conflict', path: 'tracked.txt', revision: conflicted.revision,
-      diff_token: conflicted.diffToken })
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-conflict',
+      path: 'tracked.txt',
+      revision: conflicted.revision,
+      diff_token: conflicted.diffToken,
+    })
     expect((await operation(daemon.socket, workspaceId, 'discard-conflict')).status).toBe('failed')
     expect(await readFile(join(checkout, 'tracked.txt'), 'utf8')).toContain('<<<<<<<')
   } finally {
@@ -182,20 +244,30 @@ test('a discarded file is reconcilable by request ID after losing the admission 
   const proxy = createServer((client) => {
     const upstream = createConnection(daemon.socket)
     client.on('data', (bytes) => upstream.write(bytes))
-    upstream.on('data', () => { client.destroy(); upstream.destroy() })
+    upstream.on('data', () => {
+      client.destroy()
+      upstream.destroy()
+    })
     client.on('close', () => upstream.destroy())
     upstream.on('close', () => client.destroy())
   })
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
+    const workspaceId = (
+      (await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }
+    ).id
     const preview = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
     await new Promise<void>((resolveListen, rejectListen) => {
       proxy.once('error', rejectListen)
       proxy.listen(proxyPath, resolveListen)
     })
-    const discard = { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-lost-reply', path: 'tracked.txt', revision: preview.revision,
-      diff_token: preview.diffToken }
+    const discard = {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-lost-reply',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    }
     await expect(rpc(proxyPath, discard)).rejects.toThrow(/closed|reset/i)
     const settled = await operation(daemon.socket, workspaceId, 'discard-lost-reply')
     expect(settled.status).toBe('succeeded')
@@ -216,18 +288,39 @@ test('an edit after the final discard precondition is not overwritten', async ()
   await run('git', ['init', '-q', '-b', 'main', checkout])
   await writeFile(join(checkout, 'tracked.txt'), 'baseline\n')
   await git(checkout, 'add', '--', 'tracked.txt')
-  await git(checkout, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid',
-    'commit', '-qm', 'baseline')
+  await git(
+    checkout,
+    '-c',
+    'user.name=ADE Fixture',
+    '-c',
+    'user.email=ade@example.invalid',
+    'commit',
+    '-qm',
+    'baseline',
+  )
   await writeFile(join(checkout, 'tracked.txt'), 'reviewed draft\n')
-  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1',
-    ADE_E2E_DISCARD_BEFORE_APPLY_DIR: pause })
+  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1', ADE_E2E_DISCARD_BEFORE_APPLY_DIR: pause })
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
+    const workspaceId = (
+      (await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }
+    ).id
     const preview = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-final-race', path: 'tracked.txt', revision: preview.revision,
-      diff_token: preview.diffToken })
-    await expect.poll(() => stat(join(pause, 'signal')).then(() => true, () => false)).toBe(true)
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-final-race',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    })
+    await expect
+      .poll(() =>
+        stat(join(pause, 'signal')).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true)
     await writeFile(join(checkout, 'tracked.txt'), 'newer edit\n')
     await writeFile(join(pause, 'release'), '')
     expect((await operation(daemon.socket, workspaceId, 'discard-final-race')).status).toBe('failed')
@@ -245,22 +338,43 @@ test('a concurrent edit at a different offset remains intact', async () => {
   const pause = join(directory, 'pause')
   await mkdir(pause)
   await run('git', ['init', '-q', '-b', 'main', checkout])
-  const baseline = Array.from({ length: 105 }, (_, index) => index === 52 ? 'ORIGINAL' : `line-${index}`)
-  const draft = baseline.map((line, index) => index === 52 ? 'DRAFT' : line)
+  const baseline = Array.from({ length: 105 }, (_, index) => (index === 52 ? 'ORIGINAL' : `line-${index}`))
+  const draft = baseline.map((line, index) => (index === 52 ? 'DRAFT' : line))
   await writeFile(join(checkout, 'tracked.txt'), `${baseline.join('\n')}\n`)
   await git(checkout, 'add', '--', 'tracked.txt')
-  await git(checkout, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid',
-    'commit', '-qm', 'baseline')
+  await git(
+    checkout,
+    '-c',
+    'user.name=ADE Fixture',
+    '-c',
+    'user.email=ade@example.invalid',
+    'commit',
+    '-qm',
+    'baseline',
+  )
   await writeFile(join(checkout, 'tracked.txt'), `${draft.join('\n')}\n`)
-  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1',
-    ADE_E2E_DISCARD_AFTER_CHECK_DIR: pause })
+  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1', ADE_E2E_DISCARD_AFTER_CHECK_DIR: pause })
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
+    const workspaceId = (
+      (await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }
+    ).id
     const preview = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-offset', path: 'tracked.txt', revision: preview.revision,
-      diff_token: preview.diffToken })
-    await expect.poll(() => stat(join(pause, 'signal')).then(() => true, () => false)).toBe(true)
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-offset',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    })
+    await expect
+      .poll(() =>
+        stat(join(pause, 'signal')).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true)
     const newer = [...draft]
     newer[52] = 'NEWER'
     newer.push(...draft.slice(49, 56))
@@ -284,18 +398,39 @@ test('an edit to the displaced file during exchange is restored without losing e
   await run('git', ['init', '-q', '-b', 'main', checkout])
   await writeFile(join(checkout, 'tracked.txt'), 'baseline\n')
   await git(checkout, 'add', '--', 'tracked.txt')
-  await git(checkout, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid',
-    'commit', '-qm', 'baseline')
+  await git(
+    checkout,
+    '-c',
+    'user.name=ADE Fixture',
+    '-c',
+    'user.email=ade@example.invalid',
+    'commit',
+    '-qm',
+    'baseline',
+  )
   await writeFile(join(checkout, 'tracked.txt'), 'reviewed draft\n')
-  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1',
-    ADE_E2E_DISCARD_AFTER_SWAP_DIR: pause })
+  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1', ADE_E2E_DISCARD_AFTER_SWAP_DIR: pause })
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
+    const workspaceId = (
+      (await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }
+    ).id
     const preview = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-swap-race', path: 'tracked.txt', revision: preview.revision,
-      diff_token: preview.diffToken })
-    await expect.poll(() => stat(join(pause, 'signal')).then(() => true, () => false)).toBe(true)
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-swap-race',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    })
+    await expect
+      .poll(() =>
+        stat(join(pause, 'signal')).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true)
     const displacedPath = await readFile(join(pause, 'signal'), 'utf8')
     expect(await readFile(join(checkout, 'tracked.txt'), 'utf8')).toBe('baseline\n')
     expect(await readFile(displacedPath, 'utf8')).toBe('reviewed draft\n')
@@ -324,30 +459,65 @@ test('a crash after exchange exposes the retained file and never replays discard
   await run('git', ['init', '-q', '-b', 'main', checkout])
   await writeFile(join(checkout, 'tracked.txt'), 'baseline\n')
   await git(checkout, 'add', '--', 'tracked.txt')
-  await git(checkout, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid',
-    'commit', '-qm', 'baseline')
+  await git(
+    checkout,
+    '-c',
+    'user.name=ADE Fixture',
+    '-c',
+    'user.email=ade@example.invalid',
+    'commit',
+    '-qm',
+    'baseline',
+  )
   await writeFile(join(checkout, 'tracked.txt'), 'reviewed draft\n')
-  const env = { ...process.env, ADE_DATA_DIR: dataDirectory, ADE_SOCKET: socket,
-    ADE_RUNTIME_SOCKET: join(directory, 'runtime.sock'), ADE_ROOT: directory, SHELL: '/bin/sh',
-    ADE_E2E_WORKER_PAUSE_ENABLED: '1', ADE_E2E_DISCARD_AFTER_SWAP_DIR: pause }
+  const env = {
+    ...process.env,
+    ADE_DATA_DIR: dataDirectory,
+    ADE_SOCKET: socket,
+    ADE_RUNTIME_SOCKET: join(directory, 'runtime.sock'),
+    ADE_ROOT: directory,
+    SHELL: '/bin/sh',
+    ADE_E2E_WORKER_PAUSE_ENABLED: '1',
+    ADE_E2E_DISCARD_AFTER_SWAP_DIR: pause,
+  }
   let child: ChildProcess | null = null
   let stopped = false
   const launch = async (): Promise<void> => {
     child = spawn(resolve('target/debug/ade-daemon'), [], { env, stdio: ['ignore', 'ignore', 'pipe'] })
-    await expect.poll(async () => {
-      if (child?.exitCode !== null) throw new Error(`Daemon exited during startup: ${child?.exitCode}`)
-      return rpc(socket, { op: 'hello' }, 500).then((reply) => reply.type, () => '')
-    }, { timeout: 10_000 }).toBe('hello')
+    await expect
+      .poll(
+        async () => {
+          if (child?.exitCode !== null) throw new Error(`Daemon exited during startup: ${child?.exitCode}`)
+          return rpc(socket, { op: 'hello' }, 500).then(
+            (reply) => reply.type,
+            () => '',
+          )
+        },
+        { timeout: 10_000 },
+      )
+      .toBe('hello')
   }
   try {
     await launch()
     const workspaceId = ((await rpc(socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
     const preview = await reviewedFile(socket, workspaceId, 'tracked.txt')
-    const discard = { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-crash-after-swap', path: 'tracked.txt', revision: preview.revision,
-      diff_token: preview.diffToken }
+    const discard = {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-crash-after-swap',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    }
     await rpc(socket, discard)
-    await expect.poll(() => stat(join(pause, 'signal')).then(() => true, () => false)).toBe(true)
+    await expect
+      .poll(() =>
+        stat(join(pause, 'signal')).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true)
     const displacedPath = await readFile(join(pause, 'signal'), 'utf8')
     expect(await readFile(join(checkout, 'tracked.txt'), 'utf8')).toBe('baseline\n')
     expect(await readFile(displacedPath, 'utf8')).toBe('reviewed draft\n')
@@ -355,8 +525,9 @@ test('a crash after exchange exposes the retained file and never replays discard
     first.kill('SIGKILL')
     await new Promise<void>((resolveExit) => first.once('exit', () => resolveExit()))
     await launch()
-    const receipt = (await rpc(socket, { op: 'review.operation', workspace_id: workspaceId,
-      request_id: discard.request_id })).operation as Record<string, unknown>
+    const receipt = (
+      await rpc(socket, { op: 'review.operation', workspace_id: workspaceId, request_id: discard.request_id })
+    ).operation as Record<string, unknown>
     expect(receipt).toMatchObject({ status: 'interrupted', backup_path: displacedPath })
     expect((await rpc(socket, discard)).operation).toEqual(receipt)
     await delay(100)
@@ -385,18 +556,39 @@ test('a replaced ancestor cannot redirect discard outside the workspace', async 
   await writeFile(join(nested, 'tracked.txt'), 'baseline\n')
   await writeFile(join(outside, 'tracked.txt'), 'outside untouched\n')
   await git(checkout, 'add', '--', 'nested/tracked.txt')
-  await git(checkout, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid',
-    'commit', '-qm', 'baseline')
+  await git(
+    checkout,
+    '-c',
+    'user.name=ADE Fixture',
+    '-c',
+    'user.email=ade@example.invalid',
+    'commit',
+    '-qm',
+    'baseline',
+  )
   await writeFile(join(nested, 'tracked.txt'), 'reviewed draft\n')
-  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1',
-    ADE_E2E_DISCARD_BEFORE_SWAP_DIR: pause })
+  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1', ADE_E2E_DISCARD_BEFORE_SWAP_DIR: pause })
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
+    const workspaceId = (
+      (await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }
+    ).id
     const preview = await reviewedFile(daemon.socket, workspaceId, 'nested/tracked.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-replaced-ancestor', path: 'nested/tracked.txt',
-      revision: preview.revision, diff_token: preview.diffToken })
-    await expect.poll(() => stat(join(pause, 'signal')).then(() => true, () => false)).toBe(true)
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-replaced-ancestor',
+      path: 'nested/tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    })
+    await expect
+      .poll(() =>
+        stat(join(pause, 'signal')).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true)
     await rename(nested, join(checkout, 'moved'))
     await symlink(outside, nested)
     await writeFile(join(pause, 'release'), '')
@@ -418,19 +610,43 @@ test('a writer holding the old inode can recover its later bytes from the report
   await run('git', ['init', '-q', '-b', 'main', checkout])
   await writeFile(join(checkout, 'tracked.txt'), 'baseline\n')
   await git(checkout, 'add', '--', 'tracked.txt')
-  await git(checkout, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid',
-    'commit', '-qm', 'baseline')
+  await git(
+    checkout,
+    '-c',
+    'user.name=ADE Fixture',
+    '-c',
+    'user.email=ade@example.invalid',
+    'commit',
+    '-qm',
+    'baseline',
+  )
   await writeFile(join(checkout, 'tracked.txt'), 'reviewed draft\n')
   const writer = await open(join(checkout, 'tracked.txt'), 'r+')
-  const daemon = await startDaemon({ ADE_E2E_WORKER_PAUSE_ENABLED: '1',
-    ADE_E2E_DISCARD_AFTER_DISPLACED_CHECK_DIR: pause })
+  const daemon = await startDaemon({
+    ADE_E2E_WORKER_PAUSE_ENABLED: '1',
+    ADE_E2E_DISCARD_AFTER_DISPLACED_CHECK_DIR: pause,
+  })
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }).id
+    const workspaceId = (
+      (await rpc(daemon.socket, { op: 'workspace.open', path: checkout })).workspace as { id: string }
+    ).id
     const preview = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-open-fd', path: 'tracked.txt', revision: preview.revision,
-      diff_token: preview.diffToken })
-    await expect.poll(() => stat(join(pause, 'signal')).then(() => true, () => false)).toBe(true)
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-open-fd',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    })
+    await expect
+      .poll(() =>
+        stat(join(pause, 'signal')).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true)
     const displacedPath = await readFile(join(pause, 'signal'), 'utf8')
     await writer.truncate(0)
     await writer.writeFile('later writer bytes\n')
@@ -455,19 +671,24 @@ test('discard restores the index of a linked worktree without changing its prima
   await run('git', ['init', '-q', '-b', 'main', primary])
   await writeFile(join(primary, 'tracked.txt'), 'primary baseline\n')
   await git(primary, 'add', '--', 'tracked.txt')
-  await git(primary, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid',
-    'commit', '-qm', 'baseline')
+  await git(primary, '-c', 'user.name=ADE Fixture', '-c', 'user.email=ade@example.invalid', 'commit', '-qm', 'baseline')
   await git(primary, 'worktree', 'add', '-q', '-b', 'linked', linked)
   await writeFile(join(linked, 'tracked.txt'), 'linked staged\n')
   await git(linked, 'add', '--', 'tracked.txt')
   await writeFile(join(linked, 'tracked.txt'), 'linked draft\n')
   const daemon = await startDaemon()
   try {
-    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: linked })).workspace as { id: string }).id
+    const workspaceId = ((await rpc(daemon.socket, { op: 'workspace.open', path: linked })).workspace as { id: string })
+      .id
     const preview = await reviewedFile(daemon.socket, workspaceId, 'tracked.txt')
-    await rpc(daemon.socket, { op: 'review.discard', workspace_id: workspaceId,
-      request_id: 'discard-linked-index', path: 'tracked.txt', revision: preview.revision,
-      diff_token: preview.diffToken })
+    await rpc(daemon.socket, {
+      op: 'review.discard',
+      workspace_id: workspaceId,
+      request_id: 'discard-linked-index',
+      path: 'tracked.txt',
+      revision: preview.revision,
+      diff_token: preview.diffToken,
+    })
     const receipt = await operation(daemon.socket, workspaceId, 'discard-linked-index')
     expect(receipt.status).toBe('succeeded')
     expect(await readFile(join(linked, 'tracked.txt'), 'utf8')).toBe('linked staged\n')

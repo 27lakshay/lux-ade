@@ -5,8 +5,18 @@
 // affect a successor").
 import { access, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, isRunning, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  isRunning,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { mockDirectory } from '../fixtures/providers'
 
 async function conversation(profile: ScratchProfile, conversationId: string) {
@@ -14,20 +24,30 @@ async function conversation(profile: ScratchProfile, conversationId: string) {
 }
 
 /** Send `text` and wait until its turn runs; returns the provider turn ID. */
-async function runningTurn(profile: ScratchProfile, conversationId: string, text: string = prompts.hold,
-  requestId?: string): Promise<string> {
+async function runningTurn(
+  profile: ScratchProfile,
+  conversationId: string,
+  text: string = prompts.hold,
+  requestId?: string,
+): Promise<string> {
   await send(profile, conversationId, text, requestId)
   let turn: string | null = null
-  await expect.poll(async () => {
-    const current = await conversation(profile, conversationId)
-    turn = current.status === 'running' ? current.active_turn_id ?? null : null
-    return turn
-  }, { timeout: 20_000 }).not.toBeNull()
+  await expect
+    .poll(
+      async () => {
+        const current = await conversation(profile, conversationId)
+        turn = current.status === 'running' ? (current.active_turn_id ?? null) : null
+        return turn
+      },
+      { timeout: 20_000 },
+    )
+    .not.toBeNull()
   return turn!
 }
 
 async function interruptedTurns(profile: ScratchProfile): Promise<Array<string | undefined>> {
-  return (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/interrupt')
+  return (await profile.mockCalls('codex'))
+    .filter((call) => call.method === 'turn/interrupt')
     .map((call) => (call.params as { turnId?: string }).turnId)
 }
 
@@ -36,10 +56,15 @@ async function waitForStatus(profile: ScratchProfile, conversationId: string, st
 }
 
 async function exists(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false)
+  return access(path).then(
+    () => true,
+    () => false,
+  )
 }
 
-test('a cancel that names the previous turn is refused and never stops its successor, also after a daemon crash', async ({ profile }) => {
+test('a cancel that names the previous turn is refused and never stops its successor, also after a daemon crash', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const first = await runningTurn(profile, conversationId)
   await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })
@@ -49,8 +74,9 @@ test('a cancel that names the previous turn is refused and never stops its succe
   const second = await runningTurn(profile, conversationId)
   expect(second).not.toBe(first)
   // A retried or late cancel for the first turn, through the SDK and the CLI.
-  await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first }))
-    .rejects.toThrow(`Turn ${first} is no longer active; nothing was cancelled`)
+  await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })).rejects.toThrow(
+    `Turn ${first} is no longer active; nothing was cancelled`,
+  )
   const cli = await profile.cli('conversation', 'cancel', conversationId, '--turn', first)
   expect(cli.code).not.toBe(0)
   expect(cli.stderr).toContain('no longer active')
@@ -59,8 +85,9 @@ test('a cancel that names the previous turn is refused and never stops its succe
 
   // The fence holds across a daemon crash: the running turn is reattached and still protected.
   await profile.restartDaemon('kill')
-  await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first }))
-    .rejects.toThrow('no longer active')
+  await expect(profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })).rejects.toThrow(
+    'no longer active',
+  )
   expect(await conversation(profile, conversationId)).toMatchObject({ status: 'running', active_turn_id: second })
   expect(await interruptedTurns(profile)).toEqual([first])
 
@@ -78,14 +105,19 @@ test('a cancel racing the admission of the next turn stops only the turn it was 
   // the daemon accepts it; the cancelled turn's cleanup runs meanwhile.
   const cancelled = profile.call('agent.cancel', { conversation_id: conversationId, turn_id: first })
   const successor = `successor-${test.info().testId}`
-  await expect.poll(async () => {
-    try {
-      await send(profile, conversationId, prompts.turn, successor)
-      return 'admitted'
-    } catch (error) {
-      return String(error)
-    }
-  }, { timeout: 20_000, intervals: [10] }).toBe('admitted')
+  await expect
+    .poll(
+      async () => {
+        try {
+          await send(profile, conversationId, prompts.turn, successor)
+          return 'admitted'
+        } catch (error) {
+          return String(error)
+        }
+      },
+      { timeout: 20_000, intervals: [10] },
+    )
+    .toBe('admitted')
   await cancelled
   // The successor completes normally; the earlier cancellation did not reach it.
   await waitForMessage(profile, conversationId, turnReply.codex)
@@ -96,7 +128,9 @@ test('a cancel racing the admission of the next turn stops only the turn it was 
   expect((await conversation(profile, conversationId)).error ?? null).toBeNull()
 })
 
-test('a cancellation whose provider reply fails after the turn ended does not fail the successor turn', async ({ ade }) => {
+test('a cancellation whose provider reply fails after the turn ended does not fail the successor turn', async ({
+  ade,
+}) => {
   const profile = await ade.profile({ env: { ADE_CODEX_BIN: join(__dirname, '../fixtures/codex_cancel_faults.py') } })
   const directory = mockDirectory(profile.root, 'codex')
   const { conversationId } = await startConversation(profile, 'codex')
@@ -114,8 +148,14 @@ test('a cancellation whose provider reply fails after the turn ended does not fa
   await expect.poll(() => exists(join(directory, 'interrupt-failed'))).toBe(true)
   // A steer is answered on the same provider pipe after that failure, so the
   // daemon has received the failure by the time the steer is acknowledged.
-  expect(await profile.call('conversation.steer', { operation_id: 'after-late-failure', conversation_id: conversationId,
-    turn_id: second, text: 'still running' })).toMatchObject({ outcome: 'acknowledged', turn_id: second })
+  expect(
+    await profile.call('conversation.steer', {
+      operation_id: 'after-late-failure',
+      conversation_id: conversationId,
+      turn_id: second,
+      text: 'still running',
+    }),
+  ).toMatchObject({ outcome: 'acknowledged', turn_id: second })
   expect(await conversation(profile, conversationId)).toMatchObject({ status: 'running', active_turn_id: second })
   expect(await isRunning(provider)).toBe(true)
 
@@ -134,11 +174,21 @@ test('a late provider reply to a finished turn neither fails nor replaces its su
     await send(profile, conversationId, late)
     await waitForIdle(profile, conversationId)
     const successor = await runningTurn(profile, conversationId, 'hold-late')
-    await expect.poll(async () => (await profile.mockCalls('codex'))
-      .filter((call) => call.method === 'fixture/late-delivered').length).toBe(index + 1)
+    await expect
+      .poll(
+        async () =>
+          (await profile.mockCalls('codex')).filter((call) => call.method === 'fixture/late-delivered').length,
+      )
+      .toBe(index + 1)
     // A steer on the same pipe is answered after the late reply, so the daemon has handled it.
-    expect(await profile.call('conversation.steer', { operation_id: `after-${late}`, conversation_id: conversationId,
-      turn_id: successor, text: 'still running' })).toMatchObject({ outcome: 'acknowledged', turn_id: successor })
+    expect(
+      await profile.call('conversation.steer', {
+        operation_id: `after-${late}`,
+        conversation_id: conversationId,
+        turn_id: successor,
+        text: 'still running',
+      }),
+    ).toMatchObject({ outcome: 'acknowledged', turn_id: successor })
     expect(await conversation(profile, conversationId)).toMatchObject({ status: 'running', active_turn_id: successor })
     await profile.call('agent.cancel', { conversation_id: conversationId })
     await waitForStatus(profile, conversationId, 'interrupted')

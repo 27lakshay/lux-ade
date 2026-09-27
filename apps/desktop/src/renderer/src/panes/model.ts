@@ -123,7 +123,13 @@ function place(d: Layout, paneId: string, targetId: string, side: Side) {
     return
   }
   const target: Node = { type: 'pane', id: targetId }
-  const split: Node = { type: 'split', id: uid('split'), dir, children: before ? [leaf, target] : [target, leaf], sizes: [1, 1] }
+  const split: Node = {
+    type: 'split',
+    id: uid('split'),
+    dir,
+    children: before ? [leaf, target] : [target, leaf],
+    sizes: [1, 1],
+  }
   if (at) at.parent.children[at.index] = split
   else d.root = split
 }
@@ -298,7 +304,16 @@ export function demoLayout(): Layout {
       sizes: [1, 1],
       children: [
         { type: 'pane', id: 'p-main' },
-        { type: 'split', id: 's-right', dir: 'col', sizes: [1, 1], children: [{ type: 'pane', id: 'p-package' }, { type: 'pane', id: 'p-cargo' }] },
+        {
+          type: 'split',
+          id: 's-right',
+          dir: 'col',
+          sizes: [1, 1],
+          children: [
+            { type: 'pane', id: 'p-package' },
+            { type: 'pane', id: 'p-cargo' },
+          ],
+        },
       ],
     },
   }

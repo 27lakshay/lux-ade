@@ -8,8 +8,11 @@ import { expect, type AdeHarness, type CliResult, type ScratchProfile, type Scra
 /** The rejection of `attempt`, which must be the SDK's `DaemonRequestError`. */
 export async function sdkError(attempt: Promise<unknown>): Promise<DaemonRequestError> {
   const error = await attempt.then(
-    (reply) => { throw new Error(`Expected a refusal, got ${JSON.stringify(reply)}`) },
-    (failure: unknown) => failure)
+    (reply) => {
+      throw new Error(`Expected a refusal, got ${JSON.stringify(reply)}`)
+    },
+    (failure: unknown) => failure,
+  )
   expect(error).toMatchObject({ name: 'DaemonRequestError' })
   return error as DaemonRequestError
 }
@@ -48,6 +51,7 @@ export async function occupy(profile: ScratchProfile, tree: string) {
 
 /** Wait until `profile` sees a use claim on `tree`. */
 export async function waitForClaim(profile: ScratchProfile, tree: string): Promise<void> {
-  await expect.poll(async () => (await profile.call('resources.inspect', { path: tree, resource: 'checkout' }))
-    .claims.length).toBeGreaterThan(0)
+  await expect
+    .poll(async () => (await profile.call('resources.inspect', { path: tree, resource: 'checkout' })).claims.length)
+    .toBeGreaterThan(0)
 }

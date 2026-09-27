@@ -11,7 +11,8 @@ export function sha256(data: string | Buffer): string {
 
 /** The Codex `UserInput` items of every `turn/start` the mock received, oldest first. */
 export async function codexInputs(profile: ScratchProfile): Promise<Array<Array<Record<string, string>>>> {
-  return (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')
+  return (await profile.mockCalls('codex'))
+    .filter((call) => call.method === 'turn/start')
     .map((call) => (call.params as { input: Array<Record<string, string>> }).input)
 }
 
@@ -21,12 +22,18 @@ export async function claudeContents(profile: ScratchProfile): Promise<unknown[]
 }
 
 /** Wait for `count` native prompts on `provider` and return them. */
-export async function waitForPrompts(profile: ScratchProfile, provider: 'codex' | 'claude', count: number): Promise<unknown[]> {
+export async function waitForPrompts(
+  profile: ScratchProfile,
+  provider: 'codex' | 'claude',
+  count: number,
+): Promise<unknown[]> {
   let prompts: unknown[] = []
-  await expect.poll(async () => {
-    prompts = provider === 'codex' ? await codexInputs(profile) : await claudeContents(profile)
-    return prompts.length
-  }).toBe(count)
+  await expect
+    .poll(async () => {
+      prompts = provider === 'codex' ? await codexInputs(profile) : await claudeContents(profile)
+      return prompts.length
+    })
+    .toBe(count)
   return prompts
 }
 

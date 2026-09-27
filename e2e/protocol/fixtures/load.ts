@@ -29,17 +29,31 @@ export type Workload = {
 export type LoadShape = { agents: number; terminals: number; services: number }
 
 /** Start `shape` in the workspace at `workspacePath`. Every resource is ready when it resolves. */
-export async function startWorkload(profile: ScratchProfile, workspacePath: string, shape: LoadShape): Promise<Workload> {
+export async function startWorkload(
+  profile: ScratchProfile,
+  workspacePath: string,
+  shape: LoadShape,
+): Promise<Workload> {
   const { workspace } = await profile.call('workspace.open', { path: workspacePath })
-  const conversations = await Promise.all(Array.from({ length: shape.agents }, async () => {
-    const conversationId = (await profile.call('conversation.create', { workspace_id: workspace.id, provider: 'codex' }))
-      .conversation.id
-    await send(profile, conversationId, 'hello')
-    await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).messages
-      .some((message) => message.text?.includes(turnReply.codex)), { timeout: 60_000 }).toBe(true)
-    await waitForIdle(profile, conversationId, 60_000)
-    return conversationId
-  }))
+  const conversations = await Promise.all(
+    Array.from({ length: shape.agents }, async () => {
+      const conversationId = (
+        await profile.call('conversation.create', { workspace_id: workspace.id, provider: 'codex' })
+      ).conversation.id
+      await send(profile, conversationId, 'hello')
+      await expect
+        .poll(
+          async () =>
+            (await profile.call('conversation.get', { conversation_id: conversationId })).messages.some((message) =>
+              message.text?.includes(turnReply.codex),
+            ),
+          { timeout: 60_000 },
+        )
+        .toBe(true)
+      await waitForIdle(profile, conversationId, 60_000)
+      return conversationId
+    }),
+  )
 
   const terminalIds = [workspace.terminal_id]
   for (let index = 1; index < shape.terminals; index++) {
@@ -57,7 +71,10 @@ export async function startWorkload(profile: ScratchProfile, workspacePath: stri
   await Promise.all(services.map((name) => waitForReadiness(profile, workspace.id, name, 'tcp_listening', 60_000)))
 
   return {
-    workspaceId: workspace.id, conversations, terminals, services,
+    workspaceId: workspace.id,
+    conversations,
+    terminals,
+    services,
     async stop() {
       for (const terminal of terminals) terminal.close()
       for (const name of services) await profile.call('service.stop', { workspace_id: workspace.id, name })
@@ -136,8 +153,12 @@ export class AdmissionClient {
           parentPort.postMessage({ id, ms: performance.now() - started, error: String((error && error.message) || error) })
         }
       })`
-    return new AdmissionClient(new Worker(code, { eval: true,
-      workerData: { client: pathToFileURL(binaries.client).href, socket: profile.socket } }))
+    return new AdmissionClient(
+      new Worker(code, {
+        eval: true,
+        workerData: { client: pathToFileURL(binaries.client).href, socket: profile.socket },
+      }),
+    )
   }
 
   /** Call `op` from the worker; return its wall time there and its reply. A failed call throws. */

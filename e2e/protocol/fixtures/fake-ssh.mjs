@@ -34,7 +34,10 @@ const program = basename(process.argv[1])
 const argv = process.argv.slice(2)
 
 function log(entry) {
-  appendFileSync(join(bin, 'calls.jsonl'), `${JSON.stringify({ at: Date.now(), pid: process.pid, program, ...entry })}\n`)
+  appendFileSync(
+    join(bin, 'calls.jsonl'),
+    `${JSON.stringify({ at: Date.now(), pid: process.pid, program, ...entry })}\n`,
+  )
 }
 
 function die(message, code = 255) {
@@ -71,7 +74,10 @@ const forwards = []
 let index = 0
 while (index < argv.length) {
   const word = argv[index]
-  if (word === '--') { index++; break }
+  if (word === '--') {
+    index++
+    break
+  }
   if (!word.startsWith('-')) break
   if (word === '-o') {
     const [key, ...value] = argv[index + 1].split('=')
@@ -106,18 +112,25 @@ if (linkDown(host)) die(`ssh: connect to host ${host.name} port 22: Connection r
 const key = currentKey(host)
 const [keyType] = key.split(' ')
 const algorithms = options.hostkeyalgorithms
-if (algorithms && !algorithms.split(',').some((algorithm) => algorithm === keyType ||
-  (keyType === 'ssh-rsa' && algorithm.startsWith('rsa-sha2-')))) {
+if (
+  algorithms &&
+  !algorithms
+    .split(',')
+    .some((algorithm) => algorithm === keyType || (keyType === 'ssh-rsa' && algorithm.startsWith('rsa-sha2-')))
+) {
   die(`Unable to negotiate with ${host.name} port 22: no matching host key type found. Their offer: ${keyType}`)
 }
 const alias = options.hostkeyalias ?? host.name
 // Without UserKnownHostsFile, the lab's own file stands in for ~/.ssh/known_hosts; the real one is never read.
-const knownHostsFiles = (options.userknownhostsfile ?? join(bin, 'user_known_hosts'))
-  .split(/\s+/).filter(Boolean)
+const knownHostsFiles = (options.userknownhostsfile ?? join(bin, 'user_known_hosts')).split(/\s+/).filter(Boolean)
 const known = []
 for (const file of knownHostsFiles) {
   let text = ''
-  try { text = readFileSync(file, 'utf8') } catch { continue }
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    continue
+  }
   for (const line of text.split('\n')) {
     const [names, type, blob] = line.trim().split(/\s+/)
     if (names && type && blob && names.split(',').includes(alias)) known.push(`${type} ${blob}`)
@@ -126,13 +139,17 @@ for (const file of knownHostsFiles) {
 const label = keyType.replace(/^ssh-/, '').replace(/-.*$/, '').toUpperCase()
 if (known.length === 0) {
   if (options.stricthostkeychecking === 'yes') {
-    die(`No ${label} host key is known for ${alias} and you have requested strict checking.\r\nHost key verification failed.`)
+    die(
+      `No ${label} host key is known for ${alias} and you have requested strict checking.\r\nHost key verification failed.`,
+    )
   }
 } else if (!known.includes(key)) {
-  die('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n' +
-    '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n' +
+  die(
     '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n' +
-    `Host key for ${alias} has changed and you have requested strict checking.\r\nHost key verification failed.`)
+      '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n' +
+      '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n' +
+      `Host key for ${alias} has changed and you have requested strict checking.\r\nHost key verification failed.`,
+  )
 }
 
 const remoteEnvironment = { ...host.env }
@@ -159,7 +176,12 @@ if (flags.has('N')) {
       const upstream = createConnection(remote)
       sockets.add(client)
       sockets.add(upstream)
-      const close = () => { client.destroy(); upstream.destroy(); sockets.delete(client); sockets.delete(upstream) }
+      const close = () => {
+        client.destroy()
+        upstream.destroy()
+        sockets.delete(client)
+        sockets.delete(upstream)
+      }
       client.on('error', close)
       upstream.on('error', close)
       client.on('close', close)
@@ -167,7 +189,9 @@ if (flags.has('N')) {
       client.pipe(upstream)
       upstream.pipe(client)
     })
-    server.once('error', (error) => die(`bind [${local ?? spec}]: ${error.message}\r\nCould not request local forwarding.`))
+    server.once('error', (error) =>
+      die(`bind [${local ?? spec}]: ${error.message}\r\nCould not request local forwarding.`),
+    )
     if (tcp) server.listen(Number(tcp[1]), '127.0.0.1', ready)
     else {
       server.listen(local, () => {
@@ -179,7 +203,10 @@ if (flags.has('N')) {
   }
   const shutdown = (code, message) => {
     for (const socket of sockets) socket.destroy()
-    for (const { server, local } of servers) { server.close(); if (local) rmSync(local, { force: true }) }
+    for (const { server, local } of servers) {
+      server.close()
+      if (local) rmSync(local, { force: true })
+    }
     if (message) process.stderr.write(`${message}\n`)
     log({ args: argv, exit: code, stderr: message ?? null })
     process.exit(code)
@@ -194,8 +221,11 @@ if (flags.has('N')) {
 } else {
   const run = () => {
     log({ args: argv, remote_command: command })
-    const child = spawn('/bin/sh', ['-c', command], { cwd: remoteEnvironment.HOME, env: remoteEnvironment,
-      stdio: 'inherit' })
+    const child = spawn('/bin/sh', ['-c', command], {
+      cwd: remoteEnvironment.HOME,
+      env: remoteEnvironment,
+      stdio: 'inherit',
+    })
     child.on('exit', (code, signal) => {
       log({ args: argv, remote_command: command, exit: code, signal })
       process.exit(code ?? 255)
@@ -205,7 +235,10 @@ if (flags.has('N')) {
   if (existsSync(hold)) {
     log({ args: argv, held: command })
     const timer = setInterval(() => {
-      if (!existsSync(hold)) { clearInterval(timer); run() }
+      if (!existsSync(hold)) {
+        clearInterval(timer)
+        run()
+      }
     }, 25)
   } else {
     run()

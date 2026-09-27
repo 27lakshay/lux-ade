@@ -47,7 +47,8 @@ function decode(base64: string): Uint8Array {
 }
 
 function outputBytes(frame: TerminalFrame): Uint8Array | null {
-  if (!Array.isArray(frame.bytes) || frame.bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) return null
+  if (!Array.isArray(frame.bytes) || frame.bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255))
+    return null
   return Uint8Array.from(frame.bytes as number[])
 }
 
@@ -150,24 +151,28 @@ export class TerminalFeed {
       // from a clean terminal, as a new view would.
       this.screen.reset()
     }
-    void replay(this.screen, frame, () => this.stopped).then((result) => {
-      if (this.stopped) return
-      this.expectedOffset = result.offset
-      this.restoring = false
-      this.restored = true
-      if (!result.complete) {
-        this.events.status(resync
-          ? 'Terminal fell behind and its history is too large to restore; live output continues.'
-          : 'Terminal recovery is incomplete; live output remains available.')
-      }
-      this.events.ready()
-      const queued = this.pending.splice(0)
-      this.pendingBytes = 0
-      for (const next of queued) this.push(next)
-    }).catch((error: Error) => {
-      if (this.stopped) return
-      this.fail(error.message)
-    })
+    void replay(this.screen, frame, () => this.stopped)
+      .then((result) => {
+        if (this.stopped) return
+        this.expectedOffset = result.offset
+        this.restoring = false
+        this.restored = true
+        if (!result.complete) {
+          this.events.status(
+            resync
+              ? 'Terminal fell behind and its history is too large to restore; live output continues.'
+              : 'Terminal recovery is incomplete; live output remains available.',
+          )
+        }
+        this.events.ready()
+        const queued = this.pending.splice(0)
+        this.pendingBytes = 0
+        for (const next of queued) this.push(next)
+      })
+      .catch((error: Error) => {
+        if (this.stopped) return
+        this.fail(error.message)
+      })
   }
 
   private applyLive(frame: TerminalFrame): void {

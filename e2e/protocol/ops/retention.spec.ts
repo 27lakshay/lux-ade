@@ -7,8 +7,16 @@
 import { chmod, lstat, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { expect, isRunning, send, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
-import { age, DAY_MS, diagnosticLogDirectory, names, plantDiagnosticLog, plantOrphanServiceLog, serviceLogDirectory,
-  startService } from './steps'
+import {
+  age,
+  DAY_MS,
+  diagnosticLogDirectory,
+  names,
+  plantDiagnosticLog,
+  plantOrphanServiceLog,
+  serviceLogDirectory,
+  startService,
+} from './steps'
 
 type Preview = Awaited<ReturnType<typeof preview>>
 
@@ -21,11 +29,17 @@ async function apply(profile: ScratchProfile, generation: string) {
 }
 
 function ids(reply: Preview, kind?: string): string[] {
-  return reply.candidates.filter((candidate) => !kind || candidate.kind === kind).map((candidate) => candidate.id).sort()
+  return reply.candidates
+    .filter((candidate) => !kind || candidate.kind === kind)
+    .map((candidate) => candidate.id)
+    .sort()
 }
 
 async function exists(path: string): Promise<boolean> {
-  return lstat(path).then(() => true, () => false)
+  return lstat(path).then(
+    () => true,
+    () => false,
+  )
 }
 
 async function writeSkill(directory: string, name: string, body: string): Promise<void> {
@@ -36,7 +50,11 @@ async function writeSkill(directory: string, name: string, body: string): Promis
 let operation = 0
 const nextOperation = (label: string) => `e2e-retention-${label}-${process.pid}-${++operation}`
 
-test('preview selects only unowned, idle and aged items; apply removes exactly that generation and replays after a crash', async ({ ade, profile, repo }) => {
+test('preview selects only unowned, idle and aged items; apply removes exactly that generation and replays after a crash', async ({
+  ade,
+  profile,
+  repo,
+}) => {
   // A live service whose durable log is older than the idle limit: owned, so never a candidate.
   const live = await startService(profile, repo.path, 'web')
   for (const file of await names(serviceLogDirectory(profile))) {
@@ -46,17 +64,38 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
 
   // An upload nothing references yet, and one a sent message references.
   const { conversationId } = await startConversation(profile, 'codex')
-  const unreferenced = await profile.call('attachment.put', { conversation_id: conversationId, request_id: 'upload-unreferenced',
-    name: 'notes.txt', data: Buffer.from('in-flight upload\n').toString('base64') })
-  const referenced = await profile.call('attachment.put', { conversation_id: conversationId, request_id: 'upload-referenced',
-    name: 'spec.txt', data: Buffer.from('referenced upload\n').toString('base64') })
-  await profile.call('agent.send', { conversation_id: conversationId, request_id: 'send-with-attachment', text: 'hello',
-    attachments: [referenced.attachment] })
+  const unreferenced = await profile.call('attachment.put', {
+    conversation_id: conversationId,
+    request_id: 'upload-unreferenced',
+    name: 'notes.txt',
+    data: Buffer.from('in-flight upload\n').toString('base64'),
+  })
+  const referenced = await profile.call('attachment.put', {
+    conversation_id: conversationId,
+    request_id: 'upload-referenced',
+    name: 'spec.txt',
+    data: Buffer.from('referenced upload\n').toString('base64'),
+  })
+  await profile.call('agent.send', {
+    conversation_id: conversationId,
+    request_id: 'send-with-attachment',
+    text: 'hello',
+    attachments: [referenced.attachment],
+  })
   await waitForIdle(profile, conversationId)
-  const drafted = await profile.call('attachment.put', { conversation_id: conversationId, request_id: 'upload-drafted',
-    name: 'draft.txt', data: Buffer.from('drafted upload\n').toString('base64') })
-  await profile.call('draft.save', { conversation_id: conversationId, window_id: 'retention-window', revision: 1,
-    text: 'draft with a file', attachments: [drafted.attachment] })
+  const drafted = await profile.call('attachment.put', {
+    conversation_id: conversationId,
+    request_id: 'upload-drafted',
+    name: 'draft.txt',
+    data: Buffer.from('drafted upload\n').toString('base64'),
+  })
+  await profile.call('draft.save', {
+    conversation_id: conversationId,
+    window_id: 'retention-window',
+    revision: 1,
+    text: 'draft with a file',
+    attachments: [drafted.attachment],
+  })
 
   // An installed skill bundle, replaced once. The replacement leaves the old
   // files unreferenced, so they are a candidate; the installed ones are not.
@@ -64,8 +103,11 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
   await writeSkill(source, 'notes', 'First version.')
   const first = await profile.call('skill.install', { operation_id: nextOperation('install'), source_path: source })
   await writeSkill(source, 'notes', 'Second version.')
-  const second = await profile.call('skill.install', { operation_id: nextOperation('replace'), source_path: source,
-    replace_content_hash: first.skill.content_hash })
+  const second = await profile.call('skill.install', {
+    operation_id: nextOperation('replace'),
+    source_path: source,
+    replace_content_hash: first.skill.content_hash,
+  })
   expect(second.changed).toBe(true)
 
   // Service logs: an orphan past the idle limit, an orphan written recently,
@@ -88,8 +130,13 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
   await plantDiagnosticLog(profile, 'young', '2026-09-02', 1)
 
   const planned = await preview(profile)
-  expect(planned.policy).toMatchObject({ attachment_grace_ms: DAY_MS, service_log_idle_ms: 7 * DAY_MS,
-    diagnostic_log_max_age_ms: 30 * DAY_MS, receipt_retention_ms: 30 * DAY_MS, candidate_limit: 500 })
+  expect(planned.policy).toMatchObject({
+    attachment_grace_ms: DAY_MS,
+    service_log_idle_ms: 7 * DAY_MS,
+    diagnostic_log_max_age_ms: 30 * DAY_MS,
+    receipt_retention_ms: 30 * DAY_MS,
+    candidate_limit: 500,
+  })
   expect(planned.withheld).toEqual([])
   expect(planned.truncated).toBe(false)
   expect(planned.generation).toMatch(/^[0-9a-f]{64}$/)
@@ -102,8 +149,9 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
     expect(candidate.bytes).toBeGreaterThan(0)
     expect(candidate.reason.length).toBeGreaterThan(0)
   }
-  expect(planned.candidates.find((candidate) => candidate.kind === 'service_log')!.bytes)
-    .toBe(Buffer.byteLength('idle orphan output\n'))
+  expect(planned.candidates.find((candidate) => candidate.kind === 'service_log')!.bytes).toBe(
+    Buffer.byteLength('idle orphan output\n'),
+  )
   expect(planned.reclaimable_bytes).toBe(planned.candidates.reduce((sum, candidate) => sum + candidate.bytes, 0))
   expect(planned.receipts.map((store) => store.store)).toContain('sessions')
   expect(planned.observed_logs.map((log) => log.name).sort()).toEqual(['daemon.log', 'runtime.log'])
@@ -115,10 +163,15 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
   expect(cli.json).toMatchObject({ type: 'retention_preview', generation: planned.generation })
 
   const applied = await apply(profile, planned.generation)
-  expect(applied).toMatchObject({ generation: planned.generation, replayed: false, complete: true,
-    removed_bytes: planned.reclaimable_bytes })
-  expect(applied.results.map((result) => [result.kind, result.id, result.outcome]).sort())
-    .toEqual(planned.candidates.map((candidate) => [candidate.kind, candidate.id, 'removed']).sort())
+  expect(applied).toMatchObject({
+    generation: planned.generation,
+    replayed: false,
+    complete: true,
+    removed_bytes: planned.reclaimable_bytes,
+  })
+  expect(applied.results.map((result) => [result.kind, result.id, result.outcome]).sort()).toEqual(
+    planned.candidates.map((candidate) => [candidate.kind, candidate.id, 'removed']).sort(),
+  )
 
   // Exactly the candidates are gone.
   expect(await exists(join(serviceLogDirectory(profile), `${idleOrphan}.0`))).toBe(false)
@@ -138,8 +191,10 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
   }
   expect(await isRunning(shellPid)).toBe(true)
   for (const upload of [unreferenced, referenced, drafted]) {
-    const inspected = await profile.call('attachment.inspect', { conversation_id: conversationId,
-      attachment_id: upload.attachment.id })
+    const inspected = await profile.call('attachment.inspect', {
+      conversation_id: conversationId,
+      attachment_id: upload.attachment.id,
+    })
     expect(inspected.attachment.id).toBe(upload.attachment.id)
   }
 
@@ -188,7 +243,7 @@ test('a candidate set that changed after the preview is refused and nothing is r
   const current = await preview(profile)
   expect(ids(current)).toEqual([first, late].sort())
   const racing = await Promise.allSettled([apply(profile, current.generation), apply(profile, current.generation)])
-  const fulfilled = racing.flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
+  const fulfilled = racing.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
   expect(fulfilled.length).toBeGreaterThan(0)
   for (const result of fulfilled) expect(result).toMatchObject({ complete: true, generation: current.generation })
   expect(fulfilled.filter((result) => !result.replayed)).toHaveLength(1)
@@ -199,7 +254,9 @@ test('a candidate set that changed after the preview is refused and nothing is r
   expect(await exists(join(serviceLogDirectory(profile), `${late}.0`))).toBe(false)
 })
 
-test('a removal that fails is reported per item, is not stored, and succeeds on a retry of the same set', async ({ profile }) => {
+test('a removal that fails is reported per item, is not stored, and succeeds on a retry of the same set', async ({
+  profile,
+}) => {
   const key = await plantOrphanServiceLog(profile, 8, 'stuck\n')
   const directory = serviceLogDirectory(profile)
   const planned = await preview(profile)
@@ -213,8 +270,15 @@ test('a removal that fails is reported per item, is not stored, and succeeds on 
     await chmod(directory, 0o700)
   }
   expect(failed).toMatchObject({ complete: false, replayed: false, removed_bytes: 0 })
-  expect(failed.results).toEqual([expect.objectContaining({ kind: 'service_log', id: key, outcome: 'failed', bytes: 0,
-    error: expect.stringMatching(/Could not remove/) })])
+  expect(failed.results).toEqual([
+    expect.objectContaining({
+      kind: 'service_log',
+      id: key,
+      outcome: 'failed',
+      bytes: 0,
+      error: expect.stringMatching(/Could not remove/),
+    }),
+  ])
   expect(await exists(join(directory, `${key}.0`))).toBe(true)
 
   // Nothing was removed, so the set and its name are unchanged; the failed
@@ -232,8 +296,9 @@ test('without the runtime terminal list no service log is judged, and the previe
 
   await profile.killRuntime()
   const blind = await preview(profile)
-  expect(blind.withheld).toEqual([expect.objectContaining({ kind: 'service_log',
-    reason: expect.stringMatching(/no service log is judged unowned/) })])
+  expect(blind.withheld).toEqual([
+    expect.objectContaining({ kind: 'service_log', reason: expect.stringMatching(/no service log is judged unowned/) }),
+  ])
   expect(ids(blind, 'service_log')).toEqual([])
   // Other kinds are still evaluated.
   expect(ids(blind, 'diagnostic_log')).toEqual([oldLog])
@@ -258,8 +323,12 @@ test('the scheduled receipt prune records its outcome for every store', async ({
   for (const store of before.receipts) expect(store).toMatchObject({ last_pruned_at: null, last_error: null })
 
   // The schedule first runs a minute after start, on a 30-second tick.
-  await expect.poll(async () => (await preview(profile)).receipts.find((store) => store.store === 'sessions')?.last_pruned_at ?? null,
-    { timeout: 150_000, intervals: [2_000] }).not.toBeNull()
+  await expect
+    .poll(
+      async () => (await preview(profile)).receipts.find((store) => store.store === 'sessions')?.last_pruned_at ?? null,
+      { timeout: 150_000, intervals: [2_000] },
+    )
+    .not.toBeNull()
   const after = await preview(profile)
   for (const store of after.receipts) {
     if (store.last_pruned_at === null) continue

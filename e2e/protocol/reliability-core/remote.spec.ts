@@ -5,15 +5,17 @@
 import { expect, test } from '../fixtures/remote-hosts'
 import { addAndPair } from '../remote/steps'
 
-test('R002: remote.host.install replays one operation ID and refuses it for another host, also after a daemon crash', async ({ remote }) => {
+test('R002: remote.host.install replays one operation ID and refuses it for another host, also after a daemon crash', async ({
+  remote,
+}) => {
   test.setTimeout(300_000)
   const profile = await remote.profile()
   const host = await remote.host('bare', { artifacts: [] })
   await addAndPair(profile, host, 'bare')
-  const uploads = () => remote.calls().then((calls) => calls.filter((call) => call.remote_command?.includes('ade-installed'))
-    .length)
-  const install = (hostId: string) => profile.call('remote.host.install', { host_id: hostId, operation_id: 'core-install' },
-    { timeoutMs: 250_000 })
+  const uploads = () =>
+    remote.calls().then((calls) => calls.filter((call) => call.remote_command?.includes('ade-installed')).length)
+  const install = (hostId: string) =>
+    profile.call('remote.host.install', { host_id: hostId, operation_id: 'core-install' }, { timeoutMs: 250_000 })
 
   const first = await install('bare')
   expect(first).toMatchObject({ outcome: 'installed', host_id: 'bare' })
@@ -27,7 +29,9 @@ test('R002: remote.host.install replays one operation ID and refuses it for anot
   expect(await uploads()).toBe(uploaded)
 })
 
-test('R001: an install held on the host when the local daemon crashes is reported unknown and never sent again', async ({ remote }) => {
+test('R001: an install held on the host when the local daemon crashes is reported unknown and never sent again', async ({
+  remote,
+}) => {
   test.setTimeout(300_000)
   const profile = await remote.profile()
   const host = await remote.host('bare', { artifacts: [] })

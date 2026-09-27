@@ -14,14 +14,23 @@ export const skillUsage = `  skill list                             List catalog
                                         Write a catalog skill where PROVIDER reads it; never over another owner's skill
 `
 
-function split(rest: string[], positional: number, allowed: readonly string[], command: string):
-  { args: string[]; options: Record<string, string> } {
-  if (rest.length < positional) throw new CliError('usage', `skill ${command} is missing arguments. Run ade --help for usage.`)
+function split(
+  rest: string[],
+  positional: number,
+  allowed: readonly string[],
+  command: string,
+): { args: string[]; options: Record<string, string> } {
+  if (rest.length < positional)
+    throw new CliError('usage', `skill ${command} is missing arguments. Run ade --help for usage.`)
   return { args: rest.slice(0, positional), options: namedOptions(rest.slice(positional), allowed, `skill ${command}`) }
 }
 
-export async function runSkillCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runSkillCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'skill') return undefined
   if (action === 'list') {
     if (rest.length) throw new CliError('usage', 'skill list does not accept arguments.')
@@ -29,43 +38,60 @@ export async function runSkillCommand(socketPath: string, area: string | undefin
   }
   if (action === 'discover') {
     const { options } = split(rest, 0, ['--workspace'], 'discover')
-    return dailyUseCommand(socketPath, { op: 'skill.discover',
-      ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}) })
+    return dailyUseCommand(socketPath, {
+      op: 'skill.discover',
+      ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}),
+    })
   }
   if (action === 'inspect') {
     const { args, options } = split(rest, 1, ['--workspace'], 'inspect')
-    return dailyUseCommand(socketPath, { op: 'skill.inspect', name: required(args[0], 'NAME'),
-      ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}) })
+    return dailyUseCommand(socketPath, {
+      op: 'skill.inspect',
+      name: required(args[0], 'NAME'),
+      ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}),
+    })
   }
   if (action === 'install') {
     const { args, options } = split(rest, 1, ['--request-id', '--pin', '--replace'], 'install')
-    return dailyUseCommand(socketPath, { op: 'skill.install',
+    return dailyUseCommand(socketPath, {
+      op: 'skill.install',
       operation_id: required(options['--request-id'], '--request-id'),
       source_path: resolve(required(args[0], 'PATH')),
       ...(options['--pin'] ? { expected_content_hash: options['--pin'] } : {}),
-      ...(options['--replace'] ? { replace_content_hash: options['--replace'] } : {}) })
+      ...(options['--replace'] ? { replace_content_hash: options['--replace'] } : {}),
+    })
   }
   if (action === 'adopt') {
     const { args, options } = split(rest, 2, ['--request-id', '--workspace'], 'adopt')
-    return dailyUseCommand(socketPath, { op: 'skill.adopt',
+    return dailyUseCommand(socketPath, {
+      op: 'skill.adopt',
       operation_id: required(options['--request-id'], '--request-id'),
-      path: resolve(required(args[0], 'PATH')), expected_content_hash: required(args[1], 'HASH'),
-      ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}) })
+      path: resolve(required(args[0], 'PATH')),
+      expected_content_hash: required(args[1], 'HASH'),
+      ...(options['--workspace'] ? { workspace_id: options['--workspace'] } : {}),
+    })
   }
   if (action === 'remove') {
     const { args, options } = split(rest, 2, ['--request-id'], 'remove')
-    return dailyUseCommand(socketPath, { op: 'skill.remove',
+    return dailyUseCommand(socketPath, {
+      op: 'skill.remove',
       operation_id: required(options['--request-id'], '--request-id'),
-      name: required(args[0], 'NAME'), expected_content_hash: required(args[1], 'HASH') })
+      name: required(args[0], 'NAME'),
+      expected_content_hash: required(args[1], 'HASH'),
+    })
   }
   if (action === 'place') {
     const { args, options } = split(rest, 3, ['--request-id', '--workspace'], 'place')
     const workspace = options['--workspace']
-    return dailyUseCommand(socketPath, { op: 'skill.place',
+    return dailyUseCommand(socketPath, {
+      op: 'skill.place',
       operation_id: required(options['--request-id'], '--request-id'),
-      name: required(args[0], 'NAME'), expected_content_hash: required(args[1], 'HASH'),
-      provider: required(args[2], 'PROVIDER'), scope: workspace ? 'workspace' : 'global',
-      ...(workspace ? { workspace_id: workspace } : {}) })
+      name: required(args[0], 'NAME'),
+      expected_content_hash: required(args[1], 'HASH'),
+      provider: required(args[2], 'PROVIDER'),
+      scope: workspace ? 'workspace' : 'global',
+      ...(workspace ? { workspace_id: workspace } : {}),
+    })
   }
   return undefined
 }

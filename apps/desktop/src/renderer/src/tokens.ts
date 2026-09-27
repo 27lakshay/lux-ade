@@ -27,7 +27,13 @@ const hex = (h: string): RGB => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3
 
 const TOKENS: Record<Theme, ThemeTokens> = {
   dark: {
-    solid: { backdrop: hex('#0c0c0b'), side: hex('#1a1a18'), app: hex('#141413'), raised: hex('#262523'), status: hex('#1a1a18') },
+    solid: {
+      backdrop: hex('#0c0c0b'),
+      side: hex('#1a1a18'),
+      app: hex('#141413'),
+      raised: hex('#262523'),
+      status: hex('#1a1a18'),
+    },
     glass: { side: hex('#1e1d1b'), app: hex('#161615'), raised: hex('#282725'), status: hex('#1a1a18') },
     text: {
       fg: hex('#fafafa'),
@@ -49,7 +55,13 @@ const TOKENS: Record<Theme, ThemeTokens> = {
     shadow: { solid: '0 10px 30px #00000066', glass: '0 10px 30px #00000040' },
   },
   light: {
-    solid: { backdrop: hex('#e9e9eb'), side: hex('#f7f7f8'), app: hex('#ffffff'), raised: hex('#ffffff'), status: hex('#f7f7f8') },
+    solid: {
+      backdrop: hex('#e9e9eb'),
+      side: hex('#f7f7f8'),
+      app: hex('#ffffff'),
+      raised: hex('#ffffff'),
+      status: hex('#f7f7f8'),
+    },
     glass: { side: hex('#fafafb'), app: hex('#ffffff'), raised: hex('#ffffff'), status: hex('#f7f7f8') },
     text: {
       fg: hex('#0a0a0a'),
@@ -143,11 +155,19 @@ export function floors(theme: Theme): Floor[] {
   return (Object.keys(USAGE) as Floor['surface'][]).map((surface) => {
     const checks = USAGE[surface]
     const baseline = checks
-      .map((c) => ({ check: label(c), ratio: contrast(t.text[c.text], surfaceColour(t.solid[surface], c)), min: c.min }))
+      .map((c) => ({
+        check: label(c),
+        ratio: contrast(t.text[c.text], surfaceColour(t.solid[surface], c)),
+        min: c.min,
+      }))
       .filter((r) => r.ratio < r.min)
     const target = (c: Check) => Math.min(c.min, contrast(t.text[c.text], surfaceColour(t.solid[surface], c)))
     const failing = (alpha: number) =>
-      checks.find((c) => backdrops.some((m) => contrast(t.text[c.text], surfaceColour(over(t.glass[surface], alpha, m), c)) < target(c) - 1e-9))
+      checks.find((c) =>
+        backdrops.some(
+          (m) => contrast(t.text[c.text], surfaceColour(over(t.glass[surface], alpha, m), c)) < target(c) - 1e-9,
+        ),
+      )
     // Walk down from opaque while every check still passes.
     let floor = 1
     let binding = 'none'
@@ -189,7 +209,13 @@ export interface GlassSettings {
 export function applyTokens(theme: Theme, glass: GlassSettings, root: HTMLElement = document.documentElement) {
   const t = TOKENS[theme]
   const set = (name: string, value: string) => root.style.setProperty(name, value)
-  const vars: Record<Surface, string> = { backdrop: '--backdrop', side: '--side-bg', app: '--app-bg', raised: '--raised-bg', status: '--status-bg' }
+  const vars: Record<Surface, string> = {
+    backdrop: '--backdrop',
+    side: '--side-bg',
+    app: '--app-bg',
+    raised: '--raised-bg',
+    status: '--status-bg',
+  }
 
   if (glass.on) {
     set(vars.backdrop, css(t.solid.backdrop, glass.background))

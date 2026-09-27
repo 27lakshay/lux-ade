@@ -31,8 +31,10 @@ export class QuitCoordinator {
   private readonly requestQuit: () => void
   private readonly report: (error: unknown) => void
 
-  constructor(requestQuit: () => void,
-    report: (error: unknown) => void = (error) => console.error('Quit step failed', error)) {
+  constructor(
+    requestQuit: () => void,
+    report: (error: unknown) => void = (error) => console.error('Quit step failed', error),
+  ) {
     this.requestQuit = requestQuit
     this.report = report
   }
@@ -57,16 +59,24 @@ export class QuitCoordinator {
       event.preventDefault()
       if (registration.flushing) return true
       registration.flushing = true
-      void Promise.resolve().then(flush).then((ready) => {
-        registration.flushing = false
-        if (!ready) { this.resetReleases(); return }
-        registration.released = true
-        this.requestQuit()
-      }, (error: unknown) => {
-        registration.flushing = false
-        this.resetReleases()
-        this.report(error)
-      })
+      void Promise.resolve()
+        .then(flush)
+        .then(
+          (ready) => {
+            registration.flushing = false
+            if (!ready) {
+              this.resetReleases()
+              return
+            }
+            registration.released = true
+            this.requestQuit()
+          },
+          (error: unknown) => {
+            registration.flushing = false
+            this.resetReleases()
+            this.report(error)
+          },
+        )
       return true
     }
     // Every guard let this attempt through. A window can still cancel it, so the
@@ -83,7 +93,11 @@ export class QuitCoordinator {
     this.teardown = 'running'
     void (async () => {
       for (const teardown of this.teardowns) {
-        try { await teardown() } catch (error) { this.report(error) }
+        try {
+          await teardown()
+        } catch (error) {
+          this.report(error)
+        }
       }
       this.teardown = 'done'
       this.requestQuit()

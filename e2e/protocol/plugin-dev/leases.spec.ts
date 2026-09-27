@@ -17,11 +17,16 @@ async function create(profile: ScratchProfile, provider: string): Promise<string
 /** The assistant replies, each `<version> <worker pid>`. */
 async function replies(profile: ScratchProfile, conversationId: string): Promise<string[]> {
   return (await profile.call('conversation.get', { conversation_id: conversationId })).messages
-    .filter((message) => message.role === 'assistant').map((message) => message.text ?? '')
+    .filter((message) => message.role === 'assistant')
+    .map((message) => message.text ?? '')
 }
 
 /** Sends one turn and returns the reply it produced. */
-async function turn(profile: ScratchProfile, conversationId: string, text: string): Promise<{ version: string; pid: number }> {
+async function turn(
+  profile: ScratchProfile,
+  conversationId: string,
+  text: string,
+): Promise<{ version: string; pid: number }> {
   const count = (await replies(profile, conversationId)).length
   await send(profile, conversationId, text)
   await expect.poll(async () => (await replies(profile, conversationId)).length, { timeout: 20_000 }).toBe(count + 1)
@@ -30,7 +35,10 @@ async function turn(profile: ScratchProfile, conversationId: string, text: strin
   return { version, pid: Number(pid) }
 }
 
-test('a dev reload keeps a leased Conversation on its running worker and artifact, across a daemon crash; new Conversations use the new generation', async ({ ade, profile }) => {
+test('a dev reload keeps a leased Conversation on its running worker and artifact, across a daemon crash; new Conversations use the new generation', async ({
+  ade,
+  profile,
+}) => {
   test.setTimeout(120_000)
   const source = await stagePlugin(ade.root, 'provider')
   // The worker answers with its code version and its process ID.
@@ -48,11 +56,15 @@ test('a dev reload keeps a leased Conversation on its running worker and artifac
   expect(await isRunning(first.pid)).toBe(true)
 
   await editFile(source, 'worker.mjs', (text) => text.replace('`v1 ', '`v2 '))
-  await expect.poll(() => states(profile, pluginId), { timeout: 20_000 })
+  await expect
+    .poll(() => states(profile, pluginId), { timeout: 20_000 })
     .toEqual([`${before}:leased`, `${before + 1}:current`])
   const listed = (await generations(profile, pluginId)).generations
   expect(listed.find((generation) => generation.generation === before)).toMatchObject({ provider_leases: 1 })
-  expect(listed.find((generation) => generation.generation === before + 1)).toMatchObject({ provider_leases: 0, origin: 'dev_reload' })
+  expect(listed.find((generation) => generation.generation === before + 1)).toMatchObject({
+    provider_leases: 0,
+    origin: 'dev_reload',
+  })
 
   // The reload did not touch the running worker; the old Conversation keeps using it.
   expect(await isRunning(first.pid)).toBe(true)
@@ -67,9 +79,16 @@ test('a dev reload keeps a leased Conversation on its running worker and artifac
 
   // A reload that raises the data schema is refused while sessions lease the plugin.
   const at = await lastReloadAt(profile, pluginId)
-  await editManifest(source, (manifest) => { manifest.data_schema = 2 })
-  expect(await nextReload(profile, pluginId, at)).toMatchObject({ status: 'refused', generation: null,
-    message: expect.stringContaining('raises the data schema from 1 to 2 while 2 provider session(s) lease this plugin') })
+  await editManifest(source, (manifest) => {
+    manifest.data_schema = 2
+  })
+  expect(await nextReload(profile, pluginId, at)).toMatchObject({
+    status: 'refused',
+    generation: null,
+    message: expect.stringContaining(
+      'raises the data schema from 1 to 2 while 2 provider session(s) lease this plugin',
+    ),
+  })
   expect(await current(profile, pluginId)).toBe(before + 1)
 
   // After a daemon crash the old Conversation still runs the old code from its kept artifact.
@@ -77,8 +96,9 @@ test('a dev reload keeps a leased Conversation on its running worker and artifac
   expect((await generations(profile, pluginId)).dev).toMatchObject({ watching: true })
   // The restarted daemon activates a new generation; both leased ones stay.
   expect(await states(profile, pluginId)).toEqual([`${before}:leased`, `${before + 1}:leased`, `${before + 2}:current`])
-  expect((await generations(profile, pluginId)).generations.find((generation) => generation.generation === before + 2))
-    .toMatchObject({ origin: 'restore', provider_leases: 0 })
+  expect(
+    (await generations(profile, pluginId)).generations.find((generation) => generation.generation === before + 2),
+  ).toMatchObject({ origin: 'restore', provider_leases: 0 })
   expect(existsSync(oldArtifact)).toBe(true)
   await profile.call('agent.resume', { conversation_id: old })
   await waitForIdle(profile, old)
@@ -87,6 +107,8 @@ test('a dev reload keeps a leased Conversation on its running worker and artifac
   await waitForIdle(profile, fresh)
   expect((await turn(profile, fresh, 'again')).version).toBe('v2')
   // The refused schema change is still refused when development mode resumes.
-  await expect.poll(async () => (await generations(profile, pluginId)).dev?.last_reload?.status, { timeout: 20_000 }).toBe('refused')
+  await expect
+    .poll(async () => (await generations(profile, pluginId)).dev?.last_reload?.status, { timeout: 20_000 })
+    .toBe('refused')
   expect(await current(profile, pluginId)).toBe(before + 2)
 })

@@ -4,8 +4,13 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { managedProfileOwner, rpc, stopManagedProfile, stopOrphanRuntime,
-  type ManagedProfileOwner } from '../fixtures/daemon'
+import {
+  managedProfileOwner,
+  rpc,
+  stopManagedProfile,
+  stopOrphanRuntime,
+  type ManagedProfileOwner,
+} from '../fixtures/daemon'
 
 const execFileAsync = promisify(execFile)
 const app = resolve(process.env.ADE_E2E_PACKAGE_APP ?? 'dist/electron/mac-arm64/Lux ADE.app')
@@ -16,16 +21,22 @@ async function testOwner(socket: string, home: string): Promise<ManagedProfileOw
   const daemon = await rpc(socket, { op: 'hello' })
   if (typeof daemon.runtime_socket !== 'string') throw new Error('Profile daemon omitted its runtime endpoint')
   const runtime = await rpc(daemon.runtime_socket, { op: 'hello' })
-  if (typeof runtime.data_directory !== 'string' ||
-    await realpath(runtime.data_directory) !== await realpath(join(home, 'data'))) {
+  if (
+    typeof runtime.data_directory !== 'string' ||
+    (await realpath(runtime.data_directory)) !== (await realpath(join(home, 'data')))
+  ) {
     throw new Error(`Refusing a profile daemon outside the test-owned home: ${socket}`)
   }
   return managedProfileOwner(socket)
 }
 
 function processExited(pid: number): boolean {
-  try { process.kill(pid, 0); return false }
-  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' }
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ESRCH'
+  }
 }
 
 for (const provider of ['codex', 'claude'] as const) {
@@ -39,10 +50,24 @@ for (const provider of ['codex', 'claude'] as const) {
     const directory = await mkdtemp(join(tmpdir(), `ade-live-package-${provider}-`))
     const folder = join(directory, 'project')
     const profilesHome = join(directory, 'profiles')
-    const inherited = Object.fromEntries(['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'SHELL',
-      'TERM', 'LANG', 'LC_ALL', 'LC_CTYPE', 'SSH_AUTH_SOCK', '__CF_USER_TEXT_ENCODING']
-      .flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]]))
-    const environment = { ...inherited, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    const inherited = Object.fromEntries(
+      [
+        'HOME',
+        'USER',
+        'LOGNAME',
+        'TMPDIR',
+        'SHELL',
+        'TERM',
+        'LANG',
+        'LC_ALL',
+        'LC_CTYPE',
+        'SSH_AUTH_SOCK',
+        '__CF_USER_TEXT_ENCODING',
+      ].flatMap((name) => (process.env[name] === undefined ? [] : [[name, process.env[name]]])),
+    )
+    const environment = {
+      ...inherited,
+      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
       ADE_PROFILES_HOME: profilesHome,
       ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),
       ADE_E2E_HIDE_WINDOW: '1',
@@ -80,21 +105,26 @@ for (const provider of ['codex', 'claude'] as const) {
       await window.getByRole('button', { name: 'New conversation' }).click()
       const marker = `ADE_LIVE_PACKAGED_${provider.toUpperCase()}`
       const conversation = window.getByRole('region', { name: 'Conversation' })
-      await conversation.getByRole('textbox', { name: 'Prompt' }).fill(
-        `Do not use tools, read files, or change anything. Output exactly 200 numbered lines. Each line must contain ${marker}. Do not shorten the list or add commentary.`,
-      )
+      await conversation
+        .getByRole('textbox', { name: 'Prompt' })
+        .fill(
+          `Do not use tools, read files, or change anything. Output exactly 200 numbered lines. Each line must contain ${marker}. Do not shorten the list or add commentary.`,
+        )
       await conversation.getByRole('button', { name: 'Send' }).click()
       const catalog = await rpc(socket, { op: 'catalog.get' })
       const id = (catalog.catalog as { conversations: Array<{ id: string }> }).conversations[0].id
-      await expect.poll(async () => (await rpc(socket, { op: 'conversation.get',
-        conversation_id: id })).conversation.status, { timeout: 30_000 }).toMatch(/running|error/)
+      await expect
+        .poll(async () => (await rpc(socket, { op: 'conversation.get', conversation_id: id })).conversation.status, {
+          timeout: 30_000,
+        })
+        .toMatch(/running|error/)
       const admitted = await rpc(socket, { op: 'conversation.get', conversation_id: id })
       if (admitted.conversation.status === 'error') {
         throw new Error(`Installed ${provider} turn failed: ${String(admitted.conversation.error)}`)
       }
       const before = await rpc(socket, { op: 'hello' })
-      const nativeThread = (await rpc(socket, { op: 'conversation.get',
-        conversation_id: id })).conversation.provider_thread_id
+      const nativeThread = (await rpc(socket, { op: 'conversation.get', conversation_id: id })).conversation
+        .provider_thread_id
       expect(nativeThread).toBeTruthy()
 
       await application.close()
@@ -102,40 +132,51 @@ for (const provider of ['codex', 'claude'] as const) {
       const closed = await rpc(socket, { op: 'hello' })
       expect(closed.boot_id).toBe(before.boot_id)
       expect(closed.runtime_instance).toBe(before.runtime_instance)
-      expect((await rpc(socket, { op: 'conversation.get',
-        conversation_id: id })).conversation.status).toBe('running')
+      expect((await rpc(socket, { op: 'conversation.get', conversation_id: id })).conversation.status).toBe('running')
 
       application = await electron.launch({ executablePath: executable, cwd: directory, env: environment })
       window = await application.firstWindow()
       await expect(window.locator('header').getByRole('status')).toHaveText('connected')
-      await expect.poll(async () => (await rpc(socket, { op: 'conversation.get',
-        conversation_id: id })).conversation.status, { timeout: 120_000 }).toMatch(/ready|error/)
+      await expect
+        .poll(async () => (await rpc(socket, { op: 'conversation.get', conversation_id: id })).conversation.status, {
+          timeout: 120_000,
+        })
+        .toMatch(/ready|error/)
       const after = await rpc(socket, { op: 'conversation.get', conversation_id: id })
       if (after.conversation.status === 'error') {
         throw new Error(`Installed ${provider} turn ended in error: ${String(after.conversation.error)}`)
       }
       expect(after.conversation.provider_thread_id).toBe(nativeThread)
       expect((after.messages as Array<{ role: string }>).filter((item) => item.role === 'user')).toHaveLength(1)
-      expect((after.messages as Array<{ role: string; text: string }>).some((item) =>
-        item.role === 'assistant' && item.text.includes(marker))).toBe(true)
+      expect(
+        (after.messages as Array<{ role: string; text: string }>).some(
+          (item) => item.role === 'assistant' && item.text.includes(marker),
+        ),
+      ).toBe(true)
       await expect(window.getByRole('region', { name: 'Conversation' })).toContainText(marker)
     } catch (error) {
       if (profileHome) {
         const log = await readFile(join(profileHome, 'daemon.log')).catch(() => Buffer.from('No daemon log'))
         await testInfo.attach(`installed-${provider}-daemon.log`, {
-          body: log.subarray(-64 * 1024), contentType: 'text/plain',
+          body: log.subarray(-64 * 1024),
+          contentType: 'text/plain',
         })
       }
       throw error
     } finally {
       let closeFailure: unknown
-      try { await application?.close() } catch (error) { closeFailure = error }
+      try {
+        await application?.close()
+      } catch (error) {
+        closeFailure = error
+      }
       let stopFailure: unknown
       try {
         if (owner) await stopManagedProfile(owner)
         else {
-          const listed = await execFileAsync(control, ['profiles', '--home', profilesHome, 'list'],
-            { env: environment })
+          const listed = await execFileAsync(control, ['profiles', '--home', profilesHome, 'list'], {
+            env: environment,
+          })
           const profiles = (JSON.parse(listed.stdout) as { profiles: Array<{ home: string }> }).profiles
           const registry = await realpath(profilesHome)
           for (const profile of profiles) {
@@ -161,10 +202,13 @@ for (const provider of ['codex', 'claude'] as const) {
             }
           }
         }
-      } catch (error) { stopFailure = error }
+      } catch (error) {
+        stopFailure = error
+      }
       if (closeFailure || stopFailure) {
-        throw new Error(`Installed test cleanup is unconfirmed; retained ${directory}: ` +
-          `${String(closeFailure ?? stopFailure)}`)
+        throw new Error(
+          `Installed test cleanup is unconfirmed; retained ${directory}: ` + `${String(closeFailure ?? stopFailure)}`,
+        )
       }
       await rm(directory, { recursive: true, force: true })
     }

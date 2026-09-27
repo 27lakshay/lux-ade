@@ -1,10 +1,4 @@
-import {
-  call,
-  dailyUseCommand,
-  openTerminalConnection,
-  type TerminalConnection,
-  type TerminalFrame,
-} from '@ade/client'
+import { call, dailyUseCommand, openTerminalConnection, type TerminalConnection, type TerminalFrame } from '@ade/client'
 import { catalog, CliError, effectOperationId, required, type CommandResult, type ErrorCode } from '../shared.js'
 
 export const terminalUsage = `  terminal list                         List workspace terminals
@@ -39,7 +33,8 @@ async function terminalTarget(socketPath: string, workspaceId: string, terminalI
   if (!Array.isArray(workspaces)) throw new CliError('protocol', 'Daemon catalog has no workspaces.')
   const workspace = workspaces.find((value) => value && typeof value === 'object' && value.id === workspaceId)
   if (!workspace) throw new CliError('invalid_request', 'Workspace is absent from the selected profile.')
-  const owned = workspace.terminal_id === terminalId ||
+  const owned =
+    workspace.terminal_id === terminalId ||
     (Array.isArray(workspace.extra_terminals) && workspace.extra_terminals.includes(terminalId))
   if (!owned) throw new CliError('invalid_request', 'Terminal is absent from the selected workspace.')
 }
@@ -71,23 +66,29 @@ function terminalAction(
       terminal?.dispose()
       reject(new CliError(code, message))
     }
-    terminal = openTerminalConnection(socketPath, workspaceId, terminalId, (frame) => {
-      if (frame.type === 'error') {
-        return fail('daemon', typeof frame.message === 'string' ? frame.message : 'Terminal rejected the command.')
-      }
-      if (frame.type === 'snapshot' && !sent) {
-        if (frame.terminal_snapshot_format !== 'xterm-replay-v1') {
-          return fail('incompatible', 'Terminal recovery format is incompatible with this CLI.')
+    terminal = openTerminalConnection(
+      socketPath,
+      workspaceId,
+      terminalId,
+      (frame) => {
+        if (frame.type === 'error') {
+          return fail('daemon', typeof frame.message === 'string' ? frame.message : 'Terminal rejected the command.')
         }
-        if (action === 'inspect') return finish(frame)
-        sent = true
-        if (action === 'send') terminal?.input(`${data ?? ''}\n`)
-        if (action === 'resize' && size) terminal?.resize(size.cols, size.rows, 0, 0, true)
-        terminal?.ping()
-        return
-      }
-      if (sent && frame.type === 'metrics') finish(frame)
-    }, (reason) => fail('unavailable', reason))
+        if (frame.type === 'snapshot' && !sent) {
+          if (frame.terminal_snapshot_format !== 'xterm-replay-v1') {
+            return fail('incompatible', 'Terminal recovery format is incompatible with this CLI.')
+          }
+          if (action === 'inspect') return finish(frame)
+          sent = true
+          if (action === 'send') terminal?.input(`${data ?? ''}\n`)
+          if (action === 'resize' && size) terminal?.resize(size.cols, size.rows, 0, 0, true)
+          terminal?.ping()
+          return
+        }
+        if (sent && frame.type === 'metrics') finish(frame)
+      },
+      (reason) => fail('unavailable', reason),
+    )
   })
 }
 
@@ -107,9 +108,24 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
     let offset = 0
     const wasRaw = process.stdin.isRaw
     const signalHandlers = {
-      SIGINT: () => { setImmediate(() => { detach(); process.exit(130) }) },
-      SIGTERM: () => { setImmediate(() => { detach(); process.exit(143) }) },
-      SIGHUP: () => { setImmediate(() => { detach(); process.exit(129) }) },
+      SIGINT: () => {
+        setImmediate(() => {
+          detach()
+          process.exit(130)
+        })
+      },
+      SIGTERM: () => {
+        setImmediate(() => {
+          detach()
+          process.exit(143)
+        })
+      },
+      SIGHUP: () => {
+        setImmediate(() => {
+          detach()
+          process.exit(129)
+        })
+      },
     }
     const timer = setTimeout(() => fail('timeout', 'Terminal did not respond before the deadline.'), 10_000)
     const cleanup = (): void => {
@@ -143,8 +159,7 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
       if (!ready) return
       const cols = process.stdout.columns
       const rows = process.stdout.rows
-      if (Number.isInteger(cols) && cols >= 2 && cols <= 1000 &&
-        Number.isInteger(rows) && rows >= 2 && rows <= 1000) {
+      if (Number.isInteger(cols) && cols >= 2 && cols <= 1000 && Number.isInteger(rows) && rows >= 2 && rows <= 1000) {
         terminal?.resize(cols, rows, 0, 0, true)
       }
     }
@@ -165,113 +180,142 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
       }
       if (detachAt >= 0) detach()
     }
-    terminal = openTerminalConnection(socketPath, workspaceId, terminalId, (frame) => {
-      if (frame.type === 'error') {
-        fail('daemon', typeof frame.message === 'string' ? frame.message : 'Terminal rejected the command.')
-        return
-      }
-      if (frame.type === 'snapshot') {
-        // A snapshot after the first is a resync: this attachment fell a whole
-        // budget behind, the runtime skipped the output it could not queue,
-        // and live output resumes at this snapshot's offset. Reset the TTY and
-        // restore from the snapshot, as a fresh attach would.
-        const resync = ready
-        if (frame.terminal_snapshot_format !== 'xterm-replay-v1') {
-          fail('incompatible', 'Terminal recovery format is incompatible with this CLI.')
+    terminal = openTerminalConnection(
+      socketPath,
+      workspaceId,
+      terminalId,
+      (frame) => {
+        if (frame.type === 'error') {
+          fail('daemon', typeof frame.message === 'string' ? frame.message : 'Terminal rejected the command.')
           return
         }
-        const recovery = frame.terminal_recovery as Record<string, unknown> | undefined
-        if (!recovery || !Number.isSafeInteger(recovery.through_offset) || Number(recovery.through_offset) < 0) {
-          fail('protocol', 'Terminal recovery metadata is invalid.')
-          return
-        }
-        if (resync) write(Buffer.from('\x1bc'))
-        if (recovery.complete === true) {
-          if (!Array.isArray(recovery.events)) {
-            fail('protocol', 'Terminal replay events are invalid.')
+        if (frame.type === 'snapshot') {
+          // A snapshot after the first is a resync: this attachment fell a whole
+          // budget behind, the runtime skipped the output it could not queue,
+          // and live output resumes at this snapshot's offset. Reset the TTY and
+          // restore from the snapshot, as a fresh attach would.
+          const resync = ready
+          if (frame.terminal_snapshot_format !== 'xterm-replay-v1') {
+            fail('incompatible', 'Terminal recovery format is incompatible with this CLI.')
             return
           }
-          offset = 0
-          for (const event of recovery.events as Array<Record<string, unknown>>) {
-            if (event.offset !== offset) {
-              fail('protocol', 'Terminal replay has a byte gap.')
-              return
-            }
-            if (event.type === 'output' && typeof event.bytes_base64 === 'string') {
-              const bytes = Buffer.from(event.bytes_base64, 'base64')
-              write(bytes)
-              if (settled) return
-              offset += bytes.length
-            } else if (event.type !== 'resize') {
-              fail('protocol', 'Terminal replay contains an unknown event.')
-              return
-            }
-          }
-          if (offset !== recovery.through_offset) {
-            fail('protocol', 'Terminal replay offset does not match the snapshot.')
+          const recovery = frame.terminal_recovery as Record<string, unknown> | undefined
+          if (!recovery || !Number.isSafeInteger(recovery.through_offset) || Number(recovery.through_offset) < 0) {
+            fail('protocol', 'Terminal recovery metadata is invalid.')
             return
           }
-        } else {
-          offset = Number(recovery.through_offset)
-          process.stderr.write(`${JSON.stringify({ type: 'warning', code: 'replay_limit_exceeded',
-            ...(resync ? { resync: true } : {}),
-            message: resync
-              ? 'Terminal fell behind and its history is too large to restore; live output continues.'
-              : 'Terminal history is incomplete; live output remains available.' })}\n`)
-        }
-        if (resync) return
-        ready = true
-        clearTimeout(timer)
-        process.stdin.setRawMode(true)
-        process.stdin.resume()
-        process.stdin.on('data', input)
-        process.stdout.on('resize', resize)
-        process.on('SIGINT', signalHandlers.SIGINT)
-        process.on('SIGTERM', signalHandlers.SIGTERM)
-        process.on('SIGHUP', signalHandlers.SIGHUP)
-        resize()
-        return
-      }
-      if (frame.type === 'terminal' && ready) {
-        if (frame.offset !== offset || !Array.isArray(frame.bytes) ||
-          frame.bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
-          fail('protocol', 'Terminal output has a byte gap or invalid bytes; attach again to recover.')
+          if (resync) write(Buffer.from('\x1bc'))
+          if (recovery.complete === true) {
+            if (!Array.isArray(recovery.events)) {
+              fail('protocol', 'Terminal replay events are invalid.')
+              return
+            }
+            offset = 0
+            for (const event of recovery.events as Array<Record<string, unknown>>) {
+              if (event.offset !== offset) {
+                fail('protocol', 'Terminal replay has a byte gap.')
+                return
+              }
+              if (event.type === 'output' && typeof event.bytes_base64 === 'string') {
+                const bytes = Buffer.from(event.bytes_base64, 'base64')
+                write(bytes)
+                if (settled) return
+                offset += bytes.length
+              } else if (event.type !== 'resize') {
+                fail('protocol', 'Terminal replay contains an unknown event.')
+                return
+              }
+            }
+            if (offset !== recovery.through_offset) {
+              fail('protocol', 'Terminal replay offset does not match the snapshot.')
+              return
+            }
+          } else {
+            offset = Number(recovery.through_offset)
+            process.stderr.write(
+              `${JSON.stringify({
+                type: 'warning',
+                code: 'replay_limit_exceeded',
+                ...(resync ? { resync: true } : {}),
+                message: resync
+                  ? 'Terminal fell behind and its history is too large to restore; live output continues.'
+                  : 'Terminal history is incomplete; live output remains available.',
+              })}\n`,
+            )
+          }
+          if (resync) return
+          ready = true
+          clearTimeout(timer)
+          process.stdin.setRawMode(true)
+          process.stdin.resume()
+          process.stdin.on('data', input)
+          process.stdout.on('resize', resize)
+          process.on('SIGINT', signalHandlers.SIGINT)
+          process.on('SIGTERM', signalHandlers.SIGTERM)
+          process.on('SIGHUP', signalHandlers.SIGHUP)
+          resize()
           return
         }
-        const bytes = Buffer.from(frame.bytes as number[])
-        offset += bytes.length
-        write(bytes)
-      }
-    }, (reason) => fail('unavailable', reason))
+        if (frame.type === 'terminal' && ready) {
+          if (
+            frame.offset !== offset ||
+            !Array.isArray(frame.bytes) ||
+            frame.bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
+          ) {
+            fail('protocol', 'Terminal output has a byte gap or invalid bytes; attach again to recover.')
+            return
+          }
+          const bytes = Buffer.from(frame.bytes as number[])
+          offset += bytes.length
+          write(bytes)
+        }
+      },
+      (reason) => fail('unavailable', reason),
+    )
   })
 }
 
-export async function runTerminalCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runTerminalCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area === 'terminal' && action === 'list') {
     if (rest.length) throw new CliError('usage', 'terminal list does not accept arguments.')
     const all = (await catalog(socketPath)).workspaces
     if (!Array.isArray(all)) throw new CliError('protocol', 'Daemon catalog has no workspaces.')
-    return { type: 'terminals', terminals: all.flatMap((item) => {
-      if (!item || typeof item !== 'object') return []
-      const ids = [item.terminal_id, ...(Array.isArray(item.extra_terminals) ? item.extra_terminals : [])]
-      return ids.map((terminalId) => ({ workspace_id: item.id, terminal_id: terminalId }))
-    }) }
+    return {
+      type: 'terminals',
+      terminals: all.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const ids = [item.terminal_id, ...(Array.isArray(item.extra_terminals) ? item.extra_terminals : [])]
+        return ids.map((terminalId) => ({ workspace_id: item.id, terminal_id: terminalId }))
+      }),
+    }
   }
   if (area === 'terminal' && action === 'create') {
-    if (rest.length !== 3 || rest[1] !== '--request-id' || !rest[2] ||
-      rest[2].startsWith('--') || rest[2].length > 256) {
+    if (
+      rest.length !== 3 ||
+      rest[1] !== '--request-id' ||
+      !rest[2] ||
+      rest[2].startsWith('--') ||
+      rest[2].length > 256
+    ) {
       throw new CliError('usage', 'terminal create requires WORKSPACE_ID --request-id ID.')
     }
     const response = await dailyUseCommand(socketPath, {
-      op: 'terminal.create', workspace_id: required(rest[0], 'WORKSPACE_ID'), operation_id: rest[2],
+      op: 'terminal.create',
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      operation_id: rest[2],
     })
     return { ...response, request_id: rest[2] }
   }
   if (area === 'terminal' && action === 'operation') {
     if (rest.length !== 2) throw new CliError('usage', 'terminal operation requires WORKSPACE_ID REQUEST_ID.')
     return dailyUseCommand(socketPath, {
-      op: 'terminal.operation', workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      op: 'terminal.operation',
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
       operation_id: required(rest[1], 'REQUEST_ID'),
     })
   }
@@ -281,16 +325,23 @@ export async function runTerminalCommand(socketPath: string, area: string | unde
     const terminalId = required(rest[1], 'TERMINAL_ID')
     await terminalTarget(socketPath, workspaceId, terminalId)
     const op = action === 'stop' ? 'terminal.stop' : 'terminal.retire'
-    return dailyUseCommand(socketPath, { op, operation_id: effectOperationId(), workspace_id: workspaceId,
-      terminal_id: terminalId })
+    return dailyUseCommand(socketPath, {
+      op,
+      operation_id: effectOperationId(),
+      workspace_id: workspaceId,
+      terminal_id: terminalId,
+    })
   }
   if (area === 'terminal' && action === 'restart') {
     if (rest.length !== 2) throw new CliError('usage', 'terminal restart requires WORKSPACE_ID TERMINAL_ID.')
     const workspaceId = required(rest[0], 'WORKSPACE_ID')
     const terminalId = required(rest[1], 'TERMINAL_ID')
     await terminalTarget(socketPath, workspaceId, terminalId)
-    return call(socketPath, 'terminal.restart', { operation_id: effectOperationId(), workspace_id: workspaceId,
-      terminal_id: terminalId })
+    return call(socketPath, 'terminal.restart', {
+      operation_id: effectOperationId(),
+      workspace_id: workspaceId,
+      terminal_id: terminalId,
+    })
   }
   if (area === 'terminal' && ['inspect', 'send', 'resize'].includes(action ?? '')) {
     const workspaceId = required(rest[0], 'WORKSPACE_ID')
@@ -301,12 +352,24 @@ export async function runTerminalCommand(socketPath: string, area: string | unde
       const data = required(rest[2], 'TEXT')
       if (Buffer.byteLength(data) > 64 * 1024) throw new CliError('invalid_request', 'Terminal input exceeds 64 KiB.')
       const result = await terminalAction(socketPath, workspaceId, terminalId, 'send', data)
-      return { type: 'terminal_input_submitted', workspace_id: workspaceId, terminal_id: terminalId, metrics: result.metrics }
+      return {
+        type: 'terminal_input_submitted',
+        workspace_id: workspaceId,
+        terminal_id: terminalId,
+        metrics: result.metrics,
+      }
     }
     const cols = integer(rest[2], 'COLS')
     const rows = integer(rest[3], 'ROWS')
     const result = await terminalAction(socketPath, workspaceId, terminalId, 'resize', undefined, { cols, rows })
-    return { type: 'terminal_resize_submitted', workspace_id: workspaceId, terminal_id: terminalId, cols, rows, metrics: result.metrics }
+    return {
+      type: 'terminal_resize_submitted',
+      workspace_id: workspaceId,
+      terminal_id: terminalId,
+      cols,
+      rows,
+      metrics: result.metrics,
+    }
   }
   return undefined
 }

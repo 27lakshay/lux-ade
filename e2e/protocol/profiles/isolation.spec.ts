@@ -10,8 +10,14 @@ import { expect, test, type ManagedProfile } from '../fixtures/managed-profiles'
 import { installAndEnable, stagePlugin } from '../fixtures/plugins'
 import { adopt, claimsOn, exists, externalTree, launchShell, removeTree } from '../resources/steps'
 
-type Seeded = { workspaceId: string; conversationId: string; accountId: string; pluginId: string; partition: string;
-  importId: string }
+type Seeded = {
+  workspaceId: string
+  conversationId: string
+  accountId: string
+  pluginId: string
+  partition: string
+  importId: string
+}
 
 /**
  * A Chrome `Default` profile with bookmarks under a scratch import home, read
@@ -21,10 +27,22 @@ async function chromeBookmarks(root: string): Promise<string> {
   const home = join(root, 'browser-import-home')
   const directory = join(home, 'Library/Application Support/Google/Chrome/Default')
   await mkdir(directory, { recursive: true })
-  await writeFile(join(directory, 'Bookmarks'), JSON.stringify({ version: 1, roots: {
-    bookmark_bar: { type: 'folder', name: 'Bookmarks bar', children: [
-      { type: 'url', name: 'Example', url: 'https://example.com/' },
-      { type: 'url', name: 'Docs', url: 'https://example.org/docs' }] } } }))
+  await writeFile(
+    join(directory, 'Bookmarks'),
+    JSON.stringify({
+      version: 1,
+      roots: {
+        bookmark_bar: {
+          type: 'folder',
+          name: 'Bookmarks bar',
+          children: [
+            { type: 'url', name: 'Example', url: 'https://example.com/' },
+            { type: 'url', name: 'Docs', url: 'https://example.org/docs' },
+          ],
+        },
+      },
+    }),
+  )
   return home
 }
 
@@ -43,22 +61,37 @@ async function seed(profile: ManagedProfile, repoPath: string, label: string): P
   const created = await profile.call('browser.partition.create', { partition_id: partition, name: `${label} browsing` })
   expect(created).toMatchObject({ profile_id: profile.id, created: true })
   const importId = `import-${label}`
-  const imported = await profile.call('browser.import.run', { import_id: importId, partition_id: partition,
-    source: 'chrome', classes: ['bookmarks'] })
-  expect(imported).toMatchObject({ profile_id: profile.id, partition_id: partition,
-    classes: [{ class: 'bookmarks', imported: 2 }] })
+  const imported = await profile.call('browser.import.run', {
+    import_id: importId,
+    partition_id: partition,
+    source: 'chrome',
+    classes: ['bookmarks'],
+  })
+  expect(imported).toMatchObject({
+    profile_id: profile.id,
+    partition_id: partition,
+    classes: [{ class: 'bookmarks', imported: 2 }],
+  })
   return { workspaceId, conversationId, accountId: account.id, pluginId, partition, importId }
 }
 
 /** Everything `profile` holds that the other profile seeded must be absent, and its own must be present. */
-async function expectOnlyOwn(profile: ManagedProfile, own: Seeded, other: Seeded, label: string, otherProfile: ManagedProfile) {
+async function expectOnlyOwn(
+  profile: ManagedProfile,
+  own: Seeded,
+  other: Seeded,
+  label: string,
+  otherProfile: ManagedProfile,
+) {
   const catalog = await profile.call('catalog.get', {})
   const workspaceIds = catalog.catalog.workspaces.map((workspace) => workspace.id)
   expect(workspaceIds).toContain(own.workspaceId)
   expect(workspaceIds).not.toContain(other.workspaceId)
 
   const conversation = await profile.call('conversation.get', { conversation_id: own.conversationId })
-  expect(conversation.messages.map((message) => (message as { text?: string }).text ?? '').join('\n')).toContain(turnReply.codex)
+  expect(conversation.messages.map((message) => (message as { text?: string }).text ?? '').join('\n')).toContain(
+    turnReply.codex,
+  )
   await expect(profile.call('conversation.get', { conversation_id: other.conversationId })).rejects.toThrow()
 
   const accounts = (await profile.call('account.list', {})).accounts.map((account) => account.id)
@@ -74,15 +107,23 @@ async function expectOnlyOwn(profile: ManagedProfile, own: Seeded, other: Seeded
   const partitions = await profile.call('browser.partition.list', {})
   expect(partitions.profile_id).toBe(profile.id)
   // Every profile has the built-in default partition; the named one is this profile's alone.
-  expect(partitions.partitions.map((partition) => partition.partition_id).sort()).toEqual(['default', own.partition].sort())
+  expect(partitions.partitions.map((partition) => partition.partition_id).sort()).toEqual(
+    ['default', own.partition].sort(),
+  )
   // The other profile's browser data is not reachable through this daemon.
   await expect(profile.call('browser.partition.list', { profile_id: otherProfile.id })).rejects.toThrow(/unavailable/)
-  expect(await profile.call('browser.import.get', { import_id: own.importId }))
-    .toMatchObject({ profile_id: profile.id, partition_id: own.partition, classes: [{ class: 'bookmarks', imported: 2 }] })
+  expect(await profile.call('browser.import.get', { import_id: own.importId })).toMatchObject({
+    profile_id: profile.id,
+    partition_id: own.partition,
+    classes: [{ class: 'bookmarks', imported: 2 }],
+  })
   await expect(profile.call('browser.import.get', { import_id: other.importId })).rejects.toThrow(/No browser import/)
 }
 
-test('two profiles keep separate processes, data, records, accounts, plugins and browser data, across a restart', async ({ host, ade }) => {
+test('two profiles keep separate processes, data, records, accounts, plugins and browser data, across a restart', async ({
+  host,
+  ade,
+}) => {
   const importHome = await chromeBookmarks(ade.root)
   const a = await host.create('A', { env: { ADE_BROWSER_IMPORT_HOME: importHome } })
   const b = await host.create('B', { env: { ADE_BROWSER_IMPORT_HOME: importHome } })
@@ -112,8 +153,9 @@ test('two profiles keep separate processes, data, records, accounts, plugins and
   // Each profile's provider ran in that profile only.
   expect((await a.mockCalls('codex')).filter((call) => call.method === 'turn/start')).toHaveLength(1)
   expect((await b.mockCalls('codex')).filter((call) => call.method === 'turn/start')).toHaveLength(1)
-  expect(new Set((await a.mockCalls('codex')).map((call) => call.pid)))
-    .not.toEqual(new Set((await b.mockCalls('codex')).map((call) => call.pid)))
+  expect(new Set((await a.mockCalls('codex')).map((call) => call.pid))).not.toEqual(
+    new Set((await b.mockCalls('codex')).map((call) => call.pid)),
+  )
 
   await expectOnlyOwn(a, seededA, seededB, 'A', b)
   await expectOnlyOwn(b, seededB, seededA, 'B', a)
@@ -151,8 +193,15 @@ test('starting one profile from the CLI neither starts nor selects the other', a
   expect(await a.hello()).toBeNull()
   const listed = await host.cli('profile', 'list')
   expect(listed.json).toMatchObject({ selected_id: a.id })
-  expect((listed.json!.profiles as Array<{ id: string; selected: boolean }>).map((profile) => [profile.id, profile.selected]))
-    .toEqual([[a.id, true], [b.id, false]])
+  expect(
+    (listed.json!.profiles as Array<{ id: string; selected: boolean }>).map((profile) => [
+      profile.id,
+      profile.selected,
+    ]),
+  ).toEqual([
+    [a.id, true],
+    [b.id, false],
+  ])
 })
 
 test('a checkout one profile works in stays a visible conflict for the other profile', async ({ host, ade, repo }) => {
@@ -169,8 +218,14 @@ test('a checkout one profile works in stays a visible conflict for the other pro
   // Both profiles see the one claim, owned by the worker's profile ID.
   const seenByRemover = await claimsOn(remover.asScratch(), tree)
   expect(seenByRemover).toHaveLength(1)
-  expect(seenByRemover[0]).toMatchObject({ owner_profile: worker.id, mine: false, mode: 'shared', purpose: 'use',
-    state: 'active', owner_live: true })
+  expect(seenByRemover[0]).toMatchObject({
+    owner_profile: worker.id,
+    mine: false,
+    mode: 'shared',
+    purpose: 'use',
+    state: 'active',
+    owner_live: true,
+  })
   const seenByWorker = await claimsOn(worker.asScratch(), tree)
   expect(seenByWorker.map((claim) => [claim.id, claim.mine])).toEqual([[seenByRemover[0].id, true]])
 
@@ -182,8 +237,9 @@ test('a checkout one profile works in stays a visible conflict for the other pro
   await remover.stop()
   expect((await remover.cli('status')).code).toBe(0)
   const afterRestart = await claimsOn(remover.asScratch(), tree)
-  expect(afterRestart.map((claim) => [claim.id, claim.owner_profile, claim.state, claim.mine]))
-    .toEqual([[seenByRemover[0].id, worker.id, 'active', false]])
+  expect(afterRestart.map((claim) => [claim.id, claim.owner_profile, claim.state, claim.mine])).toEqual([
+    [seenByRemover[0].id, worker.id, 'active', false],
+  ])
   const refusedAgain = await removeTree(remover.asScratch(), repositoryId, 'remove-shared-2', tree)
   expect(refusedAgain).toMatchObject({ type: 'error', code: 'host_resource_conflict' })
   expect(await isRunning(launch.shellPid!)).toBe(true)

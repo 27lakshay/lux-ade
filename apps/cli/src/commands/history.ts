@@ -30,13 +30,20 @@ function filters(options: Record<string, string>, max: number): Record<string, s
   return fields
 }
 
-export async function runHistoryCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runHistoryCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'history') return undefined
   if (action === 'search') {
     const query = required(rest[0], 'QUERY')
-    const options = namedOptions(rest.slice(1), ['--workspace', '--provider', '--conversation', '--limit', '--cursor'],
-      'history search')
+    const options = namedOptions(
+      rest.slice(1),
+      ['--workspace', '--provider', '--conversation', '--limit', '--cursor'],
+      'history search',
+    )
     return dailyUseCommand(socketPath, { op: 'history.search', query, ...filters(options, 50) })
   }
   if (action === 'list') {

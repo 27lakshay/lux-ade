@@ -19,16 +19,22 @@ export function fileOutboxStorage(file: string, name: string): OutboxStorage {
         const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW)
         try {
           const info = await handle.stat()
-          if (!info.isFile() || info.size > maxBytes) throw new Error(`${name} is invalid or too large; preserve the file for recovery`)
+          if (!info.isFile() || info.size > maxBytes)
+            throw new Error(`${name} is invalid or too large; preserve the file for recovery`)
           raw = await handle.readFile('utf8')
-        } finally { await handle.close() }
+        } finally {
+          await handle.close()
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
         throw error
       }
       if (Buffer.byteLength(raw) > maxBytes) throw new Error(`${name} is too large; preserve the file for recovery`)
-      try { return JSON.parse(raw) as unknown }
-      catch { throw new Error(`${name} is invalid; preserve the file for recovery`) }
+      try {
+        return JSON.parse(raw) as unknown
+      } catch {
+        throw new Error(`${name} is invalid; preserve the file for recovery`)
+      }
     },
     async save(value: OutboxFile<unknown>): Promise<void> {
       const payload = JSON.stringify(value)
@@ -39,15 +45,25 @@ export function fileOutboxStorage(file: string, name: string): OutboxStorage {
       let renamed = false
       try {
         const handle = await open(temporary, 'wx', 0o600)
-        try { await handle.writeFile(payload); await handle.sync() }
-        finally { await handle.close() }
+        try {
+          await handle.writeFile(payload)
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
         await rename(temporary, file)
         renamed = true
         const parent = await open(directory, 'r')
-        try { await parent.sync() }
-        finally { await parent.close() }
+        try {
+          await parent.sync()
+        } finally {
+          await parent.close()
+        }
       } catch (error) {
-        if (renamed) throw new OutboxPersistenceUncertain(`${name} was replaced, but its durability is unconfirmed`, { cause: error })
+        if (renamed)
+          throw new OutboxPersistenceUncertain(`${name} was replaced, but its durability is unconfirmed`, {
+            cause: error,
+          })
         await unlink(temporary).catch(() => undefined)
         throw error
       }

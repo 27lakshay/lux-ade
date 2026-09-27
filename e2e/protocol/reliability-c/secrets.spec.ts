@@ -29,49 +29,72 @@ async function logFiles(profile: ScratchProfile): Promise<Array<{ name: string; 
   const rotated = join(profile.dataDirectory, 'logs')
   for (const name of await readdir(rotated).catch(() => [] as string[])) files.push(join(rotated, name))
   for (let launch = 1; launch <= 2; launch++) files.push(join(profile.logsDirectory, `daemon-${launch}.stderr`))
-  const read = await Promise.all(files.map(async (path) => ({ name: path, text: await readFile(path, 'utf8').catch(() => '') })))
+  const read = await Promise.all(
+    files.map(async (path) => ({ name: path, text: await readFile(path, 'utf8').catch(() => '') })),
+  )
   return read.filter((file) => file.text.length > 0)
 }
 
-test('failures carrying credentials are readable and correlated, and no secret reaches a reply, a log or the export', async ({ ade, repo }) => {
+test('failures carrying credentials are readable and correlated, and no secret reaches a reply, a log or the export', async ({
+  ade,
+  repo,
+}) => {
   // A provider that prints credentials to stderr and exits before it speaks.
   const leaky = join(ade.root, 'leaky-provider.sh')
-  await writeFile(leaky, `#!/bin/sh\necho "fatal: login failed for ${secrets.openai} with Authorization: Bearer ${secrets.bearer}" >&2\n` +
-    `echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY GITHUB_TOKEN=$GITHUB_TOKEN" >&2\nexit 3\n`)
+  await writeFile(
+    leaky,
+    `#!/bin/sh\necho "fatal: login failed for ${secrets.openai} with Authorization: Bearer ${secrets.bearer}" >&2\n` +
+      `echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY GITHUB_TOKEN=$GITHUB_TOKEN" >&2\nexit 3\n`,
+  )
   await chmod(leaky, 0o755)
-  const profile = await ade.profile({ env: { ANTHROPIC_API_KEY: secrets.anthropic, GITHUB_TOKEN: secrets.github,
-    ADE_CODEX_BIN: leaky } })
+  const profile = await ade.profile({
+    env: { ANTHROPIC_API_KEY: secrets.anthropic, GITHUB_TOKEN: secrets.github, ADE_CODEX_BIN: leaky },
+  })
   const all = [...Object.values(secrets), transcript]
   const replies: Array<Record<string, unknown>> = []
   const ids: Record<string, string> = {}
 
   // 1. A clone URL with a password is refused without echoing the password.
   ids.clone = diagnosticId()
-  const clone = await rawReply(profile, { op: 'repository.clone', diagnostic_id: ids.clone, operation_id: 'clone-secret',
-    url: `https://e2e:${secrets.password}@127.0.0.1:9/private.git`, destination: join(ade.root, 'clone-target') })
+  const clone = await rawReply(profile, {
+    op: 'repository.clone',
+    diagnostic_id: ids.clone,
+    operation_id: 'clone-secret',
+    url: `https://e2e:${secrets.password}@127.0.0.1:9/private.git`,
+    destination: join(ade.root, 'clone-target'),
+  })
   expect(clone).toMatchObject({ type: 'error' })
   expect(String(clone.message)).toMatch(/password|credential/i)
   replies.push(clone)
 
   // 2. A send with transcript and credential text to an unknown Conversation.
   ids.send = diagnosticId()
-  const unknown = await rawReply(profile, { op: 'agent.send', diagnostic_id: ids.send, conversation_id: 'conversation_missing',
-    request_id: 'send-missing', text: `${transcript} use ${secrets.github}` })
+  const unknown = await rawReply(profile, {
+    op: 'agent.send',
+    diagnostic_id: ids.send,
+    conversation_id: 'conversation_missing',
+    request_id: 'send-missing',
+    text: `${transcript} use ${secrets.github}`,
+  })
   expect(unknown).toMatchObject({ type: 'error' })
   expect(String(unknown.message).length).toBeGreaterThan(0)
   replies.push(unknown)
 
   // 3. An oversized request with credentials in it is refused with its reason.
   ids.large = diagnosticId()
-  const large = await rawReply(profile, { op: 'workspace.open', diagnostic_id: ids.large,
-    path: `${secrets.anthropic}/${'x'.repeat(200 * 1024)}` })
+  const large = await rawReply(profile, {
+    op: 'workspace.open',
+    diagnostic_id: ids.large,
+    path: `${secrets.anthropic}/${'x'.repeat(200 * 1024)}`,
+  })
   expect(large).toMatchObject({ type: 'error', message: 'Request exceeds 128 KiB' })
   replies.push(large)
 
   // 4. A provider that dies with credentials on stderr: the Conversation fails with a reason.
   const { conversationId } = await startConversation(profile, 'codex', repo.path)
   await send(profile, conversationId, `${transcript} deploy with ${secrets.anthropic}`).catch(() => undefined)
-  await expect.poll(() => conversationStatus(profile, conversationId), { timeout: 20_000 })
+  await expect
+    .poll(() => conversationStatus(profile, conversationId), { timeout: 20_000 })
     .not.toMatch(/^(starting|ready|running|waiting|idle)$/)
   const failed = await profile.call('conversation.get', { conversation_id: conversationId })
   expect(failed.conversation.error ?? '').toMatch(/Provider connection was lost/)
@@ -79,7 +102,8 @@ test('failures carrying credentials are readable and correlated, and no secret r
 
   for (const reply of replies) {
     const text = JSON.stringify(reply)
-    for (const secret of Object.values(secrets)) expect(text, `a reply must not contain ${secret}`).not.toContain(secret)
+    for (const secret of Object.values(secrets))
+      expect(text, `a reply must not contain ${secret}`).not.toContain(secret)
   }
 
   // The export correlates each failed request by its diagnostic ID, and holds no planted value.
@@ -87,14 +111,20 @@ test('failures carrying credentials are readable and correlated, and no secret r
   const exported = JSON.stringify(bundle)
   for (const secret of all) expect(exported, `the export must not contain ${secret}`).not.toContain(secret)
   for (const [name, id] of Object.entries(ids)) {
-    const events = bundle.events.filter((event) => (event as { diagnostic_id?: string }).diagnostic_id === id)
+    const events = bundle.events
+      .filter((event) => (event as { diagnostic_id?: string }).diagnostic_id === id)
       .map((event) => (event as { event: string }).event)
     expect(events, `the ${name} failure is correlated`).toContain('rpc_failed')
   }
   expect(bundle.excluded.join('\n')).toMatch(/transcripts/)
   // The provider's stderr is accounted for by size, never by content.
-  expect(bundle.events.some((event) => (event as { event?: string; bytes?: number }).event === 'provider_stderr_drained'
-    && ((event as { bytes?: number }).bytes ?? 0) > 0)).toBe(true)
+  expect(
+    bundle.events.some(
+      (event) =>
+        (event as { event?: string; bytes?: number }).event === 'provider_stderr_drained' &&
+        ((event as { bytes?: number }).bytes ?? 0) > 0,
+    ),
+  ).toBe(true)
   expect(bundle.events.some((event) => (event as { event?: string }).event === 'provider_connection_closed')).toBe(true)
 
   // The daemon's and runtime's own log files hold no planted value either.

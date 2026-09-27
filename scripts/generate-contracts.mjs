@@ -15,8 +15,11 @@ import { compile } from 'json-schema-to-typescript'
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const packageRoot = resolve(root, 'packages/contracts')
 
-const cargo = spawnSync('node', ['scripts/cargo.mjs', 'run', '--locked', '--quiet', '-p', 'ade-core', '--bin', 'ade-contracts'],
-  { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 })
+const cargo = spawnSync(
+  'node',
+  ['scripts/cargo.mjs', 'run', '--locked', '--quiet', '-p', 'ade-core', '--bin', 'ade-contracts'],
+  { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 },
+)
 if (cargo.status !== 0) {
   console.error('ade-contracts failed; the Rust contracts do not build')
   process.exit(cargo.status ?? 1)
@@ -24,7 +27,8 @@ if (cargo.status !== 0) {
 const bundle = JSON.parse(cargo.stdout)
 const { operations, frames } = bundle
 const definitions = bundle.$defs
-const banner = '// Generated from the Rust contracts in crates/ade-core/src/contract by scripts/generate-contracts.mjs. Do not edit.'
+const banner =
+  '// Generated from the Rust contracts in crates/ade-core/src/contract by scripts/generate-contracts.mjs. Do not edit.'
 const quote = (value) => JSON.stringify(value)
 
 const schemaFile = `${JSON.stringify(bundle, null, 2)}\n`
@@ -37,11 +41,21 @@ function unknownValue(schema) {
   return shapeKeywords.some((keyword) => keyword in schema) ? schema : { ...schema, tsType: 'unknown' }
 }
 function unknownDefinitions(entries) {
-  return Object.fromEntries(Object.entries(entries).map(([name, schema]) => [name, {
-    ...schema,
-    ...(schema.properties ? { properties: Object.fromEntries(Object.entries(schema.properties)
-      .map(([key, value]) => [key, unknownValue(value)])) } : {}),
-  }]))
+  return Object.fromEntries(
+    Object.entries(entries).map(([name, schema]) => [
+      name,
+      {
+        ...schema,
+        ...(schema.properties
+          ? {
+              properties: Object.fromEntries(
+                Object.entries(schema.properties).map(([key, value]) => [key, unknownValue(value)]),
+              ),
+            }
+          : {}),
+      },
+    ]),
+  )
 }
 
 // One root that references every definition, so each becomes a named type.
@@ -72,8 +86,10 @@ export type FeedFrame = ${frames.map((frame) => frame.frame).join(' | ')}
 `
 
 const operationIdOperations = operations
-  .filter((operation) => operation.tier === 'effect_command'
-    && definitions[operation.request]?.required?.includes('operation_id'))
+  .filter(
+    (operation) =>
+      operation.tier === 'effect_command' && definitions[operation.request]?.required?.includes('operation_id'),
+  )
   .map((operation) => operation.name)
 
 const tableFile = `${banner}
@@ -99,9 +115,16 @@ ${frames.map((frame) => `  ${quote(frame.type)}: { domain: ${quote(frame.domain)
 
 const ajv = new Ajv2020({ code: { source: true, esm: true }, strict: true, allErrors: false })
 ajv.addSchema({ $id: bundle.$id, $defs: definitions })
-const exported = [...new Set([...operations.flatMap((operation) => [operation.request, operation.response]),
-  ...frames.map((frame) => frame.frame)])].sort()
-const validatorCode = standaloneCode(ajv, Object.fromEntries(exported.map((name) => [name, `${bundle.$id}#/$defs/${name}`])))
+const exported = [
+  ...new Set([
+    ...operations.flatMap((operation) => [operation.request, operation.response]),
+    ...frames.map((frame) => frame.frame),
+  ]),
+].sort()
+const validatorCode = standaloneCode(
+  ajv,
+  Object.fromEntries(exported.map((name) => [name, `${bundle.$id}#/$defs/${name}`])),
+)
 if (/\brequire\(/.test(validatorCode)) {
   throw new Error('Ajv standalone code needs its runtime; keep the contracts free of keywords that import it')
 }
@@ -119,7 +142,11 @@ for (const [path, content] of Object.entries(outputs)) {
   const target = resolve(packageRoot, path)
   if (process.argv.includes('--check')) {
     let existing = ''
-    try { existing = readFileSync(target, 'utf8') } catch { /* missing counts as stale */ }
+    try {
+      existing = readFileSync(target, 'utf8')
+    } catch {
+      /* missing counts as stale */
+    }
     if (existing !== content) stale.push(`packages/contracts/${path}`)
   } else {
     mkdirSync(dirname(target), { recursive: true })

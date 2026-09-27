@@ -2,8 +2,17 @@
 // queue of an interrupted Conversation dispatches its head, as it does for an
 // idle one; each queued prompt reaches the provider once, whatever crashes
 // or retries happen around the dispatch.
-import { conversationStatus, expect, prompts, send, startConversation, test, turnReply, waitForIdle,
-  type ScratchProfile } from '../fixtures'
+import {
+  conversationStatus,
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  type ScratchProfile,
+} from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 
 async function snapshot(profile: ScratchProfile, conversationId: string) {
@@ -11,12 +20,14 @@ async function snapshot(profile: ScratchProfile, conversationId: string) {
 }
 
 async function turnStarts(profile: ScratchProfile): Promise<string[]> {
-  return (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')
+  return (await profile.mockCalls('codex'))
+    .filter((call) => call.method === 'turn/start')
     .map((call) => (call.params as { clientUserMessageId: string }).clientUserMessageId)
 }
 
 async function userMessages(profile: ScratchProfile, conversationId: string): Promise<string[]> {
-  return (await snapshot(profile, conversationId)).messages.filter((message) => message.role === 'user')
+  return (await snapshot(profile, conversationId)).messages
+    .filter((message) => message.role === 'user')
     .map((message) => message.id)
 }
 
@@ -29,35 +40,53 @@ async function interrupted(profile: ScratchProfile, conversationId: string, requ
   expect((await snapshot(profile, conversationId)).conversation.queue_paused).toBe(true)
 }
 
-test('F034: resuming the queue of an interrupted Conversation dispatches its head, through the SDK and the CLI', async ({ profile }) => {
+test('F034: resuming the queue of an interrupted Conversation dispatches its head, through the SDK and the CLI', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await interrupted(profile, conversationId, 'cancelled-turn')
-  await profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'after-cancel', text: prompts.turn })
+  await profile.call('queue.enqueue', {
+    conversation_id: conversationId,
+    request_id: 'after-cancel',
+    text: prompts.turn,
+  })
   // Paused: nothing dispatches while the Conversation stays interrupted.
   expect((await snapshot(profile, conversationId)).queued.map((entry) => entry.id)).toEqual(['after-cancel'])
 
   await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
-  await expect.poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
+  await expect
+    .poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
     .toEqual(['cancelled-turn', 'after-cancel'])
   await waitForIdle(profile, conversationId)
   expect((await snapshot(profile, conversationId)).queued).toEqual([])
 
   // The same through the CLI, after a second interruption.
   await interrupted(profile, conversationId, 'cancelled-again')
-  await profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'after-cli-resume', text: prompts.turn })
+  await profile.call('queue.enqueue', {
+    conversation_id: conversationId,
+    request_id: 'after-cli-resume',
+    text: prompts.turn,
+  })
   const resumed = await profile.cli('queue', 'resume', conversationId)
   expect(resumed.code, resumed.stderr).toBe(0)
-  await expect.poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
+  await expect
+    .poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
     .toEqual(['cancelled-turn', 'after-cancel', 'cancelled-again', 'after-cli-resume'])
   await waitForIdle(profile, conversationId)
   expect(await turnStarts(profile)).toEqual(['cancelled-turn', 'after-cancel', 'cancelled-again', 'after-cli-resume'])
 })
 
-test('F034 and R001: after a runtime crash, the queue waits for an explicit resume, then dispatches once and never replays the lost prompt', async ({ profile }) => {
+test('F034 and R001: after a runtime crash, the queue waits for an explicit resume, then dispatches once and never replays the lost prompt', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.hold, 'lost-with-runtime')
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('running')
-  await profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'queued-past-crash', text: prompts.turn })
+  await profile.call('queue.enqueue', {
+    conversation_id: conversationId,
+    request_id: 'queued-past-crash',
+    text: prompts.turn,
+  })
   await profile.killRuntime()
   await expect.poll(() => conversationStatus(profile, conversationId), { timeout: 20_000 }).toBe('interrupted')
   await profile.restartDaemon()
@@ -79,13 +108,16 @@ test('F034 and R001: after a runtime crash, the queue waits for an explicit resu
 
   // Resuming the Agent dispatches the waiting prompt on its own.
   await profile.call('agent.resume', { conversation_id: conversationId })
-  await expect.poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
+  await expect
+    .poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
     .toEqual(['lost-with-runtime', 'queued-past-crash'])
   await waitForIdle(profile, conversationId)
   expect(await turnStarts(profile)).toEqual(['lost-with-runtime', 'other-turn', 'queued-past-crash'])
 })
 
-test('R002: repeating queue.pause converges and never dispatches a prompt twice, also after a daemon crash', async ({ profile }) => {
+test('R002: repeating queue.pause converges and never dispatches a prompt twice, also after a daemon crash', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await interrupted(profile, conversationId, 'pause-held')
   await profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'pause-q1', text: prompts.turn })
@@ -96,8 +128,12 @@ test('R002: repeating queue.pause converges and never dispatches a prompt twice,
   expect((await snapshot(profile, conversationId)).conversation.queue_paused).toBe(true)
 
   // An unpause whose reply was lost, a daemon crash, then the same unpause again.
-  await sendAndLoseReply(profile, { op: 'queue.pause', operation_id: 'lost-unpause', conversation_id: conversationId,
-    paused: false })
+  await sendAndLoseReply(profile, {
+    op: 'queue.pause',
+    operation_id: 'lost-unpause',
+    conversation_id: conversationId,
+    paused: false,
+  })
   await expect.poll(async () => (await snapshot(profile, conversationId)).conversation.queue_paused).toBe(false)
   await profile.restartDaemon('kill')
   await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
@@ -108,29 +144,51 @@ test('R002: repeating queue.pause converges and never dispatches a prompt twice,
   expect(await turnStarts(profile)).toEqual(['pause-held', 'pause-q1', 'pause-q2'])
 })
 
-test('R001 and R002: an enqueue whose reply was lost is kept once; its ID cannot be reused for another prompt or Conversation', async ({ profile }) => {
+test('R001 and R002: an enqueue whose reply was lost is kept once; its ID cannot be reused for another prompt or Conversation', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.hold, 'enqueue-held')
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('running')
-  await sendAndLoseReply(profile, { op: 'queue.enqueue', conversation_id: conversationId, request_id: 'lost-enqueue',
-    text: prompts.turn })
-  await expect.poll(async () => (await snapshot(profile, conversationId)).queued.map((entry) => entry.id))
+  await sendAndLoseReply(profile, {
+    op: 'queue.enqueue',
+    conversation_id: conversationId,
+    request_id: 'lost-enqueue',
+    text: prompts.turn,
+  })
+  await expect
+    .poll(async () => (await snapshot(profile, conversationId)).queued.map((entry) => entry.id))
     .toEqual(['lost-enqueue'])
   await profile.restartDaemon('kill')
   // The retry converges on the kept entry.
-  await profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'lost-enqueue', text: prompts.turn })
+  await profile.call('queue.enqueue', {
+    conversation_id: conversationId,
+    request_id: 'lost-enqueue',
+    text: prompts.turn,
+  })
   const cli = await profile.cli('queue', 'add', conversationId, prompts.turn, '--request-id', 'lost-enqueue')
   expect(cli.code, cli.stderr).toBe(0)
   expect((await snapshot(profile, conversationId)).queued.map((entry) => entry.id)).toEqual(['lost-enqueue'])
   // Another prompt, another Conversation or a direct send under the same ID conflicts and admits nothing.
-  await expect(profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'lost-enqueue', text: 'other' }))
-    .rejects.toThrow(/belongs to another prompt/)
+  await expect(
+    profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'lost-enqueue', text: 'other' }),
+  ).rejects.toThrow(/belongs to another prompt/)
   const other = await startConversation(profile, 'codex')
-  await expect(profile.call('queue.enqueue', { conversation_id: other.conversationId, request_id: 'lost-enqueue',
-    text: prompts.turn })).rejects.toThrow(/belongs to another prompt/)
+  await expect(
+    profile.call('queue.enqueue', {
+      conversation_id: other.conversationId,
+      request_id: 'lost-enqueue',
+      text: prompts.turn,
+    }),
+  ).rejects.toThrow(/belongs to another prompt/)
   expect((await snapshot(profile, other.conversationId)).queued).toEqual([])
-  await expect(profile.call('agent.send', { conversation_id: other.conversationId, request_id: 'lost-enqueue',
-    text: prompts.turn })).rejects.toThrow()
+  await expect(
+    profile.call('agent.send', {
+      conversation_id: other.conversationId,
+      request_id: 'lost-enqueue',
+      text: prompts.turn,
+    }),
+  ).rejects.toThrow()
 
   // The held turn survived the daemon crash. Cancelling it pauses the queue;
   // resuming the queue delivers the kept entry once.
@@ -138,10 +196,15 @@ test('R001 and R002: an enqueue whose reply was lost is kept once; its ID cannot
   await profile.call('agent.cancel', { conversation_id: conversationId })
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('interrupted')
   await profile.call('queue.pause', { conversation_id: conversationId, paused: false })
-  await expect.poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
+  await expect
+    .poll(() => userMessages(profile, conversationId), { timeout: 20_000 })
     .toEqual(['enqueue-held', 'lost-enqueue'])
   await waitForIdle(profile, conversationId)
-  await profile.call('queue.enqueue', { conversation_id: conversationId, request_id: 'lost-enqueue', text: prompts.turn })
+  await profile.call('queue.enqueue', {
+    conversation_id: conversationId,
+    request_id: 'lost-enqueue',
+    text: prompts.turn,
+  })
   expect((await snapshot(profile, conversationId)).queued).toEqual([])
   expect((await turnStarts(profile)).filter((key) => key === 'lost-enqueue')).toHaveLength(1)
   expect(JSON.stringify((await snapshot(profile, conversationId)).messages)).toContain(turnReply.codex)

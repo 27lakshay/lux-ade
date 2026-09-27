@@ -17,16 +17,20 @@ import { terminalMetrics, TerminalStream } from '../fixtures/terminals'
 const me = process.getuid!()
 const foreign = me + 1
 
-async function authProfile(ade: { root: string; profile: (options: { env: Record<string, string> }) => Promise<ScratchProfile> }) {
+async function authProfile(ade: {
+  root: string
+  profile: (options: { env: Record<string, string> }) => Promise<ScratchProfile>
+}) {
   const daemonUid = join(ade.root, 'daemon-peer-uid')
   const runtimeUid = join(ade.root, 'runtime-peer-uid')
-  const profile = await ade.profile({ env: { ADE_E2E_DAEMON_PEER_UID_FILE: daemonUid,
-    ADE_E2E_RUNTIME_PEER_UID_FILE: runtimeUid } })
+  const profile = await ade.profile({
+    env: { ADE_E2E_DAEMON_PEER_UID_FILE: daemonUid, ADE_E2E_RUNTIME_PEER_UID_FILE: runtimeUid },
+  })
   return {
     profile,
     /** Make this process a foreign peer of the daemon (`true`) or its owner again. */
-    daemonForeign: (on: boolean) => on ? writeFile(daemonUid, `${foreign}\n`) : rm(daemonUid, { force: true }),
-    runtimeForeign: (on: boolean) => on ? writeFile(runtimeUid, `${foreign}\n`) : rm(runtimeUid, { force: true }),
+    daemonForeign: (on: boolean) => (on ? writeFile(daemonUid, `${foreign}\n`) : rm(daemonUid, { force: true })),
+    runtimeForeign: (on: boolean) => (on ? writeFile(runtimeUid, `${foreign}\n`) : rm(runtimeUid, { force: true })),
   }
 }
 
@@ -43,7 +47,9 @@ test('both profile sockets are owner-only files of the profile user', async ({ a
   }
 })
 
-test('the daemon refuses a peer that is not the profile user before any terminal command runs, and the terminal is untouched', async ({ ade }) => {
+test('the daemon refuses a peer that is not the profile user before any terminal command runs, and the terminal is untouched', async ({
+  ade,
+}) => {
   const { profile, daemonForeign } = await authProfile(ade)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
@@ -68,10 +74,12 @@ test('the daemon refuses a peer that is not the profile user before any terminal
       expect(refused.stderr, args.join(' ')).toMatch(/unauthenticated/)
     }
     // Through the SDK.
-    await expect(profile.call('terminal.create', { workspace_id: workspace.id, operation_id: 'foreign-sdk' }))
-      .rejects.toThrow(/unauthenticated/)
-    await expect(profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id }))
-      .rejects.toThrow(/unauthenticated/)
+    await expect(
+      profile.call('terminal.create', { workspace_id: workspace.id, operation_id: 'foreign-sdk' }),
+    ).rejects.toThrow(/unauthenticated/)
+    await expect(
+      profile.call('terminal.stop', { workspace_id: workspace.id, terminal_id: workspace.terminal_id }),
+    ).rejects.toThrow(/unauthenticated/)
     // A terminal stream gets no snapshot.
     const stream = TerminalStream.open(profile, ...target)
     await stream.waitForClose()
@@ -108,7 +116,9 @@ test('the daemon refuses a peer that is not the profile user before any terminal
   expect((await socketReply(profile.socket, { op: 'hello' })).frame).toMatchObject({ type: 'hello' })
 })
 
-test('the runtime refuses a foreign peer outright, and fences a same-user peer that does not hold the owner token', async ({ ade }) => {
+test('the runtime refuses a foreign peer outright, and fences a same-user peer that does not hold the owner token', async ({
+  ade,
+}) => {
   const { profile, runtimeForeign } = await authProfile(ade)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
@@ -132,14 +142,19 @@ test('the runtime refuses a foreign peer outright, and fences a same-user peer t
   // A same-user process that is not the owning daemon is fenced by the owner token.
   const sameUser = async (request: Record<string, unknown>) =>
     String((await socketReply(profile.runtimeSocket, request)).frame?.message)
-  expect(await sameUser({ ...claim, runtime_protocol: runtime.frame!.runtime_protocol })).toMatch(/Another application daemon owns this runtime/)
+  expect(await sameUser({ ...claim, runtime_protocol: runtime.frame!.runtime_protocol })).toMatch(
+    /Another application daemon owns this runtime/,
+  )
   expect(await sameUser(connect)).toMatch(/stale or draining owner/)
   expect(await sameUser(stop)).toMatch(/Disconnect the application daemon/)
 
   // The runtime and its shell are untouched, and the daemon still drives the terminal.
   expect((await socketReply(profile.runtimeSocket, { op: 'hello' })).frame).toMatchObject({ instance_id: instance })
-  expect((await terminalMetrics(profile, ...target))!).toMatchObject({ shell_running: true, shell_pid: before.shell_pid,
-    run_id: before.run_id })
+  expect((await terminalMetrics(profile, ...target))!).toMatchObject({
+    shell_running: true,
+    shell_pid: before.shell_pid,
+    run_id: before.run_id,
+  })
   const sent = await profile.cli('terminal', 'send', ...target, 'echo "still-""owned"')
   expect(sent.code, sent.stderr).toBe(0)
   const stream = TerminalStream.open(profile, ...target)

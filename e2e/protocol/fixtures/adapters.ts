@@ -33,31 +33,57 @@ export async function stageAdapterAgents(root: string): Promise<AdapterAgents> {
 }
 
 /** Define an ACP adapter on the fixture agent and probe it. Returns its provider ID. */
-export async function defineAcpAdapter(profile: ScratchProfile, agents: AdapterAgents, id = 'e2e-acp',
-  env: Record<string, string> = {}): Promise<string> {
-  await profile.call('adapter.put', { definition: { id, name: 'E2E ACP', kind: 'acp', command: agents.acp,
-    env: { ACP_FIXTURE_DIR: agents.dir, ...env } } })
+export async function defineAcpAdapter(
+  profile: ScratchProfile,
+  agents: AdapterAgents,
+  id = 'e2e-acp',
+  env: Record<string, string> = {},
+): Promise<string> {
+  await profile.call('adapter.put', {
+    definition: { id, name: 'E2E ACP', kind: 'acp', command: agents.acp, env: { ACP_FIXTURE_DIR: agents.dir, ...env } },
+  })
   const probed = await profile.call('adapter.probe', { id })
-  if (probed.adapter.readiness !== 'ready') throw new Error(`Adapter ${id} is ${probed.adapter.readiness}: ${JSON.stringify(probed.adapter.probe)}`)
+  if (probed.adapter.readiness !== 'ready')
+    throw new Error(`Adapter ${id} is ${probed.adapter.readiness}: ${JSON.stringify(probed.adapter.probe)}`)
   return probed.adapter.provider_id
 }
 
 /** Define a custom executable adapter on the fixture script and probe it. Returns its provider ID. */
-export async function defineExecAdapter(profile: ScratchProfile, agents: AdapterAgents, id = 'e2e-exec'): Promise<string> {
-  await profile.call('adapter.put', { definition: { id, name: 'E2E executable', kind: 'executable', command: agents.exec,
-    env: { EXEC_FIXTURE_DIR: agents.dir }, executable: { prompt_input: 'stdin', timeout_seconds: 60 } } })
+export async function defineExecAdapter(
+  profile: ScratchProfile,
+  agents: AdapterAgents,
+  id = 'e2e-exec',
+): Promise<string> {
+  await profile.call('adapter.put', {
+    definition: {
+      id,
+      name: 'E2E executable',
+      kind: 'executable',
+      command: agents.exec,
+      env: { EXEC_FIXTURE_DIR: agents.dir },
+      executable: { prompt_input: 'stdin', timeout_seconds: 60 },
+    },
+  })
   const probed = await profile.call('adapter.probe', { id })
   if (probed.adapter.readiness !== 'ready') throw new Error(`Adapter ${id} is ${probed.adapter.readiness}`)
   return probed.adapter.provider_id
 }
 
-export type AcpCall = { pid: number; id?: string | number; method?: string; params?: Record<string, unknown>;
-  result?: Record<string, unknown> }
+export type AcpCall = {
+  pid: number
+  id?: string | number
+  method?: string
+  params?: Record<string, unknown>
+  result?: Record<string, unknown>
+}
 
 /** Every message the ACP fixture agent received, in order; empty before the first. */
 export async function acpCalls(agents: AdapterAgents): Promise<AcpCall[]> {
   const text = await readFile(join(agents.dir, 'calls.jsonl'), 'utf8').catch(() => '')
-  return text.split('\n').filter(Boolean).map((line) => JSON.parse(line) as AcpCall)
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as AcpCall)
 }
 
 /** The prompts the custom executable received, one per line. */

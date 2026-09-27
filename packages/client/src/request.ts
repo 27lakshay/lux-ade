@@ -9,19 +9,38 @@ const MAX_REQUEST_BYTES = 128 * 1024
  * The codes the client raises itself, and the general categories the daemon
  * also uses. `daemon` names a daemon error frame that carried no code.
  */
-export const categoryErrorCodes = ['unavailable', 'incompatible', 'timeout', 'protocol', 'daemon',
-  'invalid_request', 'conflict', 'outcome_unknown', 'in_progress', 'overloaded', 'not_applied'] as const
+export const categoryErrorCodes = [
+  'unavailable',
+  'incompatible',
+  'timeout',
+  'protocol',
+  'daemon',
+  'invalid_request',
+  'conflict',
+  'outcome_unknown',
+  'in_progress',
+  'overloaded',
+  'not_applied',
+] as const
 
 /**
  * The specific refusal codes the daemon sends today, each with a `recovery`
  * hint. The daemon may add codes, so `DaemonErrorCode` stays open: a code this
  * list lacks is kept exactly as the daemon sent it.
  */
-export const daemonRefusalCodes = ['needs_rebind', 'host_resource_conflict', 'host_resources_unavailable',
-  'restored_send_held', 'lifecycle_command_failed', 'lifecycle_outcome_unknown', 'lifecycle_unavailable',
-  'lifecycle_invalid_output', 'conversation_deleted'] as const
+export const daemonRefusalCodes = [
+  'needs_rebind',
+  'host_resource_conflict',
+  'host_resources_unavailable',
+  'restored_send_held',
+  'lifecycle_command_failed',
+  'lifecycle_outcome_unknown',
+  'lifecycle_unavailable',
+  'lifecycle_invalid_output',
+  'conversation_deleted',
+] as const
 
-export type KnownDaemonErrorCode = typeof categoryErrorCodes[number] | typeof daemonRefusalCodes[number]
+export type KnownDaemonErrorCode = (typeof categoryErrorCodes)[number] | (typeof daemonRefusalCodes)[number]
 // `string & {}` keeps completion for the known codes while admitting any other.
 export type DaemonErrorCode = KnownDaemonErrorCode | (string & {})
 export type RequestDelivery = 'not_sent' | 'unknown' | 'rejected'
@@ -39,9 +58,13 @@ export class DaemonRequestError extends Error {
    * so the connection carried a whole answer. It is false for a failure of the
    * connection (socket error, close, deadline) or of the client's own checks.
    */
-  constructor(public readonly code: DaemonErrorCode, message: string,
-    public readonly delivery: RequestDelivery = 'not_sent', public readonly replied = false,
-    public readonly recovery?: string) {
+  constructor(
+    public readonly code: DaemonErrorCode,
+    message: string,
+    public readonly delivery: RequestDelivery = 'not_sent',
+    public readonly replied = false,
+    public readonly recovery?: string,
+  ) {
     super(message)
     this.name = 'DaemonRequestError'
   }
@@ -66,8 +89,9 @@ export interface RequestOptions {
 
 /** The hello line a connection opens with; a paired client presents its pairing. */
 export function helloLine(pairing?: { pairingId: string; token: string } | null): string {
-  return `${JSON.stringify(pairing ? { op: 'hello', pairing_id: pairing.pairingId, pairing_token: pairing.token }
-    : { op: 'hello' })}\n`
+  return `${JSON.stringify(
+    pairing ? { op: 'hello', pairing_id: pairing.pairingId, pairing_token: pairing.token } : { op: 'hello' },
+  )}\n`
 }
 
 export type DaemonResponse = Record<string, unknown> & { type: string }
@@ -77,8 +101,15 @@ export type DaemonResponse = Record<string, unknown> & { type: string }
  * stops of existing work, and shutdown. Keep in step with
  * `crates/ade-daemon/src/bin/daemon/server/control.rs`.
  */
-export const controlOperations: ReadonlySet<string> = new Set(['hello', 'runtime.status', 'diagnostics.status',
-  'agent.cancel', 'terminal.stop', 'service.stop', 'runtime.prepare_restart'])
+export const controlOperations: ReadonlySet<string> = new Set([
+  'hello',
+  'runtime.status',
+  'diagnostics.status',
+  'agent.cancel',
+  'terminal.stop',
+  'service.stop',
+  'runtime.prepare_restart',
+])
 
 /** The control lane's socket beside a profile socket: `/x/ade.sock` becomes `/x/ade.control.sock`. */
 export function controlSocketPath(socketPath: string): string {
@@ -102,8 +133,13 @@ export async function requestDaemon(
     try {
       return await requestOnce(controlSocketPath(socketPath), op, fields, options)
     } catch (error) {
-      if (!(error instanceof DaemonRequestError) || error.code !== 'unavailable' || error.delivery !== 'not_sent'
-        || error.replied) throw error
+      if (
+        !(error instanceof DaemonRequestError) ||
+        error.code !== 'unavailable' ||
+        error.delivery !== 'not_sent' ||
+        error.replied
+      )
+        throw error
     }
   }
   return requestOnce(socketPath, op, fields, options)
@@ -116,7 +152,9 @@ function requestOnce(
   options: RequestOptions,
 ): Promise<DaemonResponse> {
   if (!socketPath || !op || (op !== 'hello' && !op.includes('.')) || 'op' in fields) {
-    return Promise.reject(new DaemonRequestError('invalid_request', 'A profile socket and valid operation are required.'))
+    return Promise.reject(
+      new DaemonRequestError('invalid_request', 'A profile socket and valid operation are required.'),
+    )
   }
   const request = JSON.stringify({ ...fields, op })
   // Attachments and client-supplied context text are the only large requests.
@@ -134,7 +172,10 @@ function requestOnce(
     let requestSent = false
     let phase: 'hello' | 'response' = 'hello'
     let buffer = Buffer.alloc(0)
-    const timer = setTimeout(() => fail('timeout', 'The profile daemon did not respond before the deadline.'), timeoutMs)
+    const timer = setTimeout(
+      () => fail('timeout', 'The profile daemon did not respond before the deadline.'),
+      timeoutMs,
+    )
 
     function finish(response: DaemonResponse): void {
       if (settled) return
@@ -144,8 +185,13 @@ function requestOnce(
       resolve(response)
     }
 
-    function fail(code: DaemonErrorCode, message: string,
-      delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent', replied = false, recovery?: string): void {
+    function fail(
+      code: DaemonErrorCode,
+      message: string,
+      delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent',
+      replied = false,
+      recovery?: string,
+    ): void {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -163,8 +209,11 @@ function requestOnce(
         const line = buffer.subarray(0, end)
         buffer = buffer.subarray(end + 1)
         let frame: unknown
-        try { frame = JSON.parse(line.toString('utf8')) }
-        catch { return fail('protocol', 'Daemon sent invalid JSON.') }
+        try {
+          frame = JSON.parse(line.toString('utf8'))
+        } catch {
+          return fail('protocol', 'Daemon sent invalid JSON.')
+        }
         if (!frame || typeof frame !== 'object' || Array.isArray(frame)) {
           return fail('protocol', 'Daemon sent an invalid response.')
         }
@@ -174,13 +223,20 @@ function requestOnce(
           // Keep the daemon's code and recovery hint as sent; only a frame with no code is `daemon`.
           const code = typeof response.code === 'string' && response.code ? response.code : 'daemon'
           const recovery = typeof response.recovery === 'string' && response.recovery ? response.recovery : undefined
-          return fail(code, typeof response.message === 'string' ? response.message : 'Daemon rejected the request.',
-            phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown', true,
-            recovery)
+          return fail(
+            code,
+            typeof response.message === 'string' ? response.message : 'Daemon rejected the request.',
+            phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown',
+            true,
+            recovery,
+          )
         }
         if (phase === 'hello') {
           if (response.type !== 'hello') return fail('protocol', 'Daemon did not provide a hello response.')
-          if (response.application_protocol !== APPLICATION_PROTOCOL || response.session_protocol !== SESSION_PROTOCOL) {
+          if (
+            response.application_protocol !== APPLICATION_PROTOCOL ||
+            response.session_protocol !== SESSION_PROTOCOL
+          ) {
             return fail('incompatible', 'Daemon application or session protocol is incompatible with this client.')
           }
           if (op === 'hello') return finish(response as DaemonResponse)
@@ -194,9 +250,12 @@ function requestOnce(
     })
     socket.on('error', (error: NodeJS.ErrnoException) => {
       const unavailable = error.code === 'ENOENT' || error.code === 'ECONNREFUSED' || error.code === 'EACCES'
-      fail(unavailable ? 'unavailable' : 'protocol', unavailable
-        ? 'Profile daemon is unavailable at the selected socket.'
-        : `Profile daemon connection failed: ${error.message}`)
+      fail(
+        unavailable ? 'unavailable' : 'protocol',
+        unavailable
+          ? 'Profile daemon is unavailable at the selected socket.'
+          : `Profile daemon connection failed: ${error.message}`,
+      )
     })
     socket.on('close', () => fail('unavailable', 'Profile daemon closed the connection before replying.'))
   })

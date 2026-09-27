@@ -40,7 +40,12 @@ function rank(value: string, search: string, keywords?: string[]): number {
 // ⌘⇧P palette. Opening is a high-frequency action, so it appears in 120ms with a small settle and
 // no travel; reduced motion makes it a plain fade. It sits on a light scrim above everything, and
 // window-drag regions are switched off while it is open so every click reaches it.
-export function CommandPalette(p: { open: boolean; onClose: () => void; commands: PaletteCommand[]; reduced: boolean }) {
+export function CommandPalette(p: {
+  open: boolean
+  onClose: () => void
+  commands: PaletteCommand[]
+  reduced: boolean
+}) {
   const returnFocus = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
@@ -122,7 +127,9 @@ export function CommandPalette(p: { open: boolean; onClose: () => void; commands
                             </span>
                             <span className="flex-1 truncate">{c.label}</span>
                             {c.checked ? <Check size={14} className="text-fg-muted" /> : null}
-                            {c.shortcut ? <kbd className="font-sans text-[11px] text-fg-muted">{c.shortcut}</kbd> : null}
+                            {c.shortcut ? (
+                              <kbd className="font-sans text-[11px] text-fg-muted">{c.shortcut}</kbd>
+                            ) : null}
                           </Command.Item>
                         )
                       })}

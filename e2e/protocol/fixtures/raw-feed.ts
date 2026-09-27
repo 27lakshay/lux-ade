@@ -20,11 +20,19 @@ export class RawFeed {
       for (let end = this.buffered.indexOf(10); end >= 0; end = this.buffered.indexOf(10)) {
         const line = this.buffered.subarray(0, end).toString('utf8')
         this.buffered = this.buffered.subarray(end + 1)
-        try { this.frames.push(JSON.parse(line) as RawFeedFrame) } catch { this.frames.push({ type: 'invalid', line }) }
+        try {
+          this.frames.push(JSON.parse(line) as RawFeedFrame)
+        } catch {
+          this.frames.push({ type: 'invalid', line })
+        }
       }
     })
-    socket.on('error', (error) => { this.closedReason ??= error.message })
-    socket.on('close', () => { this.closedReason ??= 'closed' })
+    socket.on('error', (error) => {
+      this.closedReason ??= error.message
+    })
+    socket.on('close', () => {
+      this.closedReason ??= 'closed'
+    })
   }
 
   /** Subscribe on `socketPath` and resolve once the initial catalog frame arrived. */
@@ -34,8 +42,11 @@ export class RawFeed {
 
   /** Attach to a terminal as a viewer (xterm-replay-v1) and resolve once its snapshot arrived. */
   static async openTerminal(socketPath: string, workspaceId: string, terminalId: string): Promise<RawFeed> {
-    return RawFeed.connect(socketPath, { workspace_id: workspaceId, terminal_id: terminalId, op: 'subscribe',
-      snapshot_format: 'xterm-replay-v1' }, 'snapshot')
+    return RawFeed.connect(
+      socketPath,
+      { workspace_id: workspaceId, terminal_id: terminalId, op: 'subscribe', snapshot_format: 'xterm-replay-v1' },
+      'snapshot',
+    )
   }
 
   private static async connect(socketPath: string, first: Record<string, unknown>, ready: string): Promise<RawFeed> {
@@ -43,7 +54,10 @@ export class RawFeed {
     const feed = new RawFeed(socket)
     await new Promise<void>((resolveConnect, rejectConnect) => {
       socket.once('error', rejectConnect)
-      socket.once('connect', () => { socket.off('error', rejectConnect); resolveConnect() })
+      socket.once('connect', () => {
+        socket.off('error', rejectConnect)
+        resolveConnect()
+      })
     })
     socket.write(`${JSON.stringify(first)}\n`)
     await expect.poll(() => feed.frames[0]?.type ?? null, { message: `the initial ${ready} frame` }).toBe(ready)
@@ -66,7 +80,9 @@ export class RawFeed {
 
   /** Revisions of the recorded frames, in arrival order. */
   revisions(): number[] {
-    return this.frames.map((frame) => frame.revision).filter((revision): revision is number => typeof revision === 'number')
+    return this.frames
+      .map((frame) => frame.revision)
+      .filter((revision): revision is number => typeof revision === 'number')
   }
 
   /** Wait until the peer closes the connection. */

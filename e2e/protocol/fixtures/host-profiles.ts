@@ -19,8 +19,11 @@ export function managedRuntimeHome(profilesHome: string, id: string = randomUUID
  * Start `count` profiles that share one host registry under the test's temp
  * root. Each gets its own profile UUID, data directory, sockets and HOME.
  */
-export async function startHostProfiles(ade: AdeHarness, count: number,
-  options: ProfileOptions = {}): Promise<{ profilesHome: string; profiles: ScratchProfile[] }> {
+export async function startHostProfiles(
+  ade: AdeHarness,
+  count: number,
+  options: ProfileOptions = {},
+): Promise<{ profilesHome: string; profiles: ScratchProfile[] }> {
   const profilesHome = join(ade.root, 'host')
   const profiles: ScratchProfile[] = []
   for (let index = 0; index < count; index++) {

@@ -1,18 +1,38 @@
 import { randomUUID } from 'node:crypto'
 import { link, open, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { call, DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation,
-  type DailyUseRequest, type DailyUseResponse } from '@ade/client'
-import { boundedInteger, catalog, CliError, jsonObject, object, effectOperationId, parseWords, positionals, required,
-  type CommandResult } from '../shared.js'
+import {
+  call,
+  DaemonRequestError,
+  decodeDailyUseResponse,
+  requestDaemon,
+  type DailyUseOperation,
+  type DailyUseRequest,
+  type DailyUseResponse,
+} from '@ade/client'
+import {
+  boundedInteger,
+  catalog,
+  CliError,
+  jsonObject,
+  object,
+  effectOperationId,
+  parseWords,
+  positionals,
+  required,
+  type CommandResult,
+} from '../shared.js'
 
 /** A typed request body: the operation's contract without its `op`. */
 export type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
 
 /** Check a daemon reply against its contract; a mismatch is a protocol error. */
 export function decodeReply<O extends DailyUseOperation>(op: O, response: unknown): DailyUseResponse<O> {
-  try { return decodeDailyUseResponse(op, response) }
-  catch (error) { throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`) }
+  try {
+    return decodeDailyUseResponse(op, response)
+  } catch (error) {
+    throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`)
+  }
 }
 
 export const conversationUsage = `  conversation list [WORKSPACE_ID]      List conversations
@@ -33,13 +53,26 @@ export const conversationUsage = `  conversation list [WORKSPACE_ID]      List c
 `
 
 /** Export through the public paginated read without holding the whole transcript in memory. */
-async function exportConversation(socketPath: string, conversationId: string, destination: string): Promise<Record<string, unknown>> {
+async function exportConversation(
+  socketPath: string,
+  conversationId: string,
+  destination: string,
+): Promise<Record<string, unknown>> {
   const pageSize = 100
-  const first = await requestDaemon(socketPath, 'conversation.get', { conversation_id: conversationId, limit: pageSize })
-  if (first.type !== 'conversation_snapshot') throw new CliError('protocol', 'Daemon returned an unexpected conversation response.')
+  const first = await requestDaemon(socketPath, 'conversation.get', {
+    conversation_id: conversationId,
+    limit: pageSize,
+  })
+  if (first.type !== 'conversation_snapshot')
+    throw new CliError('protocol', 'Daemon returned an unexpected conversation response.')
   const conversation = object(first.conversation)
-  if (conversation.id !== conversationId || typeof first.boot_id !== 'string' || !first.boot_id ||
-    !Number.isSafeInteger(first.revision) || (first.revision as number) < 0) {
+  if (
+    conversation.id !== conversationId ||
+    typeof first.boot_id !== 'string' ||
+    !first.boot_id ||
+    !Number.isSafeInteger(first.revision) ||
+    (first.revision as number) < 0
+  ) {
     throw new CliError('protocol', 'Daemon returned invalid conversation identity or revision.')
   }
   const bootId = first.boot_id
@@ -47,31 +80,53 @@ async function exportConversation(socketPath: string, conversationId: string, de
   const conversationRecord = JSON.stringify(conversation)
   const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`)
   let file: Awaited<ReturnType<typeof open>>
-  try { file = await open(temporary, 'wx', 0o600) }
-  catch (error) { throw new CliError('invalid_request', `Cannot create export file: ${String(error)}`) }
+  try {
+    file = await open(temporary, 'wx', 0o600)
+  } catch (error) {
+    throw new CliError('invalid_request', `Cannot create export file: ${String(error)}`)
+  }
   let fileClosed = false
   let count = 0
   let oldest = Number.POSITIVE_INFINITY
   let page = first
   try {
-    await file.writeFile(`{\n  "format": "ade-conversation-history-v1",\n  "scope": "conversation-history",\n  "message_order": "newest_first",\n  "boot_id": ${JSON.stringify(bootId)},\n  "revision": ${revision},\n  "conversation": ${JSON.stringify(conversation, null, 2)},\n  "messages": [\n`)
+    await file.writeFile(
+      `{\n  "format": "ade-conversation-history-v1",\n  "scope": "conversation-history",\n  "message_order": "newest_first",\n  "boot_id": ${JSON.stringify(bootId)},\n  "revision": ${revision},\n  "conversation": ${JSON.stringify(conversation, null, 2)},\n  "messages": [\n`,
+    )
     for (;;) {
-      if (page.type !== 'conversation_snapshot' || page.boot_id !== bootId || page.revision !== revision ||
-        !page.conversation || typeof page.conversation !== 'object' ||
+      if (
+        page.type !== 'conversation_snapshot' ||
+        page.boot_id !== bootId ||
+        page.revision !== revision ||
+        !page.conversation ||
+        typeof page.conversation !== 'object' ||
         (page.conversation as Record<string, unknown>).id !== conversationId ||
         JSON.stringify(page.conversation) !== conversationRecord ||
-        !Array.isArray(page.messages) || page.messages.length > pageSize) {
-        throw new CliError('protocol', 'Conversation changed or daemon returned an invalid history page; retry the export.')
+        !Array.isArray(page.messages) ||
+        page.messages.length > pageSize
+      ) {
+        throw new CliError(
+          'protocol',
+          'Conversation changed or daemon returned an invalid history page; retry the export.',
+        )
       }
       const messages = page.messages as unknown[]
       let previous = 0
       for (const value of messages) {
         const message = object(value)
         const sequence = message.sequence
-        if (message.conversation_id !== conversationId || typeof message.id !== 'string' || !message.id ||
-          !Number.isSafeInteger(sequence) || (sequence as number) <= previous || (sequence as number) >= oldest ||
-          typeof message.role !== 'string' || typeof message.kind !== 'string' ||
-          typeof message.text !== 'string' || typeof message.status !== 'string') {
+        if (
+          message.conversation_id !== conversationId ||
+          typeof message.id !== 'string' ||
+          !message.id ||
+          !Number.isSafeInteger(sequence) ||
+          (sequence as number) <= previous ||
+          (sequence as number) >= oldest ||
+          typeof message.role !== 'string' ||
+          typeof message.kind !== 'string' ||
+          typeof message.text !== 'string' ||
+          typeof message.status !== 'string'
+        ) {
           throw new CliError('protocol', 'Daemon returned an invalid or overlapping history page; retry the export.')
         }
         previous = sequence as number
@@ -83,29 +138,48 @@ async function exportConversation(socketPath: string, conversationId: string, de
       if (messages.length < pageSize) break
       oldest = (messages[0] as Record<string, unknown>).sequence as number
       page = await requestDaemon(socketPath, 'conversation.get', {
-        conversation_id: conversationId, before: oldest, limit: pageSize,
+        conversation_id: conversationId,
+        before: oldest,
+        limit: pageSize,
       })
     }
     await file.writeFile('\n  ]\n}\n')
     await file.sync()
     await file.close()
     fileClosed = true
-    try { await link(temporary, destination) }
-    catch (error) {
+    try {
+      await link(temporary, destination)
+    } catch (error) {
       const reason = error as NodeJS.ErrnoException
-      throw new CliError('invalid_request', reason.code === 'EEXIST'
-        ? 'Export destination already exists; choose a new file.'
-        : `Cannot publish export file: ${String(error)}`)
+      throw new CliError(
+        'invalid_request',
+        reason.code === 'EEXIST'
+          ? 'Export destination already exists; choose a new file.'
+          : `Cannot publish export file: ${String(error)}`,
+      )
     }
     try {
       const directory = await open(dirname(destination), 'r')
-      try { await directory.sync() }
-      finally { await directory.close() }
+      try {
+        await directory.sync()
+      } finally {
+        await directory.close()
+      }
     } catch (error) {
-      throw new CliError('invalid_request', `Export was created, but directory sync failed; durability is unconfirmed: ${String(error)}`)
+      throw new CliError(
+        'invalid_request',
+        `Export was created, but directory sync failed; durability is unconfirmed: ${String(error)}`,
+      )
     }
-    return { type: 'conversation_export', conversation_id: conversationId, file: destination,
-      format: 'ade-conversation-history-v1', message_count: count, boot_id: bootId, revision }
+    return {
+      type: 'conversation_export',
+      conversation_id: conversationId,
+      file: destination,
+      format: 'ade-conversation-history-v1',
+      message_count: count,
+      boot_id: bootId,
+      revision,
+    }
   } catch (error) {
     if (error instanceof CliError || error instanceof DaemonRequestError) throw error
     throw new CliError('invalid_request', `Cannot write export file: ${String(error)}`)
@@ -115,12 +189,19 @@ async function exportConversation(socketPath: string, conversationId: string, de
   }
 }
 
-export async function runConversationCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runConversationCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area === 'conversation' && action === 'list') {
     const all = (await catalog(socketPath)).conversations
     if (!Array.isArray(all)) throw new CliError('protocol', 'Daemon catalog has no conversations.')
-    return { type: 'conversations', conversations: rest[0] ? all.filter((item) => item?.workspace_id === rest[0]) : all }
+    return {
+      type: 'conversations',
+      conversations: rest[0] ? all.filter((item) => item?.workspace_id === rest[0]) : all,
+    }
   }
   if (area === 'conversation' && action === 'inspect') {
     return requestDaemon(socketPath, 'conversation.get', { conversation_id: required(rest[0], 'ID') })
@@ -177,29 +258,46 @@ export async function runConversationCommand(socketPath: string, area: string | 
       throw new CliError('usage', '--request-id requires an ID of 1 to 256 characters.')
     }
     const requestId = suppliedId ?? randomUUID()
-    const response = await requestDaemon(socketPath, 'agent.send', { conversation_id: conversationId, request_id: requestId, text })
+    const response = await requestDaemon(socketPath, 'agent.send', {
+      conversation_id: conversationId,
+      request_id: requestId,
+      text,
+    })
     return { ...response, request_id: requestId }
   }
   if (area === 'conversation' && action === 'cancel') {
     const parsed = parseWords(rest, ['--turn'], [], 'conversation cancel')
     const [conversation_id] = positionals(parsed, 1, 'conversation cancel requires ID [--turn TURN_ID]')
     const turn = parsed.options['--turn']
-    return requestDaemon(socketPath, 'agent.cancel', { operation_id: effectOperationId(), conversation_id,
-      ...(turn === undefined ? {} : { turn_id: turn }) })
+    return requestDaemon(socketPath, 'agent.cancel', {
+      operation_id: effectOperationId(),
+      conversation_id,
+      ...(turn === undefined ? {} : { turn_id: turn }),
+    })
   }
   if (area === 'conversation' && (action === 'resume' || action === 'disconnect')) {
     if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)
     const op = ({ resume: 'agent.resume', disconnect: 'agent.disconnect' } as const)[action]
-    return requestDaemon(socketPath, op, { operation_id: effectOperationId(), conversation_id: required(rest[0], 'ID') })
+    return requestDaemon(socketPath, op, {
+      operation_id: effectOperationId(),
+      conversation_id: required(rest[0], 'ID'),
+    })
   }
   if (area === 'conversation' && action === 'child-transcript') {
     const parsed = parseWords(rest, ['--cursor', '--offset'], [], 'conversation child-transcript')
-    const [conversation_id, message_id, child_id] = positionals(parsed, 3,
-      'conversation child-transcript requires ID MESSAGE_ID CHILD_ID')
+    const [conversation_id, message_id, child_id] = positionals(
+      parsed,
+      3,
+      'conversation child-transcript requires ID MESSAGE_ID CHILD_ID',
+    )
     const { '--cursor': cursor, '--offset': offset } = parsed.options
-    return call(socketPath, 'agent.child_transcript', { conversation_id, message_id, child_id,
+    return call(socketPath, 'agent.child_transcript', {
+      conversation_id,
+      message_id,
+      child_id,
       ...(cursor === undefined ? {} : { cursor }),
-      ...(offset === undefined ? {} : { offset: boundedInteger(offset, 'OFFSET', 0, 100_000) }) })
+      ...(offset === undefined ? {} : { offset: boundedInteger(offset, 'OFFSET', 0, 100_000) }),
+    })
   }
   if (area === 'conversation' && action === 'answer') {
     if (rest.length < 3 || rest.length > 4) {
@@ -213,13 +311,19 @@ export async function runConversationCommand(socketPath: string, area: string | 
       throw new CliError('usage', 'ANSWERS_JSON is required only for the answer decision.')
     }
     const answers = answerJson === undefined ? undefined : jsonObject(answerJson, 'ANSWERS_JSON')
-    if (answers && Object.values(answers).some((value) =>
-      typeof value !== 'string' && (!Array.isArray(value) || value.some((item) => typeof item !== 'string')))) {
+    if (
+      answers &&
+      Object.values(answers).some(
+        (value) =>
+          typeof value !== 'string' && (!Array.isArray(value) || value.some((item) => typeof item !== 'string')),
+      )
+    ) {
       throw new CliError('usage', 'ANSWERS_JSON values must be text or arrays of text.')
     }
     return requestDaemon(socketPath, 'agent.answer', {
       conversation_id: required(conversationId, 'ID'),
-      request_id: required(requestId, 'REQUEST_ID'), decision,
+      request_id: required(requestId, 'REQUEST_ID'),
+      decision,
       ...(answers === undefined ? {} : { answers }),
     })
   }

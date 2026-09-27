@@ -10,12 +10,18 @@ let operations = 0
 const echo = 'e2e.backend.echo'
 
 function invoke(profile: ScratchProfile, pluginId: string, commandId: string, args: unknown = null) {
-  return profile.call('plugin.command.invoke', { operation_id: `dev-${process.pid}-${++operations}`, plugin_id: pluginId,
-    command_id: commandId, args }, { timeoutMs: 60_000 })
+  return profile.call(
+    'plugin.command.invoke',
+    { operation_id: `dev-${process.pid}-${++operations}`, plugin_id: pluginId, command_id: commandId, args },
+    { timeoutMs: 60_000 },
+  )
 }
 
 async function echoed(profile: ScratchProfile, pluginId: string) {
-  return (await invoke(profile, pluginId, echo)).outcome as { status: string; value: { version: string; generation: number; pid: number } }
+  return (await invoke(profile, pluginId, echo)).outcome as {
+    status: string
+    value: { version: string; generation: number; pid: number }
+  }
 }
 
 async function generations(profile: ScratchProfile, pluginId: string) {
@@ -46,18 +52,29 @@ test('a reload bumps the generation without cutting off the call running on the 
 
   // A call holds the old generation's host while its source changes.
   const held = invoke(profile, pluginId, 'e2e.backend.hold', { release: 'release-hold' })
-  await expect.poll(async () => (await pluginLines(outDir, 'lifecycle.jsonl')).some((line) => line.event === 'hold-started')).toBe(true)
+  await expect
+    .poll(async () => (await pluginLines(outDir, 'lifecycle.jsonl')).some((line) => line.event === 'hold-started'))
+    .toBe(true)
   await setVersion(source, 'v2')
 
-  await expect.poll(async () => (await generations(profile, pluginId)).generations
-    .filter((generation) => generation.generation >= before)
-    .map((generation) => `${generation.generation}:${generation.state}`).sort(), { timeout: 20_000 })
+  await expect
+    .poll(
+      async () =>
+        (await generations(profile, pluginId)).generations
+          .filter((generation) => generation.generation >= before)
+          .map((generation) => `${generation.generation}:${generation.state}`)
+          .sort(),
+      { timeout: 20_000 },
+    )
     .toEqual([`${before}:draining`, `${before + 1}:current`])
   // The reload records its outcome once the new generation's host has started.
-  await expect.poll(async () => (await generations(profile, pluginId)).dev?.last_reload)
+  await expect
+    .poll(async () => (await generations(profile, pluginId)).dev?.last_reload)
     .toMatchObject({ status: 'activated', generation: before + 1, message: null })
   const reloaded = await generations(profile, pluginId)
-  expect(reloaded.generations.find((generation) => generation.generation === before + 1)).toMatchObject({ origin: 'dev_reload' })
+  expect(reloaded.generations.find((generation) => generation.generation === before + 1)).toMatchObject({
+    origin: 'dev_reload',
+  })
 
   // New work reaches the new generation in a new host; the old host still runs the held call.
   const fresh = await echoed(profile, pluginId)
@@ -66,18 +83,30 @@ test('a reload bumps the generation without cutting off the call running on the 
   expect(await isRunning(old.value.pid)).toBe(true)
 
   await releasePlugin(outDir, 'release-hold')
-  expect((await held).outcome).toEqual({ status: 'completed', value: { version: 'v1', generation: before, pid: old.value.pid } })
+  expect((await held).outcome).toEqual({
+    status: 'completed',
+    value: { version: 'v1', generation: before, pid: old.value.pid },
+  })
 
   // Once drained, the old generation deactivates after its call finished, and retires.
   await expect.poll(() => isRunning(old.value.pid), { timeout: 20_000 }).toBe(false)
-  await expect.poll(async () => (await generations(profile, pluginId)).generations
-    .find((generation) => generation.generation === before)?.state ?? 'retired', { timeout: 20_000 }).toBe('retired')
+  await expect
+    .poll(
+      async () =>
+        (await generations(profile, pluginId)).generations.find((generation) => generation.generation === before)
+          ?.state ?? 'retired',
+      { timeout: 20_000 },
+    )
+    .toBe('retired')
   const events = (await pluginLines(outDir, 'lifecycle.jsonl')).map((line) => `${line.event}:${line.version}`)
   expect(events.indexOf('deactivate:v1')).toBeGreaterThan(events.indexOf('hold-started:v1'))
   expect(events).toContain('activate:v2')
 })
 
-test('a broken reload leaves the current generation serving; the fix activates the next, and dev mode survives a restart', async ({ ade, profile }) => {
+test('a broken reload leaves the current generation serving; the fix activates the next, and dev mode survives a restart', async ({
+  ade,
+  profile,
+}) => {
   const source = await stagePlugin(ade.root, 'backend')
   const { pluginId } = await installAndEnable(profile, source)
   await profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: 100 })
@@ -87,7 +116,9 @@ test('a broken reload leaves the current generation serving; the fix activates t
   const manifestPath = join(source, 'ade-plugin.json')
   const manifest = await readFile(manifestPath, 'utf8')
   await writeFile(manifestPath, '{ "broken": ')
-  await expect.poll(async () => (await generations(profile, pluginId)).dev?.last_reload?.status, { timeout: 20_000 }).toBe('failed')
+  await expect
+    .poll(async () => (await generations(profile, pluginId)).dev?.last_reload?.status, { timeout: 20_000 })
+    .toBe('failed')
   expect((await generations(profile, pluginId)).dev?.last_reload?.message).toMatch(/manifest/i)
   expect(await current(profile, pluginId)).toBe(before)
   expect((await echoed(profile, pluginId)).value).toMatchObject({ version: 'v1', generation: before })
@@ -108,8 +139,13 @@ test('a broken reload leaves the current generation serving; the fix activates t
   const left = await profile.call('plugin.dev.leave', { plugin_id: pluginId })
   expect(left.dev).toBeNull()
   await profile.call('plugin.disable', { plugin_id: pluginId })
-  await expect.poll(async () => (await generations(profile, pluginId)).generations
-    .filter((generation) => generation.state !== 'retired').length).toBe(0)
+  await expect
+    .poll(
+      async () =>
+        (await generations(profile, pluginId)).generations.filter((generation) => generation.state !== 'retired')
+          .length,
+    )
+    .toBe(0)
 })
 
 // A Conversation on a `plugin:` provider leases the current generation when it
@@ -122,7 +158,13 @@ test('a dev-mode reload keeps a leased provider session on its old generation', 
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   await profile.call('conversation.create', { workspace_id: workspace.id, provider: `plugin:${pluginId}` })
   await writeFile(join(source, 'worker.mjs'), `${await readFile(join(source, 'worker.mjs'), 'utf8')}\n// edited\n`)
-  await expect.poll(async () => (await generations(profile, pluginId)).generations
-    .map((generation) => `${generation.generation}:${generation.state}`).sort(), { timeout: 20_000 })
+  await expect
+    .poll(
+      async () =>
+        (await generations(profile, pluginId)).generations
+          .map((generation) => `${generation.generation}:${generation.state}`)
+          .sort(),
+      { timeout: 20_000 },
+    )
     .toEqual([`${before}:leased`, `${before + 1}:current`])
 })

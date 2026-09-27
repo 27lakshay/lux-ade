@@ -6,7 +6,12 @@ import { QuitCoordinator } from './quit-coordinator.ts'
 
 const settle = () => new Promise((done) => setImmediate(done))
 const quitEvent = () => {
-  const event = { prevented: false, preventDefault() { event.prevented = true } }
+  const event = {
+    prevented: false,
+    preventDefault() {
+      event.prevented = true
+    },
+  }
   return event
 }
 
@@ -15,19 +20,38 @@ const quitEvent = () => {
 function harness() {
   const log = []
   let windowCancels = false
-  const quit = new QuitCoordinator(() => { log.push('requestQuit'); attempt() }, (error) => log.push(`error:${error}`))
+  const quit = new QuitCoordinator(
+    () => {
+      log.push('requestQuit')
+      attempt()
+    },
+    (error) => log.push(`error:${error}`),
+  )
   function attempt() {
     const before = quitEvent()
     quit.holdQuit(before)
-    if (before.prevented) { log.push('held'); return }
-    if (windowCancels) { log.push('window-cancelled'); return }
+    if (before.prevented) {
+      log.push('held')
+      return
+    }
+    if (windowCancels) {
+      log.push('window-cancelled')
+      return
+    }
     const will = quitEvent()
     log.push('will-quit')
     quit.finishQuit(will)
     // Teardown may already have re-entered the quit; record the exit only here.
     if (!will.prevented) log.push('quit')
   }
-  return { quit, log, attempt, setWindowCancels: (value) => { windowCancels = value } }
+  return {
+    quit,
+    log,
+    attempt,
+    setWindowCancels: (value) => {
+      windowCancels = value
+    },
+  }
 }
 
 test('a guard that released before a later guard failed is asked again on the next quit', async () => {
@@ -35,7 +59,15 @@ test('a guard that released before a later guard failed is asked again on the ne
   let draftDirty = true
   let draftFlushes = 0
   let browserOk = false
-  quit.registerGuard(() => draftDirty ? async () => { draftFlushes += 1; draftDirty = false; return true } : null)
+  quit.registerGuard(() =>
+    draftDirty
+      ? async () => {
+          draftFlushes += 1
+          draftDirty = false
+          return true
+        }
+      : null,
+  )
   quit.registerGuard(() => async () => browserOk)
   attempt()
   await settle()
@@ -52,7 +84,10 @@ test('a guard that released before a later guard failed is asked again on the ne
 test('a failing first guard keeps ADE open and is asked again', async () => {
   const { quit, log, attempt } = harness()
   let calls = 0
-  quit.registerGuard(() => async () => { calls += 1; return calls > 1 })
+  quit.registerGuard(() => async () => {
+    calls += 1
+    return calls > 1
+  })
   attempt()
   await settle()
   assert.deepEqual(log, ['held'])
@@ -66,8 +101,13 @@ test('a window that cancels the quit leaves teardown unrun and guards re-armed',
   const { quit, log, attempt, setWindowCancels } = harness()
   let torn = 0
   let guardRuns = 0
-  quit.registerGuard(() => async () => { guardRuns += 1; return true })
-  quit.registerTeardown(() => { torn += 1 })
+  quit.registerGuard(() => async () => {
+    guardRuns += 1
+    return true
+  })
+  quit.registerTeardown(() => {
+    torn += 1
+  })
   setWindowCancels(true)
   attempt()
   await settle()
@@ -84,8 +124,13 @@ test('a window that cancels the quit leaves teardown unrun and guards re-armed',
 test('teardown runs once, in order, even when one step throws', async () => {
   const { quit, log, attempt } = harness()
   const order = []
-  quit.registerTeardown(async () => { order.push('owner'); throw new Error('unregister failed') })
-  quit.registerTeardown(() => { order.push('client') })
+  quit.registerTeardown(async () => {
+    order.push('owner')
+    throw new Error('unregister failed')
+  })
+  quit.registerTeardown(() => {
+    order.push('client')
+  })
   attempt()
   await settle()
   assert.deepEqual(order, ['owner', 'client'])
@@ -96,7 +141,10 @@ test('teardown runs once, in order, even when one step throws', async () => {
 test('guards are not asked again once teardown has started', async () => {
   const { quit, attempt } = harness()
   let guardRuns = 0
-  quit.registerGuard(() => { guardRuns += 1; return null })
+  quit.registerGuard(() => {
+    guardRuns += 1
+    return null
+  })
   attempt()
   await settle()
   assert.equal(guardRuns, 1)
@@ -106,8 +154,14 @@ test('a rejected flush keeps ADE open and re-arms every guard', async () => {
   const { quit, log, attempt } = harness()
   let first = 0
   let fail = true
-  quit.registerGuard(() => async () => { first += 1; return true })
-  quit.registerGuard(() => async () => { if (fail) throw new Error('disk'); return true })
+  quit.registerGuard(() => async () => {
+    first += 1
+    return true
+  })
+  quit.registerGuard(() => async () => {
+    if (fail) throw new Error('disk')
+    return true
+  })
   attempt()
   await settle()
   assert.equal(log.at(-1), 'error:Error: disk')

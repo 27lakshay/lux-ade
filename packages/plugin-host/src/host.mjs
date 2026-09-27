@@ -21,7 +21,7 @@ function toStderr(chunk, ...rest) {
   return stderr(/** @type {string | Uint8Array} */ (chunk), /** @type {(error?: Error | null) => void} */ (callback))
 }
 
-process.stdout.write = (toStderr)
+process.stdout.write = toStderr
 for (const name of /** @type {const} */ (['log', 'info', 'debug', 'trace', 'dir'])) {
   console[name] = (...parts) => console.error(...parts)
 }
@@ -47,6 +47,11 @@ const host = createHost()
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 lines.on('line', (line) => {
   if (line.trim() === '') return
-  host.handleLine(line).then((response) => { if (response) send(response) }, (error) => fatal('handler failure', error))
+  host.handleLine(line).then(
+    (response) => {
+      if (response) send(response)
+    },
+    (error) => fatal('handler failure', error),
+  )
 })
 lines.on('close', () => process.exit(0))

@@ -10,8 +10,7 @@ test('a stop settles as exited only after a child that ignores TERM and HUP is g
   const stream = TerminalStream.open(profile, ...target)
   const runId = (await stream.snapshot()).run_id as string
   // A background child that ignores the signals a shell hang-up and a polite stop send.
-  stream.send({ op: 'input', run_id: runId,
-    data: `(trap '' TERM HUP INT; exec sleep 600) & echo "stub""born:"$!\n` })
+  stream.send({ op: 'input', run_id: runId, data: `(trap '' TERM HUP INT; exec sleep 600) & echo "stub""born:"$!\n` })
   const stubborn = Number((await stream.waitForText(/stubborn:(\d+)/))[1])
   await ade.ledger.own(stubborn, 'TERM-ignoring terminal child')
   expect(await isRunning(stubborn)).toBe(true)
@@ -37,7 +36,10 @@ test('a stop settles as exited only after a child that ignores TERM and HUP is g
 
 test('a stopped extra terminal can be retired, and a running one cannot', async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
-  const { terminal_id: terminalId } = await profile.call('terminal.create', { workspace_id: workspace.id, operation_id: 'retire-me' })
+  const { terminal_id: terminalId } = await profile.call('terminal.create', {
+    workspace_id: workspace.id,
+    operation_id: 'retire-me',
+  })
   const target = [workspace.id, terminalId] as const
   const stream = TerminalStream.open(profile, ...target)
   const runId = (await stream.snapshot()).run_id as string

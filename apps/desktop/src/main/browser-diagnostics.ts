@@ -4,9 +4,23 @@
 // redaction, bounding and paging rules live in browser-diagnostics-core.ts.
 import type { WebContents } from 'electron'
 import { browserTabPage } from './browser'
-import { clip, consoleEntry, DIAGNOSTICS_EXCLUDED, flushNetwork, networkEvent, networkTracker, pushRing, readPage,
-  REDACTION_POLICY, ring, type ConsoleEntry, type NetworkEntry, type NetworkSummary, type NetworkTracker,
-  type Ring } from './browser-diagnostics-core'
+import {
+  clip,
+  consoleEntry,
+  DIAGNOSTICS_EXCLUDED,
+  flushNetwork,
+  networkEvent,
+  networkTracker,
+  pushRing,
+  readPage,
+  REDACTION_POLICY,
+  ring,
+  type ConsoleEntry,
+  type NetworkEntry,
+  type NetworkSummary,
+  type NetworkTracker,
+  type Ring,
+} from './browser-diagnostics-core'
 
 /** Tabs with retained capture per owner process; the oldest idle one is evicted first. */
 const MAX_COLLECTORS = 16
@@ -16,9 +30,17 @@ const RING_BYTES = 512 * 1024
 const PAGE_BYTES = 768 * 1024
 
 export type Collector = {
-  key: string; tabId: string; contents: WebContents; attached: boolean; reason: string | null
-  attachedAtMs: number | null; holders: Set<string>; detachments: number
-  console: Ring<ConsoleEntry>; network: Ring<NetworkEntry>; tracker: NetworkTracker
+  key: string
+  tabId: string
+  contents: WebContents
+  attached: boolean
+  reason: string | null
+  attachedAtMs: number | null
+  holders: Set<string>
+  detachments: number
+  console: Ring<ConsoleEntry>
+  network: Ring<NetworkEntry>
+  tracker: NetworkTracker
   onMessage: (event: unknown, method: string, params: unknown, sessionId?: string) => void
   onDetach: (event: unknown, reason: string) => void
   onDestroyed: () => void
@@ -44,14 +66,27 @@ function endCapture(collector: Collector, reason: string): void {
 
 function collectorFor(key: string, tabId: string, contents: WebContents): Collector {
   const collector: Collector = {
-    key, tabId, contents, attached: false, reason: 'not_attached', attachedAtMs: null, holders: new Set(), detachments: 0,
-    console: ring(RING_ITEMS, RING_BYTES), network: ring(RING_ITEMS, RING_BYTES), tracker: networkTracker(),
+    key,
+    tabId,
+    contents,
+    attached: false,
+    reason: 'not_attached',
+    attachedAtMs: null,
+    holders: new Set(),
+    detachments: 0,
+    console: ring(RING_ITEMS, RING_BYTES),
+    network: ring(RING_ITEMS, RING_BYTES),
+    tracker: networkTracker(),
     onMessage: (_event, method, params, sessionId) => {
       // Child targets carry a session ID; capture covers the tab's own page only.
       if (sessionId) return
       const at = Date.now()
       const entry = consoleEntry(method, params, 0, at)
-      if (entry) { entry.seq = ++sequence; pushRing(collector.console, entry); return }
+      if (entry) {
+        entry.seq = ++sequence
+        pushRing(collector.console, entry)
+        return
+      }
       if (method.startsWith('Network.')) pushNetwork(collector, networkEvent(collector.tracker, method, params, at))
     },
     onDetach: (_event, reason) => endCapture(collector, reason || 'detached'),
@@ -68,7 +103,11 @@ function collectorFor(key: string, tabId: string, contents: WebContents): Collec
 function retire(collector: Collector, reason: string): void {
   if (collector.attached) {
     endCapture(collector, reason)
-    try { collector.contents.debugger.detach() } catch { /* The page may already be gone. */ }
+    try {
+      collector.contents.debugger.detach()
+    } catch {
+      /* The page may already be gone. */
+    }
   }
   if (!collector.contents.isDestroyed()) collector.contents.removeListener('destroyed', collector.onDestroyed)
   collectors.delete(collector.key)
@@ -77,7 +116,9 @@ function retire(collector: Collector, reason: string): void {
 async function startCapture(collector: Collector): Promise<void> {
   const debug = collector.contents.debugger
   if (debug.isAttached()) throw new Error('conflict: another debugger client holds this tab; close it and retry')
-  try { debug.attach('1.3') } catch (error) {
+  try {
+    debug.attach('1.3')
+  } catch (error) {
     throw new Error(`conflict: the debugger could not attach, as when DevTools holds the tab: ${String(error)}`)
   }
   debug.on('message', collector.onMessage)
@@ -91,7 +132,11 @@ async function startCapture(collector: Collector): Promise<void> {
     await debug.sendCommand('Network.enable')
   } catch (error) {
     endCapture(collector, 'enable_failed')
-    try { debug.detach() } catch { /* Already detached. */ }
+    try {
+      debug.detach()
+    } catch {
+      /* Already detached. */
+    }
     throw new Error(`unavailable: diagnostics could not start on this tab: ${String(error)}`)
   }
 }
@@ -141,13 +186,21 @@ export function releaseDiagnostics(collector: Collector, holder: string): void {
   collector.holders.delete(holder)
   if (collector.holders.size || !collector.attached) return
   endCapture(collector, 'requested')
-  try { collector.contents.debugger.detach() } catch { /* Already detached. */ }
+  try {
+    collector.contents.debugger.detach()
+  } catch {
+    /* Already detached. */
+  }
 }
 
 function attachment(collector: Collector | undefined): Record<string, unknown> {
   if (!collector) return { state: 'detached', reason: 'not_attached', attached_at_ms: null, holders: [] }
-  return { state: collector.attached ? 'attached' : 'detached', reason: collector.attached ? null : collector.reason,
-    attached_at_ms: collector.attachedAtMs, holders: [...collector.holders].sort() }
+  return {
+    state: collector.attached ? 'attached' : 'detached',
+    reason: collector.attached ? null : collector.reason,
+    attached_at_ms: collector.attachedAtMs,
+    holders: [...collector.holders].sort(),
+  }
 }
 
 /** The tab's collector, after checking the exact tab still exists under the live owner. */
@@ -168,8 +221,12 @@ export async function diagnosticsDetach(profileId: string, tabId: unknown): Prom
   return { type: 'browser_diagnostics_state', tab_id: id, attachment: attachment(collector) }
 }
 
-export async function diagnosticsRead(profileId: string, tabId: unknown, after: unknown,
-  limit: unknown): Promise<Record<string, unknown>> {
+export async function diagnosticsRead(
+  profileId: string,
+  tabId: unknown,
+  after: unknown,
+  limit: unknown,
+): Promise<Record<string, unknown>> {
   if (after !== undefined && (typeof after !== 'number' || !Number.isSafeInteger(after) || after < 0)) {
     throw new Error('invalid_request: after must be a non-negative integer')
   }
@@ -177,10 +234,21 @@ export async function diagnosticsRead(profileId: string, tabId: unknown, after: 
     throw new Error('invalid_request: limit must be between 1 and 200')
   }
   const { tabId: id, collector } = await existingCollector(profileId, tabId)
-  const page = readPage(collector?.console.items ?? [], collector?.network.items ?? [], (after) ?? 0,
-    (limit) ?? 100, PAGE_BYTES)
-  return { type: 'browser_diagnostics', tab_id: id, attachment: attachment(collector), ...page,
+  const page = readPage(
+    collector?.console.items ?? [],
+    collector?.network.items ?? [],
+    after ?? 0,
+    limit ?? 100,
+    PAGE_BYTES,
+  )
+  return {
+    type: 'browser_diagnostics',
+    tab_id: id,
+    attachment: attachment(collector),
+    ...page,
     in_flight: collector?.tracker.pending.size ?? 0,
     dropped: { console: collector?.console.dropped ?? 0, network: collector?.network.dropped ?? 0 },
-    redaction: REDACTION_POLICY, excluded: DIAGNOSTICS_EXCLUDED }
+    redaction: REDACTION_POLICY,
+    excluded: DIAGNOSTICS_EXCLUDED,
+  }
 }

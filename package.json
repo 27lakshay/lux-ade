@@ -20,6 +20,8 @@
     "test:e2e:package": "playwright test --config playwright.package.config.ts",
     "test:e2e:live": "python3 scripts/live_provider_check.py",
     "test:e2e:live:desktop": "playwright test --config playwright.live.config.ts",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "lint:fix": "oxlint --type-aware --fix",
     "deadcode": "fallow dead-code --workspace '@ade/*'",
@@ -33,6 +35,7 @@
     "electron-builder": "26.15.3",
     "fallow": "3.28.0",
     "json-schema-to-typescript": "16.0.0",
+    "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
     "oxlint-tsgolint": "7.0.2003",
     "typescript": "7.0.2"

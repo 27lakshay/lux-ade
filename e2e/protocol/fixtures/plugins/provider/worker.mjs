@@ -28,8 +28,24 @@ const methods = {
   },
   send: (params) => {
     const turn = `turn-${process.pid}-${++turns}`
-    const user = { id: params.message_id ?? `${turn}-user`, client_id: params.submission ?? null, turn, role: 'user', kind: 'text', text: params.text, status: 'completed' }
-    const reply = { id: `${turn}-assistant`, client_id: null, turn, role: 'assistant', kind: 'text', text: 'Hello plugin', status: 'completed' }
+    const user = {
+      id: params.message_id ?? `${turn}-user`,
+      client_id: params.submission ?? null,
+      turn,
+      role: 'user',
+      kind: 'text',
+      text: params.text,
+      status: 'completed',
+    }
+    const reply = {
+      id: `${turn}-assistant`,
+      client_id: null,
+      turn,
+      role: 'assistant',
+      kind: 'text',
+      text: 'Hello plugin',
+      status: 'completed',
+    }
     history.push(user, reply)
     setImmediate(() => {
       event({ type: 'submitted', submission: params.submission, turn })
@@ -44,13 +60,15 @@ const methods = {
   answer: () => ({}),
 }
 
-createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line', (line) => {
-  if (!line.trim()) return
-  const message = JSON.parse(line)
-  const handler = methods[message.method]
-  if (!handler) {
-    write({ id: message.id, error: { code: -32601, message: `Unknown method ${message.method}` } })
-    return
-  }
-  write({ id: message.id, result: handler(message.params ?? {}) })
-}).on('close', () => process.exit(0))
+createInterface({ input: process.stdin, crlfDelay: Infinity })
+  .on('line', (line) => {
+    if (!line.trim()) return
+    const message = JSON.parse(line)
+    const handler = methods[message.method]
+    if (!handler) {
+      write({ id: message.id, error: { code: -32601, message: `Unknown method ${message.method}` } })
+      return
+    }
+    write({ id: message.id, result: handler(message.params ?? {}) })
+  })
+  .on('close', () => process.exit(0))

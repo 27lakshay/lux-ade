@@ -7,8 +7,18 @@
 // after the provider exits: across a fresh observation, a later daemon start,
 // and until it exits itself.
 import { join } from 'node:path'
-import { expect, isRunning, prompts, send, test, turnReply, waitForIdle, waitForMessage, startConversation,
-  type ScratchProfile } from '../fixtures'
+import {
+  expect,
+  isRunning,
+  prompts,
+  send,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  startConversation,
+  type ScratchProfile,
+} from '../fixtures'
 import { mockDirectory } from '../fixtures/providers'
 import { waitForAttemptRecord, waitForPidFile, waitForRecordedDescendant } from '../fixtures/recovery'
 
@@ -23,13 +33,16 @@ async function recoveryAttempt(profile: ScratchProfile, key: string) {
   return undefined
 }
 
-test('an escaped provider descendant that survives a runtime kill keeps its agent attempt quarantined until it exits', async ({ ade }) => {
+test('an escaped provider descendant that survives a runtime kill keeps its agent attempt quarantined until it exits', async ({
+  ade,
+}) => {
   test.setTimeout(90_000)
   const profile = await ade.profile({ env: { ADE_CODEX_BIN: escapingCodex } })
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.hold)
-  await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId }))
-    .conversation.status).toBe('running')
+  await expect
+    .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation.status)
+    .toBe('running')
   const key = `agent:${conversationId}`
   const record = await waitForAttemptRecord(profile, key)
 
@@ -50,16 +63,21 @@ test('an escaped provider descendant that survives a runtime kill keeps its agen
   expect(after.runtime_instance).not.toBe(before.runtime_instance)
 
   const found = await recoveryAttempt(profile, key)
-  expect(found?.attempt).toMatchObject({ kind: 'provider_turn', classification: 'quarantined', resolved_at: null,
-    runtime_instance: before.runtime_instance })
+  expect(found?.attempt).toMatchObject({
+    kind: 'provider_turn',
+    classification: 'quarantined',
+    resolved_at: null,
+    runtime_instance: before.runtime_instance,
+  })
   expect(found?.attempt.pids).toContain(escapedPid)
   expect(found?.attempt.pids).not.toContain(record.pid)
 
   // Each refusal observes again: the escapee alone keeps the attempt open.
   const refusesWhileEscapeeRuns = async () => {
     const reportId = (await recoveryAttempt(profile, key))!.report.id
-    await expect(profile.call('runtime.recovery.release', { report_id: reportId, attempt_key: key }))
-      .rejects.toThrow(/still running/)
+    await expect(profile.call('runtime.recovery.release', { report_id: reportId, attempt_key: key })).rejects.toThrow(
+      /still running/,
+    )
     await expect(profile.call('agent.resume', { conversation_id: conversationId })).rejects.toThrow()
     await expect(send(profile, conversationId, prompts.turn)).rejects.toThrow()
   }
@@ -67,20 +85,24 @@ test('an escaped provider descendant that survives a runtime kill keeps its agen
   // The record is durable: a new daemon still attributes the escapee to the attempt.
   await profile.restartDaemon('kill')
   await refusesWhileEscapeeRuns()
-  expect((await recoveryAttempt(profile, key))?.attempt)
-    .toMatchObject({ classification: 'quarantined', resolved_at: null })
+  expect((await recoveryAttempt(profile, key))?.attempt).toMatchObject({
+    classification: 'quarantined',
+    resolved_at: null,
+  })
 
   // Once the escapee exits, a later observation settles the attempt and the
   // Conversation continues without replaying the held prompt.
   process.kill(escapedPid, 'SIGKILL')
   await expect.poll(() => isRunning(escapedPid)).toBe(false)
-  await expect.poll(async () => (await recoveryAttempt(profile, key))?.attempt.resolved_at ?? null,
-    { timeout: 30_000 }).not.toBeNull()
+  await expect
+    .poll(async () => (await recoveryAttempt(profile, key))?.attempt.resolved_at ?? null, { timeout: 30_000 })
+    .not.toBeNull()
   await profile.call('agent.resume', { conversation_id: conversationId })
   await waitForIdle(profile, conversationId)
   await send(profile, conversationId, prompts.turn)
   await waitForMessage(profile, conversationId, turnReply.codex)
-  const turnStarts = (await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')
+  const turnStarts = (await profile.mockCalls('codex'))
+    .filter((call) => call.method === 'turn/start')
     .map((call) => (call.params as { input: Array<{ text: string }> }).input[0].text)
   expect(turnStarts).toEqual([prompts.hold, prompts.turn])
 })

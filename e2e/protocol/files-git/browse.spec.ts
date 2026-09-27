@@ -16,10 +16,14 @@ async function tree(root: string, files: Record<string, string>): Promise<void> 
   }
 }
 
-test('browses nested folders in bounded pages whose cursors are single-use and bound to their folder and workspace', async ({ ade, profile }) => {
+test('browses nested folders in bounded pages whose cursors are single-use and bound to their folder and workspace', async ({
+  ade,
+  profile,
+}) => {
   const root = join(ade.root, 'browse')
   await tree(root, { 'src/lib/main.rs': 'fn main() {}\n', 'src/README.md': '# src\n', 'docs/guide.md': 'guide\n' })
-  for (let index = 0; index < 230; index++) await writeFile(join(root, `entry-${String(index).padStart(3, '0')}.txt`), `${index}\n`)
+  for (let index = 0; index < 230; index++)
+    await writeFile(join(root, `entry-${String(index).padStart(3, '0')}.txt`), `${index}\n`)
   const other = join(ade.root, 'other')
   await tree(other, { 'a.txt': 'a\n' })
   const workspace_id = await openWorkspace(profile, root)
@@ -45,17 +49,24 @@ test('browses nested folders in bounded pages whose cursors are single-use and b
   expect(seen.find((entry) => entry.name === 'entry-007.txt')).toMatchObject({ kind: 'file', size: 2 })
 
   // A used cursor is gone; a live one refuses another folder, operation or workspace.
-  await expect(profile.call('file.list', { workspace_id, cursor: cursors[0] })).rejects.toThrow(/expired or was already used/)
+  await expect(profile.call('file.list', { workspace_id, cursor: cursors[0] })).rejects.toThrow(
+    /expired or was already used/,
+  )
   const first = await profile.call('file.list', { workspace_id, limit: 10 })
-  await expect(profile.call('file.list', { workspace_id, path: 'src', cursor: first.next_cursor! }))
-    .rejects.toThrow(/another file operation or target/)
+  await expect(profile.call('file.list', { workspace_id, path: 'src', cursor: first.next_cursor! })).rejects.toThrow(
+    /another file operation or target/,
+  )
   const again = await profile.call('file.list', { workspace_id, limit: 10 })
-  await expect(profile.call('file.list', { workspace_id: otherId, cursor: again.next_cursor! }))
-    .rejects.toThrow(/another workspace/)
+  await expect(profile.call('file.list', { workspace_id: otherId, cursor: again.next_cursor! })).rejects.toThrow(
+    /another workspace/,
+  )
   const forged = await profile.call('file.list', { workspace_id, limit: 10 })
-  await expect(profile.call('file.search', { workspace_id, query: 'entry', cursor: forged.next_cursor! }))
-    .rejects.toThrow(/another file operation or target/)
-  await expect(profile.call('file.list', { workspace_id, cursor: 'not-a-cursor' })).rejects.toThrow(/Invalid file cursor/)
+  await expect(
+    profile.call('file.search', { workspace_id, query: 'entry', cursor: forged.next_cursor! }),
+  ).rejects.toThrow(/another file operation or target/)
+  await expect(profile.call('file.list', { workspace_id, cursor: 'not-a-cursor' })).rejects.toThrow(
+    /Invalid file cursor/,
+  )
   await expect(profile.call('file.list', { workspace_id, limit: 101 })).rejects.toThrow()
   await expect(profile.rpc({ op: 'file.list', workspace_id, limit: 0 })).rejects.toThrow(/page limit/)
 
@@ -71,8 +82,12 @@ test('browses nested folders in bounded pages whose cursors are single-use and b
   let searchCursor: string | null = null
   let pages = 0
   do {
-    const page: SearchPage = await profile.call('file.search', { workspace_id, query: 'ENTRY-', limit: 100,
-      ...(searchCursor ? { cursor: searchCursor } : {}) })
+    const page: SearchPage = await profile.call('file.search', {
+      workspace_id,
+      query: 'ENTRY-',
+      limit: 100,
+      ...(searchCursor ? { cursor: searchCursor } : {}),
+    })
     expect(page.results.length).toBeLessThanOrEqual(100)
     matches.push(...page.results.map((entry) => entry.path))
     searchCursor = page.next_cursor
@@ -84,12 +99,20 @@ test('browses nested folders in bounded pages whose cursors are single-use and b
   // The CLI drives the same commands.
   const listed = await profile.cli('file', 'list', workspace_id, 'src', '--limit', '1')
   expect(listed.code).toBe(0)
-  expect((listed.json!.entries as Entry[])).toHaveLength(1)
+  expect(listed.json!.entries as Entry[]).toHaveLength(1)
   expect(listed.json!.next_cursor).toEqual(expect.any(String))
-  const continued = await profile.cli('file', 'list', workspace_id, 'src', '--cursor', listed.json!.next_cursor as string)
+  const continued = await profile.cli(
+    'file',
+    'list',
+    workspace_id,
+    'src',
+    '--cursor',
+    listed.json!.next_cursor as string,
+  )
   expect(continued.code).toBe(0)
-  expect([...(listed.json!.entries as Entry[]), ...(continued.json!.entries as Entry[])].map((entry) => entry.name).sort())
-    .toEqual(['README.md', 'lib'])
+  expect(
+    [...(listed.json!.entries as Entry[]), ...(continued.json!.entries as Entry[])].map((entry) => entry.name).sort(),
+  ).toEqual(['README.md', 'lib'])
   const searched = await profile.cli('file', 'search', workspace_id, 'guide')
   expect(searched.code).toBe(0)
   expect(searched.json!.results).toEqual([{ name: 'guide.md', path: 'docs/guide.md', kind: 'file', size: 6 }])
@@ -113,10 +136,14 @@ test('never leaves the workspace through parent paths, absolute paths or symboli
   for (const entry of top.entries) if (entry.kind === 'symlink') expect(entry.size).toBeNull()
 
   for (const path of ['..', '../secret', 'inside/../../secret', secretDir, '/etc']) {
-    await expect(profile.call('file.list', { workspace_id, path }), path).rejects.toThrow(/relative without parent traversal/)
+    await expect(profile.call('file.list', { workspace_id, path }), path).rejects.toThrow(
+      /relative without parent traversal/,
+    )
   }
   for (const path of ['../secret/key.txt', `${secretDir}/key.txt`]) {
-    await expect(profile.call('file.preview', { workspace_id, path }), path).rejects.toThrow(/relative without parent traversal/)
+    await expect(profile.call('file.preview', { workspace_id, path }), path).rejects.toThrow(
+      /relative without parent traversal/,
+    )
   }
   // Links are listed, never followed, even when they point inside the workspace.
   for (const path of ['dir-link', 'inner-link', 'dir-link/key.txt']) {
@@ -135,14 +162,24 @@ test('never leaves the workspace through parent paths, absolute paths or symboli
   expect(await readFile(join(secretDir, 'key.txt'), 'utf8')).toBe('outside secret\n')
 })
 
-test('a large tree lists and searches past the scan budgets, and an unreadable folder is refused or skipped', async ({ ade, profile }) => {
+test('a large tree lists and searches past the scan budgets, and an unreadable folder is refused or skipped', async ({
+  ade,
+  profile,
+}) => {
   const root = join(ade.root, 'large')
   await mkdir(join(root, 'wide'), { recursive: true })
   for (let batch = 0; batch < 10_050; batch += 150) {
-    await Promise.all(Array.from({ length: Math.min(150, 10_050 - batch) },
-      (_, offset) => writeFile(join(root, 'wide', `n${batch + offset}`), '')))
+    await Promise.all(
+      Array.from({ length: Math.min(150, 10_050 - batch) }, (_, offset) =>
+        writeFile(join(root, 'wide', `n${batch + offset}`), ''),
+      ),
+    )
   }
-  await tree(root, { 'zz-deep/target-match.txt': 'found\n', 'locked/hidden-match.txt': 'hidden\n', 'open/visible-match.txt': 'x\n' })
+  await tree(root, {
+    'zz-deep/target-match.txt': 'found\n',
+    'locked/hidden-match.txt': 'hidden\n',
+    'open/visible-match.txt': 'x\n',
+  })
   const workspace_id = await openWorkspace(profile, root)
 
   // Listing continues beyond one request's 10,000-name budget.
@@ -150,7 +187,11 @@ test('a large tree lists and searches past the scan budgets, and an unreadable f
   let cursor: string | null = null
   let pages = 0
   do {
-    const page: ListPage = await profile.call('file.list', { workspace_id, path: 'wide', ...(cursor ? { cursor } : {}) })
+    const page: ListPage = await profile.call('file.list', {
+      workspace_id,
+      path: 'wide',
+      ...(cursor ? { cursor } : {}),
+    })
     expect(page.entries.length).toBeLessThanOrEqual(100)
     total += page.entries.length
     cursor = page.next_cursor
@@ -165,7 +206,11 @@ test('a large tree lists and searches past the scan budgets, and an unreadable f
   let searchCursor: string | null = null
   let searchPages = 0
   do {
-    const page: SearchPage = await profile.call('file.search', { workspace_id, query: 'target-match', ...(searchCursor ? { cursor: searchCursor } : {}) })
+    const page: SearchPage = await profile.call('file.search', {
+      workspace_id,
+      query: 'target-match',
+      ...(searchCursor ? { cursor: searchCursor } : {}),
+    })
     found.push(...page.results.map((entry) => entry.path))
     searchCursor = page.next_cursor
     searchPages++
@@ -177,12 +222,18 @@ test('a large tree lists and searches past the scan budgets, and an unreadable f
   // but still finds everything else and says the result is incomplete.
   await chmod(join(root, 'locked'), 0o000)
   try {
-    await expect(profile.call('file.list', { workspace_id, path: 'locked' })).rejects.toThrow(/Permission denied|denied/i)
+    await expect(profile.call('file.list', { workspace_id, path: 'locked' })).rejects.toThrow(
+      /Permission denied|denied/i,
+    )
     const partial: string[] = []
     let incomplete = false
     let next: string | null = null
     do {
-      const page: SearchPage = await profile.call('file.search', { workspace_id, query: '-match', ...(next ? { cursor: next } : {}) })
+      const page: SearchPage = await profile.call('file.search', {
+        workspace_id,
+        query: '-match',
+        ...(next ? { cursor: next } : {}),
+      })
       partial.push(...page.results.map((entry) => entry.path))
       incomplete ||= page.incomplete
       next = page.next_cursor
@@ -194,7 +245,10 @@ test('a large tree lists and searches past the scan budgets, and an unreadable f
   }
 })
 
-test('changed paths invalidate cursors, a daemon restart drops them, and a replaced root needs a rebind', async ({ ade, profile }) => {
+test('changed paths invalidate cursors, a daemon restart drops them, and a replaced root needs a rebind', async ({
+  ade,
+  profile,
+}) => {
   const root = join(ade.root, 'changing')
   await tree(root, { 'dir/a.txt': 'a\n' })
   for (let index = 0; index < 30; index++) await writeFile(join(root, 'dir', `f${index}.txt`), '')
@@ -203,7 +257,9 @@ test('changed paths invalidate cursors, a daemon restart drops them, and a repla
   // A folder that changes between pages is reported, never silently mixed.
   const first = await profile.call('file.list', { workspace_id, path: 'dir', limit: 5 })
   await writeFile(join(root, 'dir', 'new.txt'), 'new\n')
-  await expect(profile.call('file.list', { workspace_id, path: 'dir', cursor: first.next_cursor! })).rejects.toThrow(/changed; refresh/)
+  await expect(profile.call('file.list', { workspace_id, path: 'dir', cursor: first.next_cursor! })).rejects.toThrow(
+    /changed; refresh/,
+  )
 
   // A folder renamed away mid-search fails the continuation.
   await tree(root, { 'moving/sub/f.txt': 'f\n' })
@@ -211,8 +267,9 @@ test('changed paths invalidate cursors, a daemon restart drops them, and a repla
   const search = await profile.call('file.search', { workspace_id, query: 'm', limit: 1 })
   expect(search.next_cursor).toEqual(expect.any(String))
   await rename(join(root, 'moving'), join(root, 'moved'))
-  await expect(profile.call('file.search', { workspace_id, query: 'm', limit: 1, cursor: search.next_cursor! }))
-    .rejects.toThrow(/changed|refresh|No such file/)
+  await expect(
+    profile.call('file.search', { workspace_id, query: 'm', limit: 1, cursor: search.next_cursor! }),
+  ).rejects.toThrow(/changed|refresh|No such file/)
 
   // A preview of a path that vanished fails cleanly.
   await rm(join(root, 'dir', 'a.txt'))
@@ -221,7 +278,9 @@ test('changed paths invalidate cursors, a daemon restart drops them, and a repla
   // Cursors live in the daemon; a restart invalidates them instead of resuming a stale scan.
   const live = await profile.call('file.list', { workspace_id, path: 'dir', limit: 5 })
   await profile.restartDaemon('kill')
-  await expect(profile.call('file.list', { workspace_id, path: 'dir', cursor: live.next_cursor! })).rejects.toThrow(/expired/)
+  await expect(profile.call('file.list', { workspace_id, path: 'dir', cursor: live.next_cursor! })).rejects.toThrow(
+    /expired/,
+  )
   expect((await profile.call('file.list', { workspace_id, path: 'dir', limit: 100 })).entries.length).toBe(31)
 
   // A different folder installed at the workspace path is not the workspace.
@@ -230,5 +289,7 @@ test('changed paths invalidate cursors, a daemon restart drops them, and a repla
   await writeFile(join(root, 'impostor.txt'), 'unrelated\n')
   await expect(profile.call('file.list', { workspace_id })).rejects.toThrow(/needs_rebind|rebind/i)
   await expect(profile.call('file.search', { workspace_id, query: 'impostor' })).rejects.toThrow(/needs_rebind|rebind/i)
-  await expect(profile.call('file.preview', { workspace_id, path: 'impostor.txt' })).rejects.toThrow(/needs_rebind|rebind/i)
+  await expect(profile.call('file.preview', { workspace_id, path: 'impostor.txt' })).rejects.toThrow(
+    /needs_rebind|rebind/i,
+  )
 })

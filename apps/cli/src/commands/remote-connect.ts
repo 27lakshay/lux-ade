@@ -12,8 +12,16 @@ export const remoteConnectUsage = `  remote status --host ID --remote-profile ID
       endpoint (remote start's daemon.paired_socket); the host refuses a revoked pairing
 `
 
-const targetOptions = ['--host', '--remote-profile', '--ssh', '--remote-socket', '--host-key', '--timeout-ms',
-  '--pairing', '--token-env'] as const
+const targetOptions = [
+  '--host',
+  '--remote-profile',
+  '--ssh',
+  '--remote-socket',
+  '--host-key',
+  '--timeout-ms',
+  '--pairing',
+  '--token-env',
+] as const
 
 /** The pairing to present, with its token read from the named variable; never from the command line. */
 function pairing(options: Record<string, string>): RemoteTarget['pairing'] {
@@ -74,8 +82,13 @@ export async function runRemoteConnectCommand(words: string[]): Promise<CommandR
     const state = await transport.waitUntilConnected(deadline)
     if (op === undefined) {
       const hello = await transport.request('hello', {}, { timeoutMs: deadline })
-      return { type: 'remote_status', host_id: target.hostId, profile_id: target.profileId,
-        runtime_socket: state.current?.runtimeSocket ?? null, hello }
+      return {
+        type: 'remote_status',
+        host_id: target.hostId,
+        profile_id: target.profileId,
+        runtime_socket: state.current?.runtimeSocket ?? null,
+        hello,
+      }
     }
     return await transport.request(op, fields, { timeoutMs: deadline })
   } finally {

@@ -36,7 +36,8 @@ function expectOrdered(frames: TerminalFrame[]): { reached: number; snapshots: n
       snapshots += 1
     } else if (frame.type === 'terminal') {
       if (expected === null) violation ??= 'live output arrived before any snapshot'
-      else if (frame.offset !== expected) violation ??= `live frame ${live} after snapshot ${snapshots} is at ${frame.offset}, not ${expected}`
+      else if (frame.offset !== expected)
+        violation ??= `live frame ${live} after snapshot ${snapshots} is at ${frame.offset}, not ${expected}`
       expected = (expected ?? (frame.offset as number)) + (frame.bytes as number[]).length
       live += 1
     }
@@ -51,9 +52,18 @@ function expectOrdered(frames: TerminalFrame[]): { reached: number; snapshots: n
  * make the test itself the slow viewer.
  */
 async function floodEnded(frames: TerminalFrame[], timeout: number): Promise<void> {
-  await expect.poll(() => frames.filter((frame) => frame.type === 'terminal').slice(-4)
-    .map((frame) => Buffer.from(frame.bytes as number[]).toString('utf8')).join('').includes('flood-end'),
-  { message: 'the flood to end', timeout }).toBe(true)
+  await expect
+    .poll(
+      () =>
+        frames
+          .filter((frame) => frame.type === 'terminal')
+          .slice(-4)
+          .map((frame) => Buffer.from(frame.bytes as number[]).toString('utf8'))
+          .join('')
+          .includes('flood-end'),
+      { message: 'the flood to end', timeout },
+    )
+    .toBe(true)
 }
 
 /** Resident memory of a process, in bytes, from ps. */
@@ -80,15 +90,29 @@ class SlowViewer {
       for (let end = this.buffered.indexOf(10); end >= 0; end = this.buffered.indexOf(10)) {
         const line = this.buffered.subarray(0, end).toString('utf8')
         this.buffered = this.buffered.subarray(end + 1)
-        try { this.frames.push(JSON.parse(line) as TerminalFrame) } catch { this.frames.push({ type: 'invalid', line }) }
+        try {
+          this.frames.push(JSON.parse(line) as TerminalFrame)
+        } catch {
+          this.frames.push({ type: 'invalid', line })
+        }
       }
       this.allowance -= chunk.length
       if (this.allowance <= 0) this.socket.pause()
     })
-    this.socket.on('error', (error) => { this.closedReason ??= error.message })
-    this.socket.on('close', () => { this.closedReason ??= 'closed' })
-    this.socket.write(`${JSON.stringify({ workspace_id: workspaceId, terminal_id: terminalId, op: 'subscribe',
-      snapshot_format: 'xterm-replay-v1' })}\n`)
+    this.socket.on('error', (error) => {
+      this.closedReason ??= error.message
+    })
+    this.socket.on('close', () => {
+      this.closedReason ??= 'closed'
+    })
+    this.socket.write(
+      `${JSON.stringify({
+        workspace_id: workspaceId,
+        terminal_id: terminalId,
+        op: 'subscribe',
+        snapshot_format: 'xterm-replay-v1',
+      })}\n`,
+    )
     this.socket.pause()
     // A rate limiter, not a wait: every tick lets a little more through.
     this.timer = setInterval(() => {
@@ -121,10 +145,16 @@ test('attachments opened during a flood each get their snapshot, then live outpu
   const driver = TerminalStream.open(profile, ...target)
   const runId = (await driver.snapshot()).run_id as string
   const stop = join(profile.root, 'flood-stop')
-  driver.send({ op: 'input', run_id: runId, data: `while [ ! -e '${stop}' ]; do head -c 262144 /dev/zero | tr '\\0' f; done; ` +
-    'echo; echo "flo""od-end"\n' })
-  await expect.poll(async () => (await terminalMetrics(profile, ...target))!.terminal_bytes as number,
-    { message: 'the flood to start' }).toBeGreaterThan(1024 * 1024)
+  driver.send({
+    op: 'input',
+    run_id: runId,
+    data: `while [ ! -e '${stop}' ]; do head -c 262144 /dev/zero | tr '\\0' f; done; ` + 'echo; echo "flo""od-end"\n',
+  })
+  await expect
+    .poll(async () => (await terminalMetrics(profile, ...target))!.terminal_bytes as number, {
+      message: 'the flood to start',
+    })
+    .toBeGreaterThan(1024 * 1024)
 
   // Large replay snapshots (below the 4 MiB replay bound) and screen snapshots,
   // then small incomplete ones once the replay bound is passed.
@@ -136,8 +166,11 @@ test('attachments opened during a flood each get their snapshot, then live outpu
     const viewer = TerminalStream.open(profile, ...target, formats[round % formats.length])
     const snapshot = await viewer.snapshot()
     expect(snapshot).toMatchObject({ run_id: runId })
-    await viewer.waitFor('live output after the snapshot', () =>
-      viewer.frames.filter((frame) => frame.type === 'terminal').length >= 20, { timeout: 30_000 })
+    await viewer.waitFor(
+      'live output after the snapshot',
+      () => viewer.frames.filter((frame) => frame.type === 'terminal').length >= 20,
+      { timeout: 30_000 },
+    )
     expect(viewer.closed).toBe(false)
     const ordered = expectOrdered(viewer.frames)
     expect(ordered.live).toBeGreaterThanOrEqual(20)
@@ -150,7 +183,9 @@ test('attachments opened during a flood each get their snapshot, then live outpu
   driver.close()
 })
 
-test('a viewer slower than the flood is resynchronized from fresh snapshots, never closed, with bounded memory', async ({ profile }) => {
+test('a viewer slower than the flood is resynchronized from fresh snapshots, never closed, with bounded memory', async ({
+  profile,
+}) => {
   test.setTimeout(180_000)
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const target = [workspace.id, workspace.terminal_id] as const
@@ -166,17 +201,28 @@ test('a viewer slower than the flood is resynchronized from fresh snapshots, nev
   // About 16 MiB of output, several MiB of frames per second. The slow viewer
   // reads 64 KiB every 50 ms, about 1.3 MiB/s, far less than the flood.
   const slow = new SlowViewer(profile, ...target, 64 * 1024, 50)
-  await expect.poll(() => slow.frames.some((frame) => frame.type === 'snapshot'), { message: 'the first snapshot' }).toBe(true)
+  await expect
+    .poll(() => slow.frames.some((frame) => frame.type === 'snapshot'), { message: 'the first snapshot' })
+    .toBe(true)
   const flood = 16 * 1024 * 1024
-  driver.send({ op: 'input', run_id: runId, data: `head -c ${flood} /dev/zero | tr '\\0' s; echo; echo "flo""od-end"\n` })
+  driver.send({
+    op: 'input',
+    run_id: runId,
+    data: `head -c ${flood} /dev/zero | tr '\\0' s; echo; echo "flo""od-end"\n`,
+  })
 
   // While the flood runs, the runtime's memory stays near its baseline: a
   // lagging viewer holds at most its budget, not the flood.
   let peak = baseline
-  await expect.poll(async () => {
-    peak = Math.max(peak, residentBytes(runtimePid))
-    return (await terminalMetrics(profile, ...target))!.viewer_resyncs as number
-  }, { message: 'the slow viewer to be resynchronized', timeout: 90_000 }).toBeGreaterThanOrEqual(1)
+  await expect
+    .poll(
+      async () => {
+        peak = Math.max(peak, residentBytes(runtimePid))
+        return (await terminalMetrics(profile, ...target))!.viewer_resyncs as number
+      },
+      { message: 'the slow viewer to be resynchronized', timeout: 90_000 },
+    )
+    .toBeGreaterThanOrEqual(1)
   await floodEnded(driver.frames, 150_000)
   peak = Math.max(peak, residentBytes(runtimePid))
   expect(slow.closed).toBeNull()
@@ -192,8 +238,12 @@ test('a viewer slower than the flood is resynchronized from fresh snapshots, nev
   // The slow viewer catches up once it reads freely: fresh snapshots marked
   // as resyncs, each followed by live output in order, and it reaches the end.
   slow.unthrottle()
-  await expect.poll(() => ({ reached: expectOrdered(slow.frames).reached, closed: slow.closed }),
-    { message: 'the slow viewer to catch up', timeout: 60_000 }).toEqual({ reached: total, closed: null })
+  await expect
+    .poll(() => ({ reached: expectOrdered(slow.frames).reached, closed: slow.closed }), {
+      message: 'the slow viewer to catch up',
+      timeout: 60_000,
+    })
+    .toEqual({ reached: total, closed: null })
   const resyncs = slow.frames.filter((frame) => frame.type === 'snapshot' && frame.resync === true)
   expect(resyncs.length).toBeGreaterThanOrEqual(1)
   for (const frame of resyncs) expect(frame).toMatchObject({ run_id: runId, attachment: slow.frames[0].attachment })
@@ -201,8 +251,19 @@ test('a viewer slower than the flood is resynchronized from fresh snapshots, nev
 
   // It is still live: new output reaches it directly.
   driver.send({ op: 'input', run_id: runId, data: 'echo "af""ter-resync"\n' })
-  await expect.poll(() => slow.frames.some((frame) => frame.type === 'terminal' &&
-    Buffer.from(frame.bytes as number[]).toString('utf8').includes('after-resync')), { message: 'live output after the resync' }).toBe(true)
+  await expect
+    .poll(
+      () =>
+        slow.frames.some(
+          (frame) =>
+            frame.type === 'terminal' &&
+            Buffer.from(frame.bytes as number[])
+              .toString('utf8')
+              .includes('after-resync'),
+        ),
+      { message: 'live output after the resync' },
+    )
+    .toBe(true)
   expect(slow.closed).toBeNull()
   expectOrdered(slow.frames)
   slow.close()

@@ -8,8 +8,18 @@
 // earlier index epoch is refused as expired, not answered from the new index.
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { codexPrompts, expect, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
-  type ScratchProfile } from '../fixtures'
+import {
+  codexPrompts,
+  expect,
+  prompts,
+  send,
+  startConversation,
+  test,
+  turnReply,
+  waitForIdle,
+  waitForMessage,
+  type ScratchProfile,
+} from '../fixtures'
 import { mockDirectory } from '../fixtures/providers'
 import { openConversationView, viewDigest, type ConversationView } from '../fixtures/sync-view'
 
@@ -20,21 +30,33 @@ async function fresh(profile: ScratchProfile, conversationId: string) {
 /** Wait until the view is current, idle and equal to a fresh snapshot. */
 async function converged(view: ConversationView, profile: ScratchProfile, conversationId: string) {
   let expected: Awaited<ReturnType<typeof fresh>> | null = null
-  await expect.poll(async () => {
-    expected = await fresh(profile, conversationId)
-    const state = view.latest()
-    if (state?.status !== 'current' || !state.snapshot) return 'not current'
-    return JSON.stringify(viewDigest(state.snapshot)) === JSON.stringify(viewDigest(expected)) ? 'equal' : 'different'
-  }, { timeout: 30_000, message: 'the view to equal a fresh snapshot' }).toBe('equal')
+  await expect
+    .poll(
+      async () => {
+        expected = await fresh(profile, conversationId)
+        const state = view.latest()
+        if (state?.status !== 'current' || !state.snapshot) return 'not current'
+        return JSON.stringify(viewDigest(state.snapshot)) === JSON.stringify(viewDigest(expected))
+          ? 'equal'
+          : 'different'
+      },
+      { timeout: 30_000, message: 'the view to equal a fresh snapshot' },
+    )
+    .toBe('equal')
   return expected!
 }
 
 function toolPid(profile: ScratchProfile) {
-  return expect.poll(async () => Number((await profile.mockCalls('codex'))
-    .find((call) => call.method === 'fixture/tool')?.tool_pid ?? 0)).toBeGreaterThan(0)
+  return expect
+    .poll(async () =>
+      Number((await profile.mockCalls('codex')).find((call) => call.method === 'fixture/tool')?.tool_pid ?? 0),
+    )
+    .toBeGreaterThan(0)
 }
 
-test('the view repairs itself after a lost connection, a daemon kill and a graceful restart during turns', async ({ profile }) => {
+test('the view repairs itself after a lost connection, a daemon kill and a graceful restart during turns', async ({
+  profile,
+}) => {
   test.setTimeout(150_000)
   const { conversationId } = await startConversation(profile, 'codex')
   const view = await openConversationView(profile, conversationId)
@@ -67,8 +89,14 @@ test('the view repairs itself after a lost connection, a daemon kill and a grace
       await profile.restartDaemon(mode)
       // The client reconnects on its own and the new boot forces a new snapshot.
       await expect.poll(() => view.client()?.getState().bootId, { timeout: 20_000 }).toBe(profile.hello.boot_id)
-      await view.settle((snapshot) => snapshot.boot_id === profile.hello.boot_id && snapshot.conversation.status === 'running')
-      expect(view.states.slice(before).some((entry) => entry.cause === 'stale' && entry.state.snapshot?.boot_id === previous)).toBe(true)
+      await view.settle(
+        (snapshot) => snapshot.boot_id === profile.hello.boot_id && snapshot.conversation.status === 'running',
+      )
+      expect(
+        view.states
+          .slice(before)
+          .some((entry) => entry.cause === 'stale' && entry.state.snapshot?.boot_id === previous),
+      ).toBe(true)
       await profile.releaseMock('codex', 'release-tool')
       await waitForIdle(profile, conversationId)
       const settled = await converged(view, profile, conversationId)
@@ -76,13 +104,16 @@ test('the view repairs itself after a lost connection, a daemon kill and a grace
       // The finished tool appears once: nothing was replayed or duplicated into the view.
       const messages = view.latest()!.snapshot!.messages
       expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length)
-      await expect.poll(async () => (await profile.mockCalls('codex')).filter((call) => call.method === 'fixture/tool').length)
+      await expect
+        .poll(async () => (await profile.mockCalls('codex')).filter((call) => call.method === 'fixture/tool').length)
         .toBe(mode === 'kill' ? 1 : 2)
       // The next held tool waits for its own release.
       await rm(join(mockDirectory(profile.root, 'codex'), 'release-tool'), { force: true })
     }
     // Every frame the view applied after a snapshot was on that snapshot's boot, in order.
-    const revisions = view.forwarded.filter((frame) => frame.boot_id === profile.hello.boot_id).map((frame) => frame.revision)
+    const revisions = view.forwarded
+      .filter((frame) => frame.boot_id === profile.hello.boot_id)
+      .map((frame) => frame.revision)
     for (let index = 1; index < revisions.length; index++) expect(revisions[index]).toBe(revisions[index - 1] + 1)
   } finally {
     view.dispose()
@@ -136,7 +167,9 @@ test('a late snapshot never hides newer frames, even across a daemon restart', a
   }
 })
 
-test('a kept activity cursor catches up exactly after a restart, and a search cursor from an old index epoch expires', async ({ profile }) => {
+test('a kept activity cursor catches up exactly after a restart, and a search cursor from an old index epoch expires', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   for (let turn = 0; turn < 3; turn++) {
     await send(profile, conversationId, `capybara ${turn} ${prompts.turn}`)
@@ -147,7 +180,8 @@ test('a kept activity cursor catches up exactly after a restart, and a search cu
   const cursor = (await profile.call('activity.list', { limit: 1 })).latest_sequence
   // Indexing runs behind the turns: wait until every capybara prompt is
   // searchable, so the one-result page is sure to have a next cursor.
-  await expect.poll(async () => (await profile.call('history.search', { query: 'capybara', limit: 50 })).results.length)
+  await expect
+    .poll(async () => (await profile.call('history.search', { query: 'capybara', limit: 50 })).results.length)
     .toBe(3)
   const page = await profile.call('history.search', { query: 'capybara', limit: 1 })
   expect(page.next_cursor).toBeTruthy()
@@ -164,17 +198,22 @@ test('a kept activity cursor catches up exactly after a restart, and a search cu
   // the range the catch-up page covered: it holds exactly the rows there.
   const through = Math.max(...caughtUp.activities.map((activity) => activity.sequence))
   const all = await profile.call('activity.list', { limit: 200 })
-  expect(caughtUp.activities.map((activity) => activity.id).sort())
-    .toEqual(all.activities.filter((activity) => activity.sequence > cursor && activity.sequence <= through)
-      .map((activity) => activity.id).sort())
+  expect(caughtUp.activities.map((activity) => activity.id).sort()).toEqual(
+    all.activities
+      .filter((activity) => activity.sequence > cursor && activity.sequence <= through)
+      .map((activity) => activity.id)
+      .sort(),
+  )
 
   // The search cursor still pages on the same epoch after the restart ...
   const second = await profile.call('history.search', { query: 'capybara', limit: 1, cursor: page.next_cursor! })
   expect(second.index.epoch).toBe(page.index.epoch)
   // ... and a rebuild moves the epoch, so the old cursor is refused rather than mixed with the new index.
   await profile.call('history.index.rebuild', { expected_epoch: page.index.epoch })
-  await expect(profile.call('history.search', { query: 'capybara', limit: 1, cursor: page.next_cursor! }))
-    .rejects.toThrow(/expired/)
-  await expect.poll(async () => (await profile.call('history.search', { query: 'capybara', limit: 50 })).results.length)
+  await expect(
+    profile.call('history.search', { query: 'capybara', limit: 1, cursor: page.next_cursor! }),
+  ).rejects.toThrow(/expired/)
+  await expect
+    .poll(async () => (await profile.call('history.search', { query: 'capybara', limit: 50 })).results.length)
     .toBe(3)
 })

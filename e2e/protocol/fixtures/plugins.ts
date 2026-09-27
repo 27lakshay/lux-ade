@@ -14,8 +14,11 @@ export const fixturePluginIds: Record<FixturePlugin, string> = { backend: 'e2e.b
 let copies = 0
 
 /** A private copy of a fixture plugin under `root`, optionally with manifest fields replaced. */
-export async function stagePlugin(root: string, plugin: FixturePlugin,
-  manifest: Record<string, unknown> = {}): Promise<string> {
+export async function stagePlugin(
+  root: string,
+  plugin: FixturePlugin,
+  manifest: Record<string, unknown> = {},
+): Promise<string> {
   const target = join(root, 'plugin-sources', `${plugin}-${++copies}`)
   await mkdir(join(root, 'plugin-sources'), { recursive: true })
   await cp(join(__dirname, 'plugins', plugin), target, { recursive: true })
@@ -32,9 +35,15 @@ export async function stagePlugin(root: string, plugin: FixturePlugin,
  * point its `out_dir` setting at a directory the spec can read.
  * Returns that directory (or '' when the plugin has no backend).
  */
-export async function installAndEnable(profile: ScratchProfile, source: string,
-  operationId = `install-${++copies}`): Promise<{ pluginId: string; outDir: string }> {
-  const installed = await profile.call('plugin.install', { operation_id: operationId, source: { kind: 'local', path: source } })
+export async function installAndEnable(
+  profile: ScratchProfile,
+  source: string,
+  operationId = `install-${++copies}`,
+): Promise<{ pluginId: string; outDir: string }> {
+  const installed = await profile.call('plugin.install', {
+    operation_id: operationId,
+    source: { kind: 'local', path: source },
+  })
   const pluginId = installed.plugin.id
   await profile.call('plugin.enable', { plugin_id: pluginId })
   if (!installed.plugin.manifest.entry_points.backend) return { pluginId, outDir: '' }
@@ -47,7 +56,10 @@ export async function installAndEnable(profile: ScratchProfile, source: string,
 /** The JSON lines a fixture plugin wrote to `file` in `outDir`; empty before the first. */
 export async function pluginLines(outDir: string, file: string): Promise<Array<Record<string, unknown>>> {
   const text = await readFile(join(outDir, file), 'utf8').catch(() => '')
-  return text.split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>)
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 /** Create the release file a held fixture command or hook waits for. */

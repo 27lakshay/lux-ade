@@ -5,18 +5,36 @@ import { test } from 'node:test'
 import { CONVERSATION_WINDOW, reduceFrame, startConversationProjection } from '../dist/sync.js'
 
 const conversation = { id: 'c1', title: 'One' }
-const snapshot = (revision, messages = [], boot = 'b1') =>
-  ({ conversation, messages, requests: [], revision, boot_id: boot })
+const snapshot = (revision, messages = [], boot = 'b1') => ({
+  conversation,
+  messages,
+  requests: [],
+  revision,
+  boot_id: boot,
+})
 const message = (id, sequence, text = id) => ({ id, sequence, text })
-const changed = (revision, messages, requests = [], boot = 'b1') =>
-  ({ type: 'conversation_changed', boot_id: boot, revision, conversation, messages, requests })
+const changed = (revision, messages, requests = [], boot = 'b1') => ({
+  type: 'conversation_changed',
+  boot_id: boot,
+  revision,
+  conversation,
+  messages,
+  requests,
+})
 
 test('applies a contiguous conversation_changed by merging, sorting and replacing requests', () => {
   const base = snapshot(4, [message('a', 1), message('b', 2)])
   const outcome = reduceFrame(base, changed(5, [message('c', 3), message('a', 1, 'edited')], [{ id: 'r' }]), 'c1')
   assert.equal(outcome.kind, 'changed')
   assert.equal(outcome.snapshot.revision, 5)
-  assert.deepEqual(outcome.snapshot.messages.map((item) => [item.id, item.text]), [['a', 'edited'], ['b', 'b'], ['c', 'c']])
+  assert.deepEqual(
+    outcome.snapshot.messages.map((item) => [item.id, item.text]),
+    [
+      ['a', 'edited'],
+      ['b', 'b'],
+      ['c', 'c'],
+    ],
+  )
   assert.deepEqual(outcome.snapshot.requests, [{ id: 'r' }])
 })
 
@@ -28,8 +46,10 @@ test('keeps only the newest window of messages', () => {
 })
 
 test('advances the global revision for other frames and other conversations', () => {
-  assert.deepEqual(reduceFrame(snapshot(1), { type: 'catalog', boot_id: 'b1', revision: 2 }, 'c1'),
-    { kind: 'advance', snapshot: snapshot(2) })
+  assert.deepEqual(reduceFrame(snapshot(1), { type: 'catalog', boot_id: 'b1', revision: 2 }, 'c1'), {
+    kind: 'advance',
+    snapshot: snapshot(2),
+  })
   const other = { ...changed(2, [message('x', 1)]), conversation: { id: 'c2' } }
   assert.equal(reduceFrame(snapshot(1), other, 'c1').kind, 'advance')
 })
@@ -42,14 +62,27 @@ test('drops a duplicate at or below the snapshot revision', () => {
 test('asks for a new snapshot on a gap, a boot change or a reload of this conversation', () => {
   assert.deepEqual(reduceFrame(snapshot(5), changed(7, []), 'c1'), { kind: 'resnapshot', reason: 'gap' })
   assert.deepEqual(reduceFrame(snapshot(5), changed(1, [], [], 'b2'), 'c1'), { kind: 'resnapshot', reason: 'boot' })
-  assert.deepEqual(reduceFrame(snapshot(5), { type: 'conversation_reload', boot_id: 'b1', revision: 6, conversation }, 'c1'),
-    { kind: 'resnapshot', reason: 'reload' })
-  assert.equal(reduceFrame(snapshot(5),
-    { type: 'conversation_reload', boot_id: 'b1', revision: 6, conversation: { id: 'c2' } }, 'c1').kind, 'advance')
+  assert.deepEqual(
+    reduceFrame(snapshot(5), { type: 'conversation_reload', boot_id: 'b1', revision: 6, conversation }, 'c1'),
+    { kind: 'resnapshot', reason: 'reload' },
+  )
+  assert.equal(
+    reduceFrame(
+      snapshot(5),
+      { type: 'conversation_reload', boot_id: 'b1', revision: 6, conversation: { id: 'c2' } },
+      'c1',
+    ).kind,
+    'advance',
+  )
 })
 
 test('a deletion of this conversation ends it, even across a gap; another conversation only advances', () => {
-  const deleted = (revision, id = 'c1', boot = 'b1') => ({ type: 'conversation_deleted', boot_id: boot, revision, conversation_id: id })
+  const deleted = (revision, id = 'c1', boot = 'b1') => ({
+    type: 'conversation_deleted',
+    boot_id: boot,
+    revision,
+    conversation_id: id,
+  })
   assert.deepEqual(reduceFrame(snapshot(5), deleted(6), 'c1'), { kind: 'deleted' })
   assert.deepEqual(reduceFrame(snapshot(5), deleted(9), 'c1'), { kind: 'deleted' })
   assert.deepEqual(reduceFrame(snapshot(5), deleted(1, 'c1', 'b2'), 'c1'), { kind: 'deleted' })
@@ -61,14 +94,23 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 test('a snapshot delivered after the deletion frame is dropped, and nothing loads again', async () => {
   let release
-  const gate = new Promise((resolve) => { release = resolve })
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
   const states = []
   let listener = () => {}
   let fetches = 0
   startConversationProjection({
     conversationId: 'c1',
-    fetchSnapshot: async () => { fetches += 1; await gate; return snapshot(3, [message('a', 1)]) },
-    subscribe: (next) => { listener = next; return () => {} },
+    fetchSnapshot: async () => {
+      fetches += 1
+      await gate
+      return snapshot(3, [message('a', 1)])
+    },
+    subscribe: (next) => {
+      listener = next
+      return () => {}
+    },
     onState: (state, cause) => states.push({ ...state, cause }),
   })
   listener({ type: 'conversation_deleted', boot_id: 'b1', revision: 4, conversation_id: 'c1' })
@@ -77,19 +119,27 @@ test('a snapshot delivered after the deletion frame is dropped, and nothing load
   listener(changed(5, [message('b', 2)]))
   await settle()
   assert.equal(fetches, 1)
-  assert.deepEqual(states.map((state) => [state.status, state.cause, state.snapshot]), [['deleted', 'deleted', null]])
+  assert.deepEqual(
+    states.map((state) => [state.status, state.cause, state.snapshot]),
+    [['deleted', 'deleted', null]],
+  )
 })
 
 test('a snapshot fetch refused as conversation_deleted ends the projection', async () => {
   const states = []
   startConversationProjection({
     conversationId: 'c1',
-    fetchSnapshot: async () => { throw Object.assign(new Error('Conversation c1 was deleted'), { code: 'conversation_deleted' }) },
+    fetchSnapshot: async () => {
+      throw Object.assign(new Error('Conversation c1 was deleted'), { code: 'conversation_deleted' })
+    },
     subscribe: () => () => {},
     onState: (state, cause) => states.push({ ...state, cause }),
   })
   await settle()
-  assert.deepEqual(states.map((state) => [state.status, state.cause]), [['deleted', 'deleted']])
+  assert.deepEqual(
+    states.map((state) => [state.status, state.cause]),
+    [['deleted', 'deleted']],
+  )
 })
 
 function harness(snapshots) {
@@ -98,8 +148,14 @@ function harness(snapshots) {
   let listener = () => {}
   const stop = startConversationProjection({
     conversationId: 'c1',
-    fetchSnapshot: async (id, limit) => { fetches.push(limit); return snapshots.shift() },
-    subscribe: (next) => { listener = next; return () => {} },
+    fetchSnapshot: async (id, limit) => {
+      fetches.push(limit)
+      return snapshots.shift()
+    },
+    subscribe: (next) => {
+      listener = next
+      return () => {}
+    },
     onState: (state, cause) => states.push({ ...state, cause }),
   })
   return { fetches, states, send: (frame) => listener(frame), stop }
@@ -114,7 +170,10 @@ test('buffers frames until the snapshot loads, then replays those after its revi
   const last = h.states.at(-1)
   assert.equal(last.cause, 'loaded')
   assert.equal(last.status, 'current')
-  assert.deepEqual(last.snapshot.messages.map((item) => item.id), ['a', 'b'])
+  assert.deepEqual(
+    last.snapshot.messages.map((item) => item.id),
+    ['a', 'b'],
+  )
 })
 
 test('marks the projection stale during a gap repair and current after it', async () => {
@@ -131,8 +190,14 @@ test('marks the projection stale during a gap repair and current after it', asyn
 
 test('reports a failed load and stays loading', async () => {
   const states = []
-  startConversationProjection({ conversationId: 'c1', fetchSnapshot: async () => { throw new Error('down') },
-    subscribe: () => () => {}, onState: (state, cause) => states.push({ ...state, cause }) })
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => {
+      throw new Error('down')
+    },
+    subscribe: () => () => {},
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
   await settle()
   assert.deepEqual(states, [{ status: 'loading', snapshot: null, error: 'Error: down', cause: 'failed' }])
 })

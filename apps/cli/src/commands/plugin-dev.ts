@@ -21,8 +21,12 @@ function pluginId(words: string[], usage: string): string {
   return words[0]
 }
 
-export async function runPluginDevCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runPluginDevCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'plugin' || (action !== 'dev' && action !== 'generations')) return undefined
   if (action === 'generations') {
     const plugin_id = pluginId(rest, 'plugin generations requires PLUGIN_ID')

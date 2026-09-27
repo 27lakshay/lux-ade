@@ -52,7 +52,10 @@ function options(words: string[], valueNames: readonly string[], flagNames: read
 function requestId(parsed: Options, command: string): string {
   const id = parsed.values['--request-id']
   if (!id || id.length > 256) {
-    throw new CliError('usage', `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`)
+    throw new CliError(
+      'usage',
+      `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`,
+    )
   }
   return id
 }
@@ -67,8 +70,9 @@ function revision(value: string | undefined): { expected_revision?: number } {
 }
 
 function json(value: string | undefined, label: string): unknown {
-  try { return JSON.parse(required(value, label)) }
-  catch (error) {
+  try {
+    return JSON.parse(required(value, label))
+  } catch (error) {
     if (error instanceof CliError) throw error
     throw new CliError('usage', `${label} must be valid JSON.`)
   }
@@ -110,7 +114,10 @@ function install(socketPath: string, rest: string[]): Promise<CommandResult> {
     throw new CliError('usage', 'plugin install requires local, package or git.')
   }
   return dailyUseCommand(socketPath, {
-    op: 'plugin.install', operation_id, source, ...(version ? { expected_version: version } : {}),
+    op: 'plugin.install',
+    operation_id,
+    source,
+    ...(version ? { expected_version: version } : {}),
   })
 }
 
@@ -125,13 +132,28 @@ function record(socketPath: string, rest: string[]): Promise<CommandResult> {
     const [plugin_id, namespace, key] = count(parsed, 3, `plugin record ${action} requires PLUGIN_ID NAMESPACE KEY`)
     return action === 'get'
       ? dailyUseCommand(socketPath, { op: 'plugin.record.get', plugin_id, namespace, key })
-      : dailyUseCommand(socketPath, { op: 'plugin.record.delete', plugin_id, namespace, key,
-        ...revision(parsed.values['--expected-revision']) })
+      : dailyUseCommand(socketPath, {
+          op: 'plugin.record.delete',
+          plugin_id,
+          namespace,
+          key,
+          ...revision(parsed.values['--expected-revision']),
+        })
   }
   if (action === 'put') {
-    const [plugin_id, namespace, key, value] = count(parsed, 4, 'plugin record put requires PLUGIN_ID NAMESPACE KEY JSON')
-    return dailyUseCommand(socketPath, { op: 'plugin.record.put', plugin_id, namespace, key,
-      value: json(value, 'JSON'), ...revision(parsed.values['--expected-revision']) })
+    const [plugin_id, namespace, key, value] = count(
+      parsed,
+      4,
+      'plugin record put requires PLUGIN_ID NAMESPACE KEY JSON',
+    )
+    return dailyUseCommand(socketPath, {
+      op: 'plugin.record.put',
+      plugin_id,
+      namespace,
+      key,
+      value: json(value, 'JSON'),
+      ...revision(parsed.values['--expected-revision']),
+    })
   }
   throw new CliError('usage', 'plugin record requires list, get, put or delete.')
 }
@@ -155,21 +177,31 @@ function invoke(socketPath: string, rest: string[]): Promise<CommandResult> {
   const [plugin_id, command_id] = count(parsed, 2, 'plugin invoke requires PLUGIN_ID COMMAND_ID --request-id ID')
   const operation_id = requestId(parsed, 'plugin invoke')
   const args = parsed.values['--args']
-  return dailyUseCommand(socketPath, { op: 'plugin.command.invoke', operation_id, plugin_id, command_id,
-    ...(args === undefined ? {} : { args: json(args, '--args') }) })
+  return dailyUseCommand(socketPath, {
+    op: 'plugin.command.invoke',
+    operation_id,
+    plugin_id,
+    command_id,
+    ...(args === undefined ? {} : { args: json(args, '--args') }),
+  })
 }
 
 function host(socketPath: string, rest: string[]): Promise<CommandResult> {
   const [action, ...tail] = rest
-  if (action !== 'status' && action !== 'restart') throw new CliError('usage', 'plugin host requires status or restart.')
+  if (action !== 'status' && action !== 'restart')
+    throw new CliError('usage', 'plugin host requires status or restart.')
   const [plugin_id] = count(options(tail, []), 1, `plugin host ${action} requires PLUGIN_ID`)
   return action === 'status'
     ? dailyUseCommand(socketPath, { op: 'plugin.host.status', plugin_id })
     : dailyUseCommand(socketPath, { op: 'plugin.host.restart', plugin_id })
 }
 
-export async function runPluginCommand(socketPath: string, area: string | undefined, action: string | undefined,
-  rest: string[]): Promise<CommandResult | undefined> {
+export async function runPluginCommand(
+  socketPath: string,
+  area: string | undefined,
+  action: string | undefined,
+  rest: string[],
+): Promise<CommandResult | undefined> {
   if (area !== 'plugin') return undefined
   switch (action) {
     case 'list':
@@ -187,9 +219,12 @@ export async function runPluginCommand(socketPath: string, area: string | undefi
     case 'uninstall': {
       const parsed = options(rest, ['--request-id'], ['--purge-data'])
       const [plugin_id] = count(parsed, 1, 'plugin uninstall requires PLUGIN_ID --request-id ID')
-      return dailyUseCommand(socketPath, { op: 'plugin.uninstall', plugin_id,
+      return dailyUseCommand(socketPath, {
+        op: 'plugin.uninstall',
+        plugin_id,
         operation_id: requestId(parsed, 'plugin uninstall'),
-        ...(parsed.flags.has('--purge-data') ? { purge_data: true } : {}) })
+        ...(parsed.flags.has('--purge-data') ? { purge_data: true } : {}),
+      })
     }
     case 'record':
       return record(socketPath, rest)

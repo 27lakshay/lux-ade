@@ -10,7 +10,9 @@ for (const theme of ['dark', 'light'] as Theme[]) {
   console.log(`\n${theme}: material ${m.darkest.join(',')} .. ${m.lightest.join(',')}`)
   for (const f of floors(theme)) {
     const note = f.floor >= 1 ? '  FAIL: cannot be translucent' : ''
-    console.log(`  ${f.surface.padEnd(7)} floor ${String(Math.round(f.floor * 100)).padStart(3)}%  set by ${f.binding}${note}`)
+    console.log(
+      `  ${f.surface.padEnd(7)} floor ${String(Math.round(f.floor * 100)).padStart(3)}%  set by ${f.binding}${note}`,
+    )
     for (const b of f.baseline) console.log(`          baseline misses WCAG: ${b.check} ${b.ratio.toFixed(2)}:1`)
     if (f.floor >= 1) failed = true
   }

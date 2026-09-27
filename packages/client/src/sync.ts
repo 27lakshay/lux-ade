@@ -16,8 +16,11 @@ export type SyncFrame = { [key: string]: unknown; type: string; boot_id: string;
 
 export type SyncMessage = { id: string; sequence: number }
 
-export type ConversationSnapshot<C extends { id: string } = { id: string }, M extends SyncMessage = SyncMessage,
-  R = unknown> = { conversation: C; messages: M[]; requests: R[]; revision: number; boot_id: string }
+export type ConversationSnapshot<
+  C extends { id: string } = { id: string },
+  M extends SyncMessage = SyncMessage,
+  R = unknown,
+> = { conversation: C; messages: M[]; requests: R[]; revision: number; boot_id: string }
 
 /** What one frame does to a projection that already holds a snapshot. */
 export type FrameOutcome<S> =
@@ -40,7 +43,9 @@ export const CONVERSATION_DELETED = 'conversation_deleted'
  * window and replaces the requests.
  */
 export function reduceFrame<C extends { id: string }, M extends SyncMessage, R>(
-  snapshot: ConversationSnapshot<C, M, R>, frame: SyncFrame, conversationId: string,
+  snapshot: ConversationSnapshot<C, M, R>,
+  frame: SyncFrame,
+  conversationId: string,
 ): FrameOutcome<ConversationSnapshot<C, M, R>> {
   if (frame.boot_id === snapshot.boot_id && frame.revision <= snapshot.revision) return { kind: 'duplicate' }
   if (frame.type === CONVERSATION_DELETED && frame.conversation_id === conversationId) return { kind: 'deleted' }
@@ -59,15 +64,24 @@ export function reduceFrame<C extends { id: string }, M extends SyncMessage, R>(
   for (const item of frame.messages as M[]) {
     if (item && typeof item.id === 'string') messages.set(item.id, item)
   }
-  return { kind: 'changed', snapshot: { ...snapshot, conversation: changed,
-    messages: [...messages.values()].sort((left, right) => left.sequence - right.sequence).slice(-CONVERSATION_WINDOW),
-    requests: frame.requests as R[], revision: frame.revision } }
+  return {
+    kind: 'changed',
+    snapshot: {
+      ...snapshot,
+      conversation: changed,
+      messages: [...messages.values()]
+        .sort((left, right) => left.sequence - right.sequence)
+        .slice(-CONVERSATION_WINDOW),
+      requests: frame.requests as R[],
+      revision: frame.revision,
+    },
+  }
 }
 
 function conversationIdOf(frame: SyncFrame): string | undefined {
   const conversation = frame.conversation
   return conversation !== null && typeof conversation === 'object' && 'id' in conversation
-    ? (conversation).id as string | undefined
+    ? (conversation.id as string | undefined)
     : undefined
 }
 
@@ -140,28 +154,43 @@ export function startConversationProjection<C extends { id: string }, M extends 
   }
   const resnapshot = (): void => {
     current = null
-    if (shown && status !== 'stale') { status = 'stale'; if (!draining) emit('stale') }
+    if (shown && status !== 'stale') {
+      status = 'stale'
+      if (!draining) emit('stale')
+    }
     reloadRequested = true
-    if (!loading) { reloadRequested = false; void load() }
+    if (!loading) {
+      reloadRequested = false
+      void load()
+    }
   }
   const apply = (frame: SyncFrame): void => {
     if (deleted) return
     if (!current) {
-      if (frame.type === CONVERSATION_DELETED && frame.conversation_id === conversationId) { markDeleted(); return }
+      if (frame.type === CONVERSATION_DELETED && frame.conversation_id === conversationId) {
+        markDeleted()
+        return
+      }
       buffered.push(frame)
       if (!loading) void load()
       return
     }
     const outcome = reduceFrame(current, frame, conversationId)
     if (outcome.kind === 'duplicate') return
-    if (outcome.kind === 'deleted') { markDeleted(); return }
+    if (outcome.kind === 'deleted') {
+      markDeleted()
+      return
+    }
     if (outcome.kind === 'resnapshot') {
       if (outcome.reason !== 'reload') buffered = []
       resnapshot()
       return
     }
     current = outcome.snapshot
-    if (outcome.kind === 'changed') { shown = current; if (!draining) emit('changed') }
+    if (outcome.kind === 'changed') {
+      shown = current
+      if (!draining) emit('changed')
+    }
   }
   const load = async (): Promise<void> => {
     if (loading || disposed || deleted) return
@@ -189,15 +218,24 @@ export function startConversationProjection<C extends { id: string }, M extends 
     } catch (reason) {
       if (!disposed && !deleted) {
         if (isDeletedError(reason)) markDeleted()
-        else { error = String(reason); emit('failed') }
+        else {
+          error = String(reason)
+          emit('failed')
+        }
       }
     } finally {
       draining = false
       loading = false
-      if (!disposed && !deleted && reloadRequested) { reloadRequested = false; void load() }
+      if (!disposed && !deleted && reloadRequested) {
+        reloadRequested = false
+        void load()
+      }
     }
   }
   const unsubscribe = options.subscribe(apply)
   void load()
-  return () => { disposed = true; unsubscribe() }
+  return () => {
+    disposed = true
+    unsubscribe()
+  }
 }

@@ -19,8 +19,11 @@ const execFileAsync = promisify(execFile)
 async function createFiles(directory: string, count: number, prefix: string): Promise<void> {
   // Bound open file descriptors while keeping the large-tree fixture quick.
   for (let start = 0; start < count; start += 64) {
-    await Promise.all(Array.from({ length: Math.min(64, count - start) }, (_, offset) =>
-      writeFile(join(directory, `${prefix}-${String(start + offset).padStart(5, '0')}.txt`), 'x')))
+    await Promise.all(
+      Array.from({ length: Math.min(64, count - start) }, (_, offset) =>
+        writeFile(join(directory, `${prefix}-${String(start + offset).padStart(5, '0')}.txt`), 'x'),
+      ),
+    )
   }
 }
 
@@ -33,21 +36,22 @@ test('F071 lists more than 10,000 entries across pages and rejects a changed dir
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: root })).workspace as { id: string }
     const request = { op: 'file.list', workspace_id: workspace.id, limit: 100 }
-    const first = await rpc(daemon.socket, request, 20_000) as FilePage
+    const first = (await rpc(daemon.socket, request, 20_000)) as FilePage
     expect(first.entries).toHaveLength(100)
     expect(first.next_cursor, 'A full first page must have an accessible continuation').toEqual(expect.any(String))
 
     const changed = join(root, 'new-during-listing.txt')
     await writeFile(changed, 'new')
-    await expect(rpc(daemon.socket, { ...request, cursor: first.next_cursor }, 20_000))
-      .rejects.toThrow(/changed|stale|refresh/i)
+    await expect(rpc(daemon.socket, { ...request, cursor: first.next_cursor }, 20_000)).rejects.toThrow(
+      /changed|stale|refresh/i,
+    )
     await unlink(changed)
 
     const seen = new Set<string>()
     let cursor: string | null | undefined
     let pages = 0
     do {
-      const page = await rpc(daemon.socket, cursor ? { ...request, cursor } : request, 20_000) as FilePage
+      const page = (await rpc(daemon.socket, cursor ? { ...request, cursor } : request, 20_000)) as FilePage
       for (const entry of page.entries ?? []) {
         expect(seen.has(entry.path), `Duplicate file in page ${pages}: ${entry.path}`).toBe(false)
         seen.add(entry.path)
@@ -76,21 +80,22 @@ test('F071 searches more than 1,000 matches without repeats or omissions and rej
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: root })).workspace as { id: string }
     const request = { op: 'file.search', workspace_id: workspace.id, query: 'needle', limit: 100 }
-    const first = await rpc(daemon.socket, request, 20_000) as FilePage
+    const first = (await rpc(daemon.socket, request, 20_000)) as FilePage
     expect(first.results).toHaveLength(100)
     expect(first.next_cursor, 'A full search page must have an accessible continuation').toEqual(expect.any(String))
 
     const changed = join(nested, 'needle-new.txt')
     await writeFile(changed, 'new')
-    await expect(rpc(daemon.socket, { ...request, cursor: first.next_cursor }, 20_000))
-      .rejects.toThrow(/changed|stale|refresh/i)
+    await expect(rpc(daemon.socket, { ...request, cursor: first.next_cursor }, 20_000)).rejects.toThrow(
+      /changed|stale|refresh/i,
+    )
     await unlink(changed)
 
     const seen = new Set<string>()
     let cursor: string | null | undefined
     let pages = 0
     do {
-      const page = await rpc(daemon.socket, cursor ? { ...request, cursor } : request, 20_000) as FilePage
+      const page = (await rpc(daemon.socket, cursor ? { ...request, cursor } : request, 20_000)) as FilePage
       for (const entry of page.results ?? []) {
         expect(seen.has(entry.path), `Duplicate search result in page ${pages}: ${entry.path}`).toBe(false)
         seen.add(entry.path)
@@ -115,10 +120,10 @@ test('F071 continues a no-match search after scanning 1,000 names', async () => 
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: root })).workspace as { id: string }
     const request = { op: 'file.search', workspace_id: workspace.id, query: 'absent-name', limit: 100 }
-    const first = await rpc(daemon.socket, request) as FilePage
+    const first = (await rpc(daemon.socket, request)) as FilePage
     expect(first.results).toEqual([])
     expect(first.next_cursor).toEqual(expect.any(String))
-    const second = await rpc(daemon.socket, { ...request, cursor: first.next_cursor }) as FilePage
+    const second = (await rpc(daemon.socket, { ...request, cursor: first.next_cursor })) as FilePage
     expect(second.results).toEqual([])
     expect(second.next_cursor).toBeNull()
     expect(second.incomplete).toBe(false)
@@ -135,7 +140,7 @@ test('F071 idle cursors release their directory descriptors after expiry', async
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: root })).workspace as { id: string }
     for (let index = 0; index < 3; index++) {
-      const page = await rpc(daemon.socket, { op: 'file.list', workspace_id: workspace.id, limit: 1 }) as FilePage
+      const page = (await rpc(daemon.socket, { op: 'file.list', workspace_id: workspace.id, limit: 1 })) as FilePage
       expect(page.next_cursor).toEqual(expect.any(String))
     }
     const canonicalRoot = await realpath(root)
@@ -168,7 +173,7 @@ test('F071 can browse and preview a non-UTF-8 file name alongside ordinary files
     const daemon = await startDaemon()
     try {
       const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: root })).workspace as { id: string }
-      const page = await rpc(daemon.socket, { op: 'file.list', workspace_id: workspace.id }) as FilePage
+      const page = (await rpc(daemon.socket, { op: 'file.list', workspace_id: workspace.id })) as FilePage
       expect(page.entries).toHaveLength(2)
       const unusual = page.entries?.find((entry) => entry.name !== 'normal.txt')
       expect(unusual?.path).toEqual(expect.any(String))
@@ -189,14 +194,13 @@ test('F071 continuation cursors can be consumed only once, even by concurrent re
   try {
     const workspace = (await rpc(daemon.socket, { op: 'workspace.open', path: root })).workspace as { id: string }
     const request = { op: 'file.list', workspace_id: workspace.id, limit: 1 }
-    const first = await rpc(daemon.socket, request) as FilePage
+    const first = (await rpc(daemon.socket, request)) as FilePage
     expect(first.next_cursor).toEqual(expect.any(String))
-    const second = await rpc(daemon.socket, { ...request, cursor: first.next_cursor }) as FilePage
+    const second = (await rpc(daemon.socket, { ...request, cursor: first.next_cursor })) as FilePage
     expect(second.entries).toHaveLength(1)
-    await expect(rpc(daemon.socket, { ...request, cursor: first.next_cursor }))
-      .rejects.toThrow(/expired|used|cursor/i)
+    await expect(rpc(daemon.socket, { ...request, cursor: first.next_cursor })).rejects.toThrow(/expired|used|cursor/i)
 
-    const newFirst = await rpc(daemon.socket, request) as FilePage
+    const newFirst = (await rpc(daemon.socket, request)) as FilePage
     expect(newFirst.next_cursor).toEqual(expect.any(String))
     const attempts = await Promise.allSettled([
       rpc(daemon.socket, { ...request, cursor: newFirst.next_cursor }),
@@ -223,11 +227,12 @@ test('F071 a cursor rejected in another workspace remains usable in its owner', 
     const first = (await rpc(daemon.socket, { op: 'workspace.open', path: firstRoot })).workspace as { id: string }
     const other = (await rpc(daemon.socket, { op: 'workspace.open', path: otherRoot })).workspace as { id: string }
     const request = { op: 'file.list', workspace_id: first.id, limit: 1 }
-    const firstPage = await rpc(daemon.socket, request) as FilePage
+    const firstPage = (await rpc(daemon.socket, request)) as FilePage
     expect(firstPage.next_cursor).toEqual(expect.any(String))
-    await expect(rpc(daemon.socket, { ...request, workspace_id: other.id, cursor: firstPage.next_cursor }))
-      .rejects.toThrow(/workspace|cursor/i)
-    const secondPage = await rpc(daemon.socket, { ...request, cursor: firstPage.next_cursor }) as FilePage
+    await expect(
+      rpc(daemon.socket, { ...request, workspace_id: other.id, cursor: firstPage.next_cursor }),
+    ).rejects.toThrow(/workspace|cursor/i)
+    const secondPage = (await rpc(daemon.socket, { ...request, cursor: firstPage.next_cursor })) as FilePage
     expect(secondPage.entries).toHaveLength(1)
     expect(secondPage.entries?.[0]?.path).toMatch(/^first-/)
   } finally {
@@ -245,13 +250,12 @@ test('F071 scan capacity evicts an old cursor and preserves the most recent scan
     const request = { op: 'file.list', workspace_id: workspace.id, limit: 1 }
     const cursors: string[] = []
     for (let index = 0; index < 9; index++) {
-      const first = await rpc(daemon.socket, request) as FilePage
+      const first = (await rpc(daemon.socket, request)) as FilePage
       expect(first.next_cursor).toEqual(expect.any(String))
       cursors.push(first.next_cursor as string)
     }
-    await expect(rpc(daemon.socket, { ...request, cursor: cursors[0] }))
-      .rejects.toThrow(/expired|used|cursor/i)
-    const newest = await rpc(daemon.socket, { ...request, cursor: cursors.at(-1) }) as FilePage
+    await expect(rpc(daemon.socket, { ...request, cursor: cursors[0] })).rejects.toThrow(/expired|used|cursor/i)
+    const newest = (await rpc(daemon.socket, { ...request, cursor: cursors.at(-1) })) as FilePage
     expect(newest.entries).toHaveLength(1)
   } finally {
     await daemon.stop()
@@ -274,7 +278,7 @@ test('F071 search detects changes in a folder already visited before a later pag
     let firstFolder: string | undefined
     let sawSecondFolder = false
     for (let pageNumber = 0; pageNumber < 8; pageNumber++) {
-      const page = await rpc(daemon.socket, cursor ? { ...request, cursor } : request) as FilePage
+      const page = (await rpc(daemon.socket, cursor ? { ...request, cursor } : request)) as FilePage
       const folder = page.results?.[0]?.path.split('/')[0]
       if (!firstFolder) firstFolder = folder
       cursor = page.next_cursor
@@ -287,8 +291,7 @@ test('F071 search detects changes in a folder already visited before a later pag
     expect(sawSecondFolder, 'Search never moved past the first folder').toBe(true)
     expect(cursor).toEqual(expect.any(String))
     await writeFile(join(root, firstFolder as string, 'needle-late.txt'), 'new')
-    await expect(rpc(daemon.socket, { ...request, cursor }))
-      .rejects.toThrow(/changed|stale|refresh/i)
+    await expect(rpc(daemon.socket, { ...request, cursor })).rejects.toThrow(/changed|stale|refresh/i)
   } finally {
     await daemon.stop()
     await rm(root, { recursive: true, force: true })

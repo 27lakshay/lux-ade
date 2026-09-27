@@ -9,7 +9,9 @@ import { expect, test } from '../fixtures'
 import { DeviceHost, sampleState, samples } from '../fixtures/devices'
 import { boot, capability, device, deviceProfile, family, hostId, install, inventory, launch, send } from './steps'
 
-test('the inventory lists simulators, AVDs and adb devices with a reason for every unavailable capability', async ({ ade }) => {
+test('the inventory lists simulators, AVDs and adb devices with a reason for every unavailable capability', async ({
+  ade,
+}) => {
   const { host, profile } = await deviceProfile(ade)
   const list = await inventory(profile)
   expect(list.host.host_id).toMatch(/^host-[0-9a-f]{16}$/)
@@ -67,8 +69,9 @@ test('the inventory lists simulators, AVDs and adb devices with a reason for eve
   // Every unavailable capability carries a reason; every available one none.
   for (const entry of list.devices) {
     for (const status of entry.capabilities) {
-      expect(status.available ? status.reason : status.reason?.code, `${entry.device_id} ${status.capability}`)
-        .toEqual(status.available ? null : expect.any(String))
+      expect(status.available ? status.reason : status.reason?.code, `${entry.device_id} ${status.capability}`).toEqual(
+        status.available ? null : expect.any(String),
+      )
     }
   }
 
@@ -77,8 +80,12 @@ test('the inventory lists simulators, AVDs and adb devices with a reason for eve
   expect(cli.code).toBe(0)
   const families = cli.json?.families as Array<{ family: string }>
   expect(families.map((entry) => entry.family)).toEqual(['android'])
-  expect((cli.json?.devices as Array<{ device_id: string }>).map((entry) => entry.device_id).sort())
-    .toEqual(list.devices.filter((entry) => entry.family === 'android').map((entry) => entry.device_id).sort())
+  expect((cli.json?.devices as Array<{ device_id: string }>).map((entry) => entry.device_id).sort()).toEqual(
+    list.devices
+      .filter((entry) => entry.family === 'android')
+      .map((entry) => entry.device_id)
+      .sort(),
+  )
   expect((await profile.cli('device', 'list', '--family', 'watch')).code).not.toBe(0)
 })
 
@@ -120,8 +127,10 @@ test('a host without Xcode or the Android SDK reports both families unavailable 
   const state = sampleState()
   state.simctl = 'missing'
   const { profile } = await deviceProfile(ade, state, { android: false })
-  test.skip((await inventory(profile, 'android')).families[0].tools.length > 0,
-    'This machine has adb or the emulator on a standard PATH directory, so an SDK-less host cannot be modelled')
+  test.skip(
+    (await inventory(profile, 'android')).families[0].tools.length > 0,
+    'This machine has adb or the emulator on a standard PATH directory, so an SDK-less host cannot be modelled',
+  )
 
   const list = await inventory(profile)
   const ios = family(list, 'ios_simulator')
@@ -130,7 +139,9 @@ test('a host without Xcode or the Android SDK reports both families unavailable 
   const android = family(list, 'android')
   expect(android).toMatchObject({ available: false, tools: [] })
   expect(android.reasons.map((reason) => reason.code)).toEqual(['tool_missing', 'tool_missing', 'tool_missing'])
-  expect(android.reasons.map((reason) => reason.detail).join('\n')).toMatch(/adb was not found[\s\S]*emulator[\s\S]*aapt2/)
+  expect(android.reasons.map((reason) => reason.detail).join('\n')).toMatch(
+    /adb was not found[\s\S]*emulator[\s\S]*aapt2/,
+  )
   expect(list.devices.filter((entry) => entry.family !== 'computer')).toEqual([])
 
   // Targeted effects are refused before any receipt: the same IDs work once the tools arrive.
@@ -148,10 +159,16 @@ test('a failing simctl is reported as tool_failed, and a host with no runtimes a
   state.android = { devices: [], avds: [] }
   const { host, profile } = await deviceProfile(ade, state)
   let list = await inventory(profile)
-  expect(family(list, 'ios_simulator')).toMatchObject({ available: false,
-    reasons: [{ code: 'tool_failed', detail: expect.stringContaining('xcrun simctl failed: An error was encountered') }] })
-  expect(family(list, 'android')).toMatchObject({ available: false,
-    reasons: [{ code: 'runtime_missing', detail: 'No Android device is connected and no AVD exists' }] })
+  expect(family(list, 'ios_simulator')).toMatchObject({
+    available: false,
+    reasons: [
+      { code: 'tool_failed', detail: expect.stringContaining('xcrun simctl failed: An error was encountered') },
+    ],
+  })
+  expect(family(list, 'android')).toMatchObject({
+    available: false,
+    reasons: [{ code: 'runtime_missing', detail: 'No Android device is connected and no AVD exists' }],
+  })
 
   // Only simulators without an installed runtime: the family says why.
   await host.update((next) => {
@@ -159,12 +176,17 @@ test('a failing simctl is reported as tool_failed, and a host with no runtimes a
     next.simulators = next.simulators.filter((sim) => sim.udid === samples.noRuntime)
   })
   list = await inventory(profile, 'ios_simulator')
-  expect(family(list, 'ios_simulator')).toMatchObject({ available: false,
-    reasons: [{ code: 'runtime_missing', detail: expect.stringContaining('Install one in Xcode') }] })
-  await host.update((next) => { next.simulators = [] })
+  expect(family(list, 'ios_simulator')).toMatchObject({
+    available: false,
+    reasons: [{ code: 'runtime_missing', detail: expect.stringContaining('Install one in Xcode') }],
+  })
+  await host.update((next) => {
+    next.simulators = []
+  })
   list = await inventory(profile, 'ios_simulator')
-  expect(family(list, 'ios_simulator').reasons).toEqual([{ code: 'runtime_missing',
-    detail: expect.stringContaining('No iOS simulators exist') }])
+  expect(family(list, 'ios_simulator').reasons).toEqual([
+    { code: 'runtime_missing', detail: expect.stringContaining('No iOS simulators exist') },
+  ])
 })
 
 test('targeted operations name this host and an exact device, and refusals leave no receipt', async ({ ade }) => {
@@ -174,8 +196,12 @@ test('targeted operations name this host and an exact device, and refusals leave
 
   // Another host's ID is refused for every targeted operation.
   const other = 'host-0000000000000000'
-  for (const request of [boot(other, iphone, 'op-host'), install(other, iphone, 'op-host-i', '/tmp/x.app'),
-    launch(other, iphone, 'op-host-l', 'com.example.app'), { op: 'device.screenshot', host_id: other, device_id: iphone }]) {
+  for (const request of [
+    boot(other, iphone, 'op-host'),
+    install(other, iphone, 'op-host-i', '/tmp/x.app'),
+    launch(other, iphone, 'op-host-l', 'com.example.app'),
+    { op: 'device.screenshot', host_id: other, device_id: iphone },
+  ]) {
     const refused = await send(profile, request)
     expect(refused.type, String(request.op)).toBe('error')
     expect(refused.message).toMatch(/host/i)
@@ -186,7 +212,10 @@ test('targeted operations name this host and an exact device, and refusals leave
     expect(refused.type, bad).toBe('error')
   }
   // A capability the device cannot take now is refused with its reason.
-  const notBooted = await send(profile, install(id, iphone, 'op-install', await host.app('Demo', 'com.example.demo', '3')))
+  const notBooted = await send(
+    profile,
+    install(id, iphone, 'op-install', await host.app('Demo', 'com.example.demo', '3')),
+  )
   expect(notBooted.message).toContain('(device_not_booted)')
   const noRuntime = await send(profile, boot(id, `ios-sim:${samples.noRuntime}`, 'op-runtime'))
   expect(noRuntime.message).toContain('(runtime_missing)')

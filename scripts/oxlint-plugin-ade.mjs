@@ -14,7 +14,11 @@ const FORBIDDEN = {
 const CONSTRUCTORS = new Set(['BrowserWindow', 'WebContentsView'])
 
 const keyName = (property) =>
-  property.key?.type === 'Identifier' ? property.key.name : typeof property.key?.value === 'string' ? property.key.value : null
+  property.key?.type === 'Identifier'
+    ? property.key.name
+    : typeof property.key?.value === 'string'
+      ? property.key.value
+      : null
 
 const literalValue = (node) => (node?.type === 'Literal' ? node.value : undefined)
 
@@ -24,7 +28,7 @@ const findProperty = (object, name) =>
 const electronWebPreferences = {
   meta: {
     type: 'problem',
-    docs: { description: 'Every BrowserWindow and WebContentsView keeps Electron\'s security settings on.' },
+    docs: { description: "Every BrowserWindow and WebContentsView keeps Electron's security settings on." },
   },
   create(context) {
     return {
@@ -33,29 +37,44 @@ const electronWebPreferences = {
         const options = node.arguments[0]
         const where = node.callee.name
         if (options?.type !== 'ObjectExpression') {
-          context.report({ node, message: `Pass ${where} an object literal with webPreferences, so its security settings can be checked.` })
+          context.report({
+            node,
+            message: `Pass ${where} an object literal with webPreferences, so its security settings can be checked.`,
+          })
           return
         }
         const preferences = findProperty(options, 'webPreferences')?.value
         if (preferences?.type !== 'ObjectExpression') {
-          context.report({ node, message: `${where} needs a webPreferences object literal stating contextIsolation: true, sandbox: true and nodeIntegration: false.` })
+          context.report({
+            node,
+            message: `${where} needs a webPreferences object literal stating contextIsolation: true, sandbox: true and nodeIntegration: false.`,
+          })
           return
         }
         for (const property of preferences.properties) {
           if (property.type === 'SpreadElement') {
-            context.report({ node: property, message: 'Do not spread into webPreferences; state each setting so it can be checked.' })
+            context.report({
+              node: property,
+              message: 'Do not spread into webPreferences; state each setting so it can be checked.',
+            })
           }
         }
         for (const [name, expected] of Object.entries(REQUIRED)) {
           const property = findProperty(preferences, name)
           if (!property || literalValue(property.value) !== expected) {
-            context.report({ node: property ?? preferences, message: `${where} webPreferences must state ${name}: ${expected}.` })
+            context.report({
+              node: property ?? preferences,
+              message: `${where} webPreferences must state ${name}: ${expected}.`,
+            })
           }
         }
         for (const [name, unsafe] of Object.entries(FORBIDDEN)) {
           const property = findProperty(preferences, name)
           if (property && literalValue(property.value) !== !unsafe) {
-            context.report({ node: property, message: `${where} webPreferences must not set ${name} to ${unsafe} or a computed value.` })
+            context.report({
+              node: property,
+              message: `${where} webPreferences must not set ${name} to ${unsafe} or a computed value.`,
+            })
           }
         }
       },

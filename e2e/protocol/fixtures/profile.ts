@@ -50,7 +50,9 @@ function client(): Promise<ClientModule> {
 
 /** Thrown inside an `until` attempt to stop waiting at once. */
 class FatalWait extends Error {
-  constructor(readonly reason: Error) { super(reason.message) }
+  constructor(readonly reason: Error) {
+    super(reason.message)
+  }
 }
 
 const READY_TIMEOUT_MS = 20_000
@@ -76,13 +78,22 @@ async function until<T>(what: string, attempt: () => Promise<T | undefined>, tim
 function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return new Promise((resolveExit, rejectExit) => {
-    const timer = setTimeout(() => rejectExit(new Error(`Daemon ${child.pid} did not exit within ${timeoutMs} ms`)), timeoutMs)
-    child.once('exit', () => { clearTimeout(timer); resolveExit() })
+    const timer = setTimeout(
+      () => rejectExit(new Error(`Daemon ${child.pid} did not exit within ${timeoutMs} ms`)),
+      timeoutMs,
+    )
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolveExit()
+    })
   })
 }
 
 async function answers(socket: string): Promise<boolean> {
-  return rpc(socket, { op: 'hello' }, 1_000).then(() => true, () => false)
+  return rpc(socket, { op: 'hello' }, 1_000).then(
+    () => true,
+    () => false,
+  )
 }
 
 export class ScratchProfile {
@@ -106,7 +117,11 @@ export class ScratchProfile {
   private current: Hello | null = null
   private launches = 0
 
-  private constructor(root: string, private readonly ledger: ProcessLedger, options: ProfileOptions) {
+  private constructor(
+    root: string,
+    private readonly ledger: ProcessLedger,
+    options: ProfileOptions,
+  ) {
     this.root = root
     this.dataDirectory = join(root, 'data')
     this.socket = join(root, 'd.sock')
@@ -131,11 +146,20 @@ export class ScratchProfile {
    * `hello` reports a runtime. `register` sees the profile before the daemon
    * starts, so a failed start is still stopped and diagnosed by the harness.
    */
-  static async start(root: string, ledger: ProcessLedger, options: ProfileOptions = {},
-    register: (profile: ScratchProfile) => void = () => undefined): Promise<ScratchProfile> {
+  static async start(
+    root: string,
+    ledger: ProcessLedger,
+    options: ProfileOptions = {},
+    register: (profile: ScratchProfile) => void = () => undefined,
+  ): Promise<ScratchProfile> {
     const profile = new ScratchProfile(root, ledger, options)
     register(profile)
-    for (const directory of [profile.dataDirectory, profile.home, profile.defaultWorkspaceRoot, profile.logsDirectory]) {
+    for (const directory of [
+      profile.dataDirectory,
+      profile.home,
+      profile.defaultWorkspaceRoot,
+      profile.logsDirectory,
+    ]) {
       await mkdir(directory, { recursive: true, mode: 0o700 })
     }
     await writeFile(join(profile.home, '.gitconfig'), scratchGitConfig())
@@ -160,7 +184,11 @@ export class ScratchProfile {
    * One operation through the SDK's `call()`: the request is checked against
    * @ade/contracts before it is sent and the reply is validated before it returns.
    */
-  async call<O extends Operation>(op: O, request: CallRequest<O>, options: { timeoutMs?: number } = {}): Promise<Response<O>> {
+  async call<O extends Operation>(
+    op: O,
+    request: CallRequest<O>,
+    options: { timeoutMs?: number } = {},
+  ): Promise<Response<O>> {
     const { call } = await client()
     const started = Date.now()
     try {
@@ -178,7 +206,13 @@ export class ScratchProfile {
     const started = Date.now()
     try {
       const reply = await rpc(this.socket, request, timeoutMs)
-      await this.logOperation({ via: 'rpc', op: request.op, request, reply: summarize(reply), ms: Date.now() - started })
+      await this.logOperation({
+        via: 'rpc',
+        op: request.op,
+        request,
+        reply: summarize(reply),
+        ms: Date.now() - started,
+      })
       return reply
     } catch (error) {
       await this.logOperation({ via: 'rpc', op: request.op, request, error: String(error), ms: Date.now() - started })
@@ -195,17 +229,29 @@ export class ScratchProfile {
   async cliWith(options: { timeoutMs?: number; env?: Record<string, string> }, ...args: string[]): Promise<CliResult> {
     const started = Date.now()
     const result = await new Promise<CliResult>((resolveResult) => {
-      execFile(process.execPath, [binaries.cli, '--socket', this.socket, ...args], {
-        cwd: this.defaultWorkspaceRoot, env: { ...this.env, ...options.env },
-        timeout: options.timeoutMs ?? 30_000, maxBuffer: 32 * 1024 * 1024,
-      }, (error, stdout, stderr) => {
-        const failure = error as (Error & { code?: number | string; killed?: boolean }) | null
-        const code = failure ? (typeof failure.code === 'number' ? failure.code : -1) : 0
-        resolveResult({ code, stdout, stderr, json: parseJson(code === 0 ? stdout : stderr) })
-      })
+      execFile(
+        process.execPath,
+        [binaries.cli, '--socket', this.socket, ...args],
+        {
+          cwd: this.defaultWorkspaceRoot,
+          env: { ...this.env, ...options.env },
+          timeout: options.timeoutMs ?? 30_000,
+          maxBuffer: 32 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => {
+          const failure = error as (Error & { code?: number | string; killed?: boolean }) | null
+          const code = failure ? (typeof failure.code === 'number' ? failure.code : -1) : 0
+          resolveResult({ code, stdout, stderr, json: parseJson(code === 0 ? stdout : stderr) })
+        },
+      )
     })
-    await this.logOperation({ via: 'cli', args, code: result.code, reply: result.json ? summarize(result.json) : null,
-      ms: Date.now() - started })
+    await this.logOperation({
+      via: 'cli',
+      args,
+      code: result.code,
+      reply: result.json ? summarize(result.json) : null,
+      ms: Date.now() - started,
+    })
     return result
   }
 
@@ -229,7 +275,11 @@ export class ScratchProfile {
     await this.logOperation({ via: 'fixture', event: 'kill daemon', pid: child.pid })
     child.kill('SIGKILL')
     await waitForChildExit(child, EXIT_TIMEOUT_MS)
-    await until('the killed daemon socket to stop answering', async () => (await answers(this.socket)) ? undefined : true, 5_000)
+    await until(
+      'the killed daemon socket to stop answering',
+      async () => ((await answers(this.socket)) ? undefined : true),
+      5_000,
+    )
     this.current = null
   }
 
@@ -240,7 +290,11 @@ export class ScratchProfile {
     await this.ledger.sweep()
     await this.logOperation({ via: 'fixture', event: 'kill runtime', pid: runtimePid })
     process.kill(runtimePid, 'SIGKILL')
-    await until('the killed runtime to exit', async () => (await isRunning(runtimePid)) ? undefined : true, EXIT_TIMEOUT_MS)
+    await until(
+      'the killed runtime to exit',
+      async () => ((await isRunning(runtimePid)) ? undefined : true),
+      EXIT_TIMEOUT_MS,
+    )
   }
 
   /**
@@ -301,8 +355,11 @@ export class ScratchProfile {
       throw new Error('A spec daemon must run with ADE_SECRET_STORE=file and no ADE_KEYCHAIN')
     }
     try {
-      child = spawn(binaries.daemon, [], { cwd: this.defaultWorkspaceRoot, env: this.env,
-        stdio: ['ignore', 'ignore', stderr] })
+      child = spawn(binaries.daemon, [], {
+        cwd: this.defaultWorkspaceRoot,
+        env: this.env,
+        stdio: ['ignore', 'ignore', stderr],
+      })
     } finally {
       closeSync(stderr)
     }
@@ -311,14 +368,25 @@ export class ScratchProfile {
     const spawned = new Promise<never>((_, rejectSpawn) => child.once('error', rejectSpawn))
     spawned.catch(() => undefined)
     if (typeof child.pid === 'number') await this.ledger.own(child.pid, `daemon #${launch}`)
-    const hello = await Promise.race([spawned, until(`daemon #${launch} to answer hello at ${this.socket}`, async () => {
-      if (child.exitCode !== null || child.signalCode !== null) {
-        const output = await readFile(stderrPath, 'utf8').catch(() => '')
-        throw new FatalWait(new Error(`Daemon #${launch} exited (${child.exitCode ?? child.signalCode}) before it was ready; stderr (${stderrPath}):\n${output.slice(-4_096)}`))
-      }
-      const reply = await rpc(this.socket, { op: 'hello' }, 1_000).catch(() => null)
-      return reply?.type === 'hello' && reply.pid === child.pid ? reply as Hello : undefined
-    }, READY_TIMEOUT_MS)]).catch(async (error: unknown) => {
+    const hello = await Promise.race([
+      spawned,
+      until(
+        `daemon #${launch} to answer hello at ${this.socket}`,
+        async () => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            const output = await readFile(stderrPath, 'utf8').catch(() => '')
+            throw new FatalWait(
+              new Error(
+                `Daemon #${launch} exited (${child.exitCode ?? child.signalCode}) before it was ready; stderr (${stderrPath}):\n${output.slice(-4_096)}`,
+              ),
+            )
+          }
+          const reply = await rpc(this.socket, { op: 'hello' }, 1_000).catch(() => null)
+          return reply?.type === 'hello' && reply.pid === child.pid ? (reply as Hello) : undefined
+        },
+        READY_TIMEOUT_MS,
+      ),
+    ]).catch(async (error: unknown) => {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
       await waitForChildExit(child, EXIT_TIMEOUT_MS).catch(() => undefined)
       throw error
@@ -328,8 +396,15 @@ export class ScratchProfile {
     }
     await this.ledger.own(hello.runtime_pid, 'runtime')
     this.current = hello
-    await this.logOperation({ via: 'fixture', event: 'daemon ready', launch, pid: hello.pid, boot_id: hello.boot_id,
-      runtime_pid: hello.runtime_pid, runtime_instance: hello.runtime_instance })
+    await this.logOperation({
+      via: 'fixture',
+      event: 'daemon ready',
+      launch,
+      pid: hello.pid,
+      boot_id: hello.boot_id,
+      runtime_pid: hello.runtime_pid,
+      runtime_instance: hello.runtime_instance,
+    })
     return hello
   }
 
@@ -342,8 +417,12 @@ export class ScratchProfile {
     try {
       await this.stopDaemonGracefully()
     } catch (error) {
-      if (!this.daemonRunning || await this.runtimeHello()) throw error
-      await this.logOperation({ via: 'fixture', event: 'graceful stop refused without a runtime', error: String(error) })
+      if (!this.daemonRunning || (await this.runtimeHello())) throw error
+      await this.logOperation({
+        via: 'fixture',
+        event: 'graceful stop refused without a runtime',
+        error: String(error),
+      })
       await this.killDaemon()
     }
   }
@@ -352,17 +431,24 @@ export class ScratchProfile {
     const child = this.daemon
     if (!child || !this.daemonRunning) return
     const bootId = this.current?.boot_id ?? (await rpc(this.socket, { op: 'hello' }, 1_000)).boot_id
-    await until('runtime.prepare_restart to be accepted', async () => {
-      try {
-        await rpc(this.socket, { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`,
-          boot_id: bootId }, 5_000)
-        return true
-      } catch (error) {
-        // Admission and in-flight Git work are transient; anything else is a real failure.
-        if (/retry shortly|retry after completion/.test(String(error))) return undefined
-        throw new FatalWait(error as Error)
-      }
-    }, EXIT_TIMEOUT_MS)
+    await until(
+      'runtime.prepare_restart to be accepted',
+      async () => {
+        try {
+          await rpc(
+            this.socket,
+            { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`, boot_id: bootId },
+            5_000,
+          )
+          return true
+        } catch (error) {
+          // Admission and in-flight Git work are transient; anything else is a real failure.
+          if (/retry shortly|retry after completion/.test(String(error))) return undefined
+          throw new FatalWait(error as Error)
+        }
+      },
+      EXIT_TIMEOUT_MS,
+    )
     await waitForChildExit(child, EXIT_TIMEOUT_MS)
     this.current = null
   }
@@ -375,34 +461,52 @@ export class ScratchProfile {
     const runtime = await this.runtimeHello()
     if (!runtime) return
     const expected = await realpath(this.dataDirectory)
-    const actual = typeof runtime.data_directory === 'string' ? await realpath(runtime.data_directory).catch(() => '') : ''
-    if (actual !== expected) throw new Error(`Refusing to stop a runtime at ${this.runtimeSocket} that serves ${actual}`)
+    const actual =
+      typeof runtime.data_directory === 'string' ? await realpath(runtime.data_directory).catch(() => '') : ''
+    if (actual !== expected)
+      throw new Error(`Refusing to stop a runtime at ${this.runtimeSocket} that serves ${actual}`)
     const pid = runtime.pid
-    await until('runtime.stop to be accepted', async () => {
-      try {
-        await rpc(this.runtimeSocket, { op: 'runtime.stop', instance_id: runtime.instance_id, stop_active: true }, 2_000)
-        return true
-      } catch (error) {
-        if (!(await this.runtimeHello()) && !(typeof pid === 'number' && await isRunning(pid))) return true
-        // The runtime refuses while a daemon is still attached; that detaches as the daemon exits.
-        if (/Disconnect the application daemon|closed before a reply|timed out/.test(String(error))) return undefined
-        throw new FatalWait(error as Error)
-      }
-    }, EXIT_TIMEOUT_MS)
-    await until('the runtime to exit', async () =>
-      (await this.runtimeHello()) || (typeof pid === 'number' && await isRunning(pid)) ? undefined : true, EXIT_TIMEOUT_MS)
+    await until(
+      'runtime.stop to be accepted',
+      async () => {
+        try {
+          await rpc(
+            this.runtimeSocket,
+            { op: 'runtime.stop', instance_id: runtime.instance_id, stop_active: true },
+            2_000,
+          )
+          return true
+        } catch (error) {
+          if (!(await this.runtimeHello()) && !(typeof pid === 'number' && (await isRunning(pid)))) return true
+          // The runtime refuses while a daemon is still attached; that detaches as the daemon exits.
+          if (/Disconnect the application daemon|closed before a reply|timed out/.test(String(error))) return undefined
+          throw new FatalWait(error as Error)
+        }
+      },
+      EXIT_TIMEOUT_MS,
+    )
+    await until(
+      'the runtime to exit',
+      async () =>
+        (await this.runtimeHello()) || (typeof pid === 'number' && (await isRunning(pid))) ? undefined : true,
+      EXIT_TIMEOUT_MS,
+    )
   }
 
   private async logOperation(entry: Record<string, unknown>): Promise<void> {
-    await appendFile(join(this.logsDirectory, 'operations.jsonl'),
-      `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`).catch(() => undefined)
+    await appendFile(
+      join(this.logsDirectory, 'operations.jsonl'),
+      `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`,
+    ).catch(() => undefined)
   }
 }
 
 function parseJson(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text)
-    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
   } catch {
     return null
   }

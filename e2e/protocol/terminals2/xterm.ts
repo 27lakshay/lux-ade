@@ -53,8 +53,14 @@ export async function screenOf(terminal: Terminal): Promise<ScreenState> {
   for (let row = 0; row < terminal.rows; row++) {
     lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '')
   }
-  return { buffer: buffer.type, cols: terminal.cols, rows: terminal.rows, cursor: [buffer.cursorX, buffer.cursorY],
-    lines, modes: { ...terminal.modes } }
+  return {
+    buffer: buffer.type,
+    cols: terminal.cols,
+    rows: terminal.rows,
+    cursor: [buffer.cursorX, buffer.cursorY],
+    lines,
+    modes: { ...terminal.modes },
+  }
 }
 
 export interface XtermView {
@@ -83,10 +89,18 @@ export function xtermView(): XtermView {
   const feed = new TerminalFeed(terminal, {
     status: (message) => statuses.push(message),
     ready: () => settle(),
-    failed: () => { failed = true; queueMicrotask(() => settle(new Error(`Restore failed: ${statuses.join('; ')}`))) },
+    failed: () => {
+      failed = true
+      queueMicrotask(() => settle(new Error(`Restore failed: ${statuses.join('; ')}`)))
+    },
   })
-  return { terminal, feed, statuses, failed: () => failed,
-    restored: () => new Promise<void>((resolve, reject) => waiters.push({ resolve, reject })) }
+  return {
+    terminal,
+    feed,
+    statuses,
+    failed: () => failed,
+    restored: () => new Promise<void>((resolve, reject) => waiters.push({ resolve, reject })),
+  }
 }
 
 /** The screen a new view restores from `snapshot` alone. */
@@ -106,19 +120,29 @@ export async function openView(profile: ScratchProfile, workspaceId: string, ter
   const view: XtermView = xtermView()
   const frames: StreamFrame[] = []
   const restored = view.restored()
-  const connection = openTerminalConnection(profile.socket, workspaceId, terminalId, (frame) => {
-    frames.push(frame)
-    view.feed.push(frame)
-  }, () => {})
-  view.terminal.onData((data) => { if (view.feed.ready) connection.input(data) })
+  const connection = openTerminalConnection(
+    profile.socket,
+    workspaceId,
+    terminalId,
+    (frame) => {
+      frames.push(frame)
+      view.feed.push(frame)
+    },
+    () => {},
+  )
+  view.terminal.onData((data) => {
+    if (view.feed.ready) connection.input(data)
+  })
   await restored
   return {
-    view, connection, frames,
+    view,
+    connection,
+    frames,
     screen: () => screenOf(view.terminal),
     /** Waits until the screen, once xterm has parsed what arrived, matches. */
     until: async (what: string, match: (screen: ScreenState) => boolean): Promise<ScreenState> => {
       let last: ScreenState | undefined
-      await expect.poll(async () => match(last = await screenOf(view.terminal)), { message: what }).toBe(true)
+      await expect.poll(async () => match((last = await screenOf(view.terminal))), { message: what }).toBe(true)
       return last!
     },
   }

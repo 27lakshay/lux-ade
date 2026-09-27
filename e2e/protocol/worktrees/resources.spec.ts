@@ -17,7 +17,10 @@ type ResourceResult = { path: string; outcome: string; error?: string }
 const outcomesOf = (results: unknown) =>
   Object.fromEntries((results as ResourceResult[]).map((result) => [result.path, result.outcome]))
 
-test('rules copy, link and skip ignored resources, report tracked and missing paths, and never replace an existing file', async ({ ade, profile }) => {
+test('rules copy, link and skip ignored resources, report tracked and missing paths, and never replace an existing file', async ({
+  ade,
+  profile,
+}) => {
   const repo = await ade.repo({ initialFiles: ignored })
   await repo.write('.env', 'SECRET=primary\n')
   await repo.write('node_modules/pkg/index.js', 'module.exports = 1\n')
@@ -25,20 +28,31 @@ test('rules copy, link and skip ignored resources, report tracked and missing pa
   await repo.write('cache/blob', 'cached\n')
   await repo.write('unlisted.env', 'never copied\n')
   const repositoryId = await register(profile, repo)
-  await profile.call('worktree.configure', { repository_id: repositoryId, config: { resources: [
-    { path: '.env', mode: 'copy' },
-    { path: 'node_modules', mode: 'link' },
-    { path: 'deps', mode: 'link' },
-    { path: 'cache', mode: 'skip' },
-    { path: 'config.json', mode: 'copy' },
-    { path: 'missing.env', mode: 'copy' },
-  ] } })
+  await profile.call('worktree.configure', {
+    repository_id: repositoryId,
+    config: {
+      resources: [
+        { path: '.env', mode: 'copy' },
+        { path: 'node_modules', mode: 'link' },
+        { path: 'deps', mode: 'link' },
+        { path: 'cache', mode: 'skip' },
+        { path: 'config.json', mode: 'copy' },
+        { path: 'missing.env', mode: 'copy' },
+      ],
+    },
+  })
 
   const created = await create(profile, repositoryId, { name: 'resources' })
   expect(created, JSON.stringify(created)).toMatchObject({ status: 'succeeded' })
   const tree = created.worktree_path!
-  expect(outcomesOf(created.result!.resources)).toEqual({ '.env': 'copied', node_modules: 'linked', deps: 'not_ignored',
-    cache: 'skipped', 'config.json': 'not_ignored', 'missing.env': 'missing' })
+  expect(outcomesOf(created.result!.resources)).toEqual({
+    '.env': 'copied',
+    node_modules: 'linked',
+    deps: 'not_ignored',
+    cache: 'skipped',
+    'config.json': 'not_ignored',
+    'missing.env': 'missing',
+  })
 
   // The copy is independent; the link points at the primary checkout's directory.
   expect(await readFile(join(tree, '.env'), 'utf8')).toBe('SECRET=primary\n')
@@ -49,8 +63,9 @@ test('rules copy, link and skip ignored resources, report tracked and missing pa
   expect(existsSync(join(tree, 'unlisted.env'))).toBe(false)
   // A link Git would not ignore is taken back, so the tree stays clean.
   expect(existsSync(join(tree, 'deps'))).toBe(false)
-  expect((created.result!.resources as ResourceResult[]).find((result) => result.path === 'deps')?.error)
-    .toMatch(/without a trailing slash/)
+  expect((created.result!.resources as ResourceResult[]).find((result) => result.path === 'deps')?.error).toMatch(
+    /without a trailing slash/,
+  )
   expect(await repo.git('-C', tree, 'status', '--porcelain', '--untracked-files=all')).toBe('')
   // The tracked file is the tree's own checkout, not a copy.
   expect(await readFile(join(tree, 'config.json'), 'utf8')).toBe('{}\n')
@@ -76,7 +91,10 @@ test('rules copy, link and skip ignored resources, report tracked and missing pa
   expect(await readFile(join(repo.path, '.env'), 'utf8')).toBe('SECRET=primary\n')
 })
 
-test('an unsafe source stops creation before setup and keeps the tree; a path beyond a link is never copied', async ({ ade, profile }) => {
+test('an unsafe source stops creation before setup and keeps the tree; a path beyond a link is never copied', async ({
+  ade,
+  profile,
+}) => {
   const repo = await ade.repo({ initialFiles: ignored })
   const outside = join(dirname(repo.path), 'outside-secrets')
   await mkdir(outside, { recursive: true })
@@ -85,10 +103,16 @@ test('an unsafe source stops creation before setup and keeps the tree; a path be
   await execFileAsync('mkfifo', [join(repo.path, 'pipe')])
   const repositoryId = await register(profile, repo)
   const setupRan = join(ade.root, 'setup-ran')
-  await profile.call('worktree.configure', { repository_id: repositoryId, config: {
-    resources: [{ path: 'linked/secret.env', mode: 'copy' }, { path: 'pipe', mode: 'copy' }],
-    setup: [{ name: 'mark', command: ['/bin/sh', '-c', `: > '${setupRan}'`] }],
-  } })
+  await profile.call('worktree.configure', {
+    repository_id: repositoryId,
+    config: {
+      resources: [
+        { path: 'linked/secret.env', mode: 'copy' },
+        { path: 'pipe', mode: 'copy' },
+      ],
+      setup: [{ name: 'mark', command: ['/bin/sh', '-c', `: > '${setupRan}'`] }],
+    },
+  })
 
   const created = await create(profile, repositoryId, { name: 'unsafe' })
   expect(created, JSON.stringify(created)).toMatchObject({ status: 'failed', code: 'resource_failed' })
@@ -113,10 +137,15 @@ test('configuration refuses globs, parent paths, .git and overlapping rules', as
     [{ path: '*.env', mode: 'copy' as const }],
     [{ path: '../outside', mode: 'copy' as const }],
     [{ path: '.git/config', mode: 'copy' as const }],
-    [{ path: 'node_modules', mode: 'link' as const }, { path: 'node_modules/pkg', mode: 'copy' as const }],
+    [
+      { path: 'node_modules', mode: 'link' as const },
+      { path: 'node_modules/pkg', mode: 'copy' as const },
+    ],
   ]) {
-    await expect(profile.call('worktree.configure', { repository_id: repositoryId, config: { resources } }),
-      JSON.stringify(resources)).rejects.toThrow()
+    await expect(
+      profile.call('worktree.configure', { repository_id: repositoryId, config: { resources } }),
+      JSON.stringify(resources),
+    ).rejects.toThrow()
   }
   const state = await profile.call('worktree.get', { repository_id: repositoryId })
   expect(state.repository.config.resources ?? []).toEqual([])

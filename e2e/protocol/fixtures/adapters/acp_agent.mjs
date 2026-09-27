@@ -63,7 +63,10 @@ function request(method, params) {
 
 async function prompt(id, params) {
   const sessionId = params.sessionId
-  const text = (params.prompt ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('')
+  const text = (params.prompt ?? [])
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
   const turn = { cancelled: false, onCancel: null }
   turns.set(sessionId, turn)
   const number = history(sessionId).length + 1
@@ -87,7 +90,13 @@ async function prompt(id, params) {
     return
   }
   if (text.includes('permission')) {
-    update(sessionId, { sessionUpdate: 'tool_call', toolCallId: `call-${number}`, title: 'Write notes.txt', kind: 'edit', status: 'pending' })
+    update(sessionId, {
+      sessionUpdate: 'tool_call',
+      toolCallId: `call-${number}`,
+      title: 'Write notes.txt',
+      kind: 'edit',
+      status: 'pending',
+    })
     const answer = await request('session/request_permission', {
       sessionId,
       toolCall: { toolCallId: `call-${number}`, title: 'Write notes.txt', kind: 'edit' },
@@ -99,8 +108,11 @@ async function prompt(id, params) {
     })
     const outcome = answer?.outcome ?? {}
     if (outcome.outcome !== 'selected' || turn.cancelled) return end('cancelled')
-    update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId: `call-${number}`,
-      status: outcome.optionId === 'reject-once' ? 'failed' : 'completed' })
+    update(sessionId, {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: `call-${number}`,
+      status: outcome.optionId === 'reject-once' ? 'failed' : 'completed',
+    })
     reply(`Permission ${outcome.optionId}`)
     return end('end_turn')
   }
@@ -111,7 +123,10 @@ async function prompt(id, params) {
 const methods = {
   initialize: () => ({
     protocolVersion: Number(process.env.ACP_FIXTURE_PROTOCOL ?? 1),
-    agentCapabilities: { loadSession: true, promptCapabilities: { image: false, audio: false, embeddedContext: false } },
+    agentCapabilities: {
+      loadSession: true,
+      promptCapabilities: { image: false, audio: false, embeddedContext: false },
+    },
     agentInfo: { name: 'e2e-acp', version: '1.0.0' },
     authMethods: [],
   }),
@@ -123,43 +138,53 @@ const methods = {
   'session/load': (params) => {
     if (!existsSync(historyPath(params.sessionId))) throw Object.assign(new Error('Unknown session'), { code: -32002 })
     for (const entry of history(params.sessionId)) {
-      chunk(params.sessionId, entry.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk', entry.id, entry.text)
+      chunk(
+        params.sessionId,
+        entry.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk',
+        entry.id,
+        entry.text,
+      )
     }
     return {}
   },
 }
 
-createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line', (line) => {
-  if (!line.trim()) return
-  const message = JSON.parse(line)
-  record(message)
-  if (message.method === undefined) {
-    // A reply to a request the agent sent.
-    const resolve = waiting.get(message.id)
-    waiting.delete(message.id)
-    resolve?.(message.result)
-    return
-  }
-  if (message.method === 'session/cancel') {
-    const turn = turns.get(message.params?.sessionId)
-    if (turn) {
-      turn.cancelled = true
-      turn.onCancel?.()
+createInterface({ input: process.stdin, crlfDelay: Infinity })
+  .on('line', (line) => {
+    if (!line.trim()) return
+    const message = JSON.parse(line)
+    record(message)
+    if (message.method === undefined) {
+      // A reply to a request the agent sent.
+      const resolve = waiting.get(message.id)
+      waiting.delete(message.id)
+      resolve?.(message.result)
+      return
     }
-    return
-  }
-  if (message.method === 'session/prompt') {
-    prompt(message.id, message.params ?? {}).catch((error) => write({ id: message.id, error: { code: -32603, message: String(error) } }))
-    return
-  }
-  const handler = methods[message.method]
-  if (!handler) {
-    if (message.id !== undefined) write({ id: message.id, error: { code: -32601, message: `Unknown method ${message.method}` } })
-    return
-  }
-  try {
-    write({ id: message.id, result: handler(message.params ?? {}) })
-  } catch (error) {
-    write({ id: message.id, error: { code: error.code ?? -32603, message: error.message } })
-  }
-}).on('close', () => process.exit(0))
+    if (message.method === 'session/cancel') {
+      const turn = turns.get(message.params?.sessionId)
+      if (turn) {
+        turn.cancelled = true
+        turn.onCancel?.()
+      }
+      return
+    }
+    if (message.method === 'session/prompt') {
+      prompt(message.id, message.params ?? {}).catch((error) =>
+        write({ id: message.id, error: { code: -32603, message: String(error) } }),
+      )
+      return
+    }
+    const handler = methods[message.method]
+    if (!handler) {
+      if (message.id !== undefined)
+        write({ id: message.id, error: { code: -32601, message: `Unknown method ${message.method}` } })
+      return
+    }
+    try {
+      write({ id: message.id, result: handler(message.params ?? {}) })
+    } catch (error) {
+      write({ id: message.id, error: { code: error.code ?? -32603, message: error.message } })
+    }
+  })
+  .on('close', () => process.exit(0))

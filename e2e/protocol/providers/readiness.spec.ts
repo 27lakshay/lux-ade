@@ -8,34 +8,58 @@ import { expect, send, test, waitForIdle } from '../fixtures'
 import { compatibleVersions, FakeProviderClis } from '../fixtures/provider-cli'
 import { conversationOn, profileWithClis, readiness, readinessBecomes, record, verifiedAccount, verify } from './steps'
 
-test('F027: Codex readiness walks missing credentials, verification, ready, an external uninstall and an incompatible update, and revalidates each time', async ({ ade }) => {
+test('F027: Codex readiness walks missing credentials, verification, ready, an external uninstall and an incompatible update, and revalidates each time', async ({
+  ade,
+}) => {
   const { profile, clis } = await profileWithClis(ade)
   const codex = await record(profile, 'codex')
 
   // Without an account ADE checks installation only and never claims ready.
   const installed = await readiness(profile, 'codex')
-  expect(installed).toMatchObject({ provider: 'codex', account_id: null, state: 'installed_unchecked', version: null,
-    capability_revision: codex.revision })
+  expect(installed).toMatchObject({
+    provider: 'codex',
+    account_id: null,
+    state: 'installed_unchecked',
+    version: null,
+    capability_revision: codex.revision,
+  })
   expect(installed.reason).toMatch(/pass an account/)
-  expect(installed.checks).toContainEqual({ check: 'executable:codex', state: 'passed', detail: await realpath(clis.path('codex')) })
+  expect(installed.checks).toContainEqual({
+    check: 'executable:codex',
+    state: 'passed',
+    detail: await realpath(clis.path('codex')),
+  })
   // Profiles use the stdio transport, so Bun, which only the shared transport runs, is not required.
-  expect(installed.checks).toContainEqual({ check: 'runtime:bun', state: 'skipped', detail: expect.stringMatching(/Not used/) })
+  expect(installed.checks).toContainEqual({
+    check: 'runtime:bun',
+    state: 'skipped',
+    detail: expect.stringMatching(/Not used/),
+  })
 
   const { account } = await profile.call('account.create', { provider: 'codex', name: 'Work' })
-  const signedOut = await readinessBecomes(profile, 'codex', account.id,
-    { account_id: account.id, state: 'needs_authentication', version: compatibleVersions.codex })
+  const signedOut = await readinessBecomes(profile, 'codex', account.id, {
+    account_id: account.id,
+    state: 'needs_authentication',
+    version: compatibleVersions.codex,
+  })
   expect(signedOut.reason).toMatch(/Sign in with the Codex CLI/)
   expect(signedOut.checks).toContainEqual(expect.objectContaining({ check: 'account', state: 'failed' }))
 
   await clis.invalidateCredentials('codex', account.native_home)
-  await readinessBecomes(profile, 'codex', account.id, { state: 'needs_authentication', version: compatibleVersions.codex })
+  await readinessBecomes(profile, 'codex', account.id, {
+    state: 'needs_authentication',
+    version: compatibleVersions.codex,
+  })
 
   await clis.signIn('codex', account.native_home, { email: 'work@example.invalid', account_id: 'org-work' })
   const unverified = await readinessBecomes(profile, 'codex', account.id, { state: 'needs_verification' })
   expect(unverified.reason).toMatch(/account verify/)
 
   await verify(profile, account.id)
-  const ready = await readinessBecomes(profile, 'codex', account.id, { state: 'ready', version: compatibleVersions.codex })
+  const ready = await readinessBecomes(profile, 'codex', account.id, {
+    state: 'ready',
+    version: compatibleVersions.codex,
+  })
   expect(ready.checks).toContainEqual(expect.objectContaining({ check: 'account', state: 'passed' }))
 
   // A conversation launches under the ready account.
@@ -52,12 +76,16 @@ test('F027: Codex readiness walks missing credentials, verification, ready, an e
 
   // An update installs a build outside the validated range.
   await clis.install('codex', '0.158.0')
-  const incompatible = await readinessBecomes(profile, 'codex', account.id, { state: 'incompatible', version: '0.158.0' })
+  const incompatible = await readinessBecomes(profile, 'codex', account.id, {
+    state: 'incompatible',
+    version: '0.158.0',
+  })
   expect(incompatible.reason).toMatch(/outside the validated 0\.157\.0 build/)
   // A launch checks again and refuses with the same actionable reason.
   await profile.call('agent.disconnect', { conversation_id: conversationId })
   await profile.call('agent.resume', { conversation_id: conversationId })
-  await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation)
+  await expect
+    .poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).conversation)
     .toMatchObject({ status: 'error', error: expect.stringMatching(/outside the validated 0\.157\.0 build/) })
 
   // Reinstalling the validated build makes the same account ready again.
@@ -80,14 +108,22 @@ test('F027: Codex readiness walks missing credentials, verification, ready, an e
   expect(cli.json).toMatchObject({ type: 'provider_readiness', state: 'account_disabled', account_id: account.id })
 })
 
-test('F027: Claude readiness reports missing, incompatible, stuck, unauthenticated, unverified, ready and changed identity', async ({ ade }) => {
+test('F027: Claude readiness reports missing, incompatible, stuck, unauthenticated, unverified, ready and changed identity', async ({
+  ade,
+}) => {
   const { profile, clis } = await profileWithClis(ade)
   expect(await readiness(profile, 'claude')).toMatchObject({ state: 'installed_unchecked' })
 
   const { account } = await profile.call('account.create', { provider: 'claude', name: 'Personal' })
-  await readinessBecomes(profile, 'claude', account.id, { state: 'needs_authentication', version: compatibleVersions.claude })
+  await readinessBecomes(profile, 'claude', account.id, {
+    state: 'needs_authentication',
+    version: compatibleVersions.claude,
+  })
   await clis.invalidateCredentials('claude', account.native_home)
-  await readinessBecomes(profile, 'claude', account.id, { state: 'needs_authentication', version: compatibleVersions.claude })
+  await readinessBecomes(profile, 'claude', account.id, {
+    state: 'needs_authentication',
+    version: compatibleVersions.claude,
+  })
 
   await clis.signIn('claude', account.native_home, { email: 'me@example.invalid', account_id: 'org-me' })
   await readinessBecomes(profile, 'claude', account.id, { state: 'needs_verification' })
@@ -95,7 +131,10 @@ test('F027: Claude readiness reports missing, incompatible, stuck, unauthenticat
   await readinessBecomes(profile, 'claude', account.id, { state: 'ready', version: compatibleVersions.claude })
 
   await clis.install('claude', '2.0.9')
-  const incompatible = await readinessBecomes(profile, 'claude', account.id, { state: 'incompatible', version: '2.0.9' })
+  const incompatible = await readinessBecomes(profile, 'claude', account.id, {
+    state: 'incompatible',
+    version: '2.0.9',
+  })
   expect(incompatible.reason).toMatch(/validated 2\.1\.x range/)
 
   // A CLI that never answers is a failed check, not an incompatible one.
@@ -117,9 +156,14 @@ test('F027: Claude readiness reports missing, incompatible, stuck, unauthenticat
   await readinessBecomes(profile, 'claude', account.id, { state: 'identity_changed' })
 })
 
-test('F027: providers without a managed-account probe say what is unchecked, and bad readiness queries are refused', async ({ ade }) => {
+test('F027: providers without a managed-account probe say what is unchecked, and bad readiness queries are refused', async ({
+  ade,
+}) => {
   const { profile, clis } = await profileWithClis(ade)
-  const account = await verifiedAccount(profile, clis, 'codex', 'Work', { email: 'w@example.invalid', account_id: 'org-w' })
+  const account = await verifiedAccount(profile, clis, 'codex', 'Work', {
+    email: 'w@example.invalid',
+    account_id: 'org-w',
+  })
 
   // Oh My Pi ships with ADE; only an override would be checked.
   const omp = await readiness(profile, 'omp')
@@ -139,14 +183,22 @@ test('F027: providers without a managed-account probe say what is unchecked, and
 
 test('F027: Bun is required only by the shared Codex transport, never by a managed-account launch', async ({ ade }) => {
   const clis = await FakeProviderClis.create(ade)
-  const profile = await ade.profile({ env: { ...clis.env, ADE_CODEX_TRANSPORT: 'shared',
-    ADE_BUN_BIN: join(ade.root, 'no-bun-here') } })
+  const profile = await ade.profile({
+    env: { ...clis.env, ADE_CODEX_TRANSPORT: 'shared', ADE_BUN_BIN: join(ade.root, 'no-bun-here') },
+  })
   // A launch on Codex's own login would run the shared transport, which needs Bun.
   const ambient = await readiness(profile, 'codex')
   expect(ambient.state).toBe('missing_executable')
   expect(ambient.reason).toMatch(/ADE_BUN_BIN/)
   // A managed account runs the Codex CLI directly, so the same host is ready for it.
-  const account = await verifiedAccount(profile, clis, 'codex', 'Work', { email: 'w@example.invalid', account_id: 'org-w' })
+  const account = await verifiedAccount(profile, clis, 'codex', 'Work', {
+    email: 'w@example.invalid',
+    account_id: 'org-w',
+  })
   const managed = await readinessBecomes(profile, 'codex', account.id, { state: 'ready' })
-  expect(managed.checks).toContainEqual({ check: 'runtime:bun', state: 'skipped', detail: expect.stringMatching(/Not used/) })
+  expect(managed.checks).toContainEqual({
+    check: 'runtime:bun',
+    state: 'skipped',
+    detail: expect.stringMatching(/Not used/),
+  })
 })

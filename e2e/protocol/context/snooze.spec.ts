@@ -6,15 +6,18 @@ import { conversationStatus, expect, prompts, send, startConversation, test, typ
 import { snapshot } from './helpers'
 
 async function wakes(profile: ScratchProfile, conversationId: string) {
-  return (await profile.call('activity.list', { limit: 200 })).activities
-    .filter((activity) => activity.kind === 'snooze_ended' && activity.target.conversation_id === conversationId)
+  return (await profile.call('activity.list', { limit: 200 })).activities.filter(
+    (activity) => activity.kind === 'snooze_ended' && activity.target.conversation_id === conversationId,
+  )
 }
 
 async function activeSnooze(profile: ScratchProfile, conversationId: string) {
   return (await profile.call('conversation.controls', { conversation_id: conversationId })).snooze
 }
 
-test('F046: a snooze that falls due while ADE is down wakes once on restart, and the running turn keeps running', async ({ profile }) => {
+test('F046: a snooze that falls due while ADE is down wakes once on restart, and the running turn keeps running', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.hold)
   await expect.poll(() => conversationStatus(profile, conversationId)).toBe('running')
@@ -24,7 +27,9 @@ test('F046: a snooze that falls due while ADE is down wakes once on restart, and
   const snoozed = await profile.call('conversation.snooze', { conversation_id: conversationId, until })
   expect(snoozed.snooze).toMatchObject({ conversation_id: conversationId, until })
   // The same wake time converges on the stored snooze.
-  expect((await profile.call('conversation.snooze', { conversation_id: conversationId, until })).snooze).toEqual(snoozed.snooze)
+  expect((await profile.call('conversation.snooze', { conversation_id: conversationId, until })).snooze).toEqual(
+    snoozed.snooze,
+  )
   expect(await activeSnooze(profile, conversationId)).toEqual(snoozed.snooze)
   expect((await profile.call('conversation.snooze.list', {})).snoozes).toEqual([snoozed.snooze])
 
@@ -48,7 +53,9 @@ test('F046: a snooze that falls due while ADE is down wakes once on restart, and
   expect(await wakes(profile, conversationId)).toHaveLength(1)
 })
 
-test('F046: a snooze wakes while ADE runs, a new time replaces it, and unsnooze records no wake', async ({ profile }) => {
+test('F046: a snooze wakes while ADE runs, a new time replaces it, and unsnooze records no wake', async ({
+  profile,
+}) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const other = (await startConversation(profile, 'claude')).conversationId
 
@@ -76,18 +83,25 @@ test('F046: a snooze wakes while ADE runs, a new time replaces it, and unsnooze 
     expect(state.messages).toEqual([])
     expect(state.queued).toEqual([])
   }
-  expect(await profile.mockCalls('codex')).toEqual(expect.not.arrayContaining([
-    expect.objectContaining({ method: 'turn/start' })]))
+  expect(await profile.mockCalls('codex')).toEqual(
+    expect.not.arrayContaining([expect.objectContaining({ method: 'turn/start' })]),
+  )
 })
 
 test('F046: a wake time in the past or more than 366 days ahead is refused', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
-  await expect(profile.call('conversation.snooze', { conversation_id: conversationId, until: Date.now() - 1_000 }))
-    .rejects.toThrow('Snooze time must be in the future')
-  await expect(profile.call('conversation.snooze', { conversation_id: conversationId,
-    until: Date.now() + 367 * 24 * 60 * 60 * 1000 })).rejects.toThrow('at most 366 days ahead')
-  await expect(profile.call('conversation.snooze', { conversation_id: 'conversation_missing', until: Date.now() + 60_000 }))
-    .rejects.toThrow()
+  await expect(
+    profile.call('conversation.snooze', { conversation_id: conversationId, until: Date.now() - 1_000 }),
+  ).rejects.toThrow('Snooze time must be in the future')
+  await expect(
+    profile.call('conversation.snooze', {
+      conversation_id: conversationId,
+      until: Date.now() + 367 * 24 * 60 * 60 * 1000,
+    }),
+  ).rejects.toThrow('at most 366 days ahead')
+  await expect(
+    profile.call('conversation.snooze', { conversation_id: 'conversation_missing', until: Date.now() + 60_000 }),
+  ).rejects.toThrow()
   const cli = await profile.cli('conversation', 'snooze', conversationId, 'tomorrow')
   expect(cli.code).not.toBe(0)
   expect(await activeSnooze(profile, conversationId)).toBeNull()

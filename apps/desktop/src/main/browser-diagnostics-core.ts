@@ -10,8 +10,13 @@
 
 export const REDACTION_POLICY = 'ade-browser-redaction-v1'
 export const DIAGNOSTICS_EXCLUDED = [
-  'request and response headers', 'cookies', 'request and response bodies', 'URL fragments and user information',
-  'values of credential-like query parameters', 'object contents of console arguments', 'child-frame and worker targets',
+  'request and response headers',
+  'cookies',
+  'request and response bodies',
+  'URL fragments and user information',
+  'values of credential-like query parameters',
+  'object contents of console arguments',
+  'child-frame and worker targets',
 ]
 export const TEXT_LIMIT = 1024
 export const URL_LIMIT = 1024
@@ -19,17 +24,37 @@ export const URL_LIMIT = 1024
 const SCAN_LIMIT = 16 * 1024
 const MAX_CONSOLE_ARGS = 20
 
-export type ConsoleEntry = { seq: number; at_ms: number; source: 'console' | 'exception' | 'browser'; level: string
-  text: string; url: string | null; line: number | null }
+export type ConsoleEntry = {
+  seq: number
+  at_ms: number
+  source: 'console' | 'exception' | 'browser'
+  level: string
+  text: string
+  url: string | null
+  line: number | null
+}
 export type NetworkOutcome = 'completed' | 'failed' | 'canceled' | 'blocked' | 'incomplete'
-export type NetworkEntry = { seq: number; at_ms: number; method: string; url: string; resource_type: string | null
-  status: number | null; mime_type: string | null; encoded_bytes: number | null; duration_ms: number | null
-  outcome: NetworkOutcome; error: string | null }
+export type NetworkEntry = {
+  seq: number
+  at_ms: number
+  method: string
+  url: string
+  resource_type: string | null
+  status: number | null
+  mime_type: string | null
+  encoded_bytes: number | null
+  duration_ms: number | null
+  outcome: NetworkOutcome
+  error: string | null
+}
 
 const HEADER_LINE = /\b(cookie|set-cookie|authorization|proxy-authorization|x-api-key)\b(\s*:)[^\r\n]*/gi
-const LABELED_KV = new RegExp('\\b(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|' +
-  'client[-_]?secret|password|passwd|bearer|session[-_]?id)\\b\\s*[:=]\\s*(?:(?:Bearer|Basic|Token)\\s+\\S+|' +
-  '"[^"]*"|\'[^\']*\'|[^\\s,;&]+)', 'gi')
+const LABELED_KV = new RegExp(
+  '\\b(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|' +
+    'client[-_]?secret|password|passwd|bearer|session[-_]?id)\\b\\s*[:=]\\s*(?:(?:Bearer|Basic|Token)\\s+\\S+|' +
+    '"[^"]*"|\'[^\']*\'|[^\\s,;&]+)',
+  'gi',
+)
 const BARE_SCHEME = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g
 const PROVIDER_PATTERNS: Array<[string, RegExp]> = [
   ['anthropic-key', /sk-ant-[a-zA-Z0-9_-]{40,}/g],
@@ -70,14 +95,21 @@ export function redactUrl(value: unknown): string {
   const input = value.slice(0, SCAN_LIMIT).replace(CONTROL, '')
   if (/^data:/i.test(input)) return 'data:[omitted]'
   let url: URL
-  try { url = new URL(input) } catch { return clip(redactSecrets(input), URL_LIMIT) }
+  try {
+    url = new URL(input)
+  } catch {
+    return clip(redactSecrets(input), URL_LIMIT)
+  }
   if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'ws:' && url.protocol !== 'wss:') {
     return clip(`${url.protocol}[omitted]`, URL_LIMIT)
   }
   const pairs: string[] = []
   url.searchParams.forEach((item, name) => {
-    const kept = SENSITIVE_PARAM.test(name) ? '[redacted]'
-      : redactSecrets(item) === item ? encodeURIComponent(item) : '[redacted]'
+    const kept = SENSITIVE_PARAM.test(name)
+      ? '[redacted]'
+      : redactSecrets(item) === item
+        ? encodeURIComponent(item)
+        : '[redacted]'
     pairs.push(`${encodeURIComponent(name)}=${kept}`)
   })
   const path = redactSecrets(url.pathname)
@@ -92,7 +124,7 @@ export function redactText(value: unknown, limit = TEXT_LIMIT): string {
 }
 
 function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 function text(value: unknown, limit: number): string | null {
   return typeof value === 'string' && value ? clip(value.replace(CONTROL, ''), limit) : null
@@ -131,27 +163,57 @@ export function consoleEntry(method: string, params: unknown, seq: number, atMs:
       if (message.length > SCAN_LIMIT) break
     }
     if (Array.isArray(p.args) && p.args.length > MAX_CONSOLE_ARGS) message += ' …'
-    const frame = record(Array.isArray(record(p.stackTrace).callFrames) ? (record(p.stackTrace).callFrames as unknown[])[0] : null)
-    return { seq, at_ms: atMs, source: 'console', level: text(p.type, 32) ?? 'log', text: redactText(message),
-      url: frame.url ? redactUrl(frame.url) || null : null, line: line(frame.lineNumber) }
+    const frame = record(
+      Array.isArray(record(p.stackTrace).callFrames) ? (record(p.stackTrace).callFrames as unknown[])[0] : null,
+    )
+    return {
+      seq,
+      at_ms: atMs,
+      source: 'console',
+      level: text(p.type, 32) ?? 'log',
+      text: redactText(message),
+      url: frame.url ? redactUrl(frame.url) || null : null,
+      line: line(frame.lineNumber),
+    }
   }
   if (method === 'Runtime.exceptionThrown') {
     const details = record(p.exceptionDetails)
     const exception = record(details.exception)
     const message = typeof exception.description === 'string' ? exception.description : details.text
-    return { seq, at_ms: atMs, source: 'exception', level: 'error', text: redactText(message),
-      url: details.url ? redactUrl(details.url) || null : null, line: line(details.lineNumber) }
+    return {
+      seq,
+      at_ms: atMs,
+      source: 'exception',
+      level: 'error',
+      text: redactText(message),
+      url: details.url ? redactUrl(details.url) || null : null,
+      line: line(details.lineNumber),
+    }
   }
   if (method === 'Log.entryAdded') {
     const entry = record(p.entry)
-    return { seq, at_ms: atMs, source: 'browser', level: text(entry.level, 32) ?? 'info', text: redactText(entry.text),
-      url: entry.url ? redactUrl(entry.url) || null : null, line: line(entry.lineNumber) }
+    return {
+      seq,
+      at_ms: atMs,
+      source: 'browser',
+      level: text(entry.level, 32) ?? 'info',
+      text: redactText(entry.text),
+      url: entry.url ? redactUrl(entry.url) || null : null,
+      line: line(entry.lineNumber),
+    }
   }
   return null
 }
 
-type Pending = { atMs: number; started: number | null; method: string; url: string; resourceType: string | null
-  status: number | null; mimeType: string | null }
+type Pending = {
+  atMs: number
+  started: number | null
+  method: string
+  url: string
+  resourceType: string | null
+  status: number | null
+  mimeType: string | null
+}
 /** Requests seen but not yet ended, bounded to `limit`. */
 export type NetworkTracker = { pending: Map<string, Pending>; limit: number }
 export type NetworkSummary = Omit<NetworkEntry, 'seq'>
@@ -160,12 +222,28 @@ export function networkTracker(limit = 256): NetworkTracker {
   return { pending: new Map(), limit }
 }
 
-function summary(item: Pending, outcome: NetworkOutcome, ended: unknown, bytes: number | null,
-  error: string | null): NetworkSummary {
+function summary(
+  item: Pending,
+  outcome: NetworkOutcome,
+  ended: unknown,
+  bytes: number | null,
+  error: string | null,
+): NetworkSummary {
   const end = typeof ended === 'number' && Number.isFinite(ended) ? ended : null
-  const duration = end !== null && item.started !== null && end >= item.started ? Math.round((end - item.started) * 1000) : null
-  return { at_ms: item.atMs, method: item.method, url: item.url, resource_type: item.resourceType, status: item.status,
-    mime_type: item.mimeType, encoded_bytes: bytes, duration_ms: duration, outcome, error }
+  const duration =
+    end !== null && item.started !== null && end >= item.started ? Math.round((end - item.started) * 1000) : null
+  return {
+    at_ms: item.atMs,
+    method: item.method,
+    url: item.url,
+    resource_type: item.resourceType,
+    status: item.status,
+    mime_type: item.mimeType,
+    encoded_bytes: bytes,
+    duration_ms: duration,
+    outcome,
+    error,
+  }
 }
 
 /**
@@ -192,9 +270,15 @@ export function networkEvent(tracker: NetworkTracker, method: string, params: un
       ended.push(summary(item, 'incomplete', null, null, 'in-flight table full'))
     }
     const request = record(p.request)
-    tracker.pending.set(id, { atMs, started: typeof p.timestamp === 'number' ? p.timestamp : null,
-      method: text(request.method, 16) ?? 'GET', url: redactUrl(request.url), resourceType: text(p.type, 32),
-      status: null, mimeType: null })
+    tracker.pending.set(id, {
+      atMs,
+      started: typeof p.timestamp === 'number' ? p.timestamp : null,
+      method: text(request.method, 16) ?? 'GET',
+      url: redactUrl(request.url),
+      resourceType: text(p.type, 32),
+      status: null,
+      mimeType: null,
+    })
     return ended
   }
   const item = tracker.pending.get(id)
@@ -211,8 +295,12 @@ export function networkEvent(tracker: NetworkTracker, method: string, params: un
     ended.push(summary(item, 'completed', p.timestamp, count(p.encodedDataLength), null))
   } else if (method === 'Network.loadingFailed') {
     tracker.pending.delete(id)
-    const outcome: NetworkOutcome = p.canceled === true ? 'canceled' : typeof p.blockedReason === 'string' ? 'blocked' : 'failed'
-    const reason = typeof p.blockedReason === 'string' ? `${typeof p.errorText === 'string' ? p.errorText : ''} (${p.blockedReason})` : p.errorText
+    const outcome: NetworkOutcome =
+      p.canceled === true ? 'canceled' : typeof p.blockedReason === 'string' ? 'blocked' : 'failed'
+    const reason =
+      typeof p.blockedReason === 'string'
+        ? `${typeof p.errorText === 'string' ? p.errorText : ''} (${p.blockedReason})`
+        : p.errorText
     ended.push(summary(item, outcome, p.timestamp, null, redactText(reason, 256) || null))
   }
   return ended
@@ -226,7 +314,14 @@ export function flushNetwork(tracker: NetworkTracker, reason: string): NetworkSu
 }
 
 /** A bounded, oldest-first buffer. `dropped` counts what it evicted. */
-export type Ring<T> = { items: T[]; sizes: number[]; bytes: number; dropped: number; maxItems: number; maxBytes: number }
+export type Ring<T> = {
+  items: T[]
+  sizes: number[]
+  bytes: number
+  dropped: number
+  maxItems: number
+  maxBytes: number
+}
 
 export function ring<T>(maxItems: number, maxBytes: number): Ring<T> {
   return { items: [], sizes: [], bytes: 0, dropped: 0, maxItems, maxBytes }
@@ -254,8 +349,13 @@ export type DiagnosticsPage = { console: ConsoleEntry[]; network: NetworkEntry[]
  * One page of entries after `after`, in `seq` order across both kinds, cut at
  * `limit` entries or `byteBudget` serialized bytes, whichever comes first.
  */
-export function readPage(consoleItems: readonly ConsoleEntry[], networkItems: readonly NetworkEntry[],
-  after: number, limit: number, byteBudget: number): DiagnosticsPage {
+export function readPage(
+  consoleItems: readonly ConsoleEntry[],
+  networkItems: readonly NetworkEntry[],
+  after: number,
+  limit: number,
+  byteBudget: number,
+): DiagnosticsPage {
   const candidates = [
     ...consoleItems.filter((item) => item.seq > after).map((item) => ({ kind: 'console' as const, item })),
     ...networkItems.filter((item) => item.seq > after).map((item) => ({ kind: 'network' as const, item })),
@@ -265,7 +365,10 @@ export function readPage(consoleItems: readonly ConsoleEntry[], networkItems: re
   let taken = 0
   for (const candidate of candidates) {
     const size = entryBytes(candidate.item)
-    if (taken >= limit || bytes + size > byteBudget) { page.more = true; break }
+    if (taken >= limit || bytes + size > byteBudget) {
+      page.more = true
+      break
+    }
     if (candidate.kind === 'console') page.console.push(candidate.item)
     else page.network.push(candidate.item)
     bytes += size

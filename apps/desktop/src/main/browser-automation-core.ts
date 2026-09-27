@@ -12,7 +12,9 @@
 /** The isolated world automation scripts run in, apart from page scripts. */
 export const AUTOMATION_WORLD = 1095
 export const AUTOMATION_LIMITS = {
-  selector: 1024, text: 4096, expression: 8192,
+  selector: 1024,
+  text: 4096,
+  expression: 8192,
   /** The largest evaluation value, as JSON bytes, that is returned. */
   valueBytes: 64 * 1024,
   exception: 1024,
@@ -25,7 +27,8 @@ export type WaitState = 'attached' | 'visible' | 'detached' | 'hidden'
 export function selectorProblem(value: unknown): string | null {
   if (typeof value !== 'string') return 'selector must be a string'
   const count = [...value].length
-  if (count === 0 || count > AUTOMATION_LIMITS.selector) return `selector must be 1 to ${AUTOMATION_LIMITS.selector} characters`
+  if (count === 0 || count > AUTOMATION_LIMITS.selector)
+    return `selector must be 1 to ${AUTOMATION_LIMITS.selector} characters`
   if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) return 'selector must not contain control characters'
   if (!value.trim()) return 'selector must not be blank'
   const open: string[] = []
@@ -38,7 +41,10 @@ export function selectorProblem(value: unknown): string | null {
       index += 1
       continue
     }
-    if (quote) { if (c === quote) quote = null; continue }
+    if (quote) {
+      if (c === quote) quote = null
+      continue
+    }
     if (c === '"' || c === "'") quote = c
     else if (c === '[' || c === '(') open.push(c)
     else if (c === ']' || c === ')') {
@@ -106,18 +112,26 @@ export type AttachmentDecision =
  */
 export function decideAttachment(facts: AttachmentFacts): AttachmentDecision {
   if (facts.devtoolsOpen) {
-    return { action: 'refuse', reason: 'devtools_open',
-      message: 'DevTools is open on this tab and holds its debugger; close DevTools and retry' }
+    return {
+      action: 'refuse',
+      reason: 'devtools_open',
+      message: 'DevTools is open on this tab and holds its debugger; close DevTools and retry',
+    }
   }
   if (facts.debuggerAttached && !facts.heldByDiagnostics) {
-    return { action: 'refuse', reason: 'foreign_debugger',
-      message: 'another debugger client holds this tab; detach it and retry' }
+    return {
+      action: 'refuse',
+      reason: 'foreign_debugger',
+      message: 'another debugger client holds this tab; detach it and retry',
+    }
   }
   return facts.debuggerAttached ? { action: 'reuse' } : { action: 'attach' }
 }
 
 export type Evaluation = { value_type: string | null; value: unknown; truncated: boolean; exception: string | null }
-export type EvaluationOutcome = { ok: true; evaluation: Evaluation } | { ok: false; code: 'invalid_request' | 'unavailable'; message: string }
+export type EvaluationOutcome =
+  | { ok: true; evaluation: Evaluation }
+  | { ok: false; code: 'invalid_request' | 'unavailable'; message: string }
 
 const clip = (text: string, limit: number): string => [...text].slice(0, limit).join('')
 const VALUE_TYPES = new Set(['undefined', 'boolean', 'number', 'string', 'bigint', 'object', 'function', 'symbol'])
@@ -128,36 +142,67 @@ const VALUE_TYPES = new Set(['undefined', 'boolean', 'number', 'string', 'bigint
  * whose JSON exceeds the byte bound is left out and marked truncated.
  */
 export function boundEvaluation(reply: unknown, limit = AUTOMATION_LIMITS.valueBytes): EvaluationOutcome {
-  if (!reply || typeof reply !== 'object') return { ok: false, code: 'unavailable', message: 'the debugger returned no result' }
-  const { result, exceptionDetails } = reply as { result?: Record<string, unknown>; exceptionDetails?: Record<string, unknown> }
+  if (!reply || typeof reply !== 'object')
+    return { ok: false, code: 'unavailable', message: 'the debugger returned no result' }
+  const { result, exceptionDetails } = reply as {
+    result?: Record<string, unknown>
+    exceptionDetails?: Record<string, unknown>
+  }
   if (exceptionDetails && typeof exceptionDetails === 'object') {
     const exception = exceptionDetails.exception as Record<string, unknown> | undefined
-    const description = typeof exception?.description === 'string' ? exception.description
-      : typeof exceptionDetails.text === 'string' ? exceptionDetails.text : 'exception'
+    const description =
+      typeof exception?.description === 'string'
+        ? exception.description
+        : typeof exceptionDetails.text === 'string'
+          ? exceptionDetails.text
+          : 'exception'
     // V8 reports a refused side effect as an EvalError from debug-evaluate.
     if (/EvalError: Possible side-effect in debug-evaluate/.test(description)) {
-      return { ok: false, code: 'invalid_request', message: 'the expression may have side effects; only read-only expressions run' }
+      return {
+        ok: false,
+        code: 'invalid_request',
+        message: 'the expression may have side effects; only read-only expressions run',
+      }
     }
-    return { ok: true, evaluation: { value_type: null, value: null, truncated: false,
-      exception: clip(description, AUTOMATION_LIMITS.exception) } }
+    return {
+      ok: true,
+      evaluation: {
+        value_type: null,
+        value: null,
+        truncated: false,
+        exception: clip(description, AUTOMATION_LIMITS.exception),
+      },
+    }
   }
   if (!result || typeof result !== 'object' || typeof result.type !== 'string' || !VALUE_TYPES.has(result.type)) {
     return { ok: false, code: 'unavailable', message: 'the debugger returned no result' }
   }
   const type = result.type
   if (result.subtype === 'promise') {
-    return { ok: false, code: 'invalid_request', message: 'the expression returned a promise; promises are not awaited' }
+    return {
+      ok: false,
+      code: 'invalid_request',
+      message: 'the expression returned a promise; promises are not awaited',
+    }
   }
   // `unserializableValue` carries NaN, Infinity, -0 and bigint as text.
   if (typeof result.unserializableValue === 'string') {
-    return { ok: true, evaluation: { value_type: type, value: clip(result.unserializableValue, 64), truncated: false, exception: null } }
+    return {
+      ok: true,
+      evaluation: { value_type: type, value: clip(result.unserializableValue, 64), truncated: false, exception: null },
+    }
   }
   if (!('value' in result) || type === 'undefined' || type === 'function' || type === 'symbol') {
     return { ok: true, evaluation: { value_type: type, value: null, truncated: false, exception: null } }
   }
   let json: string | undefined
-  try { json = JSON.stringify(result.value) } catch { json = undefined }
-  if (json === undefined) return { ok: true, evaluation: { value_type: type, value: null, truncated: false, exception: null } }
+  try {
+    json = JSON.stringify(result.value)
+  } catch {
+    json = undefined
+  }
+  if (json === undefined)
+    return { ok: true, evaluation: { value_type: type, value: null, truncated: false, exception: null } }
   if (Buffer.byteLength(json) > limit) {
     return { ok: true, evaluation: { value_type: type, value: null, truncated: true, exception: null } }
   }
@@ -177,10 +222,14 @@ export function readProbe(raw: unknown): Probe | 'invalid_selector' | null {
 
 export function waitSatisfied(state: WaitState, probe: Probe): boolean {
   switch (state) {
-    case 'attached': return probe.present
-    case 'visible': return probe.visible
-    case 'detached': return !probe.present
-    case 'hidden': return !probe.visible
+    case 'attached':
+      return probe.present
+    case 'visible':
+      return probe.visible
+    case 'detached':
+      return !probe.present
+    case 'hidden':
+      return !probe.visible
   }
 }
 
@@ -201,8 +250,9 @@ export function probeScript(selector: string): string {
 }
 
 export type ActionPoint = { x: number; y: number }
-export type Actionability = { ok: true; point: ActionPoint } |
-  { ok: false; code: 'invalid_request' | 'unavailable'; message: string }
+export type Actionability =
+  | { ok: true; point: ActionPoint }
+  | { ok: false; code: 'invalid_request' | 'unavailable'; message: string }
 
 /**
  * Waits in the page until the selector's first match is visible, enabled,
@@ -268,13 +318,21 @@ export function readActionability(raw: unknown): Actionability {
   const value = raw as Record<string, unknown>
   if (value.ok === true) {
     const point = value.point as Record<string, unknown> | undefined
-    if (point && typeof point.x === 'number' && typeof point.y === 'number' && Number.isFinite(point.x) &&
-      Number.isFinite(point.y) && point.x >= 0 && point.y >= 0) {
+    if (
+      point &&
+      typeof point.x === 'number' &&
+      typeof point.y === 'number' &&
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y) &&
+      point.x >= 0 &&
+      point.y >= 0
+    ) {
       return { ok: true, point: { x: point.x, y: point.y } }
     }
     return { ok: false, code: 'unavailable', message: 'the page returned an invalid point' }
   }
-  if (value.reason === 'invalid_selector') return { ok: false, code: 'invalid_request', message: 'the page rejected the selector' }
+  if (value.reason === 'invalid_selector')
+    return { ok: false, code: 'invalid_request', message: 'the page rejected the selector' }
   const detail = typeof value.detail === 'string' && DETAILS.has(value.detail) ? value.detail : 'not actionable'
   return { ok: false, code: 'unavailable', message: `the element did not become actionable in time: ${detail}` }
 }

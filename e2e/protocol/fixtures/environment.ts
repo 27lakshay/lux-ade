@@ -17,7 +17,20 @@ export const binaries = {
 
 // Inherited names that select a profile, a data directory, a provider home or a
 // credential, or that retarget Git at another repository.
-const leakedPrefixes = ['ADE_', 'CODEX_', 'CLAUDE_', 'ANTHROPIC_', 'OPENAI_', 'OMP_', 'GIT_', 'ANDROID_', 'GH_', 'GITHUB_', 'AWS_', 'SSH_AUTH_SOCK']
+const leakedPrefixes = [
+  'ADE_',
+  'CODEX_',
+  'CLAUDE_',
+  'ANTHROPIC_',
+  'OPENAI_',
+  'OMP_',
+  'GIT_',
+  'ANDROID_',
+  'GH_',
+  'GITHUB_',
+  'AWS_',
+  'SSH_AUTH_SOCK',
+]
 
 let interpreterPath: string | null = null
 
@@ -33,7 +46,9 @@ function interpreterDirectories(): string {
     try {
       const python = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim()
       if (python) directories.push(dirname(python))
-    } catch { /* A spec that needs python3 reports the missing interpreter itself. */ }
+    } catch {
+      /* A spec that needs python3 reports the missing interpreter itself. */
+    }
     interpreterPath = [...new Set(directories)].join(':')
   }
   return interpreterPath

@@ -19,11 +19,13 @@ export type ReviewFeedback = {
 }
 
 export function formatReviewFeedback(feedback: ReviewFeedback): string {
-  const notes = feedback.notes.map(({ anchor, note }, index) =>
-    `${index + 1}. File: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\n` +
-    `Diff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\n` +
-    `${anchor.end_line === undefined ? 'Line' : 'Lines'}: +${anchor.line}${anchor.end_line === undefined ? '' : ` to +${anchor.end_line}`}\n` +
-    `Selected text: ${anchor.text}${anchor.end_text === undefined ? '' : `\nEnd text: ${anchor.end_text}`}\n` +
-    `Feedback: ${note.trim()}`)
+  const notes = feedback.notes.map(
+    ({ anchor, note }, index) =>
+      `${index + 1}. File: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\n` +
+      `Diff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\n` +
+      `${anchor.end_line === undefined ? 'Line' : 'Lines'}: +${anchor.line}${anchor.end_line === undefined ? '' : ` to +${anchor.end_line}`}\n` +
+      `Selected text: ${anchor.text}${anchor.end_text === undefined ? '' : `\nEnd text: ${anchor.end_text}`}\n` +
+      `Feedback: ${note.trim()}`,
+  )
   return `Review feedback for workspace ${feedback.workspace_id}\n\n${notes.join('\n\n')}`
 }

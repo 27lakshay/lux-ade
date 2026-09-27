@@ -19,16 +19,33 @@ export async function repositoryId(profile: ScratchProfile, path: string): Promi
 }
 
 /** Create `branch` in a new linked worktree of the repository at `repoPath`, and open it as a workspace. */
-export async function createWorktree(profile: ScratchProfile, repoPath: string, branch: string,
-  operationId = `e2e-worktree-${branch.replace(/[^A-Za-z0-9]/g, '-')}`): Promise<LinkedWorktree> {
+export async function createWorktree(
+  profile: ScratchProfile,
+  repoPath: string,
+  branch: string,
+  operationId = `e2e-worktree-${branch.replace(/[^A-Za-z0-9]/g, '-')}`,
+): Promise<LinkedWorktree> {
   const repository = await repositoryId(profile, repoPath)
-  await profile.call('worktree.switch', { repository_id: repository, operation_id: operationId, target: branch, create: true })
+  await profile.call('worktree.switch', {
+    repository_id: repository,
+    operation_id: operationId,
+    target: branch,
+    create: true,
+  })
   let path = ''
-  await expect.poll(async () => {
-    const { operation } = await profile.call('worktree.operation', { repository_id: repository, operation_id: operationId })
-    if (operation.status === 'succeeded' && operation.worktree_path) path = operation.worktree_path
-    return operation.status
-  }, { timeout: 30_000 }).toBe('succeeded')
+  await expect
+    .poll(
+      async () => {
+        const { operation } = await profile.call('worktree.operation', {
+          repository_id: repository,
+          operation_id: operationId,
+        })
+        if (operation.status === 'succeeded' && operation.worktree_path) path = operation.worktree_path
+        return operation.status
+      },
+      { timeout: 30_000 },
+    )
+    .toBe('succeeded')
   const { workspace } = await profile.call('workspace.open', { path })
   return { repositoryId: repository, operationId, path: workspace.root, workspaceId: workspace.id }
 }

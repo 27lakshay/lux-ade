@@ -24,13 +24,18 @@ import { domainCases, type Context } from './domain-cases'
 const CONFLICT = /different (parameters|request)|conflicts with another|already used for a different/
 
 async function exists(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false)
+  return access(path).then(
+    () => true,
+    () => false,
+  )
 }
 
 for (const op of ['resources.claim.resolve', 'resources.registry.accept']) {
   const effect = domainCases.find((entry) => entry.op === op)!
 
-  test(`R001: ${op} with a daemon crash after its effect committed, before its reply was final, replays one settled reply`, async ({ ade }) => {
+  test(`R001: ${op} with a daemon crash after its effect committed, before its reply was final, replays one settled reply`, async ({
+    ade,
+  }) => {
     const pause = join(ade.root, 'pause-receipt')
     await mkdir(pause, { recursive: true })
     const profile = await ade.profile({ env: { ...pauseEnvironment(ade.root), ADE_E2E_RECEIPT_PAUSE_DIR: pause } })

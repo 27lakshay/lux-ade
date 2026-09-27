@@ -5,15 +5,25 @@ import { expect, type ScratchProfile } from '../fixtures'
 
 let operations = 0
 
-export function invoke(profile: ScratchProfile, pluginId: string, commandId: string, args: unknown = null,
-  operationId = `plugin-dev-${process.pid}-${++operations}`) {
-  return profile.call('plugin.command.invoke', { operation_id: operationId, plugin_id: pluginId, command_id: commandId, args },
-    { timeoutMs: 60_000 })
+export function invoke(
+  profile: ScratchProfile,
+  pluginId: string,
+  commandId: string,
+  args: unknown = null,
+  operationId = `plugin-dev-${process.pid}-${++operations}`,
+) {
+  return profile.call(
+    'plugin.command.invoke',
+    { operation_id: operationId, plugin_id: pluginId, command_id: commandId, args },
+    { timeoutMs: 60_000 },
+  )
 }
 
 export async function echoed(profile: ScratchProfile, pluginId: string) {
-  return (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as
-    { status: string; value: { version: string; generation: number; pid: number } }
+  return (await invoke(profile, pluginId, 'e2e.backend.echo')).outcome as {
+    status: string
+    value: { version: string; generation: number; pid: number }
+  }
 }
 
 export function generations(profile: ScratchProfile, pluginId: string) {
@@ -23,7 +33,8 @@ export function generations(profile: ScratchProfile, pluginId: string) {
 /** Each generation as `number:state`, sorted. */
 export async function states(profile: ScratchProfile, pluginId: string): Promise<string[]> {
   return (await generations(profile, pluginId)).generations
-    .map((generation) => `${generation.generation}:${generation.state}`).sort()
+    .map((generation) => `${generation.generation}:${generation.state}`)
+    .sort()
 }
 
 export async function current(profile: ScratchProfile, pluginId: string): Promise<number> {
@@ -51,7 +62,9 @@ export async function editFile(source: string, file: string, change: (text: stri
 }
 
 export function setVersion(source: string, version: string): Promise<void> {
-  return editFile(source, 'backend.mjs', (text) => text.replace(/^const VERSION = '.*'$/m, `const VERSION = '${version}'`))
+  return editFile(source, 'backend.mjs', (text) =>
+    text.replace(/^const VERSION = '.*'$/m, `const VERSION = '${version}'`),
+  )
 }
 
 export function editManifest(source: string, change: (manifest: Record<string, unknown>) => void): Promise<void> {
