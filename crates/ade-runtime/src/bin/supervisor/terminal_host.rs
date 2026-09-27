@@ -151,6 +151,11 @@ struct State {
     stop_requested: bool,
     /// Fresh snapshots sent to attachments that fell a whole budget behind.
     viewer_resyncs: u64,
+    /// The tree's tracked descendants as last observed, as (PID, start
+    /// stamp). Reported in the metrics so the daemon records them with the
+    /// attempt and keeps an escaped descendant attributed after a runtime
+    /// crash (R006).
+    descendants: Vec<(i32, u64)>,
 }
 
 impl State {
@@ -161,7 +166,8 @@ impl State {
             "reply_dropped_bytes":self.reply_dropped_bytes,"viewer_resyncs":self.viewer_resyncs,
             "viewer_queue_limit_bytes":VIEWER_QUEUE_BYTES,"pixel_size":self.pixel_size,"scrollback_bytes":self.terminal.len(),"resize_owner":self.viewports.owner(),
             "shell_pid":self.shell_pid,"shell_running":self.shell_running,
-            "durable_log_error":self.durable_log_error});
+            "durable_log_error":self.durable_log_error,
+            "descendants":self.descendants.iter().map(|&(pid, started)| json!({"pid":pid,"started":started})).collect::<Vec<_>>()});
         if let Some(outcome) = &self.exit_status {
             metrics["exit_status"] = outcome.clone();
         }
@@ -794,6 +800,14 @@ fn settle_exit(
 fn verifies_tree(launched: bool, stop_requested: bool) -> bool {
     launched || stop_requested
 }
+/// The tracked descendants of a tree, as (PID, start stamp).
+fn identities(shutdown: &ade_runtime::descendants::Shutdown) -> Vec<(i32, u64)> {
+    shutdown
+        .descendants()
+        .into_iter()
+        .map(|identity| (identity.pid, identity.started))
+        .collect()
+}
 /// How long a stopped shell has to exit after its hang-up before its whole
 /// tree is killed.
 const SHELL_STOP_GRACE: Duration = Duration::from_secs(2);
@@ -849,6 +863,10 @@ pub fn spawn_runtime(
         shutdown.track();
         Arc::new(Mutex::new(shutdown))
     });
+    let initial_descendants = tree
+        .as_ref()
+        .map(|tree| identities(&tree.lock().unwrap()))
+        .unwrap_or_default();
     drop(pair.slave);
     let mut output = pair.master.try_clone_reader()?;
     let input = Arc::new(Mutex::new(pair.master.take_writer()?));
@@ -908,6 +926,7 @@ pub fn spawn_runtime(
         durable_log_error,
         stop_requested: false,
         viewer_resyncs: 0,
+        descendants: initial_descendants,
     }));
     let terminal_state = state.clone();
     let reader_tree = tree.clone();
@@ -1010,6 +1029,9 @@ pub fn spawn_runtime(
                 && let Ok(mut shutdown) = tree.try_lock()
             {
                 shutdown.track();
+                let descendants = identities(&shutdown);
+                drop(shutdown);
+                metric_state.lock().unwrap().descendants = descendants;
             }
         }
     });
@@ -1232,6 +1254,7 @@ mod tests {
             durable_log_error: None,
             stop_requested: false,
             viewer_resyncs: 0,
+            descendants: Vec::new(),
         };
         let release = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(500));
@@ -1277,6 +1300,7 @@ mod tests {
             durable_log_error: None,
             stop_requested: false,
             viewer_resyncs: 0,
+            descendants: Vec::new(),
         };
         state.append_terminal(b"\x1b[2J\x1b[HPINNED BEFORE RAW RING");
         let repaint = b"\x1b[2;1Hupdated row, pinned row remains".repeat(10000);
@@ -1336,6 +1360,7 @@ mod tests {
             durable_log_error: None,
             stop_requested: false,
             viewer_resyncs: 0,
+            descendants: Vec::new(),
         };
         let (tx, rx) = mpsc::sync_channel(1);
         let outbox = Arc::new(Outbox::default());

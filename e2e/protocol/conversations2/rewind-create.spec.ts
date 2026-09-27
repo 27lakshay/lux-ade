@@ -2,7 +2,8 @@
 // conversation.rewind (files) restores a checkpoint under its operation ID:
 // a retry reads the recorded outcome and never restores twice, also after a
 // lost reply and a daemon crash; a different payload conflicts. A
-// Conversation rewind has no handler, so it records no receipt at all.
+// Conversation rewind that is unavailable is not attempted, so it records no
+// receipt at all.
 // conversation.create replays under its operation ID, also after a crash.
 import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile,
   type ScratchRepo } from '../fixtures'
@@ -58,16 +59,21 @@ test('R001 and R002: a file rewind whose reply was lost restores once and a retr
   expect(await safetyCheckpoints(profile, workspaceId)).toBe(1)
 })
 
-test('R002: a Conversation rewind reports its limitation and records no receipt', async ({ profile }) => {
+// Codex conversation rewind is supported (context/rewind.spec.ts), so the
+// limitation here is the state: the Agent is disconnected.
+test('R002: an unavailable Conversation rewind reports its limitation and records no receipt', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
+  await profile.call('agent.disconnect', { conversation_id: conversationId })
   const rewind = { operation_id: 'rewind-conversation', conversation_id: conversationId, scope: 'conversation' as const,
     confirm_overwrite: false }
   expect(await profile.call('conversation.rewind', rewind)).toMatchObject({ outcome: 'unavailable',
-    reason: expect.stringContaining('thread/revert') })
+    reason: expect.stringContaining('not connected') })
   expect(await profile.call('conversation.rewind', rewind)).toMatchObject({ outcome: 'unavailable' })
   // Nothing was recorded under the ID, so it stays free for a real operation.
+  await profile.call('agent.resume', { conversation_id: conversationId })
+  await waitForIdle(profile, conversationId)
   expect(await profile.call('conversation.compact', { operation_id: 'rewind-conversation', conversation_id: conversationId }))
     .toMatchObject({ outcome: 'acknowledged' })
 })

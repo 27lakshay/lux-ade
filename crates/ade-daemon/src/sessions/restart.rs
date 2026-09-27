@@ -12,14 +12,16 @@
 use super::leases::{Claim, Holder, LeaseKey, Observation, Release, Verdict};
 use super::recovery::{self, Evidence, Facts, Ports, Presence, ProcessRecord, Tree};
 use super::*;
-use crate::store::runtime_recovery::{AttemptRecord, RecoveryNotice, RuntimeIncarnation};
+use crate::store::runtime_recovery::{
+    ATTEMPT_DESCENDANTS_MAX, AttemptRecord, RecoveryNotice, RuntimeIncarnation,
+};
 use ade_core::contract::agents::AgentList;
 use ade_core::contract::daemon::{
     RecoveredAttempt, RecoveredAttemptKind, RecoveryClassification, RecoveryReport,
     RuntimeRecovery, RuntimeRecoveryReleaseRequest, RuntimeRecoveryReleased,
     RuntimeRecoveryRequest,
 };
-use ade_runtime::descendants::Tracker;
+use ade_runtime::descendants::{Identity, Tracker};
 use anyhow::Context as _;
 
 /// Monitor ticks (250 ms each) between attempt identity snapshots.
@@ -58,6 +60,9 @@ struct Watch {
     record: Option<ProcessRecord>,
     runtime: Vec<RuntimeIncarnation>,
     ports: Vec<u16>,
+    /// The incarnation and key of the attempt record behind `record`, so
+    /// descendants found after the restart are recorded durably with it.
+    origin: Option<(String, String)>,
 }
 
 /// The report key of a lease.
@@ -94,6 +99,27 @@ fn identify(pid: u32) -> Option<(u64, bool)> {
         .map(|row| (row.identity.started, row.pgid == pid))
 }
 
+/// The descendants a runtime terminal reports in its metrics. A malformed
+/// entry is skipped; the report only adds candidates, which a fresh read
+/// confirms by identity before they are recorded.
+fn reported_descendants(value: &Value) -> Vec<Identity> {
+    value
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    Some(Identity {
+                        pid: i32::try_from(entry["pid"].as_i64()?).ok()?,
+                        started: entry["started"].as_u64()?,
+                    })
+                })
+                .take(ATTEMPT_DESCENDANTS_MAX)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Extends one recorded process's tree from a fresh table read and returns
 /// its descendants other than the process itself. A failed read keeps what
 /// was already tracked.
@@ -116,19 +142,50 @@ fn track_descendants(tracker: &mut Tracker, pid: u32, started: u64) -> Vec<(u32,
     descendants
 }
 
-fn observe_tree(record: &ProcessRecord) -> Tree {
+/// Reads one recorded tree. While a recorded process still runs, children it
+/// started are added to the record first, so they stay attributed after it
+/// exits. Returns the tree and the descendants added.
+fn observe_tree(record: &mut ProcessRecord) -> (Tree, Vec<(u32, u64)>) {
     let Ok(pid) = i32::try_from(record.pid) else {
-        return Tree::Unreadable(format!("process ID {} is out of range", record.pid));
+        return (
+            Tree::Unreadable(format!("process ID {} is out of range", record.pid)),
+            Vec::new(),
+        );
     };
-    let mut parents = vec![pid];
-    parents.extend(
-        record
-            .descendants
-            .iter()
-            .filter_map(|&(descendant, _)| i32::try_from(descendant).ok()),
-    );
-    let rows = ade_runtime::descendants::observe(pid, &parents);
-    recovery::tree(record, rows.as_deref().map_err(String::as_str))
+    let parents = |record: &ProcessRecord| -> Vec<i32> {
+        std::iter::once(pid)
+            .chain(
+                record
+                    .descendants
+                    .iter()
+                    .filter_map(|&(descendant, _)| i32::try_from(descendant).ok()),
+            )
+            .collect()
+    };
+    let mut added = Vec::new();
+    // Each read lists the children of the processes known before it, so a
+    // grandchild needs another read; the depth is bounded.
+    for _ in 0..8 {
+        let rows = match ade_runtime::descendants::observe(pid, &parents(record)) {
+            Ok(rows) => rows,
+            Err(reason) => return (Tree::Unreadable(reason), added),
+        };
+        let room = ATTEMPT_DESCENDANTS_MAX.saturating_sub(record.descendants.len());
+        let found: Vec<_> = recovery::extend(record, &rows)
+            .into_iter()
+            .take(room)
+            .collect();
+        if found.is_empty() {
+            return (recovery::tree(record, Ok(&rows)), added);
+        }
+        record.descendants.extend(found.iter().copied());
+        added.extend(found);
+    }
+    let rows = ade_runtime::descendants::observe(pid, &parents(record));
+    (
+        recovery::tree(record, rows.as_deref().map_err(String::as_str)),
+        added,
+    )
 }
 
 /// The presence of the old runtimes that could own an attempt: running if any
@@ -171,17 +228,48 @@ impl Listeners {
     }
 }
 
-fn gather(watch: &Watch, listeners: &mut Listeners) -> Evidence {
-    let tree = watch.record.as_ref().map(observe_tree);
+/// Observes one watched attempt. Returns the evidence and the descendants
+/// added to its record, which the caller records with [`remember`].
+fn gather(watch: &mut Watch, listeners: &mut Listeners) -> (Evidence, Vec<(u32, u64)>) {
+    let (tree, added) = match watch.record.as_mut().map(observe_tree) {
+        Some((tree, added)) => (Some(tree), added),
+        None => (None, Vec::new()),
+    };
     let ports = if tree == Some(Tree::Gone) {
         listeners.ports(&watch.ports)
     } else {
         Ports::NotApplicable
     };
-    Evidence {
+    let evidence = Evidence {
         runtime: observe_runtimes(&watch.runtime),
         tree,
         ports,
+    };
+    (evidence, added)
+}
+
+/// Records descendants found after the restart with the attempt, durably and
+/// in the watched copy, so a later observation or daemon start still counts
+/// them once their parent has exited.
+fn remember(d: &mut Data, key: &str, watch: &Watch, added: &[(u32, u64)]) {
+    if added.is_empty() {
+        return;
+    }
+    if let Some((instance, record_key)) = &watch.origin
+        && let Err(error) = d.store.add_attempt_descendants(instance, record_key, added)
+    {
+        eprintln!("Runtime restart reconciliation: {key}: {error:#}");
+    }
+    if let Some(current) = d.recovery.watch.get_mut(key)
+        && let (Some(record), Some(grown)) = (current.record.as_mut(), watch.record.as_ref())
+        && record.pid == grown.pid
+        && record.started == grown.started
+    {
+        for descendant in added {
+            if !record.descendants.contains(descendant) {
+                record.descendants.push(*descendant);
+            }
+        }
     }
 }
 
@@ -281,12 +369,16 @@ impl Pass {
         &mut self,
         d: &mut Data,
         context: &Context,
-        candidate: Candidate,
+        mut candidate: Candidate,
     ) -> Result<recovery::Outcome> {
-        let outcome = recovery::classify(
-            &candidate.watch.facts,
-            &gather(&candidate.watch, &mut self.listeners),
-        );
+        let (evidence, added) = gather(&mut candidate.watch, &mut self.listeners);
+        let outcome = recovery::classify(&candidate.watch.facts, &evidence);
+        if let Some((instance, record_key)) = &candidate.watch.origin
+            && !added.is_empty()
+        {
+            d.store
+                .add_attempt_descendants(instance, record_key, &added)?;
+        }
         let settled = outcome.classification == RecoveryClassification::Settled;
         let key = candidate.key;
         eprintln!(
@@ -417,6 +509,7 @@ impl Sessions {
                     record: Some(process(record)),
                     runtime: context.runtimes_for(Some(record)),
                     ports: Vec::new(),
+                    origin: Some((record.instance.clone(), record.key.clone())),
                 },
                 attempt: RecoveredAttempt {
                     key: record.key.clone(),
@@ -552,6 +645,7 @@ impl Sessions {
                 record: record.map(process),
                 runtime: context.runtimes_for(record),
                 ports,
+                origin: record.map(|r| (r.instance.clone(), r.key.clone())),
             },
             attempt: RecoveredAttempt {
                 key: key.clone(),
@@ -660,7 +754,8 @@ impl Sessions {
         let terminals = self.runtime.command(TerminalCommand::List)?;
         let agents: AgentList = serde_json::from_value(self.runtime.agent(AgentOp::List)?)
             .context("Invalid Agent catalogue")?;
-        let mut wanted: Vec<(String, Option<String>, u32)> = Vec::new();
+        // Key, attempt, PID, and the descendants the runtime reports it tracks.
+        let mut wanted: Vec<(String, Option<String>, u32, Vec<Identity>)> = Vec::new();
         for item in terminals["terminals"]
             .as_array()
             .context("Invalid terminal catalogue")?
@@ -676,6 +771,7 @@ impl Sessions {
                 format!("terminal:{workspace}:{terminal}"),
                 item["metrics"]["transfer_id"].as_str().map(str::to_owned),
                 u32::try_from(pid).unwrap_or(0),
+                reported_descendants(&item["metrics"]["descendants"]),
             ));
         }
         for run in agents.agents {
@@ -684,6 +780,7 @@ impl Sessions {
                     format!("agent:{}", run.spec.conversation),
                     Some(run.spec.run),
                     pid,
+                    Vec::new(),
                 ));
             }
         }
@@ -697,7 +794,7 @@ impl Sessions {
         };
         let mut kept = HashMap::new();
         let mut records = Vec::with_capacity(wanted.len());
-        for (key, attempt, pid) in wanted {
+        for (key, attempt, pid, reported) in wanted {
             if pid == 0 {
                 continue;
             }
@@ -717,6 +814,9 @@ impl Sessions {
             let mut tracker = trackers
                 .remove(&tracker_key)
                 .unwrap_or_else(|| Tracker::new(pid as i32, pid as i32));
+            // The runtime observes the tree every second; what it saw joins
+            // this tracker, which keeps it only while the same identity runs.
+            tracker.adopt(&reported);
             let descendants = track_descendants(&mut tracker, pid, started);
             kept.insert(tracker_key, tracker);
             records.push(AttemptRecord {
@@ -750,8 +850,12 @@ impl Sessions {
                 .collect()
         };
         let mut listeners = Listeners::default();
-        for (key, watch) in watched {
-            let outcome = recovery::classify(&watch.facts, &gather(&watch, &mut listeners));
+        for (key, mut watch) in watched {
+            let (evidence, added) = gather(&mut watch, &mut listeners);
+            let outcome = recovery::classify(&watch.facts, &evidence);
+            if !added.is_empty() {
+                remember(&mut self.data.lock().unwrap(), &key, &watch, &added);
+            }
             if outcome.classification == RecoveryClassification::Settled {
                 let mut d = self.data.lock().unwrap();
                 self.resolve_attempt(
@@ -799,7 +903,7 @@ impl Sessions {
     /// resolution to record, or `None` when the lease is not watched.
     pub(super) fn recovery_control_release(&self, lease: &LeaseKey) -> Result<Option<String>> {
         let key = lease_key(lease);
-        let Some(watch) = self
+        let Some(mut watch) = self
             .data
             .lock()
             .unwrap()
@@ -811,7 +915,9 @@ impl Sessions {
         else {
             return Ok(None);
         };
-        let outcome = recovery::classify(&watch.facts, &gather(&watch, &mut Listeners::default()));
+        let (evidence, added) = gather(&mut watch, &mut Listeners::default());
+        remember(&mut self.data.lock().unwrap(), &key, &watch, &added);
+        let outcome = recovery::classify(&watch.facts, &evidence);
         recovery::control_release(&outcome)
             .map(Some)
             .map_err(anyhow::Error::msg)
@@ -898,13 +1004,15 @@ impl Sessions {
         {
             return Ok(released(report));
         }
-        let Some(watch) = watch else {
+        let Some(mut watch) = watch else {
             bail!(
                 "The attempt is open but this daemon is not observing it; restart the daemon to reconcile it again"
             )
         };
         // Observe again outside the lock: a live process refuses the release.
-        let outcome = recovery::classify(&watch.facts, &gather(&watch, &mut Listeners::default()));
+        let (evidence, added) = gather(&mut watch, &mut Listeners::default());
+        remember(&mut self.data.lock().unwrap(), key, &watch, &added);
+        let outcome = recovery::classify(&watch.facts, &evidence);
         let resolution = match outcome.classification {
             RecoveryClassification::Quarantined => bail!(
                 "The attempt is still running ({}). Stop those processes before releasing it",

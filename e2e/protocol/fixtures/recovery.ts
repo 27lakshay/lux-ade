@@ -42,6 +42,24 @@ export async function waitForAttemptRecord(profile: ScratchProfile, key: string,
   return found!
 }
 
+/** The descendants the daemon recorded with `key`'s attempt record, as PIDs, for the running incarnation. */
+export async function recordedDescendants(profile: ScratchProfile, key: string): Promise<number[]> {
+  const database = join(profile.dataDirectory, 'sessions.sqlite')
+  const instance = profile.hello.runtime_instance.replaceAll("'", "''")
+  const escapedKey = key.replaceAll("'", "''")
+  const { stdout } = await execFileAsync('sqlite3', ['-readonly', '-json', database,
+    `SELECT pid FROM runtime_attempt_descendants WHERE instance = '${instance}' AND key = '${escapedKey}'`])
+    .catch(() => ({ stdout: '' }))
+  return stdout.trim() ? (JSON.parse(stdout) as Array<{ pid: number }>).map((row) => row.pid) : []
+}
+
+/** Wait until the daemon has recorded `pid` as a descendant of `key`'s attempt. */
+export async function waitForRecordedDescendant(profile: ScratchProfile, key: string, pid: number,
+  timeout = 10_000): Promise<void> {
+  await expect.poll(async () => (await recordedDescendants(profile, key)).includes(pid),
+    { timeout, message: `the daemon to record ${pid} under ${key}` }).toBe(true)
+}
+
 /** Provider and descendant fixtures for fault specs. Pass a provider as `ADE_CODEX_BIN` in `ade.profile({ env })`. */
 export const recoveryFixtures = {
   /** `escapee.py <directory> <linger>`: ignores TERM and HUP, leaves its group, writes `<directory>/escaped.pid`. */

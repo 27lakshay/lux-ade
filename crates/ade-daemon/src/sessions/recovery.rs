@@ -106,6 +106,64 @@ pub(super) fn tree(record: &ProcessRecord, rows: Result<&[Row], &str>) -> Tree {
     }
 }
 
+/// Descendants of a recorded tree that a fresh read shows but the record
+/// lacks, as (PID, start stamp): children of a recorded process whose own
+/// identity still matches, and members of the group the recorded process led
+/// while its PID is not reused. After a runtime restart the tree keeps
+/// growing while a recorded process runs; a child found this way stays
+/// attributed once it loses its parent (R006). A child cannot start before
+/// its parent, so an earlier start marks a reused parent PID and is ignored.
+/// A PID listed twice makes the read ambiguous and is never adopted.
+pub(super) fn extend(record: &ProcessRecord, rows: &[Row]) -> Vec<(u32, u64)> {
+    let mut counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+    for row in rows {
+        *counts.entry(row.identity.pid).or_default() += 1;
+    }
+    let rows: Vec<&Row> = rows
+        .iter()
+        .filter(|row| counts.get(&row.identity.pid) == Some(&1) && !row.zombie)
+        .collect();
+    let pid = record.pid as i32;
+    let reused = rows
+        .iter()
+        .any(|row| row.identity.pid == pid && row.identity.started != record.started);
+    let mut known: Vec<(i32, u64)> = vec![(pid, record.started)];
+    known.extend(
+        record
+            .descendants
+            .iter()
+            .filter_map(|&(pid, started)| i32::try_from(pid).ok().map(|pid| (pid, started))),
+    );
+    let running = |pid: i32, started: u64| {
+        rows.iter()
+            .any(|row| row.identity.pid == pid && row.identity.started == started)
+    };
+    let mut added = Vec::new();
+    loop {
+        let mut grew = false;
+        for row in &rows {
+            let identity = (row.identity.pid, row.identity.started);
+            if row.identity.pid <= 1 || known.iter().any(|&(pid, _)| pid == identity.0) {
+                continue;
+            }
+            let child = known.iter().any(|&(parent, started)| {
+                parent == row.ppid && running(parent, started) && identity.1 >= started
+            });
+            let member = record.leader && !reused && row.pgid == pid;
+            if child || member {
+                known.push(identity);
+                added.push((identity.0 as u32, identity.1));
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    added.sort_unstable();
+    added
+}
+
 /// Whether the old runtime process itself still runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Presence {
@@ -410,6 +468,59 @@ mod tests {
         // The leader exited; its group member was reparented and still runs.
         let orphan = [row(41, 9, 40, false)];
         assert_eq!(tree(&LEADER, Ok(&orphan)), Tree::Running(vec![41]));
+    }
+
+    fn child(pid: i32, started: u64, ppid: i32, pgid: i32) -> Row {
+        Row {
+            identity: Identity { pid, started },
+            ppid,
+            pgid,
+            zombie: false,
+        }
+    }
+
+    #[test]
+    fn a_live_recorded_process_extends_its_tree_with_escaped_children() {
+        // 41 left the group under the recorded shell; 42 is its child.
+        let rows = [
+            child(40, 7, 1, 40),
+            child(41, 9, 40, 41),
+            child(42, 10, 41, 41),
+            child(50, 3, 1, 50),
+        ];
+        assert_eq!(extend(&LEADER, &rows), vec![(41, 9), (42, 10)]);
+        let grown = ProcessRecord {
+            descendants: vec![(41, 9), (42, 10)],
+            ..LEADER
+        };
+        assert!(extend(&grown, &rows).is_empty());
+        // Once the shell is gone, the escaped child is still part of the tree.
+        let orphan = [child(41, 9, 1, 41)];
+        assert_eq!(tree(&grown, Ok(&orphan)), Tree::Running(vec![41]));
+    }
+
+    #[test]
+    fn extension_never_adopts_through_a_reused_pid() {
+        // PID 40 now names another process: its children are not ours.
+        let rows = [child(40, 99, 1, 40), child(41, 100, 40, 40)];
+        assert!(extend(&LEADER, &rows).is_empty());
+        // A child older than its recorded parent means the parent PID was reused.
+        let older = [child(40, 7, 1, 40), child(43, 5, 40, 43)];
+        assert!(extend(&LEADER, &older).is_empty());
+        // A recorded descendant whose PID was reused adopts nothing either.
+        let record = ProcessRecord {
+            descendants: vec![(41, 9)],
+            ..LEADER
+        };
+        let reused = [child(41, 60, 1, 41), child(44, 61, 41, 41)];
+        assert!(extend(&record, &reused).is_empty());
+        // A PID listed twice is ambiguous.
+        let twice = [
+            child(40, 7, 1, 40),
+            child(45, 8, 40, 45),
+            child(45, 9, 40, 45),
+        ];
+        assert!(extend(&LEADER, &twice).is_empty());
     }
 
     #[test]

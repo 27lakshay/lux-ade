@@ -324,6 +324,40 @@ impl Provider for Adapter {
             .request("thread/compact/start", json!({"threadId":session}))?;
         Ok(())
     }
+    /// Codex 0.157.0 `thread/fork` with `lastTurnId` (stable in the v2
+    /// protocol): the fork keeps every turn through `lastTurnId`, inclusive,
+    /// and works on legacy threads, which ADE's adapter starts. So the fork
+    /// runs through the turn before `turn`, and the Conversation continues in
+    /// the fork; the earlier thread stays unchanged. `thread/revert` rewrites
+    /// only paginated threads and `thread/rollback` was removed, so neither is
+    /// used. Files are not touched; they rewind through ADE checkpoints.
+    fn rewind(&self, session: &str, turn: &str, _operation: &str) -> Result<Option<String>> {
+        let read = self.rpc.request(
+            "thread/read",
+            json!({"threadId":session,"includeTurns":true}),
+        )?;
+        // Checks made before the fork, and a fork that does not match them,
+        // leave the Conversation on its thread: each is a definite refusal.
+        let checked = (|| {
+            ensure!(
+                read["thread"]["id"].as_str() == Some(session),
+                "Codex returned a different thread; nothing was rewound"
+            );
+            let turns = read["thread"]["turns"]
+                .as_array()
+                .context("Codex omitted the thread's turns; nothing was rewound")?;
+            Ok((turns, fork_boundary(turns, turn)?))
+        })();
+        let (turns, last) = checked.map_err(refusal)?;
+        let mut params = json!({"threadId":session,"lastTurnId":last,"cwd":self.cwd});
+        if let Some(servers) = self.mcp_servers.lock().unwrap().clone() {
+            params["config"] = mcp_overrides(&servers);
+        }
+        let forked = self.rpc.request("thread/fork", params)?;
+        let id = forked_thread(&forked, session, turns, turn).map_err(refusal)?;
+        *self.session.lock().unwrap() = Some(id.clone());
+        Ok(Some(id))
+    }
     fn validate_answer(
         &self,
         p: &PendingRequest,
@@ -364,6 +398,56 @@ impl Drop for Adapter {
     }
 }
 
+/// The turn a rewind forks through: the one before `drop_from`. Refuses when
+/// `drop_from` is not in the thread, is the first turn (`lastTurnId` cannot
+/// express an empty fork), or any turn is still in progress.
+fn fork_boundary<'a>(turns: &'a [Value], drop_from: &str) -> Result<&'a str> {
+    ensure!(
+        turns.iter().all(|turn| turn["status"] != "inProgress"),
+        "A turn is running; stop it before rewinding the conversation"
+    );
+    let index = turns
+        .iter()
+        .position(|turn| turn["id"].as_str() == Some(drop_from))
+        .context("Codex history has no such turn; nothing was rewound")?;
+    ensure!(
+        index > 0,
+        "Codex cannot fork before its first turn; nothing was rewound"
+    );
+    turns[index - 1]["id"]
+        .as_str()
+        .context("Codex omitted a turn ID; nothing was rewound")
+}
+/// The forked thread's ID, once the fork holds exactly the turns before
+/// `drop_from`, in order.
+fn forked_thread(
+    forked: &Value,
+    session: &str,
+    turns: &[Value],
+    drop_from: &str,
+) -> Result<String> {
+    let id = forked["thread"]["id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && *id != session)
+        .context("Codex did not name its forked thread; the Conversation stays on its thread")?;
+    let kept: Vec<&str> = turns
+        .iter()
+        .map_while(|t| t["id"].as_str())
+        .take_while(|id| *id != drop_from)
+        .collect();
+    let copied: Option<Vec<&str>> = forked["thread"]["turns"]
+        .as_array()
+        .map(|turns| turns.iter().filter_map(|t| t["id"].as_str()).collect());
+    ensure!(
+        copied.as_deref() == Some(kept.as_slice()),
+        "Codex forked thread {id} does not hold the earlier turns in order; the Conversation stays on {session}"
+    );
+    Ok(id.to_owned())
+}
+/// A refusal ADE decided before anything changed for the Conversation.
+fn refusal(error: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(ade_core::error::Failure::Rejected).context(error.to_string())
+}
 fn child_page(result: &Value, child: &str, offset: u64) -> Result<Value> {
     ensure!(
         result["thread"]["id"].as_str() == Some(child),
@@ -786,8 +870,8 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
         conversation: ConversationCapabilities {
             steering: capability(NativeOnly, "turn/steer; ADE does not call it"),
             rewind: capability(
-                NativeOnly,
-                "thread/revert rewrites history only and leaves files unchanged",
+                Supported,
+                "thread/fork with lastTurnId through the turn before the rewound one; files rewind through ADE checkpoints",
             ),
             compaction: capability(NativeOnly, "thread/compact/start"),
             resume: capability(Supported, "thread/resume with the native thread ID"),
@@ -843,6 +927,41 @@ fn mcp_overrides(servers: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn rewind_forks_through_the_turn_before_and_checks_the_fork() {
+        use super::*;
+        let turns = vec![
+            json!({"id":"t1","status":"completed"}),
+            json!({"id":"t2","status":"completed"}),
+            json!({"id":"t3","status":"completed"}),
+        ];
+        assert_eq!(fork_boundary(&turns, "t2").unwrap(), "t1");
+        assert_eq!(fork_boundary(&turns, "t3").unwrap(), "t2");
+        assert!(
+            fork_boundary(&turns, "t1")
+                .unwrap_err()
+                .to_string()
+                .contains("first turn")
+        );
+        assert!(fork_boundary(&turns, "t9").is_err());
+        let running = vec![
+            json!({"id":"t1","status":"completed"}),
+            json!({"id":"t2","status":"inProgress"}),
+        ];
+        assert!(fork_boundary(&running, "t2").is_err());
+        let fork = json!({"thread":{"id":"fork","turns":[{"id":"t1"}]}});
+        assert_eq!(forked_thread(&fork, "main", &turns, "t2").unwrap(), "fork");
+        let wrong = json!({"thread":{"id":"fork","turns":[{"id":"t1"},{"id":"t2"}]}});
+        assert!(forked_thread(&wrong, "main", &turns, "t2").is_err());
+        let same = json!({"thread":{"id":"main","turns":[{"id":"t1"}]}});
+        assert!(forked_thread(&same, "main", &turns, "t2").is_err());
+        let refused = refusal(anyhow!("nothing was rewound"));
+        assert_eq!(
+            refused.downcast_ref::<ade_core::error::Failure>(),
+            Some(&ade_core::error::Failure::Rejected)
+        );
+    }
     #[test]
     fn mcp_overrides_set_each_server_and_leave_the_table_alone() {
         let servers = serde_json::json!({"files": {"command": "files-mcp"}, "docs-2": {"url": "https://x.invalid"}});

@@ -1,11 +1,13 @@
-// F039: conversation and file rewind. Codex's adapter does not rewind its
-// history, so conversation rewind is reported as unavailable, with the reason,
-// and records nothing; Claude's conversation rewind is proved in
+// F039: conversation and file rewind. Codex conversation rewind forks the
+// thread before the rewound turn (below); Claude's is proved in
 // e2e/protocol/accounts-rewind/rewind.spec.ts. File rewind restores an ADE
 // checkpoint for any provider: it is previewed first, refuses a stale preview
 // and unconfirmed overwrites, and reads a lost outcome back after a crash.
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile, type ScratchRepo } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
+import { mockDirectory } from '../fixtures/providers'
 import { snapshot } from './helpers'
 
 async function checkpointed(profile: ScratchProfile, repo: ScratchRepo, provider: 'codex' | 'claude') {
@@ -25,27 +27,13 @@ async function control(profile: ScratchProfile, conversationId: string, name: st
 }
 
 for (const provider of ['codex', 'claude'] as const) {
-  test(`F039: ${provider} rewinds files through a checkpoint after a preview${provider === 'codex' ? ', and conversation rewind is unavailable' : ''}`, async ({ profile, repo }) => {
+  test(`F039: ${provider} rewinds files through a checkpoint after a preview`, async ({ profile, repo }) => {
     const { conversationId, checkpointId } = await checkpointed(profile, repo, provider)
     expect(await control(profile, conversationId, 'rewind_files'))
       .toMatchObject({ available: true, mechanism: 'ade.checkpoints', reason: null })
     await send(profile, conversationId, prompts.turn)
     await waitForIdle(profile, conversationId)
     const before = (await snapshot(profile, conversationId)).messages
-
-    if (provider === 'codex') {
-      expect(await control(profile, conversationId, 'rewind_conversation'))
-        .toMatchObject({ available: false, mechanism: null, reason: expect.stringContaining('adapter') })
-      // Conversation rewind: reported, not emulated, and no receipt, so the operation ID stays unused.
-      const conversationPreview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
-        scope: 'conversation' })
-      expect(conversationPreview).toMatchObject({ scope: 'conversation', files: null, availability: { available: false } })
-      const refused = await profile.call('conversation.rewind', { operation_id: 'rewind-op', conversation_id: conversationId,
-        scope: 'conversation' })
-      expect(refused).toMatchObject({ outcome: 'unavailable', control: 'rewind_conversation',
-        reason: conversationPreview.availability.reason })
-      expect((await snapshot(profile, conversationId)).messages).toEqual(before)
-    }
 
     // File rewind: the preview lists what changes and asks for confirmation over uncommitted work.
     const preview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId, scope: 'files',
@@ -130,21 +118,129 @@ test('R001: a file rewind whose reply was lost is read back after a daemon crash
   expect(safety).toHaveLength(1)
 })
 
-// Gap: Codex 0.157.0 thread/revert rewrites only paginated threads, and ADE's
-// Codex adapter starts legacy threads (thread/rollback was removed), so Codex
-// conversation rewind is honestly unavailable (proved above). Codex documents
-// thread/fork with lastTurnId, which could fork before a turn as Claude's
-// adapter does; it stays unwired until the pinned schema is checked. ADE's side of a
-// rewind (dropping messages, invalidating history pages) is built and proved
-// for Claude in e2e/protocol/accounts-rewind/rewind.spec.ts.
-test.fixme('F039: a Codex conversation rewind drops later messages and invalidates stale history pages', async ({ profile }) => {
+// Codex conversation rewind forks the thread with thread/fork and lastTurnId
+// (stable in the Codex 0.157.0 v2 protocol, and supported on the legacy
+// threads ADE's adapter starts): the fork keeps every turn through the turn
+// before the rewound one, the Conversation continues in it, and the earlier
+// thread stays unchanged. thread/revert (paginated threads only) and the
+// removed thread/rollback are never called. The mock (codex_mock.py) emulates
+// only that documented lastTurnId behaviour.
+type Message = { id: string; role: string; text: string; turn_id: string | null; sequence: number }
+
+async function codexMessages(profile: ScratchProfile, conversationId: string): Promise<Message[]> {
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages as Message[]
+}
+
+async function codexThread(profile: ScratchProfile, conversationId: string): Promise<string | null> {
+  return (await snapshot(profile, conversationId)).conversation.provider_thread_id
+}
+
+async function hits(profile: ScratchProfile, query: string): Promise<number> {
+  return ((await profile.call('history.search' as never, { query } as never)) as { results: unknown[] }).results.length
+}
+
+/** The turn IDs a mock Codex thread holds, as its thread file stores them. */
+async function mockTurns(profile: ScratchProfile, threadId: string): Promise<string[]> {
+  const stored = JSON.parse(await readFile(join(mockDirectory(profile.root, 'codex'), `${threadId}.json`), 'utf8')) as
+    { turns: Array<{ id: string }> }
+  return stored.turns.map((turn) => turn.id)
+}
+
+async function codexCalls(profile: ScratchProfile, method: string) {
+  return (await profile.mockCalls('codex')).filter((call) => call.method === method)
+    .map((call) => call.params as Record<string, unknown>)
+}
+
+test('F039, F043: a Codex conversation rewind forks the thread before the turn, drops later messages, refuses stale history pages and drops search hits', async ({ profile }) => {
+  const { conversationId } = await startConversation(profile, 'codex')
+  for (const text of ['first zebracorn', 'second quokkaflux', 'third lemurmint']) {
+    await send(profile, conversationId, text)
+    await waitForIdle(profile, conversationId)
+  }
+  const all = await codexMessages(profile, conversationId)
+  expect(all.map((message) => message.text)).toEqual(['first zebracorn', 'Hello world', 'second quokkaflux',
+    'Hello world', 'third lemurmint', 'Hello world'])
+  const [first, , second] = all
+  const original = (await codexThread(profile, conversationId))!
+  const originalTurns = await mockTurns(profile, original)
+  expect(originalTurns).toHaveLength(3)
+  await expect.poll(() => hits(profile, 'quokkaflux')).toBe(1)
+
+  expect(await control(profile, conversationId, 'rewind_conversation'))
+    .toMatchObject({ available: true, mechanism: 'codex.thread_fork', reason: null })
+  // A reader holds the newest page and pages back from it.
+  const page = await profile.call('conversation.get', { conversation_id: conversationId, limit: 2 })
+  const cursor = { conversation_id: conversationId, before: (page.messages[0] as Message).sequence, limit: 2,
+    history_epoch: page.history_epoch }
+  expect((await profile.call('conversation.get', cursor)).messages).toHaveLength(2)
+
+  const shown = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
+    scope: 'conversation', before_message_id: second!.id })
+  expect(shown.history).toMatchObject({ before_message_id: second!.id, turn_id: second!.turn_id, removed_messages: 4,
+    removed_turns: 2, kept_messages: 2, history_epoch: 0 })
+  const rewind = { operation_id: 'rewind-codex', conversation_id: conversationId, scope: 'conversation' as const,
+    before_message_id: second!.id, expected_state: shown.history!.state_token }
+  const reply = await profile.call('conversation.rewind', rewind)
+  expect(reply).toMatchObject({ outcome: 'acknowledged', control: 'rewind_conversation', reason: null,
+    history: { removed_messages: 4, removed_turns: 2, kept_messages: 2, history_epoch: 1,
+      previous_native_session: original } })
+  const forked = reply.history!.native_session!
+  expect(forked).toBeTruthy()
+  expect(forked).not.toBe(original)
+
+  // Codex forked through the first turn; no history-rewriting method ran.
+  expect(await codexCalls(profile, 'thread/fork')).toEqual([expect.objectContaining({ threadId: original,
+    lastTurnId: first!.turn_id })])
+  expect(await codexCalls(profile, 'thread/revert')).toEqual([])
+  expect(await codexCalls(profile, 'thread/rollback')).toEqual([])
+  expect(await mockTurns(profile, forked)).toEqual([first!.turn_id])
+  expect(await mockTurns(profile, original)).toEqual(originalTurns)
+
+  // ADE dropped the later turns and moved the Conversation to the fork.
+  expect(await codexThread(profile, conversationId)).toBe(forked)
+  expect((await codexMessages(profile, conversationId)).map((message) => message.text))
+    .toEqual(['first zebracorn', 'Hello world'])
+  await expect(profile.call('conversation.get', cursor)).rejects.toThrow(/History changed since that page was read/)
+  await expect.poll(() => hits(profile, 'quokkaflux')).toBe(0)
+  await expect.poll(() => hits(profile, 'lemurmint')).toBe(0)
+  expect(await hits(profile, 'zebracorn')).toBe(1)
+
+  // R002: the same operation replays, also after a daemon crash, and forks once.
+  expect(await profile.call('conversation.rewind', rewind)).toEqual(reply)
+  await profile.restartDaemon('kill')
+  expect(await profile.call('conversation.rewind', rewind)).toEqual(reply)
+  expect(await codexCalls(profile, 'thread/fork')).toHaveLength(1)
+
+  // The next turn runs in the fork, and a resume reads the fork back unchanged.
+  await send(profile, conversationId, 'fourth ocelotwave')
+  await waitForIdle(profile, conversationId)
+  expect((await codexCalls(profile, 'turn/start')).at(-1)).toMatchObject({ threadId: forked })
+  expect(await mockTurns(profile, forked)).toHaveLength(2)
+  const continued = await codexMessages(profile, conversationId)
+  expect(continued.map((message) => message.text))
+    .toEqual(['first zebracorn', 'Hello world', 'fourth ocelotwave', 'Hello world'])
+  await profile.call('agent.disconnect', { conversation_id: conversationId })
+  await profile.call('agent.resume', { conversation_id: conversationId })
+  await waitForIdle(profile, conversationId)
+  expect(await codexThread(profile, conversationId)).toBe(forked)
+  expect((await codexMessages(profile, conversationId)).map((message) => [message.id, message.text]))
+    .toEqual(continued.map((message) => [message.id, message.text]))
+})
+
+test('F039: a Codex rewind before the first turn is refused and keeps the thread', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
-  await send(profile, conversationId, 'second prompt')
-  await waitForIdle(profile, conversationId)
-  const firstTurn = (await snapshot(profile, conversationId)).messages[0].turn_id
-  expect(await profile.call('conversation.rewind', { operation_id: 'rewind-history', conversation_id: conversationId,
-    scope: 'conversation' })).toMatchObject({ outcome: 'acknowledged' })
-  expect((await snapshot(profile, conversationId)).messages.every((message) => message.turn_id === firstTurn)).toBe(true)
+  const [first] = await codexMessages(profile, conversationId)
+  const original = await codexThread(profile, conversationId)
+  const shown = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
+    scope: 'conversation', before_message_id: first!.id })
+  const reply = await profile.call('conversation.rewind', { operation_id: 'rewind-first', conversation_id: conversationId,
+    scope: 'conversation', before_message_id: first!.id, expected_state: shown.history!.state_token })
+  expect(reply).toMatchObject({ outcome: 'refused', control: 'rewind_conversation' })
+  expect(reply.history).toBeUndefined()
+  expect(await codexCalls(profile, 'thread/fork')).toEqual([])
+  expect(await codexThread(profile, conversationId)).toBe(original)
+  expect((await codexMessages(profile, conversationId)).map((message) => message.text))
+    .toEqual([first!.text, 'Hello world'])
 })

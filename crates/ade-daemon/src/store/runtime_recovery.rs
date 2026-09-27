@@ -178,6 +178,34 @@ impl Store {
         Ok(())
     }
 
+    /// Adds descendants found after a restart to one attempt record, up to
+    /// [`ATTEMPT_DESCENDANTS_MAX`] per record. Known ones are kept as they are.
+    pub fn add_attempt_descendants(
+        &self,
+        instance: &str,
+        key: &str,
+        descendants: &[(u32, u64)],
+    ) -> Result<()> {
+        ensure_tables(&self.connection)?;
+        let tx = self.transaction()?;
+        let mut kept: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM runtime_attempt_descendants WHERE instance=?1 AND key=?2",
+            params![instance, key],
+            |row| row.get(0),
+        )?;
+        for (pid, started) in descendants {
+            if kept >= ATTEMPT_DESCENDANTS_MAX as i64 {
+                break;
+            }
+            kept += tx.execute(
+                "INSERT OR IGNORE INTO runtime_attempt_descendants(instance,key,pid,started) VALUES(?1,?2,?3,?4)",
+                params![instance, key, pid, stamp(*started)],
+            )? as i64;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// The attempt records of these incarnations.
     pub fn attempt_records(&self, instances: &[String]) -> Result<Vec<AttemptRecord>> {
         ensure_tables(&self.connection)?;

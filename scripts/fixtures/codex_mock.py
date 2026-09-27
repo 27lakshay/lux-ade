@@ -74,8 +74,33 @@ for line in sys.stdin:
         if params['threadId'] in ('fixture-child-running','fixture-child-completed'):
             child={'id':params['threadId'],'turns':[{'id':'child-turn','status':'completed','items':[{'id':'child-answer','type':'agentMessage','text':'Child Codex transcript'}]}]}
             send({'id':rpc_id,'result':{'thread':child}})
+        elif thread is not None and params['threadId'] == thread['id']:
+            read = dict(thread) if params.get('includeTurns') else {**thread, 'turns': []}
+            send({'id':rpc_id,'result':{'thread':read}})
         else:
             send({'id':rpc_id,'error':{'code':-32000,'message':'Unknown child thread'}})
+    elif method == "thread/fork":
+        # Codex 0.157.0 v2 ThreadForkParams: `lastTurnId` keeps the turns
+        # through that turn, inclusive; it must name a persisted turn that is
+        # not in progress. The fork is a new thread and the source stays
+        # unchanged. Nothing else of thread/fork is emulated.
+        path = root / (params["threadId"] + ".json")
+        source = thread if thread is not None and thread["id"] == params["threadId"] else (
+            json.loads(path.read_text()) if path.exists() else None)
+        last = params.get("lastTurnId")
+        ids = [turn["id"] for turn in source["turns"]] if source else []
+        if source is None:
+            send({"id": rpc_id, "error": {"code": -32600, "message": "no rollout found for thread id " + params["threadId"]}})
+        elif last is not None and last not in ids:
+            send({"id": rpc_id, "error": {"code": -32600, "message": f"lastTurnId '{last}' was not found in the source thread"}})
+        elif last is not None and source["turns"][ids.index(last)]["status"] == "inProgress":
+            send({"id": rpc_id, "error": {"code": -32600, "message": f"lastTurnId '{last}' identifies an in-progress turn"}})
+        else:
+            kept = source["turns"] if last is None else source["turns"][:ids.index(last) + 1]
+            thread = {"id": "mock-thread-" + str(uuid.uuid4()), "turns": json.loads(json.dumps(kept))}
+            save()
+            send({"id": rpc_id, "result": {"thread": thread}})
+            note("thread/started", {"thread": {**thread, "forkedFromId": source["id"]}})
     elif method == "thread/start":
         thread = {"id": "mock-thread-" + str(uuid.uuid4()), "turns": []}
         save()
