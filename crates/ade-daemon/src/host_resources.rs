@@ -482,6 +482,32 @@ pub fn opening(file_exists: bool, bound: Option<&str>) -> Opening {
     }
 }
 
+/// Whether an explicit accept may recover from `blocked`, given the other
+/// daemon incarnations on this host that still hold their liveness locks.
+///
+/// A missing or unreadable registry is recovered by starting an empty one.
+/// A live daemon may still hold claims in the old file through its open
+/// connection, and an empty registry would forget them, so recovery waits
+/// until no other incarnation is live. A newer registry is never replaced.
+/// Retrying an open, or adopting a replacement that other daemons already
+/// use, forgets nothing and is always allowed.
+pub fn may_accept(blocked: &Blocked, live_others: &[String]) -> std::result::Result<(), String> {
+    match blocked {
+        Blocked::Unsupported(_) => Err(blocked.message()),
+        Blocked::Missing | Blocked::Unreadable(_) if !live_others.is_empty() => Err(format!(
+            "{} {} still live on this host and may hold claims in the old host resource registry (incarnations {}); an empty registry would forget them. Stop those profiles, then accept the registry again. ADE left it unchanged.",
+            live_others.len(),
+            if live_others.len() == 1 {
+                "ADE daemon is"
+            } else {
+                "ADE daemons are"
+            },
+            live_others.join(", ")
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Checks an existing registry's identity against the profile's binding.
 pub fn verify(
     integrity: &str,
@@ -811,6 +837,26 @@ impl HostResources {
                 }
             }
         }
+    }
+
+    /// Other daemon incarnations whose liveness lock is still held, sorted.
+    /// Lock files with names this module never writes are ignored.
+    fn live_others(&self) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(self.location.directory.join(OWNERS)) else {
+            return Vec::new();
+        };
+        let mut live: Vec<String> = entries
+            .filter_map(|entry| {
+                let name = entry.ok()?.file_name().into_string().ok()?;
+                let incarnation = name.strip_suffix(".lock")?.to_owned();
+                (incarnation != self.incarnation
+                    && valid_incarnation(&incarnation)
+                    && self.live(&incarnation))
+                .then_some(incarnation)
+            })
+            .collect();
+        live.sort();
+        live
     }
 
     /// Applies owner loss to every claim whose incarnation lost its lock.
@@ -1430,8 +1476,8 @@ impl HostResources {
             Err(blocked) => Some(blocked.clone()),
         };
         if let Some(blocked) = blocked {
-            if let Blocked::Unsupported(_) = blocked {
-                return Err(Self::unavailable(&blocked));
+            if let Err(refusal) = may_accept(&blocked, &self.live_others()) {
+                return Err(HostResourcesUnavailable(refusal).into());
             }
             let aside = matches!(blocked, Blocked::Unreadable(_))
                 .then(|| format!("unreadable-{}", now_ms()));
@@ -2287,6 +2333,25 @@ mod tests {
             verify("ok", Some("2"), Some("h"), Some("h")),
             Err(Blocked::Unsupported("2".into()))
         );
+    }
+
+    #[test]
+    fn recovery_never_starts_an_empty_registry_while_another_daemon_is_live() {
+        let live = vec!["incarnation_a".to_owned()];
+        for blocked in [Blocked::Missing, Blocked::Unreadable("x".into())] {
+            assert!(may_accept(&blocked, &[]).is_ok());
+            let refusal = may_accept(&blocked, &live).unwrap_err();
+            assert!(refusal.contains("incarnation_a") && refusal.contains("still live"));
+        }
+        // Retrying an open or adopting a replacement forgets nothing.
+        assert!(may_accept(&Blocked::Unavailable("x".into()), &live).is_ok());
+        let replaced = Blocked::Replaced {
+            bound: "a".into(),
+            found: "b".into(),
+        };
+        assert!(may_accept(&replaced, &live).is_ok());
+        // A newer registry is never replaced, live daemons or not.
+        assert!(may_accept(&Blocked::Unsupported("2".into()), &[]).is_err());
     }
 
     #[test]

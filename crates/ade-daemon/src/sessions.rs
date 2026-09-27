@@ -569,25 +569,22 @@ impl Sessions {
     pub fn subscribe(&self) -> Result<(String, mpsc::Receiver<Value>)> {
         let (tx, rx) = mpsc::sync_channel(128);
         let id = new_id("subscriber");
-        for _ in 0..3 {
-            let (catalog, revision) = self.live_catalog()?;
-            let mut d = self.data.lock().unwrap();
-            if d.revision != revision {
-                continue;
-            }
+        // The catalog frame and the subscriber's insertion happen under one
+        // lock, so the subscriber sees every change after that revision.
+        self.with_live_catalog(|d, catalog| {
             tx.send(reply(&ade_core::contract::workspaces::CatalogFrame {
                 tag: Default::default(),
                 catalog,
                 providers: self.provider_descriptors(),
                 boot_id: self.boot_id.clone(),
-                revision,
+                revision: d.revision,
             })?)?;
-            d.subscribers.insert(id.clone(), tx);
+            d.subscribers.insert(id.clone(), tx.clone());
             self.subscribers
                 .store(d.subscribers.len(), Ordering::Relaxed);
-            return Ok((id, rx));
-        }
-        Err(anyhow!("Catalog changed during subscription; retry"))
+            Ok(())
+        })?;
+        Ok((id, rx))
     }
     pub fn unsubscribe(&self, id: &str) {
         let mut d = self.data.lock().unwrap();

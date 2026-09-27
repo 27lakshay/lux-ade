@@ -861,6 +861,22 @@ impl Core {
                 ).into());
             }
         };
+        // Leased provider sessions keep running older code against the same
+        // records, so the data schema rises only once they have ended, as
+        // for a development reload.
+        if let Some(stored) = stored_schema {
+            let leases = reload::lease_count(&state.db, &manifest.id)?;
+            if let dev::SchemaChange::Refuse(_) = dev::reload_schema(stored, data_schema, leases) {
+                return Err(coded(
+                    "conflict",
+                    format!(
+                        "Plugin {} data is at schema {stored}; this artifact raises it to {data_schema} while {leases} provider session(s) lease an older version that uses the same records. End those sessions before updating the data schema",
+                        manifest.id
+                    ),
+                )
+                .into());
+            }
+        }
         let path = artifact::place(staged, &self.artifacts, &manifest.id, &manifest.version)?;
         let now = now_ms();
         let installed_at = existing

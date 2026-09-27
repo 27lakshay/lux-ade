@@ -26,6 +26,17 @@ export function fixedBrowserProfile(socket: string): string {
   return `fixed-${createHash('sha256').update(socket).digest('hex').slice(0, 32)}`
 }
 
+/**
+ * The browser storage profile the desktop owner reports on its tab records
+ * (`profileId`) for the ADE profile it registered as. A fixed-socket owner
+ * registers as `fixed-<hash>` and stores every tab under `fixed`; a managed
+ * profile's owner stores tabs under the profile's own ID. See
+ * apps/desktop/src/main/index.ts and profiles.ts.
+ */
+export function ownerStorageProfile(profileId: string): string {
+  return /^fixed-[0-9a-f]{32}$/.test(profileId) ? 'fixed' : profileId
+}
+
 /** A 1x1 PNG, for a capture's element screenshot. */
 export const onePixelPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
@@ -52,7 +63,7 @@ export function contextCaptureReply(command: BrowserOwnerCommand, page: { url: s
  */
 export async function startBrowserOwner(profile: ScratchProfile,
   answer: (command: BrowserOwnerCommand) => Record<string, unknown>,
-  ownerId = 'e2e-owner'): Promise<BrowserOwner> {
+  ownerId = 'e2e-owner', profileId = fixedBrowserProfile(profile.socket)): Promise<BrowserOwner> {
   const directory = join(profile.root, 'bo')
   await mkdir(directory, { recursive: true, mode: 0o700 })
   await chmod(directory, 0o700)
@@ -77,7 +88,6 @@ export async function startBrowserOwner(profile: ScratchProfile,
   })
   server.unref()
   await chmod(socket, 0o600)
-  const profileId = fixedBrowserProfile(profile.socket)
   const registered = await profile.rpc({ op: 'browser.owner.register', profile_id: profileId, owner_id: ownerId,
     socket_path: socket })
   if (registered.type === 'error') {
