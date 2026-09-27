@@ -273,19 +273,37 @@ impl Sessions {
         Ok(())
     }
     pub(super) fn live_catalog(&self) -> Result<(Catalogue, u64)> {
-        // Copy durable claims while holding the sole-writer lock, then let
-        // filesystem metadata and Git-layout probes run without blocking other
-        // commands. A changed daemon revision invalidates the entire snapshot.
+        self.with_live_catalog(|d, catalog| Ok((catalog, d.revision)))
+    }
+    /// Runs `finish` under the sole-writer lock with the current catalogue,
+    /// whose workspaces' path health was probed outside the lock. Durable
+    /// workspaces and binding claims are copied under the lock, then the
+    /// filesystem metadata and Git-layout probes run without blocking other
+    /// commands. Only a change to the workspaces or their binding claims
+    /// invalidates the probe. Conversations and windows are read again under
+    /// the final lock, so a busy profile, whose revision moves with every
+    /// turn event, still gets a snapshot consistent with the revision it is
+    /// given.
+    pub(super) fn with_live_catalog<T>(
+        &self,
+        mut finish: impl FnMut(&mut Data, Catalogue) -> Result<T>,
+    ) -> Result<T> {
         for _ in 0..3 {
-            let (mut catalog, claims, revision) = {
+            let (mut probed, claims) = {
                 let d = self.data.lock().unwrap();
                 let catalog = d.store.catalog()?;
                 let claims = d.store.catalog_binding_claims(&catalog)?;
-                (catalog, claims, d.revision)
+                (catalog, claims)
             };
-            probe_catalog_bindings(&mut catalog, &claims);
-            if self.data.lock().unwrap().revision == revision {
-                return Ok((catalog, revision));
+            let basis = serde_json::to_value(&probed.workspaces)?;
+            probe_catalog_bindings(&mut probed, &claims);
+            let mut d = self.data.lock().unwrap();
+            let mut current = d.store.catalog()?;
+            if serde_json::to_value(&current.workspaces)? == basis
+                && d.store.catalog_binding_claims(&current)? == claims
+            {
+                current.workspaces = probed.workspaces;
+                return finish(&mut d, current);
             }
         }
         Err(anyhow!(

@@ -737,20 +737,27 @@ impl Hosts {
 
     /// Stops the host and retires every generation up to `through`, so a
     /// late invocation for a disabled activation cannot start it again. The
-    /// plugin's `deactivate` runs with a bounded wait, outside the slot lock.
-    /// A newer generation's host, started after the disable that chose
-    /// `through`, is current and keeps running.
+    /// host drains its open calls in the background, then the plugin's
+    /// `deactivate` runs with a bounded wait (see [`Hosts::drain`]). A newer
+    /// generation's host, started after the disable that chose `through`, is
+    /// current and keeps running.
     pub fn stop(&self, plugin_id: &str, through: u64) {
         let slot = self.slot(plugin_id);
         let process = fence(&mut slot.state.lock().unwrap(), through);
-        if let Some(process) = process {
-            let _ = process.call(
-                "deactivate",
-                json!({"generation": process.key.generation}),
-                DEACTIVATE_TIMEOUT,
-            );
-            process.kill();
+        let Some(process) = process else { return };
+        // A disable, like a newer generation, never cuts off open calls: a
+        // host that has any drains them within the grace, then deactivates.
+        // The generation is retired, so no new call can open on it.
+        if process.open_calls() > 0 {
+            self.drain(plugin_id, process);
+            return;
         }
+        let _ = process.call(
+            "deactivate",
+            json!({"generation": process.key.generation}),
+            DEACTIVATE_TIMEOUT,
+        );
+        process.kill();
     }
 
     /// Stores `spec` for the next start of its generation's host, as after a

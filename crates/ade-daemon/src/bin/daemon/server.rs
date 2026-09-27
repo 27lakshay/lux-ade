@@ -172,6 +172,32 @@ impl BrowserOwner {
     }
 }
 
+/// Whether an owner's `browser.list` or `browser.inspect` reply describes only
+/// the browser profile and tab the daemon asked for. The owner reports each
+/// tab's storage profile (`profileId`), and it is the requested profile; a
+/// popup, another tab or another profile's tab is never relayed as the
+/// requested one. An error reply carries no records.
+fn browser_records_match(op: &str, profile_id: &str, tab_id: &Value, response: &Value) -> bool {
+    if response["type"] == "error" {
+        return true;
+    }
+    let tab_matches = |tab: &Value| tab["profileId"] == profile_id;
+    match op {
+        "browser.inspect" => {
+            response["tab_id"] == *tab_id
+                && response["tab"]["id"] == *tab_id
+                && tab_matches(&response["tab"])
+        }
+        "browser.list" => {
+            response["profileId"] == profile_id
+                && response["tabs"]
+                    .as_array()
+                    .is_some_and(|tabs| tabs.iter().all(tab_matches))
+        }
+        _ => true,
+    }
+}
+
 fn browser_error(code: &str, message: &str) -> Value {
     json!({"type":"error","code":code,"message":message})
 }
@@ -990,9 +1016,7 @@ impl Host {
             || !response["type"].is_string()
             || response["profile_id"] != owner.profile_id
             || response["owner_id"] != owner.owner_id
-            || (op == "browser.inspect"
-                && response["type"] != "error"
-                && response["tab_id"] != request["tab_id"])
+            || !browser_records_match(op, &owner.profile_id, &request["tab_id"], &response)
         {
             return browser_error(
                 "unavailable",
@@ -2015,6 +2039,62 @@ mod error_envelope_tests {
         assert_eq!(response["code"], "outcome_unknown");
         assert_eq!(response["recovery"], "reconnect_and_reconcile");
     }
+    #[test]
+    fn browser_replies_describe_only_the_requested_profile_and_tab() {
+        let tab = |id: &str, profile: &str| json!({"id": id, "profileId": profile});
+        let inspect = |tab_id: &str, record: Value| json!({"type": "browser_tab", "tab_id": tab_id, "tab": record});
+        let wanted = json!("t1");
+        assert!(browser_records_match(
+            "browser.inspect",
+            "p",
+            &wanted,
+            &inspect("t1", tab("t1", "p"))
+        ));
+        assert!(!browser_records_match(
+            "browser.inspect",
+            "p",
+            &wanted,
+            &inspect("popup", tab("popup", "p"))
+        ));
+        assert!(!browser_records_match(
+            "browser.inspect",
+            "p",
+            &wanted,
+            &inspect("t1", tab("popup", "p"))
+        ));
+        assert!(!browser_records_match(
+            "browser.inspect",
+            "p",
+            &wanted,
+            &inspect("t1", tab("t1", "q"))
+        ));
+        let list = |profile: &str, tabs: Vec<Value>| json!({"type": "browser_tabs", "profileId": profile, "tabs": tabs});
+        assert!(browser_records_match(
+            "browser.list",
+            "p",
+            &Value::Null,
+            &list("p", vec![tab("a", "p")])
+        ));
+        assert!(!browser_records_match(
+            "browser.list",
+            "p",
+            &Value::Null,
+            &list("q", vec![])
+        ));
+        assert!(!browser_records_match(
+            "browser.list",
+            "p",
+            &Value::Null,
+            &list("p", vec![tab("a", "p"), tab("b", "q")])
+        ));
+        assert!(browser_records_match(
+            "browser.inspect",
+            "p",
+            &wanted,
+            &json!({"type": "error"})
+        ));
+    }
+
     #[test]
     fn browser_fingerprint_matches_the_owner_recomputation() {
         // The desktop owner recomputes sha256(JSON.stringify([op, profile,

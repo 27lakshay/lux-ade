@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(PartialEq, Eq)]
 pub(crate) struct CatalogBindingClaim {
     workspace: Option<(u64, u64)>,
     repository: Option<(String, Option<(u64, u64)>)>,
