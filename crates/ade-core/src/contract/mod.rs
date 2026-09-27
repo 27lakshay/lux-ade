@@ -35,13 +35,20 @@ macro_rules! wire_tag {
 }
 
 pub mod accounts;
+pub mod activity;
 pub mod agents;
 pub mod conversations;
 pub mod daemon;
 pub mod files;
+pub mod history;
+pub mod mcp;
+pub mod orchestration;
+pub mod plugins;
+pub mod resources;
 pub mod review;
 pub mod scripts;
 pub mod services;
+pub mod skills;
 pub mod terminals;
 pub mod workspaces;
 pub mod worktrees;
@@ -102,6 +109,41 @@ pub const DOMAINS: &[Domain] = &[
         name: "daemon",
         operations: daemon::operations,
         frames: daemon::frames,
+    },
+    Domain {
+        name: "activity",
+        operations: activity::operations,
+        frames: activity::frames,
+    },
+    Domain {
+        name: "mcp",
+        operations: mcp::operations,
+        frames: mcp::frames,
+    },
+    Domain {
+        name: "skills",
+        operations: skills::operations,
+        frames: skills::frames,
+    },
+    Domain {
+        name: "plugins",
+        operations: plugins::operations,
+        frames: plugins::frames,
+    },
+    Domain {
+        name: "orchestration",
+        operations: orchestration::operations,
+        frames: orchestration::frames,
+    },
+    Domain {
+        name: "history",
+        operations: history::operations,
+        frames: history::frames,
+    },
+    Domain {
+        name: "resources",
+        operations: resources::operations,
+        frames: resources::frames,
     },
 ];
 
