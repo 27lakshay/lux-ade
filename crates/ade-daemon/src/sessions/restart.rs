@@ -19,6 +19,7 @@ use ade_core::contract::daemon::{
     RuntimeRecovery, RuntimeRecoveryReleaseRequest, RuntimeRecoveryReleased,
     RuntimeRecoveryRequest,
 };
+use ade_runtime::descendants::Tracker;
 use anyhow::Context as _;
 
 /// Monitor ticks (250 ms each) between attempt identity snapshots.
@@ -33,6 +34,9 @@ pub(super) struct State {
     watch: HashMap<String, Watch>,
     /// The attempt records last written for the current incarnation.
     recorded: Vec<AttemptRecord>,
+    /// The tree of each recorded process by key and PID, extended at every
+    /// snapshot so a descendant that leaves the group stays attributed.
+    trackers: HashMap<(String, u32), Tracker>,
     tick: u32,
 }
 
@@ -90,11 +94,40 @@ fn identify(pid: u32) -> Option<(u64, bool)> {
         .map(|row| (row.identity.started, row.pgid == pid))
 }
 
+/// Extends one recorded process's tree from a fresh table read and returns
+/// its descendants other than the process itself. A failed read keeps what
+/// was already tracked.
+fn track_descendants(tracker: &mut Tracker, pid: u32, started: u64) -> Vec<(u32, u64)> {
+    if let Ok(rows) = ade_runtime::descendants::observe(pid as i32, &tracker.parents()) {
+        tracker.observe(&rows);
+        tracker.forget_exited(&rows);
+    }
+    let mut descendants: Vec<(u32, u64)> = tracker
+        .tracked()
+        .into_iter()
+        .filter(|identity| !(identity.pid as u32 == pid && identity.started == started))
+        .filter_map(|identity| {
+            u32::try_from(identity.pid)
+                .ok()
+                .map(|pid| (pid, identity.started))
+        })
+        .collect();
+    descendants.sort_unstable();
+    descendants
+}
+
 fn observe_tree(record: &ProcessRecord) -> Tree {
     let Ok(pid) = i32::try_from(record.pid) else {
         return Tree::Unreadable(format!("process ID {} is out of range", record.pid));
     };
-    let rows = ade_runtime::descendants::observe(pid, &[pid]);
+    let mut parents = vec![pid];
+    parents.extend(
+        record
+            .descendants
+            .iter()
+            .filter_map(|&(descendant, _)| i32::try_from(descendant).ok()),
+    );
+    let rows = ade_runtime::descendants::observe(pid, &parents);
     recovery::tree(record, rows.as_deref().map_err(String::as_str))
 }
 
@@ -187,6 +220,7 @@ fn process(record: &AttemptRecord) -> ProcessRecord {
         pid: record.pid,
         started: record.started,
         leader: record.leader,
+        descendants: record.descendants.clone(),
     }
 }
 
@@ -654,32 +688,48 @@ impl Sessions {
             }
         }
         let instance = self.runtime.instance.clone();
-        let previous = self.data.lock().unwrap().recovery.recorded.clone();
+        let (previous, mut trackers) = {
+            let mut d = self.data.lock().unwrap();
+            (
+                d.recovery.recorded.clone(),
+                std::mem::take(&mut d.recovery.trackers),
+            )
+        };
+        let mut kept = HashMap::new();
         let mut records = Vec::with_capacity(wanted.len());
         for (key, attempt, pid) in wanted {
             if pid == 0 {
                 continue;
             }
             // The same key, attempt and PID is the same process; skip the read.
-            if let Some(known) = previous
+            let identity = match previous
                 .iter()
                 .find(|r| r.key == key && r.attempt == attempt && r.pid == pid)
             {
-                records.push(known.clone());
+                Some(known) => Some((known.started, known.leader)),
+                // An exited shell can no longer be identified; it stays unrecorded.
+                None => identify(pid),
+            };
+            let Some((started, leader)) = identity else {
                 continue;
-            }
-            // An exited shell can no longer be identified; it stays unrecorded.
-            if let Some((started, leader)) = identify(pid) {
-                records.push(AttemptRecord {
-                    instance: instance.clone(),
-                    key,
-                    attempt,
-                    pid,
-                    started,
-                    leader,
-                });
-            }
+            };
+            let tracker_key = (key.clone(), pid);
+            let mut tracker = trackers
+                .remove(&tracker_key)
+                .unwrap_or_else(|| Tracker::new(pid as i32, pid as i32));
+            let descendants = track_descendants(&mut tracker, pid, started);
+            kept.insert(tracker_key, tracker);
+            records.push(AttemptRecord {
+                instance: instance.clone(),
+                key,
+                attempt,
+                pid,
+                started,
+                leader,
+                descendants,
+            });
         }
+        self.data.lock().unwrap().recovery.trackers = kept;
         records.sort_by(|a, b| a.key.cmp(&b.key));
         let mut d = self.data.lock().unwrap();
         if records != d.recovery.recorded {

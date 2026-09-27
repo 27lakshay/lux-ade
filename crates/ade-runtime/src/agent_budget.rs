@@ -8,6 +8,10 @@
 
 /// Bytes of unacknowledged events a run retains while the daemon is away.
 pub const JOURNAL_LIMIT: usize = 32 * 1024 * 1024;
+/// How recently the daemon must have read a run's events to count as attached.
+/// The daemon long-polls for at most a second between batches, so a longer
+/// silence means it is away or stuck.
+pub const CONSUMER_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
 /// Bytes of ordinary command receipts a run retains.
 pub const RECEIPT_LIMIT: usize = 32 * 1024 * 1024;
 /// Receipts ordinary commands may hold.
@@ -58,6 +62,17 @@ pub fn journal(
     } else {
         Journaling::Accept
     }
+}
+
+/// Whether a full journal holds the provider back instead of overflowing.
+///
+/// While the daemon is attached and draining, a burst that fills the journal
+/// is waited out: backpressure reaches the provider pipe, and nothing is lost.
+/// Overflow is only for output the daemon cannot take, because it has been
+/// away for `CONSUMER_WINDOW` (`since_read` is `None` when it never read), or
+/// because one event is larger than a frame can ever carry.
+pub fn backpressure(event: usize, frame: usize, since_read: Option<std::time::Duration>) -> bool {
+    event < frame && since_read.is_some_and(|elapsed| elapsed < CONSUMER_WINDOW)
 }
 
 /// Whether a command stops or settles existing work, or starts new work.
@@ -143,6 +158,18 @@ mod tests {
         );
         assert_eq!(journal(0, 10, FRAME, false, true, true), Journaling::Closed);
         assert_eq!(journal(0, 10, FRAME, true, true, false), Journaling::Closed);
+    }
+
+    #[test]
+    fn a_full_journal_waits_for_an_attached_daemon_and_overflows_without_one() {
+        use std::time::Duration;
+        // The daemon read events a moment ago: hold the provider back.
+        assert!(backpressure(10, FRAME, Some(Duration::from_millis(200))));
+        // The daemon has been silent past the window, or never read: overflow.
+        assert!(!backpressure(10, FRAME, Some(CONSUMER_WINDOW)));
+        assert!(!backpressure(10, FRAME, None));
+        // An event no frame can carry never fits, however long it waits.
+        assert!(!backpressure(FRAME, FRAME, Some(Duration::ZERO)));
     }
 
     #[test]

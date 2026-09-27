@@ -21,7 +21,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub const FRAME: u64 = 17 * 1024 * 1024;
@@ -120,6 +120,8 @@ struct Journal {
     /// but the run is not exited until an exit is observed or confirmed.
     output_failure: Option<String>,
     closed: bool,
+    /// When the daemon last asked for events; a recent read means it is attached.
+    last_read: Option<Instant>,
 }
 impl Journal {
     fn new() -> Self {
@@ -130,6 +132,7 @@ impl Journal {
             bytes: 0,
             output_failure: None,
             closed: false,
+            last_read: None,
         }
     }
 }
@@ -205,14 +208,34 @@ impl Run {
         let mut journal = self.journal.lock().unwrap();
         let exit = matches!(event, Event::Exited { .. });
         let size = serde_json::to_vec(&event).map_or(usize::MAX, |v| v.len());
-        let decision = agent_budget::journal(
-            journal.bytes,
-            size,
-            FRAME as usize - 65536,
-            journal.output_failure.is_some(),
-            journal.closed,
-            exit,
-        );
+        let frame = FRAME as usize - 65536;
+        let decision = loop {
+            let decision = agent_budget::journal(
+                journal.bytes,
+                size,
+                frame,
+                journal.output_failure.is_some(),
+                journal.closed,
+                exit,
+            );
+            // An attached daemon drains the journal: wait for its acknowledgement
+            // rather than lose output. This thread stops reading meanwhile, so
+            // the bounded queue fills and the provider pipe blocks.
+            if decision != Journaling::Overflow
+                || !agent_budget::backpressure(
+                    size,
+                    frame,
+                    journal.last_read.map(|read| read.elapsed()),
+                )
+            {
+                break decision;
+            }
+            journal = self
+                .changed
+                .wait_timeout(journal, Duration::from_millis(250))
+                .unwrap()
+                .0;
+        };
         let (event, bytes) = match decision {
             Journaling::Closed | Journaling::Discard => return decision,
             Journaling::Overflow => {
@@ -244,6 +267,7 @@ impl Run {
     }
     pub fn events(&self, after: u64) -> Result<Value> {
         let mut journal = self.journal.lock().unwrap();
+        journal.last_read = Some(Instant::now());
         ensure!(
             after >= journal.acknowledged && after < journal.next,
             "Agent event cursor is outside the retained journal"
@@ -295,6 +319,8 @@ impl Run {
             journal.bytes -= bytes;
         }
         journal.acknowledged = journal.acknowledged.max(cursor);
+        // A journaling thread may be waiting for this space.
+        self.changed.notify_all();
         Ok(json!({"type":"ack"}))
     }
     pub fn describe(&self) -> Value {

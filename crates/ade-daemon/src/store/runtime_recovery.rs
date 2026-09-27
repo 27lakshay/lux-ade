@@ -10,6 +10,7 @@ use ade_core::contract::daemon::RecoveryReport;
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS runtime_incarnations(instance TEXT PRIMARY KEY, pid INTEGER NOT NULL, started INTEGER, first_seen_at INTEGER NOT NULL, reconciled_at INTEGER);
 CREATE TABLE IF NOT EXISTS runtime_attempt_records(instance TEXT NOT NULL, key TEXT NOT NULL, attempt TEXT, pid INTEGER NOT NULL, started INTEGER NOT NULL, leader INTEGER NOT NULL, recorded_at INTEGER NOT NULL, PRIMARY KEY(instance, key));
+CREATE TABLE IF NOT EXISTS runtime_attempt_descendants(instance TEXT NOT NULL, key TEXT NOT NULL, pid INTEGER NOT NULL, started INTEGER NOT NULL, PRIMARY KEY(instance, key, pid));
 CREATE TABLE IF NOT EXISTS runtime_recovery_reports(id TEXT PRIMARY KEY, detected_at INTEGER NOT NULL, open INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS runtime_recovery_reports_by_time ON runtime_recovery_reports(detected_at);
 ";
@@ -18,6 +19,8 @@ CREATE INDEX IF NOT EXISTS runtime_recovery_reports_by_time ON runtime_recovery_
 const CLOSED_REPORTS_KEPT: i64 = 20;
 /// Attempt records kept per incarnation.
 pub const ATTEMPT_RECORDS_MAX: usize = 4096;
+/// Descendants kept per attempt record.
+pub const ATTEMPT_DESCENDANTS_MAX: usize = 256;
 
 fn ensure_tables(connection: &Connection) -> Result<()> {
     connection.execute_batch(SCHEMA)?;
@@ -44,6 +47,9 @@ pub struct AttemptRecord {
     pub pid: u32,
     pub started: u64,
     pub leader: bool,
+    /// Descendants seen under the process, as (PID, start stamp), including
+    /// those that left its group.
+    pub descendants: Vec<(u32, u64)>,
 }
 
 /// An activity record for one attempt that did not settle.
@@ -143,8 +149,18 @@ impl Store {
             "DELETE FROM runtime_attempt_records WHERE instance=?1",
             [instance],
         )?;
+        tx.execute(
+            "DELETE FROM runtime_attempt_descendants WHERE instance=?1",
+            [instance],
+        )?;
         let now = now_ms();
         for record in records.iter().take(ATTEMPT_RECORDS_MAX) {
+            for (pid, started) in record.descendants.iter().take(ATTEMPT_DESCENDANTS_MAX) {
+                tx.execute(
+                    "INSERT OR REPLACE INTO runtime_attempt_descendants(instance,key,pid,started) VALUES(?1,?2,?3,?4)",
+                    params![instance, record.key, pid, stamp(*started)],
+                )?;
+            }
             tx.execute(
                 "INSERT OR REPLACE INTO runtime_attempt_records(instance,key,attempt,pid,started,leader,recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",
                 params![
@@ -178,9 +194,22 @@ impl Store {
                     pid: row.get(3)?,
                     started: row.get::<_, i64>(4)? as u64,
                     leader: row.get(5)?,
+                    descendants: Vec::new(),
                 })
             })? {
                 records.push(record?);
+            }
+        }
+        let mut descendants = self.connection.prepare(
+            "SELECT pid,started FROM runtime_attempt_descendants WHERE instance=?1 AND key=?2 ORDER BY pid",
+        )?;
+        for record in &mut records {
+            for descendant in descendants
+                .query_map(params![record.instance, record.key], |row| {
+                    Ok((row.get::<_, u32>(0)?, row.get::<_, i64>(1)? as u64))
+                })?
+            {
+                record.descendants.push(descendant?);
             }
         }
         Ok(records)
@@ -272,6 +301,10 @@ fn forget_incarnations(tx: &Connection, instances: &[String]) -> Result<()> {
     for instance in instances {
         tx.execute(
             "DELETE FROM runtime_attempt_records WHERE instance=?1",
+            [instance],
+        )?;
+        tx.execute(
+            "DELETE FROM runtime_attempt_descendants WHERE instance=?1",
             [instance],
         )?;
         tx.execute(
