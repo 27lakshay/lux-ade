@@ -35,6 +35,8 @@
     "@codemirror/state",
     "@codemirror/view",
     "@pierre/trees",
+    "@tanstack/react-hotkeys",
+    "@tanstack/react-query",
     "codemirror",
     "electron-context-menu",
     "jsonc-parser",

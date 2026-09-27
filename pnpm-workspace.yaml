@@ -12,3 +12,5 @@ minimumReleaseAgeExclude:
   - electron-vite@6.0.0-beta.3
   - '@tanstack/react-router@1.170.40'
   - '@tanstack/router-core@1.171.33'
+  - '@tanstack/hotkeys@0.10.1'
+  - '@tanstack/react-hotkeys@0.12.1'
