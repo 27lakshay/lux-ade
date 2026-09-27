@@ -1878,6 +1878,46 @@
         }
       ]
     },
+    "BrowserClickRequest": {
+      "additionalProperties": false,
+      "description": "`browser.click`: a trusted left click at the centre of the first element the\nselector matches, once it is visible, enabled, stable and not covered.\nThe fingerprint covers the operation, profile, owner, tab and selector;\n`timeout_ms` is not part of it.",
+      "properties": {
+        "op": {
+          "const": "browser.click"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "selector": {
+          "description": "A CSS selector of 1 to 1024 characters without control characters.",
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the element to become actionable, 100 to 10000\nmilliseconds; 5000 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "operation_id",
+        "tab_id",
+        "selector"
+      ],
+      "type": "object"
+    },
     "BrowserCloseRequest": {
       "additionalProperties": false,
       "description": "`browser.close`: close an exact tab.",
@@ -2314,6 +2354,100 @@
       ],
       "type": "object"
     },
+    "BrowserEvaluateRequest": {
+      "additionalProperties": false,
+      "description": "`browser.evaluate`: evaluate a read-only JavaScript expression in the tab's\npage. The debugger refuses any expression whose side effects it cannot rule\nout, such as an assignment, a DOM write or a network call; that is an\n`invalid_request`. The value returns as JSON and is bounded.",
+      "properties": {
+        "expression": {
+          "description": "1 to 8192 characters.",
+          "type": "string"
+        },
+        "op": {
+          "const": "browser.evaluate"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "Execution limit, 50 to 5000 milliseconds; 1000 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "expression"
+      ],
+      "type": "object"
+    },
+    "BrowserEvaluation": {
+      "description": "The `browser.evaluate` reply. A value or an exception is reported, never both.",
+      "properties": {
+        "exception": {
+          "description": "The thrown exception's text, cut to 1024 characters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "truncated": {
+          "description": "The value's JSON exceeded 65536 bytes and was left out.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `browser_evaluation` type tag.",
+          "enum": [
+            "browser_evaluation"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "description": "The page URL without user information, query or fragment; empty when\nthe page is not HTTP(S).",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value as JSON; `null` when it has no JSON form, was left out or threw."
+        },
+        "value_type": {
+          "description": "The JavaScript type: `undefined`, `boolean`, `number`, `string`,\n`bigint`, `object`, `function` or `symbol`; `null` after an exception.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "url",
+        "value_type",
+        "value",
+        "truncated",
+        "exception"
+      ],
+      "type": "object"
+    },
     "BrowserImport": {
       "description": "The `browser.import.run` and `browser.import.get` reply.",
       "properties": {
@@ -2729,7 +2863,7 @@
       "type": "object"
     },
     "BrowserMutation": {
-      "description": "The `browser.open`, `browser.navigate` and `browser.close` reply, relayed\nfrom the owner. `payload_fingerprint` is the daemon's fingerprint of the\noperation, its profile, owner, tab and URL.",
+      "description": "The `browser.open`, `browser.navigate`, `browser.close`, `browser.click` and\n`browser.type` reply, relayed from the owner. `payload_fingerprint` is the\ndaemon's fingerprint of the operation, its profile, owner, tab and URL, and\nfor click and type the selector and typed input.",
       "properties": {
         "op": {
           "type": "string"
@@ -3531,6 +3665,97 @@
       ],
       "type": "object"
     },
+    "BrowserScreenshot": {
+      "description": "The `browser.screenshot` reply.",
+      "properties": {
+        "captured_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "data": {
+          "description": "Base64 image bytes.",
+          "type": "string"
+        },
+        "height": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "media_type": {
+          "description": "`image/png` or `image/jpeg`.",
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "scaled": {
+          "description": "The capture was scaled down to fit.",
+          "type": "boolean"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_screenshot` type tag.",
+          "enum": [
+            "browser_screenshot"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "description": "The page URL without user information, query or fragment; empty when\nthe page is not HTTP(S).",
+          "type": "string"
+        },
+        "width": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "url",
+        "media_type",
+        "data",
+        "width",
+        "height",
+        "scaled",
+        "captured_at_ms"
+      ],
+      "type": "object"
+    },
+    "BrowserScreenshotRequest": {
+      "additionalProperties": false,
+      "description": "`browser.screenshot`: the visible viewport of the tab's page, scaled so no\nside exceeds 1600 pixels and encoded within 512 KiB.",
+      "properties": {
+        "op": {
+          "const": "browser.screenshot"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id"
+      ],
+      "type": "object"
+    },
     "BrowserTabRecord": {
       "description": "One browser tab as the owner reports it. The owner uses camelCase names.",
       "properties": {
@@ -3649,6 +3874,181 @@
         "tabs"
       ],
       "type": "object"
+    },
+    "BrowserTypeRequest": {
+      "additionalProperties": false,
+      "description": "`browser.type`: focus the first editable element the selector matches and\ninsert text as trusted input. The caret moves to the end of the element's\ncontent first, or the content is selected and replaced when `replace` is\ntrue. The fingerprint covers the operation, profile, owner, tab, selector,\ntext and `replace`; `timeout_ms` is not part of it. The owner's receipt\nnever stores the text.",
+      "properties": {
+        "op": {
+          "const": "browser.type"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "replace": {
+          "description": "Replace the element's content; false when absent.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "selector": {
+          "description": "A CSS selector of 1 to 1024 characters without control characters.",
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "text": {
+          "description": "1 to 4096 characters. Tab and line feed are the only control characters.",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "100 to 10000 milliseconds; 5000 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "operation_id",
+        "tab_id",
+        "selector",
+        "text"
+      ],
+      "type": "object"
+    },
+    "BrowserWait": {
+      "description": "The `browser.wait` reply.",
+      "properties": {
+        "elapsed_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "satisfied": {
+          "type": "boolean"
+        },
+        "selector": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/BrowserWaitState"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_wait` type tag.",
+          "enum": [
+            "browser_wait"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "description": "The page URL without user information, query or fragment; empty when\nthe page is not HTTP(S).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "selector",
+        "state",
+        "satisfied",
+        "elapsed_ms",
+        "url"
+      ],
+      "type": "object"
+    },
+    "BrowserWaitRequest": {
+      "additionalProperties": false,
+      "description": "`browser.wait`: wait until the selector reaches a state in the tab's page.\nA wait that runs out of time is an answer, not an error: `satisfied` is\nfalse.",
+      "properties": {
+        "op": {
+          "const": "browser.wait"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "selector": {
+          "description": "A CSS selector of 1 to 1024 characters without control characters.",
+          "type": "string"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserWaitState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`visible` when absent."
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "0 to 10000 milliseconds; 5000 when absent. 0 checks once.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "selector"
+      ],
+      "type": "object"
+    },
+    "BrowserWaitState": {
+      "description": "The element state `browser.wait` waits for.",
+      "oneOf": [
+        {
+          "const": "attached",
+          "description": "An element matches the selector.",
+          "type": "string"
+        },
+        {
+          "const": "visible",
+          "description": "A matching element has a box, and is not hidden or transparent.",
+          "type": "string"
+        },
+        {
+          "const": "detached",
+          "description": "No element matches the selector.",
+          "type": "string"
+        },
+        {
+          "const": "hidden",
+          "description": "No matching element is visible.",
+          "type": "string"
+        }
+      ]
     },
     "Caller": {
       "description": "Who asks. An Agent caller names its own Conversation; the daemon records\nthe attribution and refuses an Agent that acts as another Conversation.",
@@ -24427,6 +24827,41 @@
       "request": "BrowserContextCaptureRequest",
       "response": "BrowserContextCapture",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.click",
+      "request": "BrowserClickRequest",
+      "response": "BrowserMutation",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.type",
+      "request": "BrowserTypeRequest",
+      "response": "BrowserMutation",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.evaluate",
+      "request": "BrowserEvaluateRequest",
+      "response": "BrowserEvaluation",
+      "tier": "query"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.wait",
+      "request": "BrowserWaitRequest",
+      "response": "BrowserWait",
+      "tier": "query"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.screenshot",
+      "request": "BrowserScreenshotRequest",
+      "response": "BrowserScreenshot",
+      "tier": "query"
     },
     {
       "domain": "repository",

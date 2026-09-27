@@ -310,9 +310,10 @@ pub struct BrowserTabReply {
     pub tab: BrowserTabRecord,
 }
 
-/// The `browser.open`, `browser.navigate` and `browser.close` reply, relayed
-/// from the owner. `payload_fingerprint` is the daemon's fingerprint of the
-/// operation, its profile, owner, tab and URL.
+/// The `browser.open`, `browser.navigate`, `browser.close`, `browser.click` and
+/// `browser.type` reply, relayed from the owner. `payload_fingerprint` is the
+/// daemon's fingerprint of the operation, its profile, owner, tab and URL, and
+/// for click and type the selector and typed input.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct BrowserMutation {
     #[serde(rename = "type")]

@@ -125,6 +125,17 @@ export async function attachDiagnostics(profileId: string, tabId: unknown, holde
   return collector
 }
 
+/**
+ * Whether ADE diagnostics or a recording holds this page's debugger now.
+ * Automation shares that attachment instead of treating it as a foreign client.
+ */
+export function diagnosticsHoldsDebugger(contents: WebContents): boolean {
+  for (const collector of collectors.values()) {
+    if (collector.contents === contents && collector.attached) return true
+  }
+  return false
+}
+
 /** Releases `holder`; capture stops when nobody holds it. Entries stay readable. */
 export function releaseDiagnostics(collector: Collector, holder: string): void {
   collector.holders.delete(holder)
