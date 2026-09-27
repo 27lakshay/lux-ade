@@ -7,13 +7,23 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { lstatSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { decodeRequest, decodeResponse, type Operation, type Request, type Response } from '@ade/contracts'
+import {
+  decodeRequest, decodeResponse, type ExecutionHostEntry, type Operation, type PlacementDecision, type Request,
+  type Response,
+} from '@ade/contracts'
 import { DaemonRequestError, requestDaemon, type DaemonResponse, type RequestOptions } from './request.js'
 import {
   admitRemoteRequest, connectionKey, initialRemoteState, reduceRemote, sshForwardArgs, validateLocalSocket,
   type RemoteEffect, type RemoteEvent, type RemoteState, type RemoteTarget,
 } from './remote-state.js'
+import {
+  admitPlacement, previewCapability, type PlacementAdmission, type PreviewCapability,
+} from './placement.js'
 
+export {
+  admitPlacement, deviceCapability, previewCapability, sshPreviewForwardArgs,
+  type DeviceCapability, type PlacementAdmission, type PreviewCapability,
+} from './placement.js'
 export {
   connectionKey, remoteStatus, validateTarget,
   type RemoteFailure, type RemoteIdentity, type RemotePhase, type RemoteState, type RemoteTarget,
@@ -124,6 +134,19 @@ export class RemoteDaemonTransport {
       }
       throw error
     }
+  }
+
+  /**
+   * Final admission for new work the daemon's `placement.check` admitted on
+   * this transport's host: it must be connected now. Never another host.
+   */
+  admitPlacement(decision: PlacementDecision): PlacementAdmission {
+    return admitPlacement(decision, this.state, this.target)
+  }
+
+  /** Whether a service URL on this host can be forwarded over this transport now. */
+  previewCapability(entry: ExecutionHostEntry, url: string): PreviewCapability {
+    return previewCapability(entry, url, this.state, this.target)
   }
 
   /** A typed command with the same contract checks as a local `dailyUseCommand`. */

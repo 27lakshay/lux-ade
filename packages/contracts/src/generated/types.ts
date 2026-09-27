@@ -140,6 +140,7 @@ export type ContractDefinition =
   | DeliveryOutcome
   | DeliveryStatus
   | Descriptor
+  | DeviceAccess
   | DiagnosticClaims
   | DiagnosticCounter
   | DiagnosticCounterKind
@@ -175,6 +176,9 @@ export type ContractDefinition =
   | DraftSendPrepareRequest
   | Excluded
   | Exclusion
+  | ExecutionHost
+  | ExecutionHostEntry
+  | ExecutionHosts
   | ExecutionState
   | FileEntry
   | FileKind
@@ -221,6 +225,8 @@ export type ContractDefinition =
   | HistorySearch
   | HistorySearchRequest
   | Hook
+  | HostCapabilities
+  | HostReadiness
   | HostResourcesState
   | Inspection
   | Installation
@@ -261,6 +267,19 @@ export type ContractDefinition =
   | PendingRequest
   | PendingSend
   | PendingSendList
+  | PlacedResource
+  | Placement
+  | PlacementCheckRequest
+  | PlacementDecision
+  | PlacementHostsRequest
+  | PlacementListRequest
+  | PlacementRecordRequest
+  | PlacementReleaseRequest
+  | PlacementReleased
+  | PlacementReply
+  | PlacementResolveRequest
+  | PlacementSource
+  | Placements
   | PluginActivation
   | PluginCommandContribution
   | PluginContributions
@@ -301,6 +320,7 @@ export type ContractDefinition =
   | PortAssignment
   | PortObservation
   | PreviewKind
+  | PreviewTransport
   | Projected
   | ProviderListRequest
   | ProviderSelection
@@ -342,6 +362,7 @@ export type ContractDefinition =
   | RepositoryRebindRequest
   | RepositoryRecord
   | ResourceClaim
+  | ResourceKind
   | ResourcesClaimResolveRequest
   | ResourcesInspectRequest
   | ResourcesRegistryAcceptRequest
@@ -771,6 +792,10 @@ export type DeliveryOutcome = 'shown' | 'failed' | 'suppressed'
  */
 export type DeliveryStatus = 'claimed' | 'shown' | 'failed' | 'suppressed'
 /**
+ * Whether device and computer control is available on a host.
+ */
+export type DeviceAccess = 'local_host' | 'unsupported'
+/**
  * What a diagnostic counter counts.
  */
 export type DiagnosticCounterKind = 'dropped' | 'coalesced'
@@ -794,6 +819,30 @@ export type DiagnosticUnknownSource = 'receipt' | 'claim' | 'terminal' | 'conver
  * Why an entry does not reach a provider.
  */
 export type Exclusion = ('disabled' | 'outside_scope' | 'provider_not_selected') | 'unsupported'
+/**
+ * An execution host. `local` is the host this daemon runs on; a remote host
+ * is named by its `remote.host.*` registry ID.
+ */
+export type ExecutionHost =
+  | {
+      kind: 'local'
+    }
+  | {
+      host_id: string
+      kind: 'remote'
+    }
+/**
+ * How a service preview on this host reaches the viewer.
+ */
+export type PreviewTransport = 'direct' | 'ssh_forward'
+/**
+ * The kinds of work that carry an execution host.
+ */
+export type ResourceKind = 'workspace' | 'conversation' | 'terminal' | 'service'
+/**
+ * What this daemon can prove about a host being able to take new work.
+ */
+export type HostReadiness = 'ready' | 'started' | 'unavailable' | 'unknown'
 /**
  * Whether a service's recorded run is live in the current runtime.
  */
@@ -964,6 +1013,34 @@ export type PairingState = 'active' | 'revoked'
  * What the daemon knows about an unresolved send.
  */
 export type SendOutcome = 'prepared' | 'accepted' | 'rejected' | 'held' | 'conflict'
+/**
+ * One placed resource. Everything except a workspace names its workspace,
+ * and must run on that workspace's host.
+ */
+export type PlacedResource =
+  | {
+      kind: 'workspace'
+      workspace_id: string
+    }
+  | {
+      conversation_id: string
+      kind: 'conversation'
+      workspace_id: string
+    }
+  | {
+      kind: 'terminal'
+      terminal_id: string
+      workspace_id: string
+    }
+  | {
+      kind: 'service'
+      name: string
+      workspace_id: string
+    }
+/**
+ * Where a resource's host identity comes from.
+ */
+export type PlacementSource = 'local_state' | 'recorded'
 /**
  * A registration kind in the activation registry.
  */
@@ -3406,6 +3483,51 @@ export interface Excluded {
   [k: string]: unknown
 }
 /**
+ * One execution host and what this daemon knows about it.
+ */
+export interface ExecutionHostEntry {
+  capabilities: HostCapabilities
+  host: ExecutionHost
+  label: string
+  readiness: HostReadiness
+  /**
+   * Why the host is not ready, or what the client must still confirm.
+   */
+  reason: string | null
+  /**
+   * Remote hosts only: the remote profile from its last start.
+   */
+  remote_profile_id: string | null
+  /**
+   * Remote hosts only: the remote daemon's socket from its last start.
+   */
+  remote_socket: string | null
+  [k: string]: unknown
+}
+/**
+ * What a host can run and expose.
+ */
+export interface HostCapabilities {
+  devices: DeviceAccess
+  previews: PreviewTransport
+  /**
+   * The resource kinds a placement may target on this host.
+   */
+  resources: ResourceKind[]
+  [k: string]: unknown
+}
+/**
+ * The `placement.hosts` reply. The local host is always first.
+ */
+export interface ExecutionHosts {
+  hosts: ExecutionHostEntry[]
+  /**
+   * The `execution_hosts` type tag.
+   */
+  type: 'execution_hosts'
+  [k: string]: unknown
+}
+/**
  * One entry in a listing or search result.
  */
 export interface FileEntry {
@@ -4825,6 +4947,126 @@ export interface PendingSendList {
    * The `pending_sends` type tag.
    */
   type: 'pending_sends'
+  [k: string]: unknown
+}
+/**
+ * One resource and its execution host.
+ */
+export interface Placement {
+  host: ExecutionHost
+  /**
+   * When the record was written; null for local state.
+   */
+  recorded_at_ms: number | null
+  resource: PlacedResource
+  source: PlacementSource
+  [k: string]: unknown
+}
+/**
+ * `placement.check`: may new work of `resource` kind be placed on `host`?
+ */
+export interface PlacementCheckRequest {
+  host: ExecutionHost
+  op: 'placement.check'
+  resource: ResourceKind
+  /**
+   * For anything but a workspace: the workspace the work belongs to. Its
+   * host must be `host`.
+   */
+  workspace_id?: string | null
+}
+/**
+ * The `placement.check` reply.
+ */
+export interface PlacementDecision {
+  /**
+   * True only when this daemon's evidence allows the placement.
+   */
+  admitted: boolean
+  host: ExecutionHost
+  /**
+   * Why the placement is refused, or what the client must still confirm.
+   */
+  reason: string | null
+  /**
+   * True for a remote host: the work is sent through the remote transport,
+   * which must be connected to this host at that moment.
+   */
+  requires_remote_transport: boolean
+  resource: ResourceKind
+  /**
+   * The `placement_decision` type tag.
+   */
+  type: 'placement_decision'
+  [k: string]: unknown
+}
+/**
+ * `placement.hosts`: every execution host.
+ */
+export interface PlacementHostsRequest {
+  op: 'placement.hosts'
+}
+/**
+ * `placement.list`: recorded placements, all or for one remote host.
+ */
+export interface PlacementListRequest {
+  host_id?: string | null
+  op: 'placement.list'
+}
+/**
+ * `placement.record`: record the host of a resource created on a remote host.
+ */
+export interface PlacementRecordRequest {
+  host: ExecutionHost
+  op: 'placement.record'
+  resource: PlacedResource
+}
+/**
+ * `placement.release`: forget one recorded placement.
+ */
+export interface PlacementReleaseRequest {
+  op: 'placement.release'
+  resource: PlacedResource
+}
+/**
+ * The `placement.release` reply. `released` is false when nothing was recorded.
+ */
+export interface PlacementReleased {
+  released: boolean
+  resource: PlacedResource
+  /**
+   * The `placement_released` type tag.
+   */
+  type: 'placement_released'
+  [k: string]: unknown
+}
+/**
+ * The `placement.record` and `placement.resolve` reply.
+ */
+export interface PlacementReply {
+  placement: Placement
+  /**
+   * The `placement` type tag.
+   */
+  type: 'placement'
+  [k: string]: unknown
+}
+/**
+ * `placement.resolve`: the host of one resource.
+ */
+export interface PlacementResolveRequest {
+  op: 'placement.resolve'
+  resource: PlacedResource
+}
+/**
+ * The `placement.list` reply.
+ */
+export interface Placements {
+  placements: Placement[]
+  /**
+   * The `placements` type tag.
+   */
+  type: 'placements'
   [k: string]: unknown
 }
 /**
@@ -8053,7 +8295,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8239,6 +8481,12 @@ export interface RequestByOperation {
   "browser.recording.start": BrowserRecordingStartRequest
   "browser.recording.stop": BrowserRecordingStopRequest
   "browser.recording.get": BrowserRecordingGetRequest
+  "placement.hosts": PlacementHostsRequest
+  "placement.check": PlacementCheckRequest
+  "placement.record": PlacementRecordRequest
+  "placement.resolve": PlacementResolveRequest
+  "placement.list": PlacementListRequest
+  "placement.release": PlacementReleaseRequest
 }
 
 export interface ResponseByOperation {
@@ -8425,6 +8673,12 @@ export interface ResponseByOperation {
   "browser.recording.start": BrowserRecording
   "browser.recording.stop": BrowserRecording
   "browser.recording.get": BrowserRecording
+  "placement.hosts": ExecutionHosts
+  "placement.check": PlacementDecision
+  "placement.record": PlacementReply
+  "placement.resolve": PlacementReply
+  "placement.list": Placements
+  "placement.release": PlacementReleased
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

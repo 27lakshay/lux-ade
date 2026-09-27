@@ -161,6 +161,8 @@ pub fn validate_host_id(id: &str) -> Result<()> {
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
         "Host ID must be 1 to 64 lowercase letters, digits or '-'"
     );
+    // `local` names this machine in placement; a remote host never takes it.
+    ensure!(id != "local", "Host ID local is reserved for this machine");
     Ok(())
 }
 
@@ -750,6 +752,7 @@ mod tests {
         assert!(validate_host_id("dev-box-2").is_ok());
         assert!(validate_host_id("Dev").is_err());
         assert!(validate_host_id("-x").is_err());
+        assert!(validate_host_id("local").is_err());
         assert!(validate_target("me@devbox").is_ok());
         assert!(validate_target("me@devbox; rm").is_err());
         assert!(validate_remote_path("/opt/ade/bin/ade-control").is_ok());

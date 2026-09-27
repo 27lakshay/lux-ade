@@ -185,6 +185,12 @@ export const operations = {
   "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
   "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
   "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
+  "placement.hosts": { tier: "query", domain: "placement", request: "PlacementHostsRequest", response: "ExecutionHosts" },
+  "placement.check": { tier: "query", domain: "placement", request: "PlacementCheckRequest", response: "PlacementDecision" },
+  "placement.record": { tier: "idempotent_command", domain: "placement", request: "PlacementRecordRequest", response: "PlacementReply" },
+  "placement.resolve": { tier: "query", domain: "placement", request: "PlacementResolveRequest", response: "PlacementReply" },
+  "placement.list": { tier: "query", domain: "placement", request: "PlacementListRequest", response: "Placements" },
+  "placement.release": { tier: "idempotent_command", domain: "placement", request: "PlacementReleaseRequest", response: "PlacementReleased" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

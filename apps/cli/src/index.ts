@@ -10,6 +10,7 @@ import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
+import { placementUsage, runPlacementCommand } from './commands/placement.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { remoteConnectUsage, runRemoteConnectCommand } from './commands/remote-connect.js'
@@ -86,6 +87,7 @@ const usage = [
   listenerUsage,
   mcpUsage,
   remoteUsage,
+  placementUsage,
   skillUsage,
   pluginUsage,
   orchestrationUsage,
@@ -223,6 +225,7 @@ const commandAreas = [
   runListenerCommand,
   runMcpCommand,
   runRemoteCommand,
+  runPlacementCommand,
   runSkillCommand,
   runPluginCommand,
   runOrchestrationCommand,

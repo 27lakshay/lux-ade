@@ -4563,6 +4563,21 @@
       ],
       "type": "object"
     },
+    "DeviceAccess": {
+      "description": "Whether device and computer control is available on a host.",
+      "oneOf": [
+        {
+          "const": "local_host",
+          "description": "Devices attached to this machine; each reports its own availability.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "Not offered. Nothing is redirected to a local device instead.",
+          "type": "string"
+        }
+      ]
+    },
     "DiagnosticClaims": {
       "description": "Lease and claim state.",
       "properties": {
@@ -5809,6 +5824,112 @@
           "type": "string"
         }
       ]
+    },
+    "ExecutionHost": {
+      "description": "An execution host. `local` is the host this daemon runs on; a remote host\nis named by its `remote.host.*` registry ID.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "local",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "host_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "remote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "host_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExecutionHostEntry": {
+      "description": "One execution host and what this daemon knows about it.",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/HostCapabilities"
+        },
+        "host": {
+          "$ref": "#/$defs/ExecutionHost"
+        },
+        "label": {
+          "type": "string"
+        },
+        "readiness": {
+          "$ref": "#/$defs/HostReadiness"
+        },
+        "reason": {
+          "description": "Why the host is not ready, or what the client must still confirm.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remote_profile_id": {
+          "description": "Remote hosts only: the remote profile from its last start.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remote_socket": {
+          "description": "Remote hosts only: the remote daemon's socket from its last start.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "host",
+        "label",
+        "readiness",
+        "reason",
+        "capabilities",
+        "remote_socket",
+        "remote_profile_id"
+      ],
+      "type": "object"
+    },
+    "ExecutionHosts": {
+      "description": "The `placement.hosts` reply. The local host is always first.",
+      "properties": {
+        "hosts": {
+          "items": {
+            "$ref": "#/$defs/ExecutionHostEntry"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `execution_hosts` type tag.",
+          "enum": [
+            "execution_hosts"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "hosts"
+      ],
+      "type": "object"
     },
     "ExecutionState": {
       "description": "Whether a service's recorded run is live in the current runtime.",
@@ -7309,6 +7430,55 @@
       ],
       "type": "object"
     },
+    "HostCapabilities": {
+      "description": "What a host can run and expose.",
+      "properties": {
+        "devices": {
+          "$ref": "#/$defs/DeviceAccess"
+        },
+        "previews": {
+          "$ref": "#/$defs/PreviewTransport"
+        },
+        "resources": {
+          "description": "The resource kinds a placement may target on this host.",
+          "items": {
+            "$ref": "#/$defs/ResourceKind"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "resources",
+        "previews",
+        "devices"
+      ],
+      "type": "object"
+    },
+    "HostReadiness": {
+      "description": "What this daemon can prove about a host being able to take new work.",
+      "oneOf": [
+        {
+          "const": "ready",
+          "description": "The local host: this daemon is answering.",
+          "type": "string"
+        },
+        {
+          "const": "started",
+          "description": "The remote daemon last started with compatible protocols. The client's\nremote transport must also be connected before work is sent.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "The host cannot take new work; `reason` says why.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "The last start's outcome is unknown; probe before placing work.",
+          "type": "string"
+        }
+      ]
+    },
     "HostResourcesState": {
       "description": "The reply to every `resources.*` operation.",
       "properties": {
@@ -8664,6 +8834,360 @@
       ],
       "type": "object"
     },
+    "PlacedResource": {
+      "description": "One placed resource. Everything except a workspace names its workspace,\nand must run on that workspace's host.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "workspace",
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "conversation_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "conversation",
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id",
+            "conversation_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "terminal",
+              "type": "string"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id",
+            "terminal_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "service",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id",
+            "name"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Placement": {
+      "description": "One resource and its execution host.",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/ExecutionHost"
+        },
+        "recorded_at_ms": {
+          "description": "When the record was written; null for local state.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resource": {
+          "$ref": "#/$defs/PlacedResource"
+        },
+        "source": {
+          "$ref": "#/$defs/PlacementSource"
+        }
+      },
+      "required": [
+        "resource",
+        "host",
+        "source",
+        "recorded_at_ms"
+      ],
+      "type": "object"
+    },
+    "PlacementCheckRequest": {
+      "additionalProperties": false,
+      "description": "`placement.check`: may new work of `resource` kind be placed on `host`?",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/ExecutionHost"
+        },
+        "op": {
+          "const": "placement.check"
+        },
+        "resource": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "workspace_id": {
+          "description": "For anything but a workspace: the workspace the work belongs to. Its\nhost must be `host`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "host",
+        "resource"
+      ],
+      "type": "object"
+    },
+    "PlacementDecision": {
+      "description": "The `placement.check` reply.",
+      "properties": {
+        "admitted": {
+          "description": "True only when this daemon's evidence allows the placement.",
+          "type": "boolean"
+        },
+        "host": {
+          "$ref": "#/$defs/ExecutionHost"
+        },
+        "reason": {
+          "description": "Why the placement is refused, or what the client must still confirm.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requires_remote_transport": {
+          "description": "True for a remote host: the work is sent through the remote transport,\nwhich must be connected to this host at that moment.",
+          "type": "boolean"
+        },
+        "resource": {
+          "$ref": "#/$defs/ResourceKind"
+        },
+        "type": {
+          "description": "The `placement_decision` type tag.",
+          "enum": [
+            "placement_decision"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host",
+        "resource",
+        "admitted",
+        "reason",
+        "requires_remote_transport"
+      ],
+      "type": "object"
+    },
+    "PlacementHostsRequest": {
+      "additionalProperties": false,
+      "description": "`placement.hosts`: every execution host.",
+      "properties": {
+        "op": {
+          "const": "placement.hosts"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "PlacementListRequest": {
+      "additionalProperties": false,
+      "description": "`placement.list`: recorded placements, all or for one remote host.",
+      "properties": {
+        "host_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "placement.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "PlacementRecordRequest": {
+      "additionalProperties": false,
+      "description": "`placement.record`: record the host of a resource created on a remote host.",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/ExecutionHost"
+        },
+        "op": {
+          "const": "placement.record"
+        },
+        "resource": {
+          "$ref": "#/$defs/PlacedResource"
+        }
+      },
+      "required": [
+        "op",
+        "resource",
+        "host"
+      ],
+      "type": "object"
+    },
+    "PlacementReleaseRequest": {
+      "additionalProperties": false,
+      "description": "`placement.release`: forget one recorded placement.",
+      "properties": {
+        "op": {
+          "const": "placement.release"
+        },
+        "resource": {
+          "$ref": "#/$defs/PlacedResource"
+        }
+      },
+      "required": [
+        "op",
+        "resource"
+      ],
+      "type": "object"
+    },
+    "PlacementReleased": {
+      "description": "The `placement.release` reply. `released` is false when nothing was recorded.",
+      "properties": {
+        "released": {
+          "type": "boolean"
+        },
+        "resource": {
+          "$ref": "#/$defs/PlacedResource"
+        },
+        "type": {
+          "description": "The `placement_released` type tag.",
+          "enum": [
+            "placement_released"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "resource",
+        "released"
+      ],
+      "type": "object"
+    },
+    "PlacementReply": {
+      "description": "The `placement.record` and `placement.resolve` reply.",
+      "properties": {
+        "placement": {
+          "$ref": "#/$defs/Placement"
+        },
+        "type": {
+          "description": "The `placement` type tag.",
+          "enum": [
+            "placement"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "placement"
+      ],
+      "type": "object"
+    },
+    "PlacementResolveRequest": {
+      "additionalProperties": false,
+      "description": "`placement.resolve`: the host of one resource.",
+      "properties": {
+        "op": {
+          "const": "placement.resolve"
+        },
+        "resource": {
+          "$ref": "#/$defs/PlacedResource"
+        }
+      },
+      "required": [
+        "op",
+        "resource"
+      ],
+      "type": "object"
+    },
+    "PlacementSource": {
+      "description": "Where a resource's host identity comes from.",
+      "oneOf": [
+        {
+          "const": "local_state",
+          "description": "This daemon holds the resource, so it runs on the local host.",
+          "type": "string"
+        },
+        {
+          "const": "recorded",
+          "description": "A `placement.record` names its remote host.",
+          "type": "string"
+        }
+      ]
+    },
+    "Placements": {
+      "description": "The `placement.list` reply.",
+      "properties": {
+        "placements": {
+          "items": {
+            "$ref": "#/$defs/Placement"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `placements` type tag.",
+          "enum": [
+            "placements"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "placements"
+      ],
+      "type": "object"
+    },
     "PluginActivation": {
       "description": "The live activation of an enabled plugin.",
       "properties": {
@@ -9785,6 +10309,21 @@
       ],
       "type": "string"
     },
+    "PreviewTransport": {
+      "description": "How a service preview on this host reaches the viewer.",
+      "oneOf": [
+        {
+          "const": "direct",
+          "description": "The URL is opened on this machine as it is.",
+          "type": "string"
+        },
+        {
+          "const": "ssh_forward",
+          "description": "A loopback URL on the remote host is forwarded over the remote SSH transport.",
+          "type": "string"
+        }
+      ]
+    },
     "Projected": {
       "description": "One entry in a provider's native shape.",
       "properties": {
@@ -10889,6 +11428,16 @@
         "updated_at"
       ],
       "type": "object"
+    },
+    "ResourceKind": {
+      "description": "The kinds of work that carry an execution host.",
+      "enum": [
+        "workspace",
+        "conversation",
+        "terminal",
+        "service"
+      ],
+      "type": "string"
     },
     "ResourcesClaimResolveRequest": {
       "additionalProperties": false,
@@ -18793,6 +19342,48 @@
       "request": "BrowserRecordingGetRequest",
       "response": "BrowserRecording",
       "tier": "query"
+    },
+    {
+      "domain": "placement",
+      "name": "placement.hosts",
+      "request": "PlacementHostsRequest",
+      "response": "ExecutionHosts",
+      "tier": "query"
+    },
+    {
+      "domain": "placement",
+      "name": "placement.check",
+      "request": "PlacementCheckRequest",
+      "response": "PlacementDecision",
+      "tier": "query"
+    },
+    {
+      "domain": "placement",
+      "name": "placement.record",
+      "request": "PlacementRecordRequest",
+      "response": "PlacementReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "placement",
+      "name": "placement.resolve",
+      "request": "PlacementResolveRequest",
+      "response": "PlacementReply",
+      "tier": "query"
+    },
+    {
+      "domain": "placement",
+      "name": "placement.list",
+      "request": "PlacementListRequest",
+      "response": "Placements",
+      "tier": "query"
+    },
+    {
+      "domain": "placement",
+      "name": "placement.release",
+      "request": "PlacementReleaseRequest",
+      "response": "PlacementReleased",
+      "tier": "idempotent_command"
     }
   ]
 }
