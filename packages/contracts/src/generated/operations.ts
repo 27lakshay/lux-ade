@@ -230,6 +230,12 @@ export const operations = {
   "device.boot": { tier: "effect_command", domain: "devices", request: "DeviceBootRequest", response: "DeviceBooted" },
   "device.app.install": { tier: "effect_command", domain: "devices", request: "DeviceAppInstallRequest", response: "DeviceAppInstalled" },
   "device.app.launch": { tier: "effect_command", domain: "devices", request: "DeviceAppLaunchRequest", response: "DeviceAppLaunched" },
+  "placement.hosts": { tier: "query", domain: "placement", request: "PlacementHostsRequest", response: "ExecutionHosts" },
+  "placement.check": { tier: "query", domain: "placement", request: "PlacementCheckRequest", response: "PlacementDecision" },
+  "placement.record": { tier: "idempotent_command", domain: "placement", request: "PlacementRecordRequest", response: "PlacementReply" },
+  "placement.resolve": { tier: "query", domain: "placement", request: "PlacementResolveRequest", response: "PlacementReply" },
+  "placement.list": { tier: "query", domain: "placement", request: "PlacementListRequest", response: "Placements" },
+  "placement.release": { tier: "idempotent_command", domain: "placement", request: "PlacementReleaseRequest", response: "PlacementReleased" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

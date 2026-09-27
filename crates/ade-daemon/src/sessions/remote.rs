@@ -34,7 +34,7 @@ const START_TIMEOUT: Duration = Duration::from_secs(60);
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(10);
 const KEYSCAN_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn ensure_schema(connection: &Connection) -> Result<()> {
+pub(super) fn ensure_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(SCHEMA)?;
     receipts::ensure(connection)
 }

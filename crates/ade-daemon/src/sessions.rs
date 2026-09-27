@@ -42,6 +42,7 @@ mod inspection;
 mod leases;
 mod mcp;
 mod orchestration;
+mod placement;
 mod remote;
 mod repository;
 mod retention;
@@ -754,6 +755,7 @@ impl Sessions {
             op if op.starts_with("remote.") => self.remote_command(request),
             op if op.starts_with("repository.") => self.repository_command(request),
             op if controls::handles(op) => self.control_command(request),
+            op if op.starts_with("placement.") => self.placement_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"

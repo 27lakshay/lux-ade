@@ -14,6 +14,7 @@ import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.
 import { deviceUsage, runDeviceCommand } from './commands/devices.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { repositoryUsage, runRepositoryCommand } from './commands/repository.js'
+import { placementUsage, runPlacementCommand } from './commands/placement.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { remoteConnectUsage, runRemoteConnectCommand } from './commands/remote-connect.js'
@@ -96,6 +97,7 @@ const usage = [
   listenerUsage,
   mcpUsage,
   remoteUsage,
+  placementUsage,
   skillUsage,
   pluginUsage,
   hookUsage,
@@ -239,6 +241,7 @@ const commandAreas = [
   runListenerCommand,
   runMcpCommand,
   runRemoteCommand,
+  runPlacementCommand,
   runSkillCommand,
   runPluginCommand,
   runHookCommand,
