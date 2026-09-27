@@ -195,6 +195,11 @@ export const operations = {
   "repository.clone": { tier: "effect_command", domain: "repository", request: "RepositoryCloneRequest", response: "RepositoryCloned" },
   "repository.publish.preview": { tier: "query", domain: "repository", request: "RepositoryPublishPreviewRequest", response: "RepositoryPublishPreview" },
   "repository.publish": { tier: "effect_command", domain: "repository", request: "RepositoryPublishRequest", response: "RepositoryPublished" },
+  "hook.subscription.list": { tier: "query", domain: "hooks", request: "HookSubscriptionListRequest", response: "HookSubscriptionList" },
+  "hook.delivery.list": { tier: "query", domain: "hooks", request: "HookDeliveryListRequest", response: "HookDeliveryList" },
+  "hook.delivery.inspect": { tier: "query", domain: "hooks", request: "HookDeliveryInspectRequest", response: "HookDeliveryReply" },
+  "hook.delivery.retry": { tier: "effect_command", domain: "hooks", request: "HookDeliveryRetryRequest", response: "HookDeliveryReply" },
+  "hook.delivery.abandon": { tier: "idempotent_command", domain: "hooks", request: "HookDeliveryAbandonRequest", response: "HookDeliveryReply" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

@@ -106,6 +106,16 @@ pub fn problems(manifest: &PluginManifest, files: &BTreeSet<String>) -> Vec<Stri
     if !contributes.panels.is_empty() && entries.ui.is_none() {
         out.push("panels need a ui entry point".into());
     }
+    // Hooks run in the backend host after the event commits.
+    if !contributes.hooks.is_empty() && entries.backend.is_none() {
+        out.push("hooks need a backend entry point".into());
+    }
+    let mut events = HashSet::new();
+    for event in &contributes.hooks {
+        if !events.insert(*event) {
+            out.push(format!("hook {} is declared twice", event.as_str()));
+        }
+    }
     let mut seen = HashSet::new();
     for (kind, id, title) in contributes
         .commands
@@ -354,6 +364,21 @@ mod tests {
                 m["entry_points"] = json!({"backend": "dist/ui.js"});
             },
             "panels need a ui entry point",
+        );
+        rejects(
+            |m| m["contributes"]["hooks"] = json!(["turn.settled"]),
+            "hooks need a backend entry point",
+        );
+        rejects(
+            |m| m["contributes"]["hooks"] = json!(["turn.started"]),
+            "unknown variant",
+        );
+        rejects(
+            |m| {
+                m["entry_points"]["backend"] = json!("dist/ui.js");
+                m["contributes"]["hooks"] = json!(["turn.settled", "turn.settled"]);
+            },
+            "hook turn.settled is declared twice",
         );
         // A command and a panel may share a local name; they are separate kinds.
         let mut manifest = base();

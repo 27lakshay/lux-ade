@@ -3,6 +3,7 @@
 use crate::host_resources::{self, HostResources, Settlement, Target};
 use crate::model::{new_id, now_ms};
 use crate::receipts::{self, Admission, Status};
+use ade_core::contract::hooks::{HookDelivery, HookSubscription};
 use ade_core::contract::resources::{
     ClaimMode, ClaimPurpose, ResourcesClaimResolveRequest, ResourcesInspectRequest,
     ResourcesRegistryAcceptRequest,
@@ -1105,6 +1106,16 @@ impl Worktrees {
     }
     pub fn active_operations(&self) -> usize {
         self.data.lock().unwrap().busy.len()
+    }
+    /// Hook deliveries staged by lifecycle commits, for the outbox relay (F058).
+    pub fn staged_hook_deliveries(&self) -> Result<Vec<HookDelivery>> {
+        crate::hooks::staged(&self.data.lock().unwrap().db)
+    }
+    pub fn forget_hook_deliveries(&self, effect_ids: &[String]) -> Result<()> {
+        crate::hooks::forget_staged(&self.data.lock().unwrap().db, effect_ids)
+    }
+    pub fn sync_hook_subscriptions(&self, subscriptions: &[HookSubscription]) -> Result<()> {
+        crate::hooks::replace_subscriptions(&self.data.lock().unwrap().db, subscriptions)
     }
     pub fn lease(self: &Arc<Self>, root: &str) -> Result<Lease> {
         self.acquire_lease(root, false)
@@ -2390,6 +2401,17 @@ impl Worktrees {
             put(&tx, "repositories", &repo.id, &repo)?;
             put(&tx, LEDGER, &job.id, &job)?;
             reconcile_receipt(&tx, &job)?;
+            // Lifecycle hooks commit with the completion they describe (F058).
+            if job.status == JobStatus::Succeeded
+                && let Some(event) = crate::hooks::Event::worktree(
+                    job.request["op"].as_str().unwrap_or(""),
+                    &job.id,
+                    &job.repository_id,
+                    job.worktree_path.as_deref(),
+                )
+            {
+                crate::hooks::enqueue(&tx, &event, now_ms())?;
+            }
             tx.commit()?;
             Ok(())
         })() {

@@ -677,6 +677,12 @@ impl Store {
             ],
         )?;
         write_binding(&tx, "workspace", &workspace.id, &workspace.root)?;
+        // The lifecycle hook commits with the new workspace (F058).
+        crate::hooks::enqueue(
+            &tx,
+            &crate::hooks::Event::workspace_created(&workspace),
+            now_ms(),
+        )?;
         tx.commit()?;
         Ok(workspace)
     }

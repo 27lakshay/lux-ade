@@ -6,6 +6,7 @@ pub use ade_runtime::{agent_runtime, provider, runtime};
 pub mod checkpoints;
 pub mod files;
 pub mod history;
+pub mod hooks;
 pub mod host_resources;
 pub mod listeners;
 pub mod observability;

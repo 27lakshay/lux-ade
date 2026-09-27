@@ -223,6 +223,19 @@ export type ContractDefinition =
   | HistorySearch
   | HistorySearchRequest
   | Hook
+  | HookDelivery
+  | HookDeliveryAbandonRequest
+  | HookDeliveryInspectRequest
+  | HookDeliveryList
+  | HookDeliveryListRequest
+  | HookDeliveryReply
+  | HookDeliveryRetryRequest
+  | HookDeliveryStatus
+  | HookEvent
+  | HookHostStatus
+  | HookSubscription
+  | HookSubscriptionList
+  | HookSubscriptionListRequest
   | HostResourcesState
   | Inspection
   | Installation
@@ -937,6 +950,17 @@ export type HistoryImportOutcome = 'imported' | 'appended' | 'unchanged'
  * A provider whose native on-disk sessions ADE can import.
  */
 export type HistoryImportProvider = 'claude' | 'codex'
+/**
+ * A lifecycle event a plugin can subscribe to. Every event fires after the
+ * state change it describes has committed.
+ */
+export type HookEvent =
+  'turn.settled' | 'workspace.created' | 'worktree.created' | 'worktree.removed' | 'service.state_changed'
+/**
+ * Where a delivery is in its lifecycle.
+ */
+export type HookDeliveryStatus =
+  'awaiting_host' | 'queued' | 'dispatching' | 'delivered' | 'failed' | 'unknown' | 'abandoned'
 export type RegistryState = 'ready' | 'blocked'
 /**
  * How the server's code reached this host. ADE records it; it installs nothing.
@@ -4325,6 +4349,157 @@ export interface HistorySearchRequest {
   workspace_id?: string | null
 }
 /**
+ * One hook delivery.
+ */
+export interface HookDelivery {
+  /**
+   * The plugin's activation generation when the event committed.
+   */
+  activation_generation: number
+  /**
+   * How many times it was handed to a plugin host.
+   */
+  attempts: number
+  created_at: number
+  /**
+   * Stable for the life of the delivery and across retries. The plugin
+   * receives it with every send.
+   */
+  effect_id: string
+  /**
+   * The last error the host or the daemon recorded.
+   */
+  error: string | null
+  event: HookEvent
+  /**
+   * The earliest time the dispatcher sends a queued delivery.
+   */
+  next_attempt_at: number
+  /**
+   * The event's facts, as the plugin receives them.
+   */
+  payload: unknown
+  plugin_id: string
+  /**
+   * Commit order in the outbox.
+   */
+  sequence: number
+  status: HookDeliveryStatus
+  updated_at: number
+  [k: string]: unknown
+}
+/**
+ * `hook.delivery.abandon`: stop a delivery that is not in flight.
+ */
+export interface HookDeliveryAbandonRequest {
+  effect_id: string
+  op: 'hook.delivery.abandon'
+}
+/**
+ * `hook.delivery.inspect`: one delivery by its effect ID.
+ */
+export interface HookDeliveryInspectRequest {
+  effect_id: string
+  op: 'hook.delivery.inspect'
+}
+/**
+ * The `hook.delivery.list` reply.
+ */
+export interface HookDeliveryList {
+  deliveries: HookDelivery[]
+  host: HookHostStatus
+  /**
+   * Pass as `after` for the next page; null on the last page.
+   */
+  next_after: number | null
+  /**
+   * The `hook_deliveries` type tag.
+   */
+  type: 'hook_deliveries'
+  [k: string]: unknown
+}
+/**
+ * Whether a plugin host can take deliveries now.
+ */
+export interface HookHostStatus {
+  available: boolean
+  /**
+   * Why deliveries are waiting, when the host is unavailable.
+   */
+  detail: string | null
+  [k: string]: unknown
+}
+/**
+ * `hook.delivery.list`: deliveries in commit order, oldest first.
+ */
+export interface HookDeliveryListRequest {
+  /**
+   * Return deliveries after this sequence; the previous page's `next_after`.
+   */
+  after?: number | null
+  /**
+   * 1 to 200; 50 when absent.
+   */
+  limit?: number | null
+  op: 'hook.delivery.list'
+  plugin_id?: string | null
+  status?: HookDeliveryStatus | null
+}
+/**
+ * The `hook.delivery.inspect`, `hook.delivery.retry` and `hook.delivery.abandon` reply.
+ */
+export interface HookDeliveryReply {
+  delivery: HookDelivery
+  /**
+   * The `hook_delivery` type tag.
+   */
+  type: 'hook_delivery'
+  [k: string]: unknown
+}
+/**
+ * `hook.delivery.retry`: queue a failed or unknown delivery to be sent again
+ * with the same effect ID. A delivered, abandoned or pending delivery is refused.
+ */
+export interface HookDeliveryRetryRequest {
+  /**
+   * Required to retry an `unknown` delivery: the caller accepts that the
+   * plugin may see the same effect twice.
+   */
+  acknowledge_unknown?: boolean
+  effect_id: string
+  op: 'hook.delivery.retry'
+  operation_id: string
+}
+/**
+ * One plugin's subscription to one event, from its live activation.
+ */
+export interface HookSubscription {
+  /**
+   * The activation generation that declared it.
+   */
+  activation_generation: number
+  event: HookEvent
+  plugin_id: string
+  [k: string]: unknown
+}
+/**
+ * The `hook.subscription.list` reply.
+ */
+export interface HookSubscriptionList {
+  subscriptions: HookSubscription[]
+  /**
+   * The `hook_subscriptions` type tag.
+   */
+  type: 'hook_subscriptions'
+  [k: string]: unknown
+}
+/**
+ * `hook.subscription.list`: the active subscriptions the outbox uses.
+ */
+export interface HookSubscriptionListRequest {
+  op: 'hook.subscription.list'
+}
+/**
  * The reply to every `resources.*` operation.
  */
 export interface HostResourcesState {
@@ -5001,6 +5176,10 @@ export interface PluginCommandResult {
  */
 export interface PluginContributions {
   commands: PluginCommandContribution[]
+  /**
+   * Lifecycle events delivered to the backend entry point after they commit (F058).
+   */
+  hooks?: HookEvent[]
   panels: PluginPanelContribution[]
   settings: PluginSettingContribution[]
 }
@@ -5124,6 +5303,10 @@ export interface PluginManifest {
  */
 export interface PluginContributions1 {
   commands: PluginCommandContribution[]
+  /**
+   * Lifecycle events delivered to the backend entry point after they commit (F058).
+   */
+  hooks?: HookEvent[]
   panels: PluginPanelContribution[]
   settings: PluginSettingContribution[]
 }
@@ -8601,7 +8784,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8797,6 +8980,11 @@ export interface RequestByOperation {
   "repository.clone": RepositoryCloneRequest
   "repository.publish.preview": RepositoryPublishPreviewRequest
   "repository.publish": RepositoryPublishRequest
+  "hook.subscription.list": HookSubscriptionListRequest
+  "hook.delivery.list": HookDeliveryListRequest
+  "hook.delivery.inspect": HookDeliveryInspectRequest
+  "hook.delivery.retry": HookDeliveryRetryRequest
+  "hook.delivery.abandon": HookDeliveryAbandonRequest
 }
 
 export interface ResponseByOperation {
@@ -8993,6 +9181,11 @@ export interface ResponseByOperation {
   "repository.clone": RepositoryCloned
   "repository.publish.preview": RepositoryPublishPreview
   "repository.publish": RepositoryPublished
+  "hook.subscription.list": HookSubscriptionList
+  "hook.delivery.list": HookDeliveryList
+  "hook.delivery.inspect": HookDeliveryReply
+  "hook.delivery.retry": HookDeliveryReply
+  "hook.delivery.abandon": HookDeliveryReply
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged
