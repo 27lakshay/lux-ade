@@ -28,7 +28,7 @@ use uuid::Uuid;
 const FILES: &[(&str, &str, i64)] = &[
     ("sessions.sqlite", "sqlite", 17),
     ("sessions.review.sqlite3", "sqlite", 0),
-    ("sessions.worktrees/lifecycle.sqlite3", "sqlite", 3),
+    ("sessions.worktrees/lifecycle.sqlite3", "sqlite", 4),
     ("sessions.worktrees/empty.toml", "manifest", 0),
 ];
 const EXCLUDED: &[&str] = &[
@@ -334,7 +334,9 @@ fn fence(data: &Path, final_data: &Path) -> Result<()> {
             Ok(())
         })?;
         tx.execute("DELETE FROM owned", [])?;
-        rewrite(&tx, "operations", |_id, record| {
+        // Schema 4 keeps the lifecycle ledger in `jobs`; `operations` holds receipts,
+        // which the daemon reconciles to the ledger when it opens.
+        rewrite(&tx, "jobs", |_id, record| {
             if record["status"] == "running" {
                 record["status"] = json!("interrupted");
                 record["code"] = json!("restored_without_runtime_owner");

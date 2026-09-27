@@ -100,6 +100,22 @@
       ],
       "type": "object"
     },
+    "BranchPolicy": {
+      "description": "What `worktree.remove` does with the removed tree's branch.",
+      "oneOf": [
+        {
+          "enum": [
+            "keep"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "merged",
+          "description": "Delete the branch only if Git reports it merged.",
+          "type": "string"
+        }
+      ]
+    },
     "CatalogFrame": {
       "description": "The `catalog.get` reply and the `catalog` feed frame.",
       "properties": {
@@ -173,6 +189,32 @@
         "workspaces",
         "conversations",
         "windows"
+      ],
+      "type": "object"
+    },
+    "Config": {
+      "additionalProperties": false,
+      "description": "A repository's stored lifecycle configuration.",
+      "properties": {
+        "directory": {
+          "default": null,
+          "description": "Parent directory for new trees; the repository's parent when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "description": "Git command timeout in seconds.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "directory",
+        "timeout_seconds"
       ],
       "type": "object"
     },
@@ -609,6 +651,16 @@
       ],
       "type": "object"
     },
+    "SetupState": {
+      "description": "Whether a tree is ready for an Agent, from its latest `worktree.switch`.",
+      "enum": [
+        "ready",
+        "preparing",
+        "interrupted",
+        "failed"
+      ],
+      "type": "string"
+    },
     "TerminalOwner": {
       "properties": {
         "runtime_instance": {
@@ -675,6 +727,669 @@
         "worktree_lifecycle_needs_rebind"
       ],
       "type": "object"
+    },
+    "WorktreeAdoptRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.adopt`: take ADE removal authority over an existing linked tree.",
+      "properties": {
+        "confirm_path": {
+          "description": "Must equal the canonical form of `path`. Optional in Rust only so a\nmissing value keeps the daemon's own error message.",
+          "type": "string"
+        },
+        "op": {
+          "const": "worktree.adopt"
+        },
+        "path": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "path",
+        "confirm_path"
+      ],
+      "type": "object"
+    },
+    "WorktreeConfigInput": {
+      "additionalProperties": false,
+      "description": "The configuration a caller sends. Absent fields take their defaults; the\nstored form is [`Config`].",
+      "properties": {
+        "directory": {
+          "default": null,
+          "description": "Parent directory for new trees; the repository's parent when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "description": "Git command timeout; the daemon accepts 5 to 300.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "WorktreeConfigureRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.configure`: replace a repository's lifecycle configuration.",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/WorktreeConfigInput"
+        },
+        "op": {
+          "const": "worktree.configure"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "config"
+      ],
+      "type": "object"
+    },
+    "WorktreeGetRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.get`: read a registered repository's lifecycle state.",
+      "properties": {
+        "op": {
+          "const": "worktree.get"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id"
+      ],
+      "type": "object"
+    },
+    "WorktreeItem": {
+      "description": "One entry of `git worktree list`, with ADE's ownership and setup state.",
+      "properties": {
+        "ade_owned": {
+          "description": "Whether ADE holds removal authority over this tree.",
+          "type": "boolean"
+        },
+        "bare": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detached": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "lock_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locked": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "prunable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "setup_state": {
+          "$ref": "#/$defs/SetupState"
+        }
+      },
+      "required": [
+        "path",
+        "ade_owned",
+        "setup_state"
+      ],
+      "type": "object"
+    },
+    "WorktreeOperation": {
+      "description": "One lifecycle operation from the ledger. The daemon stores this shape.",
+      "properties": {
+        "binding_generation": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The caller's operation ID.",
+          "type": "string"
+        },
+        "recovery": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "request": {
+          "description": "The request as the caller sent it, including `op`."
+        },
+        "result": {
+          "description": "Command output and its `value`; `null` until the command runs.\n`worktree_state` omits `stdout` and `stderr`."
+        },
+        "started_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/WorktreeOperationStatus"
+        },
+        "worktree_path": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "repository_id",
+        "binding_generation",
+        "request",
+        "worktree_path",
+        "status",
+        "result",
+        "error",
+        "started_at",
+        "finished_at"
+      ],
+      "type": "object"
+    },
+    "WorktreeOperationReply": {
+      "description": "The `worktree.operation` reply.",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/WorktreeOperation"
+        },
+        "type": {
+          "description": "The `worktree_operation` type tag.",
+          "enum": [
+            "worktree_operation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "WorktreeOperationRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.operation`: read one lifecycle operation receipt in full.",
+      "properties": {
+        "op": {
+          "const": "worktree.operation"
+        },
+        "operation_id": {
+          "description": "The operation's ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "WorktreeOperationStatus": {
+      "description": "A lifecycle operation's status in its ledger.",
+      "oneOf": [
+        {
+          "enum": [
+            "running",
+            "succeeded",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "partial",
+          "description": "The tree was removed but its branch was kept.",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "The daemon stopped while the operation ran; inspect before retrying.",
+          "type": "string"
+        }
+      ]
+    },
+    "WorktreeRebindCandidate": {
+      "description": "One lifecycle repository in the rebind catalog.",
+      "properties": {
+        "binding_generation": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "common_dir": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "needs_rebind": {
+          "type": "boolean"
+        },
+        "rebindable": {
+          "description": "Whether the saved source identity survives, so a rebind can be verified.",
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "common_dir",
+        "needs_rebind",
+        "rebindable",
+        "binding_generation"
+      ],
+      "type": "object"
+    },
+    "WorktreeRebindCatalog": {
+      "description": "The `worktree.rebind.list` reply.",
+      "properties": {
+        "repositories": {
+          "items": {
+            "$ref": "#/$defs/WorktreeRebindCandidate"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `worktree_rebind_catalog` type tag.",
+          "enum": [
+            "worktree_rebind_catalog"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repositories"
+      ],
+      "type": "object"
+    },
+    "WorktreeRebindListRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.rebind.list`: list lifecycle repositories and whether each needs a rebind.",
+      "properties": {
+        "op": {
+          "const": "worktree.rebind.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "WorktreeRebindRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.rebind`: bind a restored lifecycle repository to a verified checkout.",
+      "properties": {
+        "op": {
+          "const": "worktree.rebind"
+        },
+        "path": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WorktreeRefreshRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.refresh`: re-read the Git worktree listing under the repository lock.",
+      "properties": {
+        "op": {
+          "const": "worktree.refresh"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "WorktreeRemoveRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.remove`: remove a clean ADE-owned linked tree.",
+      "properties": {
+        "confirm_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delete_branch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BranchPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Branch policy; the daemon uses `keep` when it is absent. The daemon\nreads the raw string so an unknown policy keeps its own error message."
+        },
+        "force": {
+          "description": "Forced removal is unavailable; `true` is rejected.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "worktree.remove"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WorktreeRepository": {
+      "description": "A registered lifecycle repository. Device and inode identities are decimal strings.",
+      "properties": {
+        "binding_generation": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "common_device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "common_dir": {
+          "type": "string"
+        },
+        "common_inode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "config": {
+          "$ref": "#/$defs/Config"
+        },
+        "id": {
+          "type": "string"
+        },
+        "needs_rebind": {
+          "type": "boolean"
+        },
+        "refreshed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "root": {
+          "description": "The primary checkout, where lifecycle commands run.",
+          "type": "string"
+        },
+        "root_device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root_inode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_common_device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_common_dir": {
+          "description": "The common directory before the first rebind.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_common_inode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_root_device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_root_inode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "common_dir",
+        "source_common_dir",
+        "root_device",
+        "root_inode",
+        "source_root_device",
+        "source_root_inode",
+        "common_device",
+        "common_inode",
+        "source_common_device",
+        "source_common_inode",
+        "needs_rebind",
+        "binding_generation",
+        "config",
+        "refreshed_at"
+      ],
+      "type": "object"
+    },
+    "WorktreeRepositoryRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.repository`: register the Git repository containing `path`, or\nreturn the one already registered for its common directory.",
+      "properties": {
+        "op": {
+          "const": "worktree.repository"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WorktreeState": {
+      "description": "A repository's lifecycle state: the reply to every command except\n`worktree.operation` and `worktree.rebind.list`.",
+      "properties": {
+        "busy": {
+          "description": "Whether a lifecycle or review operation holds the repository.",
+          "type": "boolean"
+        },
+        "operations": {
+          "description": "The newest 100 operations, newest first, without command output.",
+          "items": {
+            "$ref": "#/$defs/WorktreeOperation"
+          },
+          "type": "array"
+        },
+        "repository": {
+          "$ref": "#/$defs/WorktreeRepository"
+        },
+        "type": {
+          "description": "The `worktree_state` type tag.",
+          "enum": [
+            "worktree_state"
+          ],
+          "type": "string"
+        },
+        "worktrees": {
+          "description": "The cached Git listing, primary checkout first.",
+          "items": {
+            "$ref": "#/$defs/WorktreeItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "repository",
+        "worktrees",
+        "busy",
+        "operations"
+      ],
+      "type": "object"
+    },
+    "WorktreeSwitchRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.switch`: check out `target` in a linked tree, creating the branch\nwhen `create` is true.",
+      "properties": {
+        "base": {
+          "description": "Start point for a new branch; the daemon uses `HEAD` when it is absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "create": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "worktree.switch"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute path for a new tree, directly inside the configured directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "target": {
+          "description": "A branch name, or the path of an existing linked tree.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id",
+        "target"
+      ],
+      "type": "object"
     }
   },
   "$id": "ade-contracts",
@@ -719,6 +1434,76 @@
       "request": "AgentAnswerRequest",
       "response": "Ack",
       "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.repository",
+      "request": "WorktreeRepositoryRequest",
+      "response": "WorktreeState",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.get",
+      "request": "WorktreeGetRequest",
+      "response": "WorktreeState",
+      "tier": "query"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.switch",
+      "request": "WorktreeSwitchRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.adopt",
+      "request": "WorktreeAdoptRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.remove",
+      "request": "WorktreeRemoveRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.refresh",
+      "request": "WorktreeRefreshRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.configure",
+      "request": "WorktreeConfigureRequest",
+      "response": "WorktreeState",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.operation",
+      "request": "WorktreeOperationRequest",
+      "response": "WorktreeOperationReply",
+      "tier": "query"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.rebind",
+      "request": "WorktreeRebindRequest",
+      "response": "WorktreeState",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.rebind.list",
+      "request": "WorktreeRebindListRequest",
+      "response": "WorktreeRebindCatalog",
+      "tier": "query"
     }
   ]
 }

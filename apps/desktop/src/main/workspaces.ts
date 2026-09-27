@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand, requestDaemon } from '@ade/client'
 import { getClient, getClientGeneration, getProfileState, getSocket, getStartupProfileSelection, isRestoringBinding,
   isSwitching, managedProfiles, setRestoringBinding } from './profile-connection'
 import { validId } from './validation'
@@ -32,7 +32,7 @@ export function registerWorkspaceIpc(): void {
     const generation = getClientGeneration()
     if (!endpoint || isSwitching() || getClient().getState().status !== 'connected') throw new Error('Profile daemon is unavailable')
     const [lifecycle, repositories, workspaces] = await Promise.all([
-      requestDaemon(endpoint, 'worktree.rebind.list'),
+      dailyUseCommand(endpoint, { op: 'worktree.rebind.list' }),
       requestDaemon(endpoint, 'repository.rebind.list'),
       requestDaemon(endpoint, 'workspace.rebind.list'),
     ])
@@ -63,9 +63,11 @@ export function registerWorkspaceIpc(): void {
       if (getSocket() !== endpoint || getClientGeneration() !== generation || getProfileState().activeId !== (managedProfiles ? activeProfile : null)) {
         throw new Error('Profile changed while checking the replacement folder')
       }
-      const op = kind === 'worktree' ? 'worktree.rebind' : kind === 'repository' ? 'repository.rebind' : 'workspace.rebind'
+      const op = kind === 'repository' ? 'repository.rebind' : 'workspace.rebind'
       const field = kind === 'workspace' ? 'workspace_id' : 'repository_id'
-      const result = await requestDaemon(endpoint, op, { [field]: id, path: folder })
+      const result = kind === 'worktree'
+        ? await dailyUseCommand(endpoint, { op: 'worktree.rebind', repository_id: id, path: folder })
+        : await requestDaemon(endpoint, op, { [field]: id, path: folder })
       if (getSocket() !== endpoint || getClientGeneration() !== generation) throw new Error('Profile changed during workspace recovery')
       return result
     } finally { setRestoringBinding(false) }
