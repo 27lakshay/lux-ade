@@ -9,9 +9,10 @@ import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
+import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
-import { remoteUsage, runRemoteCommand } from './commands/remote.js'
+import { remoteConnectUsage, runRemoteConnectCommand } from './commands/remote-connect.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
 import { historyUsage, runHistoryCommand } from './commands/history.js'
 import { importUsage, runImportCommand } from './commands/imports.js'
@@ -87,6 +88,7 @@ const usage = [
   pluginUsage,
   orchestrationUsage,
   diagnosticsUsage,
+  remoteConnectUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -248,6 +250,9 @@ async function main(): Promise<void> {
       if (socketPath || profileId) throw new CliError('usage', 'profile list does not accept --socket or --profile.')
       process.stdout.write(`${JSON.stringify(await managedProfiles())}\n`)
       return
+    }
+    if (words[0] === 'remote' && (words[1] === 'status' || words[1] === 'request')) {
+      return void process.stdout.write(`${JSON.stringify(await runRemoteConnectCommand(words.slice(1)))}\n`)
     }
     const endpoint = profileId ? await profileSocket(profileId) : socketPath
     if (!endpoint) throw new CliError('usage', 'Select a profile with --profile ID, --socket PATH or ADE_SOCKET.')
