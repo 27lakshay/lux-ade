@@ -45,7 +45,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F023 | Provider plugins | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `63966d4` ([evidence](evidence/e2e-fix-plugin-providers.md)) |
 | F024 | Generic ACP and custom executable adapters | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `63966d4` ([evidence](evidence/e2e-fix-plugin-providers.md)) |
 | F025 | Multiple accounts | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F026 | Explicit in-conversation account switching | V1 | [02-providers](02-providers/spec.md) | Unverified |
+| F026 | Explicit in-conversation account switching | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `284067a` ([evidence](evidence/e2e-accounts-rewind.md)) |
 | F027 | Provider setup, authentication and readiness | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
 | F028 | Model, reasoning and permission capabilities | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
 | F029 | Agent presets | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
@@ -58,7 +58,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F036 | Draft recovery, recall and stash | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F037 | Slash commands and skills | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F038 | Approvals and questions | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
-| F039 | Conversation and file rewind | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F039 | Conversation and file rewind | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `284067a` ([evidence](evidence/e2e-accounts-rewind.md)) |
 | F040 | Context compaction | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F041 | Combined history | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
 | F042 | External session import | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |

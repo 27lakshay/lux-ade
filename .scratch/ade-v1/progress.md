@@ -1141,3 +1141,22 @@ framework use, and system-service specs run alone.
 The register now holds 70 accepted rows. F039 (rewind) stays open: its Claude
 proof depends on fake-SDK behaviour the real SDK does not document.
 
+**Round 4, merged at `284067a`** (798 in-process tests; 757 of 758 protocol specs pass
+at 2 workers in 10.2 minutes. The one failure is load-sensitive and passes 3 of 3
+alone; it is queued to be made deterministic.)
+
+- **reliability-core:** every one of the 81 effect commands now carries an
+  operation ID. 21 commands gained an envelope with durable receipts, browser
+  receipts are durable, and 7 product fixes landed. R001–R003 are held for one
+  crash window: resource resolve and accept settle their receipt in a second
+  write.
+- **accounts-rewind:** F026 and F039 accepted; rewind now follows only
+  documented provider behaviour.
+- **restarts-profiles, plugin-dev, load-conformance:** every headless part
+  passes, but R005, R011, F005, F007, F060, F139, R016, R019, F140 and F098 each
+  keep an Electron-only part (or, for F098, controls not built), so none is
+  accepted. R019 measured admission p95 at 69.9 ms sustained, 24.2 ms idle and
+  21.3 ms after a crash, against the 250 ms target.
+
+Register: 72 accepted rows.
+
