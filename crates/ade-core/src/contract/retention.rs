@@ -2,6 +2,9 @@
 //!
 //! Cleanup is a preview-and-apply pair. `retention.preview` lists every item
 //! the configured retention would remove and names it with a `generation`.
+//! `retention.policy.set` configures the service log and diagnostic log limits
+//! under a revision guard; a changed policy changes every generation, so a
+//! preview made under the old policy cannot apply.
 //! `retention.apply` takes that generation, recomputes the candidates, and
 //! removes them only when the recomputed set still has the same generation, so
 //! it never removes an item the caller did not see. Referenced data, in-flight
@@ -24,6 +27,16 @@ pub fn operations() -> Vec<OperationSpec> {
             "retention.apply",
             Tier::IdempotentCommand,
         ),
+        OperationSpec::new::<RetentionPolicyGetRequest, RetentionPolicyReply>(
+            "retention.policy.get",
+            Tier::Query,
+        ),
+        // Guarded by the revision the caller saw; a retry of an applied change
+        // converges on the stored policy instead of applying twice.
+        OperationSpec::new::<RetentionPolicySetRequest, RetentionPolicyReply>(
+            "retention.policy.set",
+            Tier::IdempotentCommand,
+        ),
     ]
 }
 
@@ -42,7 +55,43 @@ pub struct RetentionApplyRequest {
     pub generation: String,
 }
 
+/// `retention.policy.get`: the policy retention applies now.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RetentionPolicyGetRequest {}
+
+/// `retention.policy.set`: configure the limits a user may change. An absent
+/// field returns that limit to its default. Each limit is 1 to 365 days.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RetentionPolicySetRequest {
+    /// The policy `revision` the caller saw; a newer stored policy is refused.
+    pub expected_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_log_idle_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic_log_max_age_ms: Option<i64>,
+}
+
+/// The configured limits, as stored; null means the default applies.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct RetentionConfigured {
+    pub service_log_idle_ms: Option<i64>,
+    pub diagnostic_log_max_age_ms: Option<i64>,
+}
+
+/// The `retention.policy.get` and `retention.policy.set` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RetentionPolicyReply {
+    #[serde(rename = "type")]
+    pub tag: RetentionPolicyTag,
+    /// The effective policy; its `revision` guards the next change.
+    pub policy: RetentionPolicy,
+    pub configured: RetentionConfigured,
+    /// False when a set found the policy already as requested.
+    pub changed: bool,
+}
+
 wire_tag!(RetentionPreviewTag, "retention_preview");
+wire_tag!(RetentionPolicyTag, "retention_policy");
 wire_tag!(RetentionApplyTag, "retention_apply");
 
 /// What a retention candidate is.
@@ -78,6 +127,9 @@ pub struct RetentionPolicy {
     pub diagnostic_log_max_age_ms: i64,
     /// Most candidates one preview lists.
     pub candidate_limit: u64,
+    /// The configuration revision; 0 until `retention.policy.set` first changes it.
+    #[serde(default)]
+    pub revision: u64,
 }
 
 /// One item the preview would remove.
@@ -251,7 +303,7 @@ mod tests {
             json!({"type": "retention_preview", "generation": "g", "generated_at": 5,
                 "policy": {"receipt_retention_ms": 1, "receipt_prune_interval_ms": 2,
                     "attachment_grace_ms": 3, "service_log_idle_ms": 4,
-                    "diagnostic_log_max_age_ms": 5, "candidate_limit": 500},
+                    "diagnostic_log_max_age_ms": 5, "candidate_limit": 500, "revision": 0},
                 "candidates": [{"kind": "attachment", "id": "a", "scope": "c", "bytes": 10,
                     "last_activity_at": 1, "reason": "unreferenced"}],
                 "truncated": false, "reclaimable_bytes": 10,

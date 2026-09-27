@@ -211,6 +211,8 @@ export const operations = {
   "remote.host.install": { tier: "effect_command", domain: "remote", request: "RemoteHostInstallRequest", response: "RemoteHostInstall" },
   "retention.preview": { tier: "query", domain: "retention", request: "RetentionPreviewRequest", response: "RetentionPreview" },
   "retention.apply": { tier: "idempotent_command", domain: "retention", request: "RetentionApplyRequest", response: "RetentionApply" },
+  "retention.policy.get": { tier: "query", domain: "retention", request: "RetentionPolicyGetRequest", response: "RetentionPolicyReply" },
+  "retention.policy.set": { tier: "idempotent_command", domain: "retention", request: "RetentionPolicySetRequest", response: "RetentionPolicyReply" },
   "browser.diagnostics.attach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsAttachRequest", response: "BrowserDiagnosticsState" },
   "browser.diagnostics.detach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsDetachRequest", response: "BrowserDiagnosticsState" },
   "browser.diagnostics.read": { tier: "query", domain: "browser", request: "BrowserDiagnosticsReadRequest", response: "BrowserDiagnostics" },

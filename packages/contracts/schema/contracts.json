@@ -19816,6 +19816,32 @@
       ],
       "type": "object"
     },
+    "RetentionConfigured": {
+      "description": "The configured limits, as stored; null means the default applies.",
+      "properties": {
+        "diagnostic_log_max_age_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "service_log_idle_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "service_log_idle_ms",
+        "diagnostic_log_max_age_ms"
+      ],
+      "type": "object"
+    },
     "RetentionItemResult": {
       "description": "One item's result.",
       "properties": {
@@ -19949,6 +19975,13 @@
           "minimum": -9007199254740991,
           "type": "integer"
         },
+        "revision": {
+          "default": 0,
+          "description": "The configuration revision; 0 until `retention.policy.set` first changes it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "service_log_idle_ms": {
           "description": "A service log must be idle this long before it can go.",
           "maximum": 9007199254740991,
@@ -19962,7 +19995,87 @@
         "attachment_grace_ms",
         "service_log_idle_ms",
         "diagnostic_log_max_age_ms",
-        "candidate_limit"
+        "candidate_limit",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "RetentionPolicyGetRequest": {
+      "additionalProperties": false,
+      "description": "`retention.policy.get`: the policy retention applies now.",
+      "properties": {
+        "op": {
+          "const": "retention.policy.get"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "RetentionPolicyReply": {
+      "description": "The `retention.policy.get` and `retention.policy.set` reply.",
+      "properties": {
+        "changed": {
+          "description": "False when a set found the policy already as requested.",
+          "type": "boolean"
+        },
+        "configured": {
+          "$ref": "#/$defs/RetentionConfigured"
+        },
+        "policy": {
+          "$ref": "#/$defs/RetentionPolicy",
+          "description": "The effective policy; its `revision` guards the next change."
+        },
+        "type": {
+          "description": "The `retention_policy` type tag.",
+          "enum": [
+            "retention_policy"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "policy",
+        "configured",
+        "changed"
+      ],
+      "type": "object"
+    },
+    "RetentionPolicySetRequest": {
+      "additionalProperties": false,
+      "description": "`retention.policy.set`: configure the limits a user may change. An absent\nfield returns that limit to its default. Each limit is 1 to 365 days.",
+      "properties": {
+        "diagnostic_log_max_age_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expected_revision": {
+          "description": "The policy `revision` the caller saw; a newer stored policy is refused.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "retention.policy.set"
+        },
+        "service_log_idle_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "expected_revision"
       ],
       "type": "object"
     },
@@ -28378,6 +28491,20 @@
       "name": "retention.apply",
       "request": "RetentionApplyRequest",
       "response": "RetentionApply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "retention",
+      "name": "retention.policy.get",
+      "request": "RetentionPolicyGetRequest",
+      "response": "RetentionPolicyReply",
+      "tier": "query"
+    },
+    {
+      "domain": "retention",
+      "name": "retention.policy.set",
+      "request": "RetentionPolicySetRequest",
+      "response": "RetentionPolicyReply",
       "tier": "idempotent_command"
     },
     {
