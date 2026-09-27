@@ -38,6 +38,7 @@ mod commands;
 mod context;
 mod controls;
 mod conversations;
+mod deletion;
 mod devices;
 mod drafts;
 mod hooks;
@@ -801,6 +802,7 @@ impl Sessions {
             op if op.starts_with("checkpoint.") => self.checkpoint_command(request),
             op if op.starts_with("remote.") => self.remote_command(request),
             op if op.starts_with("repository.") => self.repository_command(request),
+            "conversation.delete" => self.delete_conversation(request),
             op if controls::handles(op) => self.control_command(request),
             op if op.starts_with("command.") => self.commands_command(request),
             op if drafts::handles(op) => self.draft_recall_command(request),

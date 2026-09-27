@@ -544,6 +544,7 @@ impl Sessions {
                         account.provider == c.provider,
                         "Conversation account belongs to another provider"
                     );
+                    ensure!(account.state != "disabled", crate::store::ACCOUNT_DISABLED);
                     ensure!(
                         account.state == "verified",
                         "Conversation account is not verified"

@@ -25,18 +25,25 @@ export type FrameOutcome<S> =
   | { kind: 'resnapshot'; reason: 'gap' | 'boot' | 'reload' }
   | { kind: 'advance'; snapshot: S }
   | { kind: 'changed'; snapshot: S }
+  | { kind: 'deleted' }
+
+/** The daemon's error code for a Conversation that has a deletion tombstone. */
+export const CONVERSATION_DELETED = 'conversation_deleted'
 
 /**
  * The pure reducer. Frames at or below the snapshot's revision on the same boot are
- * duplicates. A different boot, a revision gap, or a `conversation_reload` for this
- * conversation needs a new snapshot. The revision is global, so every other frame
- * advances it; a `conversation_changed` for this conversation also merges messages
- * by ID, sorts them by sequence, keeps the newest window and replaces the requests.
+ * duplicates. A `conversation_deleted` for this conversation ends the projection,
+ * whatever gap or boot change came before it. A different boot, a revision gap, or a
+ * `conversation_reload` for this conversation needs a new snapshot. The revision is
+ * global, so every other frame advances it; a `conversation_changed` for this
+ * conversation also merges messages by ID, sorts them by sequence, keeps the newest
+ * window and replaces the requests.
  */
 export function reduceFrame<C extends { id: string }, M extends SyncMessage, R>(
   snapshot: ConversationSnapshot<C, M, R>, frame: SyncFrame, conversationId: string,
 ): FrameOutcome<ConversationSnapshot<C, M, R>> {
   if (frame.boot_id === snapshot.boot_id && frame.revision <= snapshot.revision) return { kind: 'duplicate' }
+  if (frame.type === CONVERSATION_DELETED && frame.conversation_id === conversationId) return { kind: 'deleted' }
   if (frame.boot_id !== snapshot.boot_id) return { kind: 'resnapshot', reason: 'boot' }
   if (frame.revision !== snapshot.revision + 1) return { kind: 'resnapshot', reason: 'gap' }
   if (frame.type === 'conversation_reload' && conversationIdOf(frame) === conversationId) {
@@ -68,14 +75,17 @@ function conversationIdOf(frame: SyncFrame): string | undefined {
  * `loading`: no snapshot has been applied yet. `current`: a snapshot is applied and
  * the buffered frames are drained. `stale`: a snapshot was shown, but a gap, boot
  * change or reload is being repaired; `snapshot` is the last projection until then.
+ * `deleted`: the Conversation was deleted. The projection holds no snapshot, ignores
+ * every later frame and snapshot reply, and never loads again.
  */
-export type ProjectionStatus = 'loading' | 'current' | 'stale'
+export type ProjectionStatus = 'loading' | 'current' | 'stale' | 'deleted'
 
 /**
  * Why the listener was called: a snapshot loaded and its buffer drained, a load
- * failed, a delta changed the projection, or a repair began and the projection is stale.
+ * failed, a delta changed the projection, a repair began and the projection is stale,
+ * or the Conversation was deleted.
  */
-export type ProjectionCause = 'loaded' | 'failed' | 'changed' | 'stale'
+export type ProjectionCause = 'loaded' | 'failed' | 'changed' | 'stale' | 'deleted'
 
 export type ProjectionState<S> = { status: ProjectionStatus; snapshot: S | null; error: string | null }
 
@@ -88,10 +98,17 @@ export type ConversationProjectionOptions<S> = {
   onState: (state: ProjectionState<S>, cause: ProjectionCause) => void
 }
 
+/** Whether a failed snapshot fetch reports the Conversation deleted. */
+function isDeletedError(reason: unknown): boolean {
+  return reason !== null && typeof reason === 'object' && (reason as { code?: unknown }).code === CONVERSATION_DELETED
+}
+
 /**
  * Keeps one conversation's projection current from a snapshot and the feed. It
  * buffers frames until the first snapshot loads, drops duplicates, and takes a new
  * snapshot on a boot change, revision gap or reload, queuing one if a load is in flight.
+ * A `conversation_deleted` frame, or a snapshot fetch refused as `conversation_deleted`,
+ * ends it: a snapshot read before the deletion and delivered late is dropped.
  * It subscribes and loads at once; call the returned function to stop.
  */
 export function startConversationProjection<C extends { id: string }, M extends SyncMessage, R>(
@@ -100,6 +117,7 @@ export function startConversationProjection<C extends { id: string }, M extends 
   type S = ConversationSnapshot<C, M, R>
   const { conversationId } = options
   let disposed = false
+  let deleted = false
   let current: S | null = null
   let shown: S | null = null
   let status: ProjectionStatus = 'loading'
@@ -109,6 +127,17 @@ export function startConversationProjection<C extends { id: string }, M extends 
   let buffered: SyncFrame[] = []
   let draining = false
   const emit = (cause: ProjectionCause): void => options.onState({ status, snapshot: shown, error }, cause)
+  const markDeleted = (): void => {
+    if (deleted) return
+    deleted = true
+    current = null
+    shown = null
+    buffered = []
+    reloadRequested = false
+    status = 'deleted'
+    error = `Conversation ${conversationId} was deleted`
+    emit('deleted')
+  }
   const resnapshot = (): void => {
     current = null
     if (shown && status !== 'stale') { status = 'stale'; if (!draining) emit('stale') }
@@ -116,9 +145,16 @@ export function startConversationProjection<C extends { id: string }, M extends 
     if (!loading) { reloadRequested = false; void load() }
   }
   const apply = (frame: SyncFrame): void => {
-    if (!current) { buffered.push(frame); if (!loading) void load(); return }
+    if (deleted) return
+    if (!current) {
+      if (frame.type === CONVERSATION_DELETED && frame.conversation_id === conversationId) { markDeleted(); return }
+      buffered.push(frame)
+      if (!loading) void load()
+      return
+    }
     const outcome = reduceFrame(current, frame, conversationId)
     if (outcome.kind === 'duplicate') return
+    if (outcome.kind === 'deleted') { markDeleted(); return }
     if (outcome.kind === 'resnapshot') {
       if (outcome.reason !== 'reload') buffered = []
       resnapshot()
@@ -128,11 +164,11 @@ export function startConversationProjection<C extends { id: string }, M extends 
     if (outcome.kind === 'changed') { shown = current; if (!draining) emit('changed') }
   }
   const load = async (): Promise<void> => {
-    if (loading || disposed) return
+    if (loading || disposed || deleted) return
     loading = true
     try {
       const value = await options.fetchSnapshot(conversationId, CONVERSATION_WINDOW)
-      if (!disposed) {
+      if (!disposed && !deleted) {
         current = value
         shown = value
         error = null
@@ -145,15 +181,20 @@ export function startConversationProjection<C extends { id: string }, M extends 
           if (!current) break
         }
         draining = false
-        status = current ? 'current' : 'stale'
-        emit('loaded')
+        if (!deleted) {
+          status = current ? 'current' : 'stale'
+          emit('loaded')
+        }
       }
     } catch (reason) {
-      if (!disposed) { error = String(reason); emit('failed') }
+      if (!disposed && !deleted) {
+        if (isDeletedError(reason)) markDeleted()
+        else { error = String(reason); emit('failed') }
+      }
     } finally {
       draining = false
       loading = false
-      if (!disposed && reloadRequested) { reloadRequested = false; void load() }
+      if (!disposed && !deleted && reloadRequested) { reloadRequested = false; void load() }
     }
   }
   const unsubscribe = options.subscribe(apply)

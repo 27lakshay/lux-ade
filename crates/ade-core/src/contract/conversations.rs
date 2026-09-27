@@ -105,15 +105,22 @@ pub fn operations() -> Vec<OperationSpec> {
             "conversation.snooze.list",
             Tier::Query,
         ),
+        // Removes the Conversation's history and leaves a tombstone; a retry
+        // returns the recorded deletion.
+        OperationSpec::new::<ConversationDeleteRequest, ConversationDeleted>(
+            "conversation.delete",
+            Tier::EffectCommand,
+        ),
     ];
     operations.extend(drafts::operations());
     operations
 }
 
 pub fn frames() -> Vec<FrameSpec> {
-    vec![FrameSpec::new::<ConversationChanged>(
-        "conversation_changed",
-    )]
+    vec![
+        FrameSpec::new::<ConversationChanged>("conversation_changed"),
+        FrameSpec::new::<ConversationDeletedFrame>("conversation_deleted"),
+    ]
 }
 
 /// `conversation.get`: one page of a conversation's messages, newest first.
@@ -835,6 +842,66 @@ pub struct ConversationSnooze {
     pub snoozed_at: i64,
 }
 
+/// `conversation.delete`: delete a Conversation that is not running a turn.
+/// An idle Agent is stopped first. The daemon removes its messages, pending
+/// requests, drafts, draft history and stashes, queue, send intents and
+/// snooze, detaches its windows, and leaves a tombstone: every later read,
+/// write, page or search that names the Conversation is refused as deleted.
+/// Attachment payloads stay until retention reclaims them.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationDeleteRequest {
+    /// The caller's operation ID. The deletion and its receipt commit in one
+    /// transaction; a retry with the same ID returns the recorded reply.
+    pub operation_id: String,
+    pub conversation_id: String,
+}
+
+wire_tag!(ConversationDeletedTag, "conversation_deleted");
+
+/// What one deletion removed.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConversationDeletion {
+    pub messages: u64,
+    pub requests: u64,
+    pub drafts: u64,
+    pub draft_history: u64,
+    pub draft_stashes: u64,
+    pub queued_prompts: u64,
+    pub send_intents: u64,
+    pub snoozes: u64,
+    /// Windows that showed the Conversation and now show none.
+    pub windows_detached: u64,
+}
+
+/// The `conversation.delete` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationDeleted {
+    #[serde(rename = "type")]
+    pub tag: ConversationDeletedTag,
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub workspace_id: String,
+    /// When the tombstone was written, in Unix milliseconds.
+    pub deleted_at: i64,
+    pub removed: ConversationDeletion,
+    /// Live attachment payloads the deletion left in place. Nothing references
+    /// them any more, so retention reclaims each once its grace period passes.
+    pub attachments_left_for_retention: u64,
+}
+
+/// The `conversation_deleted` feed frame. A client drops its view of the
+/// Conversation; a snapshot or page read earlier is stale.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationDeletedFrame {
+    #[serde(rename = "type")]
+    pub tag: ConversationDeletedTag,
+    pub conversation_id: String,
+    pub workspace_id: String,
+    pub deleted_at: i64,
+    pub boot_id: String,
+    pub revision: u64,
+}
+
 /// `conversation.snooze`: defer attention until a future time, at most 366 days ahead.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ConversationSnoozeRequest {
@@ -1000,6 +1067,7 @@ mod tests {
             ("conversation.snooze", "idempotent_command"),
             ("conversation.unsnooze", "idempotent_command"),
             ("conversation.snooze.list", "query"),
+            ("conversation.delete", "effect_command"),
             ("draft.history.list", "query"),
             ("draft.history.restore", "idempotent_command"),
             ("draft.stash.save", "idempotent_command"),

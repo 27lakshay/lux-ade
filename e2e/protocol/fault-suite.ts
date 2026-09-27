@@ -99,8 +99,10 @@ export const faultClasses: FaultClass[] = [
       t('files-git/browse.spec.ts', 'changed paths invalidate cursors, a daemon restart drops them')] },
     { fault: 'late pages after a rewind', tests: [
       t('context/rewind.spec.ts', 'a Codex conversation rewind drops later messages and invalidates stale history pages')] },
-    { fault: 'late pages after a deletion', tests: [],
-      gap: 'No operation deletes a Conversation yet; catalogs/history.spec.ts keeps "a deleted conversation disappears from search results" as a fixme.' },
+    { fault: 'late pages after a deletion', tests: [
+      t('restarts/stale-rewind.spec.ts', 'a result delayed across a conversation delete cannot resurrect it'),
+      t('conversation-delete/delete.spec.ts', 'a deletion survives a daemon kill'),
+      t('catalogs/history.spec.ts', 'a deleted conversation disappears from search results')] },
     { fault: 'late pages after a profile switch', tests: [
       t('reliability-b/stale-results.spec.ts', 'a profile switch drops the old profile late snapshot'),
       t('reliability-b/stale-results.spec.ts', 'late pages and cursors from another context')] },

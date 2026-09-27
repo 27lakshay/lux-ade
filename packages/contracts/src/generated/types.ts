@@ -223,6 +223,10 @@ export type ContractDefinition =
   | ConversationControlsRequest
   | ConversationCreateRequest
   | ConversationCreated
+  | ConversationDeleteRequest
+  | ConversationDeleted
+  | ConversationDeletedFrame
+  | ConversationDeletion
   | ConversationGetRequest
   | ConversationRewindHistory
   | ConversationRewindPreview
@@ -5406,6 +5410,80 @@ export interface ConversationCreated {
    * The `ack` type tag.
    */
   type: 'ack'
+  [k: string]: unknown
+}
+/**
+ * `conversation.delete`: delete a Conversation that is not running a turn.
+ * An idle Agent is stopped first. The daemon removes its messages, pending
+ * requests, drafts, draft history and stashes, queue, send intents and
+ * snooze, detaches its windows, and leaves a tombstone: every later read,
+ * write, page or search that names the Conversation is refused as deleted.
+ * Attachment payloads stay until retention reclaims them.
+ */
+export interface ConversationDeleteRequest {
+  conversation_id: string
+  op: 'conversation.delete'
+  /**
+   * The caller's operation ID. The deletion and its receipt commit in one
+   * transaction; a retry with the same ID returns the recorded reply.
+   */
+  operation_id: string
+}
+/**
+ * The `conversation.delete` reply.
+ */
+export interface ConversationDeleted {
+  /**
+   * Live attachment payloads the deletion left in place. Nothing references
+   * them any more, so retention reclaims each once its grace period passes.
+   */
+  attachments_left_for_retention: number
+  conversation_id: string
+  /**
+   * When the tombstone was written, in Unix milliseconds.
+   */
+  deleted_at: number
+  operation_id: string
+  removed: ConversationDeletion
+  /**
+   * The `conversation_deleted` type tag.
+   */
+  type: 'conversation_deleted'
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * What one deletion removed.
+ */
+export interface ConversationDeletion {
+  draft_history: number
+  draft_stashes: number
+  drafts: number
+  messages: number
+  queued_prompts: number
+  requests: number
+  send_intents: number
+  snoozes: number
+  /**
+   * Windows that showed the Conversation and now show none.
+   */
+  windows_detached: number
+  [k: string]: unknown
+}
+/**
+ * The `conversation_deleted` feed frame. A client drops its view of the
+ * Conversation; a snapshot or page read earlier is stale.
+ */
+export interface ConversationDeletedFrame {
+  boot_id: string
+  conversation_id: string
+  deleted_at: number
+  revision: number
+  /**
+   * The `conversation_deleted` type tag.
+   */
+  type: 'conversation_deleted'
+  workspace_id: string
   [k: string]: unknown
 }
 /**
@@ -13364,7 +13442,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -13403,6 +13481,7 @@ export interface RequestByOperation {
   "conversation.snooze": ConversationSnoozeRequest
   "conversation.unsnooze": ConversationUnsnoozeRequest
   "conversation.snooze.list": ConversationSnoozeListRequest
+  "conversation.delete": ConversationDeleteRequest
   "draft.history.list": DraftHistoryListRequest
   "draft.history.restore": DraftHistoryRestoreRequest
   "draft.stash.save": DraftStashSaveRequest
@@ -13683,6 +13762,7 @@ export interface ResponseByOperation {
   "conversation.snooze": ConversationSnoozeReply
   "conversation.unsnooze": ConversationSnoozeReply
   "conversation.snooze.list": ConversationSnoozeList
+  "conversation.delete": ConversationDeleted
   "draft.history.list": DraftHistoryList
   "draft.history.restore": DraftRestored
   "draft.stash.save": DraftStashReply
@@ -13926,4 +14006,4 @@ export interface ResponseByOperation {
   "context.plan": ContextPlan
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged
+export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ServiceChanged | ActivityChanged

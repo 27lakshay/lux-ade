@@ -64,6 +64,7 @@ impl History {
         tx.execute_batch(SCHEMA)?;
         // Search reports each conversation's rewind epoch with its matches.
         tx.execute_batch(crate::store::HISTORY_EPOCHS)?;
+        tx.execute_batch(crate::store::TOMBSTONES)?;
         import::ensure_table(&tx)?;
         tx.commit()?;
         let history = Arc::new(Self {
@@ -314,7 +315,8 @@ impl History {
                     i.native_session_id,i.source_path,i.native_cwd,i.account_id,i.imported_at
              FROM conversations c
              LEFT JOIN history_imports i ON i.conversation_id=c.id
-             WHERE (?1 IS NULL OR c.workspace_id=?1)
+             WHERE NOT EXISTS(SELECT 1 FROM conversation_tombstones t WHERE t.conversation_id=c.id)
+               AND (?1 IS NULL OR c.workspace_id=?1)
                AND (?2 IS NULL OR json_extract(c.data,'$.provider')=?2)
                AND (?3 IS NULL OR updated<?3 OR (updated=?3 AND c.id<?4))
              ORDER BY updated DESC, c.id DESC LIMIT ?5",
@@ -391,6 +393,12 @@ fn check_filters(
             )?;
             ensure!(exists, "Unknown {noun} ID: {id}");
         }
+    }
+    // A search scoped to a deleted Conversation is refused, not answered empty.
+    if let Some(id) = conversation_id
+        && crate::store::is_deleted(db, id)?
+    {
+        return Err(ade_core::error::ConversationDeleted(id.to_owned()).into());
     }
     Ok(())
 }

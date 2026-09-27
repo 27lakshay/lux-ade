@@ -92,7 +92,7 @@ impl Store {
             "Unknown active browser tab"
         );
         if let Some(id) = &window.conversation_id {
-            let conversation: Conversation = one(&tx, "conversations", id)?;
+            let conversation: Conversation = live_conversation(&tx, id)?;
             ensure!(
                 conversation.workspace_id == window.workspace_id,
                 "Window conversation belongs to another workspace"

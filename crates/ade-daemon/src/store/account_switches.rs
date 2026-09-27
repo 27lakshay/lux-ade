@@ -131,7 +131,7 @@ impl Store {
             "Operation {} was admitted concurrently",
             commit.operation_id
         );
-        let stored: Conversation = one(&tx, "conversations", &commit.prior.id)?;
+        let stored: Conversation = live_conversation(&tx, &commit.prior.id)?;
         ensure!(
             encode(&stored)? == encode(commit.prior)?,
             "Conversation changed during the account switch; preview it again"

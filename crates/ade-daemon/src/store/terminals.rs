@@ -60,7 +60,7 @@ pub(crate) fn forget_terminal_views(tx: &Connection, terminal: &str) -> Result<(
 impl Store {
     pub fn reserve_terminal(&self, id: &str, instance: &str) -> Result<Conversation> {
         let tx = self.transaction()?;
-        let mut c: Conversation = one(&tx, "conversations", id)?;
+        let mut c: Conversation = live_conversation(&tx, id)?;
         if c.terminal_owner.is_some() {
             return Ok(c);
         }

@@ -2,8 +2,9 @@
 // A snapshot, a search reply, an older page and a search cursor are each read
 // before a Claude conversation rewind and used after it. A rewind deletes the
 // later messages, and the next turn reuses their sequence numbers, so a late
-// result that is trusted by position would show another message. The profile
-// switch half of R011 is in `reliability-b/stale-results.spec.ts`.
+// result that is trusted by position would show another message. The same
+// late results are also used after a conversation delete. The profile switch
+// half of R011 is in `reliability-b/stale-results.spec.ts`.
 import { expect, send, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
 import { openConversationView } from '../fixtures/sync-view'
 
@@ -136,6 +137,70 @@ test('R011: a search reply, an older page and a search cursor read before a rewi
   for (const word of removedWords) expect(await hits(profile, word)).toBe(0)
 })
 
-// Gap: ADE has no operation that deletes a Conversation, so the "delete" half
-// of R011 has nothing to exercise. Rewind above is the only removal of history.
-test.fixme('R011: a result delayed across a conversation delete cannot resurrect it', async () => {})
+// The delete half of R011: a snapshot, a search reply, an older page and a
+// search cursor read before `conversation.delete` and used after it. The
+// deletion leaves a tombstone, so a late result is refused or empty, never a
+// view of the deleted Conversation.
+test('R011: a result delayed across a conversation delete cannot resurrect it', async ({ profile }) => {
+  test.setTimeout(90_000)
+  const { conversationId, all } = await threeTurns(profile)
+  await expect.poll(() => hits(profile, 'quokkaflux')).toBe(1)
+  await expect.poll(() => hits(profile, 'Claude')).toBe(3)
+
+  // Replies the caller holds while the deletion runs.
+  const [lateMatch] = (await profile.call('history.search', { query: 'quokkaflux', limit: 50 })).results
+  expect(lateMatch).toMatchObject({ message_id: all[2]!.id, provenance: { conversation_id: conversationId } })
+  const newestReply = await profile.call('history.search', { query: 'Claude', limit: 1 })
+  expect(newestReply.next_cursor).toBeTruthy()
+  const page = await profile.call('conversation.get', { conversation_id: conversationId, limit: 2 })
+  const olderPage = { conversation_id: conversationId, before: page.messages[0]!.sequence, limit: 50,
+    history_epoch: page.history_epoch }
+
+  const view = await openConversationView(profile, conversationId)
+  try {
+    await view.settle((snapshot) => snapshot.messages.length === 6)
+    // The connection drops and the frames move on, so the reconnected view needs a new snapshot.
+    view.detach()
+    await startConversation(profile, 'codex')
+    const held = view.holdNextSnapshot()
+    await view.attach(profile)
+    const late = await held.read
+    expect(late.messages.map((message) => message.id)).toEqual(all.map((message) => message.id))
+
+    // The deletion lands while that snapshot reply is still on its way.
+    await profile.call('conversation.delete', { operation_id: 'delete-late-results', conversation_id: conversationId })
+    await expect.poll(() => view.forwarded.some((frame) => frame.type === 'conversation_deleted' &&
+      frame.conversation_id === conversationId)).toBe(true)
+    const beforeRelease = view.states.length
+    held.release()
+    await expect.poll(() => view.latest()?.status).toBe('deleted')
+    expect(view.latest()).toEqual({ status: 'deleted', snapshot: null,
+      error: `Conversation ${conversationId} was deleted` })
+    // The late snapshot was never shown as the current view, and nothing loads again.
+    expect(view.states.slice(beforeRelease).some(({ state }) => state.status === 'current')).toBe(false)
+    const fetches = view.fetches()
+    await turn(profile, (await startConversation(profile, 'claude')).conversationId, 'unrelated turn')
+    expect(view.fetches()).toBe(fetches)
+    expect(view.latest()?.status).toBe('deleted')
+  } finally {
+    view.dispose()
+  }
+
+  // Opening the late match, or the older page, is refused as deleted.
+  const deleted = new RegExp(`Conversation ${conversationId} was deleted`)
+  await expect(profile.call('conversation.get', { conversation_id: conversationId, before: lateMatch!.sequence + 1,
+    limit: 1, history_epoch: lateMatch!.history_epoch })).rejects.toThrow(deleted)
+  await expect(profile.call('conversation.get', olderPage)).rejects.toThrow(deleted)
+  // The search cursor from before the deletion pages nothing of it, and no word of it is found.
+  const rest = await profile.call('history.search', { query: 'Claude', limit: 50, cursor: newestReply.next_cursor! })
+  expect(rest.results.filter((match) => match.provenance.conversation_id === conversationId)).toEqual([])
+  for (const word of ['zebracorn', ...removedWords]) expect(await hits(profile, word)).toBe(0)
+
+  // A new Conversation with the same words is found under its own identity only.
+  const again = (await startConversation(profile, 'claude')).conversationId
+  await turn(profile, again, 'second quokkaflux')
+  await expect.poll(() => hits(profile, 'quokkaflux')).toBe(1)
+  const fresh = (await profile.call('history.search', { query: 'quokkaflux', limit: 50 })).results[0]!
+  expect(fresh.provenance.conversation_id).toBe(again)
+  expect(fresh.message_id).not.toBe(lateMatch!.message_id)
+})
