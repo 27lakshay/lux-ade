@@ -46,26 +46,26 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F024 | Generic ACP and custom executable adapters | V1 | [02-providers](02-providers/spec.md) | Unverified |
 | F025 | Multiple accounts | V1 | [02-providers](02-providers/spec.md) | Unverified |
 | F026 | Explicit in-conversation account switching | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F027 | Provider setup, authentication and readiness | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F028 | Model, reasoning and permission capabilities | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F029 | Agent presets | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F030 | Quota and limit visibility | V1 | [02-providers](02-providers/spec.md) | Unverified |
+| F027 | Provider setup, authentication and readiness | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
+| F028 | Model, reasoning and permission capabilities | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
+| F029 | Agent presets | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
+| F030 | Quota and limit visibility | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
 | F031 | Structured conversations | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
-| F032 | Attachments and media | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F033 | Prompt context capture | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F032 | Attachments and media | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
+| F033 | Prompt context capture | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F034 | Message queues | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
 | F035 | Steering active runs | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
-| F036 | Draft recovery, recall and stash | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F037 | Slash commands and skills | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F036 | Draft recovery, recall and stash | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
+| F037 | Slash commands and skills | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F038 | Approvals and questions | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
 | F039 | Conversation and file rewind | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F040 | Context compaction | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F040 | Context compaction | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F041 | Combined history | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
 | F042 | External session import | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
 | F043 | Work search | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
 | F044 | Task pins, labels, ordering and archive UI | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F045 | Dashboard | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
-| F046 | Snoozing | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F046 | Snoozing | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F047 | Automatic settlement | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F048 | Idle hibernation | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F049 | Usage analytics | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
@@ -86,7 +86,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F064 | Carry uncommitted changes | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
 | F065 | Adopt branch, checkout, worktree or PR source | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
 | F066 | Worktree naming and defaults | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
-| F067 | Workspace setup and teardown hooks | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
+| F067 | Workspace setup and teardown hooks | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-hooks-auth.md)) |
 | F068 | Ignored-resource handling | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
 | F069 | Workspace archive and cleanup | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
 | F070 | Checkpoints and restore | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-resources.md)) |
@@ -102,14 +102,14 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F080 | Change attribution | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F081 | Persistent terminals | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
 | F082 | Terminal ergonomics | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
-| F083 | Programmatic terminal access | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
+| F083 | Programmatic terminal access | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-hooks-auth.md)) |
 | F084 | Saved commands | Not now | [07-terminals-services](07-terminals-services/spec.md) | Not scheduled |
 | F085 | Dev port discovery | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-services.md)) |
 | F086 | Managed dev services | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-services.md)) |
-| F087 | Port allocation | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
-| F088 | Stable dev URLs and proxying | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
+| F087 | Port allocation | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-services.md)) |
+| F088 | Stable dev URLs and proxying | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-services.md)) |
 | F089 | Peer-service environment wiring | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
-| F090 | Workspace scripts | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
+| F090 | Workspace scripts | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-services.md)) |
 | F091 | Embedded browser | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
 | F092 | Browser profiles | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
 | F093 | Browser import | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
@@ -143,10 +143,10 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F121 | Direct LAN/VPN connectivity | V1 | [11-remote](11-remote/spec.md) | Unverified |
 | F122 | Pairing and revocation | V1 | [11-remote](11-remote/spec.md) | Unverified |
 | F123 | Relay connectivity | Design now, ship later | [11-remote](11-remote/spec.md) | Not scheduled |
-| F124 | SSH bootstrap and connection | V1 | [11-remote](11-remote/spec.md) | Unverified |
-| F125 | Remote workspaces | V1 | [11-remote](11-remote/spec.md) | Unverified |
+| F124 | SSH bootstrap and connection | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-remote.md)) |
+| F125 | Remote workspaces | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-remote.md)) |
 | F126 | Multiple execution hosts | V1 | [11-remote](11-remote/spec.md) | Unverified |
-| F127 | Execution placement | V1 | [11-remote](11-remote/spec.md) | Unverified |
+| F127 | Execution placement | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-remote.md)) |
 | F128 | Disposable VM/container environments | Not now | [11-remote](11-remote/spec.md) | Not scheduled |
 | F129 | Remote previews and device access | V1 | [11-remote](11-remote/spec.md) | Unverified |
 | F130 | Polished self-host deployment product | Not now | [11-remote](11-remote/spec.md) | Not scheduled |

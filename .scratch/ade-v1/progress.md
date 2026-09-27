@@ -1056,3 +1056,38 @@ See each domain `issues/` ticket for slice-specific acceptance and limits.
   `Documents/Codex` was left untouched. The E2E startup failure also exits
   without a native modal. The interrupted Git ID archive has no prune control
   and fails closed at 16 MiB. F075 and F078 remain open.
+
+## Headless E2E, round 2
+
+Ten workers fixed round 1's cross-area bugs and proved further areas. The
+merged suite passes 352 specs in 2.2 minutes with 6 workers; 15 are `fixme`.
+`check:static` passes with 750 in-process tests.
+
+**Newly accepted (18):** F027, F028, F029, F030, F124, F125, F127, F067, F083,
+F087, F088, F090, F032, F033, F036, F037, F040 and F046. The register now
+holds 41 accepted features plus R014.
+
+Fixed and proven:
+- the SDK and CLI keep daemon error codes and recovery hints, and the CLI
+  documents its exit codes;
+- queue resume after an interrupt dispatches;
+- oversized agent messages are bounded;
+- crash classification is deterministic;
+- conversations can launch generic ACP and custom adapters and plugin
+  providers, pending the fix round below;
+- streamed hook status and authenticated terminal commands;
+- the remote tests run over a fake-`ssh` fixture with a pinned host key.
+
+**Held back:**
+- F023 and F024, until plugin uninstall stops deleting provider leases before
+  admission.
+- F089, until secret service values are stored as references rather than plain
+  text.
+- R001 and R002: the evidence over-claimed again.
+- F039 (rewind) was not claimed.
+- F098–F100 and F131/F132/F043/F136–F138 were proven only partly; see
+  `evidence/e2e-devices.md` and `evidence/e2e-ops-leftovers.md`.
+
+A fix round covers the two blockers and the delegation provider gap. Browser
+automation and diagnostics (F091–F097) live in Electron main and wait for
+Electron E2E in the UI phase.
