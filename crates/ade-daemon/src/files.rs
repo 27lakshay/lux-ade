@@ -1,9 +1,14 @@
 //! Bounded, read-only workspace inspection. Opened directory descriptors, rather
 //! than re-resolved paths, are the authority for every child lookup.
+use crate::scripts::decode;
+use ade_core::contract::files::{
+    FileEntry, FileKind, FileList, FileListRequest, FilePreview, FilePreviewRequest, FileSearch,
+    FileSearchRequest, PreviewKind,
+};
 use ade_core::error::NeedsRebind;
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
@@ -180,26 +185,27 @@ fn child_stat(fd: RawFd, name: &str) -> Result<libc::stat> {
     }
     Ok(value)
 }
-fn kind(metadata: &libc::stat) -> &'static str {
+fn kind(metadata: &libc::stat) -> FileKind {
     match metadata.st_mode & libc::S_IFMT {
-        libc::S_IFDIR => "directory",
-        libc::S_IFREG => "file",
-        libc::S_IFLNK => "symlink",
-        _ => "other",
+        libc::S_IFDIR => FileKind::Directory,
+        libc::S_IFREG => FileKind::File,
+        libc::S_IFLNK => FileKind::Symlink,
+        _ => FileKind::Other,
     }
 }
-fn entry(parent: &str, name: &str, metadata: &libc::stat) -> Value {
+fn entry(parent: &str, name: &str, metadata: &libc::stat) -> FileEntry {
     let path = if parent.is_empty() {
         name.to_owned()
     } else {
         format!("{parent}/{name}")
     };
-    json!({
-        "name": display_name(name).unwrap_or_else(|_| name.to_owned()),
-        "path": path,
-        "kind": kind(metadata),
-        "size": if kind(metadata) == "file" { Some(metadata.st_size.max(0) as u64) } else { None },
-    })
+    let kind = kind(metadata);
+    FileEntry {
+        name: display_name(name).unwrap_or_else(|_| name.to_owned()),
+        path,
+        kind,
+        size: (kind == FileKind::File).then(|| metadata.st_size.max(0) as u64),
+    }
 }
 fn stamp(path: String, metadata: &libc::stat) -> Frame {
     Frame {
@@ -383,26 +389,27 @@ fn root_fd(path: &str, expected: (u64, u64)) -> Result<OwnedFd> {
     }
     Ok(fd)
 }
-fn page_limit(request: &Value) -> Result<usize> {
-    let requested = if request.get("limit").is_some() {
-        request["limit"]
-            .as_u64()
-            .context("Invalid file page limit")?
-    } else {
-        PAGE_LIMIT as u64
-    };
+/// Rejects the malformed fields the handler reported by name before it was
+/// typed, so those messages survive the typed decode.
+fn check_page_fields(request: &Value) -> Result<()> {
+    if request.get("limit").is_some_and(|limit| !limit.is_u64()) {
+        bail!("Invalid file page limit");
+    }
+    if request
+        .get("cursor")
+        .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
+    {
+        bail!("Invalid file cursor");
+    }
+    Ok(())
+}
+fn page_limit(limit: Option<u64>) -> Result<usize> {
+    let requested = limit.unwrap_or(PAGE_LIMIT as u64);
     ensure!(
         (1..=PAGE_LIMIT as u64).contains(&requested),
         "File page limit must be 1 to 100"
     );
     Ok(requested as usize)
-}
-fn requested_cursor(request: &Value) -> Result<Option<&str>> {
-    match request.get("cursor") {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(token)) => Ok(Some(token)),
-        _ => bail!("Invalid file cursor"),
-    }
 }
 
 impl Files {
@@ -413,10 +420,12 @@ impl Files {
         identity: (u64, u64),
         request: &Value,
     ) -> Result<Value> {
-        let path = request["path"].as_str().unwrap_or("");
+        check_page_fields(request)?;
+        let list: FileListRequest = decode(request, &[])?;
+        let path = list.path.as_deref().unwrap_or("");
         let _ = relative(path)?;
-        let limit = page_limit(request)?;
-        let mut scan = if let Some(token) = requested_cursor(request)? {
+        let limit = page_limit(list.limit)?;
+        let mut scan = if let Some(token) = list.cursor.as_deref() {
             self.take(token, workspace_id, identity, "file.list", path)?
         } else {
             let fd = open_directory(root, path)?;
@@ -475,9 +484,13 @@ impl Files {
         }
         validate_frame(root, current)?;
         let next_cursor = if ended { None } else { Some(self.save(scan)?) };
-        Ok(
-            json!({"type":"file_list","path":path,"entries":entries,"next_cursor":next_cursor,"incomplete":false}),
-        )
+        Ok(serde_json::to_value(FileList {
+            tag: Default::default(),
+            path: path.to_owned(),
+            entries,
+            next_cursor,
+            incomplete: false,
+        })?)
     }
 
     fn search(
@@ -487,14 +500,19 @@ impl Files {
         identity: (u64, u64),
         request: &Value,
     ) -> Result<Value> {
-        let query = request["query"].as_str().context("Missing query")?;
+        if !request["query"].is_string() {
+            bail!("Missing query");
+        }
+        check_page_fields(request)?;
+        let search: FileSearchRequest = decode(request, &[])?;
+        let query = search.query.as_str();
         ensure!(
             !query.is_empty() && query.len() <= 256,
             "File query must be 1 to 256 bytes"
         );
         let query = query.to_lowercase();
-        let limit = page_limit(request)?;
-        let mut scan = if let Some(token) = requested_cursor(request)? {
+        let limit = page_limit(search.limit)?;
+        let mut scan = if let Some(token) = search.cursor.as_deref() {
             self.take(token, workspace_id, identity, "file.search", &query)?
         } else {
             let root_frame = stamp(String::new(), &stat(root.as_raw_fd())?);
@@ -572,7 +590,7 @@ impl Files {
             if display_name(&name)?.to_lowercase().contains(&query) {
                 results.push(entry(&current.frame.path, &name, &metadata));
             }
-            if kind(&metadata) == "directory" {
+            if kind(&metadata) == FileKind::Directory {
                 if stack.len() < SEARCH_DEPTH_LIMIT {
                     stack.push(live_frame(root, stamp(child_path, &metadata))?);
                 } else {
@@ -592,9 +610,12 @@ impl Files {
         } else {
             Some(self.save(scan)?)
         };
-        Ok(
-            json!({"type":"file_search","results":results,"next_cursor":next_cursor,"incomplete":incomplete_result}),
-        )
+        Ok(serde_json::to_value(FileSearch {
+            tag: Default::default(),
+            results,
+            next_cursor,
+            incomplete: incomplete_result,
+        })?)
     }
 }
 impl Default for Files {
@@ -603,14 +624,33 @@ impl Default for Files {
     }
 }
 fn preview(root: &OwnedFd, request: &Value) -> Result<Value> {
-    let path = request["path"].as_str().context("Missing path")?;
+    if !request["path"].is_string() {
+        bail!("Missing path");
+    }
+    let preview: FilePreviewRequest = decode(request, &[])?;
+    let path = preview.path.as_str();
+    let reply = |kind, mime: Option<&str>, text, bytes_base64, size, truncated| -> Result<Value> {
+        Ok(serde_json::to_value(FilePreview {
+            tag: Default::default(),
+            path: path.to_owned(),
+            kind,
+            mime: mime.map(str::to_owned),
+            text,
+            bytes_base64,
+            size,
+            truncated,
+        })?)
+    };
     let parts = relative(path)?;
     let (name, parents) = parts.split_last().context("Preview requires a file path")?;
     let parent_path = parents.join("/");
     let parent = open_directory(root, &parent_path)?;
     let fd = open_child(parent.as_raw_fd(), name, false)?;
     let metadata = stat(fd.as_raw_fd())?;
-    ensure!(kind(&metadata) == "file", "Preview requires a regular file");
+    ensure!(
+        kind(&metadata) == FileKind::File,
+        "Preview requires a regular file"
+    );
     let size = metadata.st_size.max(0) as u64;
     let decoded_name = decode_name(name)?;
     let extension = Path::new(std::ffi::OsStr::from_bytes(&decoded_name))
@@ -619,8 +659,13 @@ fn preview(root: &OwnedFd, request: &Value) -> Result<Value> {
         .unwrap_or("")
         .to_ascii_lowercase();
     if matches!(extension.as_str(), "html" | "htm" | "svg" | "xhtml" | "xml") {
-        return Ok(
-            json!({"type":"file_preview","path":path,"kind":"unsupported","size":size,"truncated":size > PREVIEW_LIMIT as u64}),
+        return reply(
+            PreviewKind::Unsupported,
+            None,
+            None,
+            None,
+            size,
+            size > PREVIEW_LIMIT as u64,
         );
     }
     let mime = match extension.as_str() {
@@ -646,12 +691,16 @@ fn preview(root: &OwnedFd, request: &Value) -> Result<Value> {
             _ => false,
         };
         return if truncated || !valid {
-            Ok(
-                json!({"type":"file_preview","path":path,"kind":"unsupported","size":size,"truncated":truncated}),
-            )
+            reply(PreviewKind::Unsupported, None, None, None, size, truncated)
         } else {
-            Ok(
-                json!({"type":"file_preview","path":path,"kind":"image","mime":mime,"bytes_base64":base64::engine::general_purpose::STANDARD.encode(bytes),"size":size,"truncated":false}),
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            reply(
+                PreviewKind::Image,
+                Some(mime),
+                None,
+                Some(encoded),
+                size,
+                false,
             )
         };
     }
@@ -661,12 +710,15 @@ fn preview(root: &OwnedFd, request: &Value) -> Result<Value> {
         }
     }
     match String::from_utf8(bytes) {
-        Ok(text) if !text.contains('\0') => Ok(
-            json!({"type":"file_preview","path":path,"kind":"text","mime":"text/plain","text":text,"size":size,"truncated":truncated}),
+        Ok(text) if !text.contains('\0') => reply(
+            PreviewKind::Text,
+            Some("text/plain"),
+            Some(text),
+            None,
+            size,
+            truncated,
         ),
-        _ => Ok(
-            json!({"type":"file_preview","path":path,"kind":"unsupported","size":size,"truncated":truncated}),
-        ),
+        _ => reply(PreviewKind::Unsupported, None, None, None, size, truncated),
     }
 }
 

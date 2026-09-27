@@ -1,4 +1,4 @@
-import { decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseResponse } from '@ade/client'
+import { dailyUseCommand, decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseResponse } from '@ade/client'
 import { CliError, jsonObject, required, type CommandResult } from '../shared.js'
 
 export const serviceUsage = `  service list WORKSPACE_ID             List managed services and execution state
@@ -158,27 +158,29 @@ export async function runServiceCommand(socketPath: string, area: string | undef
   }
   if (area === 'script' && (action === 'list' || action === 'runs')) {
     if (rest.length !== 1) throw new CliError('usage', `script ${action} requires WORKSPACE_ID.`)
-    return requestDaemon(socketPath, `script.${action}`, { workspace_id: required(rest[0], 'WORKSPACE_ID') })
+    const op = action === 'list' ? 'script.list' : 'script.runs'
+    return dailyUseCommand(socketPath, { op, workspace_id: required(rest[0], 'WORKSPACE_ID') })
   }
   if (area === 'script' && action === 'start') {
     if (rest.length !== 2) throw new CliError('usage', 'script start requires WORKSPACE_ID NAME.')
-    return requestDaemon(socketPath, 'script.start', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
+    return dailyUseCommand(socketPath, {
+      op: 'script.start', workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
     })
   }
   if (area === 'script' && action === 'inspect') {
     if (rest.length < 2 || rest.length > 3) {
       throw new CliError('usage', 'script inspect requires WORKSPACE_ID RUN_ID [TAIL_BYTES].')
     }
-    return requestDaemon(socketPath, 'script.inspect', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
+    return dailyUseCommand(socketPath, {
+      op: 'script.inspect', workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
       ...(rest[2] === undefined ? {} : { tail_bytes: tailBytes(rest[2]) }),
     })
   }
   if (area === 'script' && (action === 'stop' || action === 'retire')) {
     if (rest.length !== 2) throw new CliError('usage', `script ${action} requires WORKSPACE_ID RUN_ID.`)
-    return requestDaemon(socketPath, `script.${action}`, {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
+    const op = action === 'stop' ? 'script.stop' : 'script.retire'
+    return dailyUseCommand(socketPath, {
+      op, workspace_id: required(rest[0], 'WORKSPACE_ID'), run_id: required(rest[1], 'RUN_ID'),
     })
   }
   return undefined

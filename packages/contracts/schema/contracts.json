@@ -1724,6 +1724,268 @@
       ],
       "type": "string"
     },
+    "FileEntry": {
+      "description": "One entry in a listing or search result.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FileKind"
+        },
+        "name": {
+          "description": "Display name; a name that is not UTF-8 is shown lossily.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Workspace-relative path. A non-UTF-8 component is encoded as U+E000\nfollowed by its unpadded URL-safe Base64 bytes.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Byte size of a regular file; null for every other kind.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "kind",
+        "size"
+      ],
+      "type": "object"
+    },
+    "FileKind": {
+      "description": "A directory entry's type, read without following symbolic links.",
+      "enum": [
+        "directory",
+        "file",
+        "symlink",
+        "other"
+      ],
+      "type": "string"
+    },
+    "FileList": {
+      "description": "The `file.list` reply.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/FileEntry"
+          },
+          "type": "array"
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "description": "Null when the directory has no more entries.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `file_list` type tag.",
+          "enum": [
+            "file_list"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "entries",
+        "next_cursor",
+        "incomplete"
+      ],
+      "type": "object"
+    },
+    "FileListRequest": {
+      "additionalProperties": false,
+      "description": "`file.list`: one page of a workspace directory.",
+      "properties": {
+        "cursor": {
+          "description": "The `next_cursor` of the previous page for the same path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Page size, 1 to 100; the daemon uses 100 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "file.list"
+        },
+        "path": {
+          "description": "Workspace-relative directory; the workspace root when absent or empty.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "FilePreview": {
+      "description": "The `file.preview` reply. `text` carries `mime` and `text`; `image` carries\n`mime` and `bytes_base64`; `unsupported` carries neither.",
+      "properties": {
+        "bytes_base64": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/PreviewKind"
+        },
+        "mime": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "description": "The file's byte size.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "truncated": {
+          "description": "True when the file exceeds the 256 KiB preview limit.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `file_preview` type tag.",
+          "enum": [
+            "file_preview"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "kind",
+        "size",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "FilePreviewRequest": {
+      "additionalProperties": false,
+      "description": "`file.preview`: the bounded contents of one workspace file.",
+      "properties": {
+        "op": {
+          "const": "file.preview"
+        },
+        "path": {
+          "description": "Workspace-relative file path.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "path"
+      ],
+      "type": "object"
+    },
+    "FileSearch": {
+      "description": "The `file.search` reply.",
+      "properties": {
+        "incomplete": {
+          "description": "True when depth, path-length or directory limits cut the search short.",
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "description": "Null when the search has finished.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/FileEntry"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `file_search` type tag.",
+          "enum": [
+            "file_search"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "results",
+        "next_cursor",
+        "incomplete"
+      ],
+      "type": "object"
+    },
+    "FileSearchRequest": {
+      "additionalProperties": false,
+      "description": "`file.search`: one page of entries whose name contains the query, ignoring case.",
+      "properties": {
+        "cursor": {
+          "description": "The `next_cursor` of the previous page for the same query.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Page size, 1 to 100; the daemon uses 100 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "file.search"
+        },
+        "query": {
+          "description": "1 to 256 bytes.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "query"
+      ],
+      "type": "object"
+    },
     "GitOperation": {
       "description": "A Git mutation's receipt.",
       "properties": {
@@ -2120,6 +2382,80 @@
       ],
       "type": "object"
     },
+    "OutputCoverage": {
+      "description": "How much of a run's output the durable spool holds and the reply returns.",
+      "properties": {
+        "captured_through_offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "produced_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputCoverageReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null when the status is `complete`."
+        },
+        "returned_start_offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/OutputCoverageStatus"
+        }
+      },
+      "required": [
+        "status",
+        "reason",
+        "produced_bytes",
+        "captured_through_offset",
+        "returned_start_offset"
+      ],
+      "type": "object"
+    },
+    "OutputCoverageReason": {
+      "description": "Why output coverage is pending or incomplete.",
+      "enum": [
+        "capture_error",
+        "durable_output_unavailable",
+        "retention_overflow",
+        "segment_gap",
+        "process_running",
+        "exit_unknown",
+        "capture_gap",
+        "tail_limited"
+      ],
+      "type": "string"
+    },
+    "OutputCoverageStatus": {
+      "description": "Whether the returned output covers everything the run produced.",
+      "enum": [
+        "complete",
+        "pending",
+        "incomplete"
+      ],
+      "type": "string"
+    },
     "PeerEndpoint": {
       "additionalProperties": false,
       "properties": {
@@ -2221,6 +2557,15 @@
         "contested",
         "observed_other",
         "unobserved"
+      ],
+      "type": "string"
+    },
+    "PreviewKind": {
+      "description": "How a preview presents the file.",
+      "enum": [
+        "text",
+        "image",
+        "unsupported"
       ],
       "type": "string"
     },
@@ -3198,6 +3543,396 @@
         "operation_id",
         "path",
         "revision"
+      ],
+      "type": "object"
+    },
+    "Script": {
+      "description": "A configured workspace script, as `script.list` returns it.",
+      "oneOf": [
+        {
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "package_json",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "ade_recipe",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "program",
+            "args",
+            "cwd"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ScriptInspectRequest": {
+      "additionalProperties": false,
+      "description": "`script.inspect`: one run's state and output tail.",
+      "properties": {
+        "op": {
+          "const": "script.inspect"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "tail_bytes": {
+          "description": "Output tail size, 1 to 32768 bytes; the daemon uses 8192 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "ScriptInspection": {
+      "description": "The `script.inspect` reply.",
+      "properties": {
+        "durable_output": {
+          "description": "The durable spool tail, passed through unchanged."
+        },
+        "exit_status": {
+          "description": "The runtime's exit outcome (`kind` is `success`, `failure`, `signaled`\nor `unknown`), present once the runtime reports one."
+        },
+        "metrics": {
+          "description": "The runtime's terminal metrics, passed through unchanged."
+        },
+        "name": {
+          "description": "The script name encoded in the run ID; empty if it does not parse.",
+          "type": "string"
+        },
+        "output": {
+          "description": "The runtime's live `terminal.tail` reply, passed through unchanged."
+        },
+        "output_coverage": {
+          "$ref": "#/$defs/OutputCoverage"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ScriptRunStatus"
+        },
+        "type": {
+          "description": "The `script_run` type tag.",
+          "enum": [
+            "script_run"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "run_id",
+        "name",
+        "state",
+        "metrics",
+        "output",
+        "output_coverage",
+        "durable_output"
+      ],
+      "type": "object"
+    },
+    "ScriptList": {
+      "description": "The `script.list` reply.",
+      "properties": {
+        "scripts": {
+          "items": {
+            "$ref": "#/$defs/Script"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `scripts` type tag.",
+          "enum": [
+            "scripts"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "scripts"
+      ],
+      "type": "object"
+    },
+    "ScriptListRequest": {
+      "additionalProperties": false,
+      "description": "`script.list`: the workspace's configured package scripts and ADE recipes.",
+      "properties": {
+        "op": {
+          "const": "script.list"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "ScriptRetireRequest": {
+      "additionalProperties": false,
+      "description": "`script.retire`: remove a stopped run and its retained output.",
+      "properties": {
+        "op": {
+          "const": "script.retire"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "ScriptRetired": {
+      "description": "The `script.retire` reply.",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "ScriptRun": {
+      "description": "The `script.start` and `script.stop` reply.",
+      "properties": {
+        "exit_status": {
+          "description": "The runtime's exit outcome (`kind` is `success`, `failure`, `signaled`\nor `unknown`), present once the runtime reports one."
+        },
+        "metrics": {
+          "description": "The runtime's terminal metrics, passed through unchanged."
+        },
+        "name": {
+          "description": "The script name encoded in the run ID; empty if it does not parse.",
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ScriptRunStatus"
+        },
+        "toolchain": {
+          "description": "The selected Node toolchain, on `script.start` of a Node-based script."
+        },
+        "type": {
+          "description": "The `script_run` type tag.",
+          "enum": [
+            "script_run"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "run_id",
+        "name",
+        "state",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "ScriptRunState": {
+      "description": "One run as `script.runs` lists it.",
+      "properties": {
+        "exit_status": {
+          "description": "The runtime's exit outcome (`kind` is `success`, `failure`, `signaled`\nor `unknown`), present once the runtime reports one."
+        },
+        "metrics": {
+          "description": "The runtime's terminal metrics, passed through unchanged."
+        },
+        "name": {
+          "description": "The script name encoded in the run ID; empty if it does not parse.",
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ScriptRunStatus"
+        }
+      },
+      "required": [
+        "run_id",
+        "name",
+        "state",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "ScriptRunStatus": {
+      "description": "A run's observed process state.",
+      "enum": [
+        "running",
+        "exited",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "ScriptRuns": {
+      "description": "The `script.runs` reply.",
+      "properties": {
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/ScriptRunState"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `script_runs` type tag.",
+          "enum": [
+            "script_runs"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "runs"
+      ],
+      "type": "object"
+    },
+    "ScriptRunsRequest": {
+      "additionalProperties": false,
+      "description": "`script.runs`: the workspace's registered script runs the runtime still knows.",
+      "properties": {
+        "op": {
+          "const": "script.runs"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "ScriptStartRequest": {
+      "additionalProperties": false,
+      "description": "`script.start`: launch a configured script by name as a supervised PTY.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "script.start"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ScriptStopRequest": {
+      "additionalProperties": false,
+      "description": "`script.stop`: stop a run and wait up to five seconds for it to exit.",
+      "properties": {
+        "op": {
+          "const": "script.stop"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "run_id"
       ],
       "type": "object"
     },
@@ -6084,6 +6819,69 @@
       "name": "worktree.rebind.list",
       "request": "WorktreeRebindListRequest",
       "response": "WorktreeRebindCatalog",
+      "tier": "query"
+    },
+    {
+      "domain": "scripts",
+      "name": "script.list",
+      "request": "ScriptListRequest",
+      "response": "ScriptList",
+      "tier": "query"
+    },
+    {
+      "domain": "scripts",
+      "name": "script.inspect",
+      "request": "ScriptInspectRequest",
+      "response": "ScriptInspection",
+      "tier": "query"
+    },
+    {
+      "domain": "scripts",
+      "name": "script.start",
+      "request": "ScriptStartRequest",
+      "response": "ScriptRun",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "scripts",
+      "name": "script.stop",
+      "request": "ScriptStopRequest",
+      "response": "ScriptRun",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "scripts",
+      "name": "script.retire",
+      "request": "ScriptRetireRequest",
+      "response": "ScriptRetired",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "scripts",
+      "name": "script.runs",
+      "request": "ScriptRunsRequest",
+      "response": "ScriptRuns",
+      "tier": "query"
+    },
+    {
+      "domain": "files",
+      "name": "file.list",
+      "request": "FileListRequest",
+      "response": "FileList",
+      "tier": "query"
+    },
+    {
+      "domain": "files",
+      "name": "file.search",
+      "request": "FileSearchRequest",
+      "response": "FileSearch",
+      "tier": "query"
+    },
+    {
+      "domain": "files",
+      "name": "file.preview",
+      "request": "FilePreviewRequest",
+      "response": "FilePreview",
       "tier": "query"
     }
   ]

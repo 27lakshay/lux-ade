@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { decodeDailyUseResponse, requestDaemon, type DailyUseOperation } from '@ade/client'
+import { dailyUseCommand, decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseRequest } from '@ade/client'
 import { getClient, getClientGeneration, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
 
@@ -9,7 +9,8 @@ function serviceReply(op: string, response: unknown): unknown {
   try { return decodeDailyUseResponse(op as DailyUseOperation, response) }
   catch (error) { throw new Error(`Daemon ${op} reply failed its contract: ${String(error)}`) }
 }
-const scriptOps = new Set(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
+type ScriptOp = 'script.list' | 'script.runs' | 'script.start' | 'script.inspect' | 'script.stop' | 'script.retire'
+const scriptOps = new Set<string>(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
 export function registerServiceIpc(): void {
   ipcMain.handle('ade:script-request', async (_event, op: unknown, fields: unknown) => {
     if (typeof op !== 'string' || !scriptOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
@@ -50,7 +51,7 @@ export function registerServiceIpc(): void {
       keys.add('tail_bytes')
     }
     if (Object.keys(args).some((key) => !keys.has(key))) throw new Error('Unknown script request field')
-    const result = await requestDaemon(endpoint, op, request)
+    const result = await dailyUseCommand(endpoint, { ...request, op } as DailyUseRequest<ScriptOp>)
     if (generation !== getClientGeneration() || getSocket() !== endpoint) {
       throw new Error('Profile changed while the script request completed; inspect the original profile before retrying')
     }

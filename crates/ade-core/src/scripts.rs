@@ -15,7 +15,8 @@ fn manifest_present(path: &Path) -> Result<bool> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A configured workspace script, as `script.list` returns it.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Script {
     PackageJson {

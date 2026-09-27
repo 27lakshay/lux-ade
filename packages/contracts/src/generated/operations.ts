@@ -82,6 +82,15 @@ export const operations = {
   "worktree.operation": { tier: "query", domain: "worktrees", request: "WorktreeOperationRequest", response: "WorktreeOperationReply" },
   "worktree.rebind": { tier: "idempotent_command", domain: "worktrees", request: "WorktreeRebindRequest", response: "WorktreeState" },
   "worktree.rebind.list": { tier: "query", domain: "worktrees", request: "WorktreeRebindListRequest", response: "WorktreeRebindCatalog" },
+  "script.list": { tier: "query", domain: "scripts", request: "ScriptListRequest", response: "ScriptList" },
+  "script.inspect": { tier: "query", domain: "scripts", request: "ScriptInspectRequest", response: "ScriptInspection" },
+  "script.start": { tier: "effect_command", domain: "scripts", request: "ScriptStartRequest", response: "ScriptRun" },
+  "script.stop": { tier: "effect_command", domain: "scripts", request: "ScriptStopRequest", response: "ScriptRun" },
+  "script.retire": { tier: "effect_command", domain: "scripts", request: "ScriptRetireRequest", response: "ScriptRetired" },
+  "script.runs": { tier: "query", domain: "scripts", request: "ScriptRunsRequest", response: "ScriptRuns" },
+  "file.list": { tier: "query", domain: "files", request: "FileListRequest", response: "FileList" },
+  "file.search": { tier: "query", domain: "files", request: "FileSearchRequest", response: "FileSearch" },
+  "file.preview": { tier: "query", domain: "files", request: "FilePreviewRequest", response: "FilePreview" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */
