@@ -180,8 +180,112 @@ pub struct Supervisor {
     pub pid: u32,
     token: String,
     draining: AtomicBool,
-    owner: Mutex<BufReader<UnixStream>>,
+    owner: Mutex<OwnerChannel>,
     handoff_path: PathBuf,
+}
+/// The owner's control connection. The runtime answers each command with
+/// exactly one frame, in order, even after the daemon stopped waiting. The
+/// channel counts replies it has not read, so a late reply is discarded and
+/// never mistaken for the reply to a later command.
+pub(crate) struct OwnerChannel {
+    stream: UnixStream,
+    /// Bytes read past the last complete frame, kept across read timeouts.
+    partial: Vec<u8>,
+    /// Commands sent whose reply has not been read yet.
+    unanswered: usize,
+    /// Set when framing can no longer be trusted; nothing is sent after it.
+    broken: Option<String>,
+}
+/// What a failed read or write means for the channel's framing.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ChannelFault {
+    /// The reply has not arrived yet; it is still owed and read later.
+    Late,
+    /// The byte stream is no longer aligned to frames.
+    Broken,
+}
+pub(crate) fn channel_fault(error: &std::io::Error) -> ChannelFault {
+    match error.kind() {
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => ChannelFault::Late,
+        _ => ChannelFault::Broken,
+    }
+}
+impl OwnerChannel {
+    pub(crate) fn new(reader: BufReader<UnixStream>) -> Self {
+        let partial = reader.buffer().to_vec();
+        Self {
+            stream: reader.into_inner(),
+            partial,
+            unanswered: 0,
+            broken: None,
+        }
+    }
+    fn read_line(&mut self) -> std::io::Result<Vec<u8>> {
+        loop {
+            if let Some(end) = self.partial.iter().position(|b| *b == b'\n') {
+                return Ok(self.partial.drain(..=end).collect());
+            }
+            if self.partial.len() as u64 >= MAX_CONTROL {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Runtime control frame too large",
+                ));
+            }
+            let mut buffer = [0u8; 8192];
+            match self.stream.read(&mut buffer) {
+                Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+                Ok(n) => self.partial.extend_from_slice(&buffer[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    /// Reads the next owed reply, keeping the count of owed replies exact.
+    fn next_reply(&mut self) -> Result<Vec<u8>> {
+        match self.read_line() {
+            Ok(line) => {
+                self.unanswered -= 1;
+                Ok(line)
+            }
+            Err(error) => {
+                if channel_fault(&error) == ChannelFault::Broken {
+                    self.broken = Some(error.to_string());
+                }
+                Err(error.into())
+            }
+        }
+    }
+    fn command(&mut self, value: &Value) -> Result<Value> {
+        if let Some(reason) = &self.broken {
+            bail!("Runtime control connection failed ({reason}); the command was not sent");
+        }
+        // Discard replies to earlier commands whose caller stopped waiting.
+        while self.unanswered > 0 {
+            self.next_reply().context(
+                "An earlier runtime command is still unanswered; the command was not sent",
+            )?;
+        }
+        let line = serde_json::to_string(value)?;
+        ensure!(
+            line.len() < MAX_CONTROL as usize,
+            "Runtime control frame too large"
+        );
+        if let Err(error) = writeln!(self.stream, "{line}") {
+            // A partial write misaligns the stream, and the runtime may still
+            // have received the command, so its outcome is unknown.
+            self.broken = Some(error.to_string());
+            return Err(error.into());
+        }
+        self.unanswered = 1;
+        let line = self.next_reply()?;
+        let value: Value = serde_json::from_slice(&line)?;
+        ensure!(
+            value["type"] != "error",
+            "{}",
+            value["message"].as_str().unwrap_or("Runtime error")
+        );
+        Ok(value)
+    }
 }
 impl Supervisor {
     pub fn data_directory(&self) -> &Path {
@@ -278,16 +382,14 @@ impl Supervisor {
             pid: hello.pid,
             token,
             draining: AtomicBool::new(false),
-            owner: Mutex::new(reader),
+            owner: Mutex::new(OwnerChannel::new(reader)),
             handoff_path,
         })
     }
     /// Sends one command on the owner's control socket and returns its reply.
     pub fn command(&self, command: impl Into<Control>) -> Result<Value> {
         let value = command.into().to_value();
-        let mut reader = self.owner.lock().unwrap();
-        write_frame(reader.get_mut(), &value)?;
-        response(&mut reader)
+        self.owner.lock().unwrap().command(&value)
     }
     pub fn prepare_handoff(&self) -> Result<Value> {
         self.draining.store(true, Ordering::Release);
@@ -396,7 +498,7 @@ impl Drop for Supervisor {
             .owner
             .get_mut()
             .unwrap()
-            .get_mut()
+            .stream
             .shutdown(std::net::Shutdown::Both);
     }
 }
@@ -450,7 +552,7 @@ mod tests {
                 pid: std::process::id(),
                 token: "fixture".into(),
                 draining: AtomicBool::new(false),
-                owner: Mutex::new(BufReader::new(owner)),
+                owner: Mutex::new(OwnerChannel::new(BufReader::new(owner))),
                 handoff_path: PathBuf::new(),
             };
             let result = supervisor.agent(AgentOp::Command {
@@ -461,6 +563,61 @@ mod tests {
             control_thread.join().unwrap();
             command_thread.join().unwrap();
         }
+    }
+    #[test]
+    fn late_control_reply_is_discarded_not_read_as_the_next_reply() {
+        let (client, mut runtime) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut channel = OwnerChannel::new(BufReader::new(client));
+        let (released_tx, released_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let mut reader = BufReader::new(runtime.try_clone().unwrap());
+            let first = read_frame(&mut reader).unwrap();
+            assert_eq!(first["op"], "terminal.list");
+            // The runtime was blocked past the daemon's read timeout.
+            released_rx.recv().unwrap();
+            write_frame(&mut runtime, &json!({"type":"terminals","terminals":[]})).unwrap();
+            let second = read_frame(&mut reader).unwrap();
+            assert_eq!(second["op"], "terminal.stop");
+            write_frame(
+                &mut runtime,
+                &json!({"type":"error","message":"still running"}),
+            )
+            .unwrap();
+        });
+        let error = channel.command(&json!({"op":"terminal.list"})).unwrap_err();
+        let io = error.downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(channel_fault(io), ChannelFault::Late);
+        // While the earlier reply is still owed, a new command is not sent.
+        assert!(channel.command(&json!({"op":"terminal.stop"})).is_err());
+        assert_eq!(channel.unanswered, 1);
+        released_tx.send(()).unwrap();
+        // The late `terminals` list is discarded; the stop's own refusal wins.
+        let error = channel.command(&json!({"op":"terminal.stop"})).unwrap_err();
+        assert_eq!(error.to_string(), "still running");
+        assert_eq!(channel.unanswered, 0);
+        server.join().unwrap();
+    }
+    #[test]
+    fn a_frame_split_across_a_timeout_is_kept_whole() {
+        let (client, mut runtime) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut channel = OwnerChannel::new(BufReader::new(client));
+        runtime.write_all(b"{\"type\":\"a").unwrap();
+        channel.unanswered = 1;
+        assert!(channel.next_reply().is_err());
+        assert!(channel.broken.is_none());
+        runtime.write_all(b"ck\"}\n").unwrap();
+        assert_eq!(channel.next_reply().unwrap(), b"{\"type\":\"ack\"}\n");
+        drop(runtime);
+        channel.unanswered = 1;
+        assert!(channel.next_reply().is_err());
+        assert!(channel.broken.is_some());
+        assert!(channel.command(&json!({"op":"owner.check"})).is_err());
     }
     #[test]
     fn endpoint_guard_never_removes_regular_files_or_a_replacement() {

@@ -72,6 +72,14 @@ fn run_state(terminal: &Value, run_id: &str) -> ScriptRunState {
     }
 }
 
+/// Whether `script.stop` can answer: the run was reaped or its exit is unknown,
+/// and the runtime has finished verifying the process tree. [`run_state`]
+/// then reports only a proven exit as exited.
+fn stop_settled(metrics: &Value) -> bool {
+    (metrics["shell_running"] == false || metrics["exit_status"]["kind"] == "unknown")
+        && metrics["exit_status"]["verifying"] != true
+}
+
 fn script_run(workspace_id: &str, run: ScriptRunState, toolchain: Option<Value>) -> Result<Value> {
     Ok(serde_json::to_value(ScriptRun {
         tag: Default::default(),
@@ -301,7 +309,8 @@ pub fn command(
                 .as_str()
                 .context("Script transfer identity is unavailable")?
                 .to_owned();
-            if item["metrics"]["exit_status"]["kind"] == "unknown" {
+            if item["metrics"]["exit_status"]["kind"] == "unknown" && stop_settled(&item["metrics"])
+            {
                 return script_run(&workspace.id, run_state(item, run_id), None);
             }
             if item["metrics"]["shell_running"] == true {
@@ -318,9 +327,7 @@ pub fn command(
                     item["metrics"]["transfer_id"] == transfer_id,
                     "Script run changed during stop"
                 );
-                if item["metrics"]["shell_running"] == false
-                    || item["metrics"]["exit_status"]["kind"] == "unknown"
-                {
+                if stop_settled(&item["metrics"]) {
                     return script_run(&workspace.id, run_state(item, run_id), None);
                 }
                 if Instant::now() >= deadline {
@@ -384,4 +391,31 @@ fn pause_retirement_for_e2e(run_id: &str) -> Result<()> {
         std::thread::sleep(Duration::from_millis(10));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+    #[test]
+    fn a_stop_with_a_live_tree_answers_unknown_not_exited() {
+        let verifying = json!({"metrics": {"shell_running": false, "exit_status":
+            {"kind": "unknown", "verifying": true, "child": {"kind": "signaled", "signal": 9}}}});
+        assert!(!stop_settled(&verifying["metrics"]));
+        let live = json!({"metrics": {"shell_running": false, "exit_status":
+            {"kind": "unknown", "child": {"kind": "signaled", "signal": 9},
+             "descendants": {"verdict": "live"}}}});
+        assert!(stop_settled(&live["metrics"]));
+        assert!(matches!(
+            run_state(&live, "script:build:1").state,
+            ScriptRunStatus::Unknown
+        ));
+        let exited = json!({"metrics": {"shell_running": false, "exit_status":
+            {"kind": "signaled", "signal": 15, "descendants": {"verdict": "exited"}}}});
+        assert!(stop_settled(&exited["metrics"]));
+        assert!(matches!(
+            run_state(&exited, "script:build:1").state,
+            ScriptRunStatus::Exited
+        ));
+        assert!(!stop_settled(&json!({"shell_running": true})));
+    }
 }
