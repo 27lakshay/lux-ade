@@ -20,6 +20,8 @@ const steps = [
   ['typecheck', ['pnpm', 'typecheck']],
   ['fallow', ['pnpm', 'deadcode']],
   ['js build', ['pnpm', 'build']],
+  // In-process tests of pure TypeScript cores, beside their modules.
+  ['js pure tests', ['node', '--test', 'packages/*/src/**/*.test.mjs', 'apps/*/src/**/*.test.mjs']],
   ['clippy', [...cargo, 'clippy', '--locked', '--workspace', ...features, '--all-targets', '--', '-D', 'warnings']],
   ['legacy rust tests', [...cargo, 'nextest', 'run', '--locked', '--workspace', ...features, '--profile', 'ci']],
 ]

@@ -848,14 +848,20 @@ impl Runtime {
             if state.transfer_id.is_some() {
                 // Observe the tree before signalling so descendants outside
                 // the group are killed too. The reader thread then proves the
-                // tree stopped; when it already holds the tree it is doing so.
-                if let Some(tree) = &self.tree
-                    && let Ok(mut shutdown) = tree.try_lock()
-                {
-                    shutdown.kill_now();
-                } else if self.tree.is_none()
-                    && let Some(pid) = state.shell_pid
-                {
+                // tree stopped. When the tree is busy (the metrics thread is
+                // tracking it, or the reader is already proving shutdown),
+                // still signal the group so a stop is never dropped.
+                let signalled = match &self.tree {
+                    Some(tree) => match tree.try_lock() {
+                        Ok(mut shutdown) => {
+                            shutdown.kill_now();
+                            true
+                        }
+                        Err(_) => false,
+                    },
+                    None => false,
+                };
+                if !signalled && let Some(pid) = state.shell_pid {
                     let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
                     if result != 0
                         && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
