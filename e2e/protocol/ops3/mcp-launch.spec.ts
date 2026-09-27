@@ -108,7 +108,7 @@ test('F131: a Claude launch receives the resolved servers as the SDK mcpServers 
     headers: { Authorization: '${FIXTURE_REMOTE_AUTH}' } })
 })
 
-test('F131: a launch with no applicable server passes nothing, and an unwired provider says so', async ({ ade, profile }) => {
+test('F131: a launch with no applicable server passes nothing, and every projected provider is wired', async ({ ade, profile }) => {
   const repo = await ade.repo({ name: 'plain' })
   const workspace = (await profile.call('workspace.open', { path: repo.path })).workspace
   // Only a disabled entry and one for another workspace exist.
@@ -120,13 +120,13 @@ test('F131: a launch with no applicable server passes nothing, and an unwired pr
   const claude = await startConversation(profile, 'claude', repo.path)
   await turn(profile, claude.conversationId)
   expect(await claudeQueries(profile)).toEqual([])
-  // Oh My Pi has a projection, but ADE does not write its user-owned mcp.json,
-  // so its resolution reports that the adapter does not deliver it.
+  // Oh My Pi receives the catalog as an ADE-owned extension package
+  // (ops3/omp-mcp.spec.ts), so its resolution reports it wired too.
   await call(profile, 'mcp.server.add', { name: 'files', definition: stdio() })
   expect(await call(profile, 'mcp.resolve', { workspace_id: workspace.id, provider: 'omp' }))
-    .toMatchObject({ delivery: 'direct', wired: false })
+    .toMatchObject({ delivery: 'direct', wired: true })
   const inspected = await profile.cli('mcp', 'inspect', 'files')
   expect(inspected.code, inspected.stderr).toBe(0)
   const wired = Object.fromEntries((inspected.json?.providers as Array<any>).map((entry) => [entry.provider, entry.wired]))
-  expect(wired).toEqual({ claude: true, codex: true, omp: false })
+  expect(wired).toEqual({ claude: true, codex: true, omp: true })
 })

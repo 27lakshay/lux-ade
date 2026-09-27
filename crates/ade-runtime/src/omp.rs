@@ -15,6 +15,10 @@ pub struct Adapter {
     rpc: Arc<Rpc>,
     account: Option<AccountExecution>,
     cwd: String,
+    /// The `mcpServers` map from the profile MCP catalog (F131). The bridge
+    /// writes it as the `.mcp.json` of an ADE-owned extension package and
+    /// names that package with `--extension` at launch and resume.
+    mcp_servers: std::sync::Mutex<Option<Value>>,
 }
 impl Adapter {
     pub fn spawn(
@@ -56,6 +60,7 @@ impl Adapter {
             rpc: Rpc::spawn(command, events, provider::bridge_event)?,
             account: account.cloned(),
             cwd: cwd.into(),
+            mcp_servers: std::sync::Mutex::new(None),
         }))
     }
 }
@@ -78,12 +83,32 @@ impl Provider for Adapter {
     fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
         Some(self.rpc.descendants())
     }
+    fn configure_mcp(&self, servers: Value) -> Result<()> {
+        ensure!(
+            servers.is_object(),
+            "Oh My Pi MCP servers must be an object"
+        );
+        *self.mcp_servers.lock().unwrap() = Some(servers);
+        Ok(())
+    }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
         if let Some(account) = &self.account {
             provider::omp_probe::ensure_identity(account)?;
             provider::omp_probe::ensure_workspace_sources(&self.cwd, account)?;
         }
-        provider::response_session(&self.rpc, resume, config)
+        let servers = self.mcp_servers.lock().unwrap().clone();
+        let Some(servers) = servers else {
+            return provider::response_session(&self.rpc, resume, config);
+        };
+        let connected: Connected = serde_json::from_value(self.rpc.request(
+            "open",
+            json!({"resume":resume,"config":config,"mcp_servers":servers}),
+        )?)?;
+        ensure!(
+            resume.is_none_or(|id| id == connected.session),
+            "Provider resumed a different session; original identity retained"
+        );
+        Ok(connected)
     }
     fn send(
         &self,
