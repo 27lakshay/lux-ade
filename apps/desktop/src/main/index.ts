@@ -97,6 +97,10 @@ function openMainWindow(): void {
     minWidth: 720,
     minHeight: 480,
     title: 'ADE',
+    // Electron restores this window's position, size and fullscreen or maximized state by name.
+    // (Experimental in Electron 44.) The pane layout is the renderer's, not the window's.
+    name: 'main',
+    windowStatePersistence: true,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: TRAFFIC_LIGHTS,
     // Glass: macOS blurs whatever is behind the window and the renderer paints translucent cards
