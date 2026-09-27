@@ -48,6 +48,7 @@ mod mcp;
 mod orchestration;
 mod placement;
 mod recovery;
+mod registered;
 mod remote;
 mod repository;
 mod restart;
@@ -123,6 +124,9 @@ pub struct Sessions {
     usage: Arc<crate::usage::Usage>,
     presets: Arc<crate::capabilities::Presets>,
     adapters: crate::adapters::Adapters,
+    /// Each plugin provider artifact's handshake descriptor, once discovered;
+    /// `None` when its handshake failed.
+    provider_handshakes: Mutex<HashMap<String, Option<provider::Descriptor>>>,
     pub worktrees: Arc<crate::worktrees::Worktrees>,
     /// The plugin registry, or why it could not open. Its failure never blocks the core.
     plugins: std::result::Result<crate::plugins::Plugins, String>,
@@ -170,6 +174,7 @@ impl Sessions {
         };
         let sessions = Arc::new(Self {
             adapters: crate::adapters::Adapters::open(path)?,
+            provider_handshakes: Mutex::new(HashMap::new()),
             history,
             usage,
             presets,
@@ -565,7 +570,7 @@ impl Sessions {
             tx.send(reply(&ade_core::contract::workspaces::CatalogFrame {
                 tag: Default::default(),
                 catalog,
-                providers: provider::descriptors().to_vec(),
+                providers: self.provider_descriptors(),
                 boot_id: self.boot_id.clone(),
                 revision,
             })?)?;
@@ -587,6 +592,7 @@ impl Sessions {
         let op = request["op"].as_str().unwrap_or("");
         if op.starts_with("plugin.") {
             let reply = match &self.plugins {
+                Ok(plugins) if op == "plugin.uninstall" => self.uninstall_plugin(plugins, request),
                 Ok(plugins) => plugins.command(request),
                 Err(error) => Err(anyhow!("Plugin registry is unavailable: {error}")),
             };
@@ -660,6 +666,9 @@ impl Sessions {
         }
         if op.starts_with("usage.") {
             return self.usage.command(request);
+        }
+        if op == "adapter.remove" {
+            return self.remove_adapter(request);
         }
         if op.starts_with("adapter.") {
             return self.adapters.command(request);

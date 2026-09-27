@@ -172,6 +172,10 @@ pub struct AgentRunSpec {
     /// for bundled providers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker: Option<super::providers::ProviderWorker>,
+    /// The generic adapter definition an `adapter:` run launches, pinned by
+    /// revision; absent for every other provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<super::providers::adapters::AdapterPin>,
 }
 
 /// `agent.account_inspect`: probe a provider account's native status. The

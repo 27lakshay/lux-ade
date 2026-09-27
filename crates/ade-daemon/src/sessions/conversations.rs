@@ -167,14 +167,29 @@ impl Sessions {
                 let workspace = non_empty("workspace_id", &create.workspace_id)?;
                 let provider_config =
                     serde_json::from_value(create.provider_config.unwrap_or_else(|| json!({})))?;
+                let provider = create.provider.as_deref().unwrap_or("codex");
+                // Adapters and plugin providers are validated through the
+                // provider registry, not the static catalogue.
+                let registered = self.registered_descriptor(provider)?;
                 let mut d = self.data.lock().unwrap();
-                let conversation = d.store.create_with_account(
-                    workspace,
-                    title,
-                    create.provider.as_deref().unwrap_or("codex"),
-                    provider_config,
-                    create.account_id.as_deref(),
-                )?;
+                let conversation = match &registered {
+                    None => d.store.create_with_account(
+                        workspace,
+                        title,
+                        provider,
+                        provider_config,
+                        create.account_id.as_deref(),
+                    )?,
+                    Some(descriptor) => {
+                        ensure!(
+                            create.account_id.is_none(),
+                            "{provider} uses the agent's own login; ADE manages no accounts for it"
+                        );
+                        d.store
+                            .create_registered(workspace, title, descriptor, provider_config)?
+                    }
+                };
+                self.pin_new(&conversation)?;
                 self.catalog_changed(&mut d)?;
                 reply(&ConversationCreated {
                     tag: Default::default(),

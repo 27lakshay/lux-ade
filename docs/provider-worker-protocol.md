@@ -72,6 +72,14 @@ event: `submitted`, `started`, `item`, `delta`, `request`, `resolved`,
 `finished`, `usage`, `operation_failed`, `error` or `exited`. The shapes are
 the `Event` enum in `crates/ade-core/src/provider.rs`.
 
+ADE records the user's prompt itself, under the `submission` ID of the `send`
+that carried it, and may pre-assign the prompt's native item ID as the send's
+`message_id`. A worker that also reports that prompt as an `item` gives it role
+`user` and kind `text`, sets its `client_id` to that `submission` and, when
+`message_id` is present, its `id` to that `message_id`. ADE then updates its
+own record instead of adding a second copy. A different `id`, role or kind for
+the same record is refused as a changed message identity, and the run fails.
+
 A worker must not send requests to ADE. A request, a malformed line or a line
 over 16 MiB closes the connection, and the run ends with an exit event.
 

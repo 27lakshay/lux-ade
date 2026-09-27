@@ -522,6 +522,13 @@ impl Sessions {
             "Workspace directory is unavailable: {}",
             w.root
         );
+        // A recovered run already runs what it launched with; the runtime
+        // never reads the spec again.
+        let (worker, adapter) = if restore {
+            (None, None)
+        } else {
+            self.launch_pins(&c)?
+        };
         let rpc = Remote::new(
             self.runtime.clone(),
             Spec {
@@ -530,7 +537,8 @@ impl Sessions {
                 provider: c.provider.clone(),
                 root: w.root,
                 account,
-                worker: None,
+                worker,
+                adapter,
             },
         );
         if !restore {

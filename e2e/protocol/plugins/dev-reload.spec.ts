@@ -112,11 +112,9 @@ test('a broken reload leaves the current generation serving; the fix activates t
     .filter((generation) => generation.state !== 'retired').length).toBe(0)
 })
 
-// Gap (F023, 04-S11): nothing creates a provider session on a `plugin:` provider.
-// `conversation.create` validates the provider against the static catalogue and
-// `sessions/agents.rs` launches every run with `worker: None`, so
-// `Plugins::lease_provider` has no caller and a generation can never be `leased`.
-test.fixme('a dev-mode reload keeps a leased provider session on its old generation', async ({ ade, profile }) => {
+// A Conversation on a `plugin:` provider leases the current generation when it
+// is created (F023, 04-S11); the adapter-launch slice closed that gap.
+test('a dev-mode reload keeps a leased provider session on its old generation', async ({ ade, profile }) => {
   const source = await stagePlugin(ade.root, 'provider')
   const { pluginId } = await installAndEnable(profile, source)
   await profile.call('plugin.dev.enter', { plugin_id: pluginId, debounce_ms: 100 })

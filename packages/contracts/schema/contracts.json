@@ -1112,6 +1112,25 @@
       ],
       "type": "object"
     },
+    "AdapterPin": {
+      "additionalProperties": false,
+      "description": "The adapter definition one run launches. A conversation starts on one\ndefinition revision; a run carries that definition so the runtime never\nreads the profile's store, and a later edit never changes a running agent.",
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/AdapterDefinition"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "definition"
+      ],
+      "type": "object"
+    },
     "AdapterProbe": {
       "description": "The stored probe of one adapter.",
       "properties": {
@@ -1599,6 +1618,17 @@
         "account": {
           "default": null,
           "description": "The pinned account execution context, or null for ambient credentials."
+        },
+        "adapter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdapterPin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The generic adapter definition an `adapter:` run launches, pinned by\nrevision; absent for every other provider."
         },
         "conversation": {
           "type": "string"
