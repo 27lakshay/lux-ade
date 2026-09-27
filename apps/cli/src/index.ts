@@ -28,6 +28,7 @@ import { retentionUsage, runRetentionCommand } from './commands/retention.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
+import { pluginDevUsage, runPluginDevCommand } from './commands/plugin-dev.js'
 import { hookUsage, runHookCommand } from './commands/hooks.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
@@ -100,6 +101,7 @@ const usage = [
   placementUsage,
   skillUsage,
   pluginUsage,
+  pluginDevUsage,
   hookUsage,
   orchestrationUsage,
   runsUsage,
@@ -243,6 +245,7 @@ const commandAreas = [
   runRemoteCommand,
   runPlacementCommand,
   runSkillCommand,
+  runPluginDevCommand,
   runPluginCommand,
   runHookCommand,
   runOrchestrationCommand,
