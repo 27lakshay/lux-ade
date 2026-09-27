@@ -1,10 +1,39 @@
 # ADE v1 delivery record
 
-Status: active on the daily-use gate; requirements remain unverified until their full acceptance passes.
+Status: backend build closed; remaining rows need the user (see the first section).
 Type: delivery record
 
 Updated: 2026-09-27. Branch: `codex/architecture-proposal`. No Git remote is
 configured. This is a checkpoint, not a claim that the v1 register is complete.
+
+## Backend build closed: what needs the user (2026-09-27)
+
+Every round and fix that could be done without the user is merged. The build
+branch `1ce8adf` passes `pnpm check:static` (810 in-process tests) and the full
+headless protocol suite (830 specs, 14 skipped, no failures, 2 workers). The
+register holds 79 accepted rows. Nothing was pushed.
+
+The remaining rows each need something only the user can give:
+
+| Needs | Rows |
+|---|---|
+| A decision: the MCP gateway leg under D14 (direct delivery already works for Claude, Codex and Oh My Pi) | F131 |
+| The UI phase: rows that are UI only | F008, F009, F011–F016, F018–F020, F052–F056, F091–F097, F114 |
+| The UI phase: rows whose headless parts pass but that keep an Electron-only part | F005, F007, F060, F071, F073, F078, F082, F136, F137, F138, F139, F140, R005, R016, R019, R020 |
+| Live accounts and installs: real Oh My Pi, two Claude accounts, Gemini CLI, GitHub Copilot CLI | F021, F022, F025, R012 |
+| A decision: display and app control prompts for macOS permissions, so it was not built | F098 |
+| The user present: a hand check of the real Keychain backend (tests use only the file backend) | — |
+
+Also left for the user:
+
+- **Legacy Electron E2E specs are stale.** They predate `operation_id` in raw
+  requests, backup format 6 and the new send-recovery results. Update them
+  when Electron E2E resumes in the UI phase.
+- **One worktree remains:** `claude/wf_317b0f50-41b-9` (old ops-3). Its commits
+  are all merged. It holds one untracked file, an outdated copy of
+  `evidence/e2e-ops3.md`. The hazards guard refused `wt remove --force`, so it
+  stays until the user removes it.
+- `apps/desktop/PRODUCT.md` is the user's untracked file and was not touched.
 
 ## Parallel build: overnight coordinator log (2026-09-27)
 
@@ -1211,3 +1240,16 @@ round 3. The register now holds 79 accepted rows.
 - Terminal cleanup: no attachment is closed for lag any more, and the CLI's
   complete-history resync path is proven.
 
+
+**Last backend round, merged at `1ce8adf`** (810 in-process tests; the full protocol suite
+passes: 830 specs in 11.9 minutes at 2 workers, 14 skipped, no failures)
+
+- **Oh My Pi MCP** ([evidence](evidence/e2e-omp-mcp.md)): Oh My Pi launches
+  receive the resolved MCP catalog through an `--extension` package holding a
+  `.mcp.json`. Direct delivery now works for Claude, Codex and Oh My Pi. F131
+  stays open for the gateway leg, which needs a decision under D14.
+- **Skill retention** ([evidence](evidence/e2e-skill-retention.md)): skill blobs
+  no longer referenced are released through `skill_blob_releases` and swept
+  after the retention window. F138 stays open for its display parts.
+
+**Newly accepted:** none. The register holds 79 accepted rows.
