@@ -3,6 +3,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { cp, link, lstat, mkdir, open, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
+import { getProfileState, getStartupProfileSelection, isSwitching, managedProfiles, setSwitching,
+  type Profile } from './profile-connection'
 
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
 type BrowserMutation = 'browser.open' | 'browser.navigate' | 'browser.close'
@@ -334,7 +336,7 @@ async function migrateBrowserStorage(id: string): Promise<void> {
     await syncDirectory(parent)
   } finally { await rm(stage, { recursive: true, force: true }) }
 }
-export async function adoptUnownedBrowserStorage(id: string, directory: string): Promise<void> {
+async function adoptUnownedBrowserStorage(id: string, directory: string): Promise<void> {
   if (!validId(id) || id === 'fixed' || !isAbsolute(directory)) throw new Error('Invalid browser profile for adoption')
   const lease = await acquireBrowserLease(id, directory)
   try {
@@ -636,7 +638,7 @@ function validatedBundle(value: unknown): BrowserBundle {
   return bundle
 }
 /** Electron-owned, intentionally partial capture of tabs and persistent cookies. */
-export async function captureBrowserProfile(id: string, destination: string): Promise<Record<string, unknown>> {
+async function captureBrowserProfile(id: string, destination: string): Promise<Record<string, unknown>> {
   if (!validId(id) || id === 'fixed' || !isAbsolute(destination) || activeProfile !== id ||
     browserLease?.id !== id || capturingProfiles.has(id)) throw new Error('Browser capture target is unavailable')
   capturingProfiles.add(id)
@@ -713,7 +715,7 @@ export async function captureBrowserProfile(id: string, destination: string): Pr
 }
 
 /** Restore into a never-opened managed profile without inheriting source identity. */
-export async function restoreBrowserProfile(source: string, id: string, home: string): Promise<Record<string, unknown>> {
+async function restoreBrowserProfile(source: string, id: string, home: string): Promise<Record<string, unknown>> {
   if (!isAbsolute(source) || !isAbsolute(home) || !validId(id) || id === 'fixed' ||
     activeProfile === id || profilePaths.has(id) || profiles.has(id)) throw new Error('Browser restore needs a fresh inactive profile')
   const info = await lstat(source)
@@ -1074,7 +1076,22 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
     else browserOperations.delete(browserProfileId)
   }
 }
-export function registerBrowserIpc(): void {
+function browserBackupRequest(event: Electron.IpcMainInvokeEvent, id: unknown, location: unknown,
+  active: boolean): { profile: Profile; location: string } {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed() || event.senderFrame !== window.webContents.mainFrame ||
+    !managedProfiles || isSwitching() || typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id) ||
+    typeof location !== 'string' || !isAbsolute(location) || location.includes('\0') || location.length > 4096) {
+    throw new Error('Invalid browser backup request')
+  }
+  const profile = getProfileState().profiles.find((item) => item.id === id)
+  if (!profile || (active ? getProfileState().activeId !== id : getProfileState().activeId === id)) {
+    throw new Error('Browser backup target does not match the requested profile')
+  }
+  return { profile, location }
+}
+// selectProfile arrives as a parameter because profiles.ts imports this module.
+export function registerBrowserIpc(selectProfile: (id: string, updateDefault: boolean) => Promise<unknown>): void {
   guardedBrowserHandle('ade:browser-list', async (event) => {
     const { id } = current(event)
     await stateFor(id)
@@ -1146,4 +1163,30 @@ export function registerBrowserIpc(): void {
     attach(window, id, tab.id, bounds)
   })
   guardedBrowserHandle('ade:browser-hide', (event) => { detach(owner(event)) })
+  ipcMain.handle('ade:browser-adopt', async (event, id: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed() || event.senderFrame !== window.webContents.mainFrame) throw new Error('Browser adoption is unavailable')
+    if (!managedProfiles || typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id) || isSwitching()) {
+      throw new Error('Invalid browser adoption request')
+    }
+    if (getStartupProfileSelection()) await getStartupProfileSelection()
+    const profile = getProfileState().profiles.find((item) => item.id === id)
+    if (!profile) throw new Error('Unknown profile')
+    await adoptUnownedBrowserStorage(id, profile.home)
+    return selectProfile(id, true)
+  })
+  ipcMain.handle('ade:browser-backup-capture', async (event, id: unknown, destination: unknown) => {
+    if (getStartupProfileSelection()) await getStartupProfileSelection()
+    const request = browserBackupRequest(event, id, destination, true)
+    setSwitching(true)
+    try { return await captureBrowserProfile(request.profile.id, request.location) }
+    finally { setSwitching(false) }
+  })
+  ipcMain.handle('ade:browser-backup-restore', async (event, bundle: unknown, id: unknown) => {
+    if (getStartupProfileSelection()) await getStartupProfileSelection()
+    const request = browserBackupRequest(event, id, bundle, false)
+    setSwitching(true)
+    try { return await restoreBrowserProfile(request.location, request.profile.id, request.profile.home) }
+    finally { setSwitching(false) }
+  })
 }
