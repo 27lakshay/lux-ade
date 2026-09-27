@@ -65,5 +65,6 @@ study-only.
 - Triage: published specs use `ready-for-agent`; see [triage labels](docs/agents/triage-labels.md).
 - Domain: read [CONTEXT.md](CONTEXT.md) and follow [domain guidance](docs/agents/domain.md) before
   changing shared terminology or contracts.
-- Library notes: Electron, Tailwind v4 and xterm.js publish no agent docs; read the verified notes
-  in `docs/agents/` before using their APIs.
+- Library notes: Electron and Tailwind v4 publish no agent docs; read the verified notes in
+  `docs/agents/` before using their APIs. The terminal (Ghostty as WebAssembly) is described in
+  [docs/agents/terminal.md](docs/agents/terminal.md).
