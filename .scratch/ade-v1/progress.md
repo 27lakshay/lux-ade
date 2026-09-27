@@ -1103,7 +1103,7 @@ disagree about where cancellation is recorded under storage failure; this needs
 a fix. It affects R004, which is not accepted.
 
 **Newly accepted (17):** R006, R008, R009, R010, R017, F010, F075, F099, F100,
-F104, F106, F107, F117, F121, F122, F126 and F129. The register now holds 58
+F104, F106, F107, F117, F121, F122, F126 and F129. The register now holds 61
 accepted rows.
 
 **Not merged:**
