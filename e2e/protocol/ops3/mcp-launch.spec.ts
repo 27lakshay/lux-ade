@@ -1,6 +1,6 @@
 // F131: a server registered once in the profile MCP catalog reaches the
-// providers through their adapters. Codex receives the resolved table as the
-// `mcp_servers` config override on thread/start and thread/resume; Claude
+// providers through their adapters. Codex receives each resolved server as a
+// `mcp_servers.<name>` config override on thread/start and thread/resume; Claude
 // receives it as the Agent SDK's `mcpServers` option. Delivery is `direct`:
 // ADE runs no gateway, so each provider negotiates protocol version,
 // capabilities and authorization with the server itself, and the resolution
@@ -63,16 +63,18 @@ test('F131: a Codex launch receives the resolved servers, and a resume receives 
   const { conversationId } = await startConversation(profile, 'codex', alphaRepo.path)
   await turn(profile, conversationId)
   const [started] = await codexCalls(profile, 'thread/start')
-  // Exactly the resolution, with the secret passed by name and never by value.
-  expect(started.config).toEqual({ mcp_servers: resolved.document.mcp_servers })
-  expect(started.config.mcp_servers.files).toMatchObject({ command: 'files-mcp', env: { LOG_LEVEL: 'info' },
+  // Exactly the resolution, one `mcp_servers.<name>` key per server so the
+  // user's own config.toml servers stay, with the secret passed by name only.
+  expect(started.config).toEqual(Object.fromEntries(Object.entries(resolved.document.mcp_servers)
+    .map(([name, server]) => [`mcp_servers.${name}`, server])))
+  expect(started.config['mcp_servers.files']).toMatchObject({ command: 'files-mcp', env: { LOG_LEVEL: 'info' },
     env_vars: ['FIXTURE_TOKEN'] })
 
   // Another workspace launches with its own resolution.
   const other = await startConversation(profile, 'codex', betaRepo.path)
   await turn(profile, other.conversationId)
   const betaStart = (await codexCalls(profile, 'thread/start'))[1]
-  expect(Object.keys(betaStart.config.mcp_servers).sort()).toEqual(['beta-only', 'files'])
+  expect(Object.keys(betaStart.config).sort()).toEqual(['mcp_servers.beta-only', 'mcp_servers.files'])
 
   // The catalog changes while the Agent runs; a resume after a daemon crash
   // launches with the current catalog, not the one the first launch saw.
@@ -86,7 +88,7 @@ test('F131: a Codex launch receives the resolved servers, and a resume receives 
   await turn(profile, conversationId)
   const resumed = await codexCalls(profile, 'thread/resume')
   expect(resumed.length).toBeGreaterThan(0)
-  expect(resumed.at(-1)!.config.mcp_servers.files.args).toEqual(['--root', '/srv'])
+  expect(resumed.at(-1)!.config['mcp_servers.files'].args).toEqual(['--root', '/srv'])
 })
 
 test('F131: a Claude launch receives the resolved servers as the SDK mcpServers option', async ({ profile }) => {

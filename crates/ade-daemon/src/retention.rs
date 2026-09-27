@@ -99,7 +99,8 @@ pub fn plan_policy_change(
         }
     }
     if stored == requested
-        && (expected_revision == stored_revision || expected_revision + 1 == stored_revision)
+        && (expected_revision == stored_revision
+            || expected_revision.checked_add(1) == Some(stored_revision))
     {
         return Ok(PolicyChange::Unchanged);
     }
@@ -468,6 +469,8 @@ mod tests {
         // A stale caller with another request is refused.
         assert!(plan_policy_change(2, &two_days, 0, &none).is_err());
         assert!(plan_policy_change(1, &two_days, 0, &none).is_err());
+        // A revision no daemon issued is refused, not an overflow.
+        assert!(plan_policy_change(1, &two_days, u64::MAX, &two_days).is_err());
         for bad in [0, DAY_MS - 1, 365 * DAY_MS + 1, -DAY_MS] {
             let request = RetentionConfigured {
                 service_log_idle_ms: None,

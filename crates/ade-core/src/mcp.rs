@@ -26,8 +26,8 @@ pub const PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2025-11-25", "2025-06-18
 pub const PROJECTED_PROVIDERS: &[&str] = &["claude", "codex", "omp"];
 
 /// Providers whose adapter passes the projection to the provider at launch:
-/// Codex as the `mcp_servers` config override on `thread/start` and
-/// `thread/resume`, Claude as the SDK's `mcpServers` query option. Oh My Pi
+/// Codex as one `mcp_servers.<name>` config override per server on
+/// `thread/start` and `thread/resume`, Claude as the SDK's `mcpServers` query option. Oh My Pi
 /// reads `mcp.json` from its agent directory, which ADE does not write
 /// without adoption, so it stays unwired.
 pub const WIRED_PROVIDERS: &[&str] = &["claude", "codex"];

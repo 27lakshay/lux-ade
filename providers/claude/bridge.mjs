@@ -132,7 +132,10 @@ export class Bridge {
       if(message.type==='system'&&message.subtype==='init')continue;
       if(query!==this.query)break;
       // A truncating resume the CLI refused (resumeDropsTurn) reports a result with no turn.
-      if(message.type==='result'&&!this.active&&[...(message.errors??[]),message.result??''].some(text=>String(text).startsWith('Resume rejected'))) {
+      const refusal=message.type==='result'&&!this.active&&[...(message.errors??[]),message.result??''].map(String).find(text=>text.startsWith('Resume rejected'));
+      if(refusal) {
+        // rewind() is still waiting on this query: it reports the refusal to its caller.
+        if(this.rewinding?.query===query) {this.rewinding.refused=refusal;continue;}
         this.event({type:'error',error:'Claude refused the conversation rewind; the history was kept'});
         continue;
       }
@@ -171,6 +174,8 @@ export class Bridge {
         this.event({type:'finished',session:this.session,turn:active.turn,status:active.cancelled?'interrupted':message.is_error?'failed':'completed',error:message.is_error?(message.errors??[message.result??message.subtype]).join('\n'):null});
       }
     }
+    // A refused rewind may end its query; rewind() then resumes plainly.
+    if(this.rewinding?.query===query)return;
     if(!this.closed&&query===this.query)throw new Error('Claude SDK stream closed; resume before continuing');
   }
   async child_transcript({session,child,offset=0,cursor=null}) {
@@ -286,16 +291,40 @@ export class Bridge {
     if(index===0)throw new Error('Claude cannot resume before its first message; nothing was rewound');
     const single=!chain.slice(index+1).some(prompt);
     const {sessionId,...kept}=this.options;
-    const options={...kept,resume:session,resumeSessionAt:chain[index-1].uuid,...(single?{resumeDropsTurn:drop_from}:{})};
+    const plain={...kept,resume:session};
+    const options={...plain,resumeSessionAt:chain[index-1].uuid,...(single?{resumeDropsTurn:drop_from}:{})};
+    const attempt=this.restart(options);
+    this.rewinding=attempt;
+    let failed=null;
+    try {await attempt.query.initializationResult();}
+    catch(error) {failed=error;}
+    // The CLI validates the fork while it boots, before it answers initialize,
+    // so its refusal is already delivered; one event-loop turn lets consume()
+    // read it. A refusal is final (SDK: do not retry the same fork): resume
+    // plainly, keeping the history, and report the rewind as refused.
+    await new Promise(resolve=>setImmediate(resolve));
+    this.rewinding=null;
+    if(attempt.refused||failed) {
+      const refused=this.restart(plain);
+      await refused.query.initializationResult();
+      throw new Error(`Claude refused the conversation rewind; the history was kept: ${attempt.refused??failed.message}`);
+    }
+    return {};
+  }
+  // Replaces the running query with one started from `options`. Nothing runs
+  // while it restarts; the old query's input generator ends with it.
+  restart(options) {
     const previous=this.query;
     this.generation++;this.wake?.();this.wake=null;
-    this.query=this.sdk.query({prompt:this.input(this.generation),options});
+    const query=this.sdk.query({prompt:this.input(this.generation),options});
+    this.query=query;
     previous.close();
-    this.options={...kept,resume:session};
+    this.options={...options};
+    delete this.options.resumeSessionAt;delete this.options.resumeDropsTurn;
     this.usageStream={query_id:randomUUID(),fresh:false,results:0};
-    this.watch(this.query);
-    await this.query.initializationResult();
-    return {};
+    const attempt={query,refused:null};
+    this.watch(query);
+    return attempt;
   }
   close() {this.closed=true;for(const request of [...this.permissions.values()])request.resolve({behavior:'deny',message:'lux-ade disconnected'});this.query?.close();this.wake?.();}
 }

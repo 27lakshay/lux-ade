@@ -26,14 +26,15 @@ export function fakeSdk(directory) {
         const at=history.findIndex(m=>m.uuid===options.resumeSessionAt);
         const dropped=history.slice(at+1);
         const prompt=m=>m.type==='user'&&typeof m.message?.content==='string';
-        rejected=at<0||(!!options.resumeDropsTurn&&(dropped[0]?.uuid!==options.resumeDropsTurn||dropped.slice(1).some(prompt)));
+        // An entry the session absorbed mid-turn (a task notification) is not from that turn.
+        rejected=at<0||(!!options.resumeDropsTurn&&(dropped[0]?.uuid!==options.resumeDropsTurn||dropped.slice(1).some(m=>prompt(m)||m.absorbed)));
         if(!rejected)history=history.slice(0,at+1);
       }
       // Recorded only for a catalog or rewind launch, so other call logs are unchanged.
       if(options.mcpServers||options.resumeSessionAt)record({method:'query',session,resume:options.resume??null,
         ...(options.mcpServers?{mcpServers:options.mcpServers}:{}),
         ...(options.resumeSessionAt?{resumeSessionAt:options.resumeSessionAt,resumeDropsTurn:options.resumeDropsTurn??null,rejected}:{})});
-      const messages=[];let wake=null,closed=false,current=null;
+      const messages=[];let wake=null,closed=false,current=null,ending=false;
       // Cumulative per query() call, as the SDK reports modelUsage and total_cost_usd.
       const usage={inputTokens:0,outputTokens:0,cacheReadInputTokens:0,cacheCreationInputTokens:0,costUSD:0};
       const save=()=>writeFileSync(file(session),JSON.stringify(history));
@@ -62,13 +63,14 @@ export function fakeSdk(directory) {
           current?.abort.abort();finish(true);return {still_queued:[]};
         },
         close(){closed=true;query.closed=true;current?.abort.abort();wake?.();},
-        async *[Symbol.asyncIterator](){while(!closed){if(messages.length){yield messages.shift();continue;}await new Promise(resolve=>wake=resolve);}},
+        async *[Symbol.asyncIterator](){while(!closed){if(messages.length){yield messages.shift();continue;}if(ending)return;await new Promise(resolve=>wake=resolve);}},
       };
       sdk.last=query;save();
-      if(rejected)queueMicrotask(()=>emit({type:'result',is_error:true,subtype:'error_during_execution',errors:[`Resume rejected by --resume-drops-turn: entries after ${options.resumeSessionAt} are not all from ${options.resumeDropsTurn}`]}));
+      // The CLI refuses at boot, before it answers initialize, and its stream then ends.
+      if(rejected)queueMicrotask(()=>{emit({type:'result',is_error:true,subtype:'error_during_execution',errors:[`Resume rejected by --resume-drops-turn: entries after ${options.resumeSessionAt} are not all from ${options.resumeDropsTurn}`]});ending=true;});
       queueMicrotask(async()=>{
         for await(const user of prompt) {
-          if(closed)break;
+          if(closed||ending)break;
           const text=user.message.content;
           record({method:'send',uuid:user.uuid,text});
           current={uuid:user.uuid,answer:`assistant-${user.uuid}`,text,abort:new AbortController()};
@@ -121,6 +123,8 @@ export function fakeSdk(directory) {
             record({method:"answer",answer});
           }
           if(!closed)finish(false);
+          // A task notification the session absorbed after the answer: kept in the chain, never shown.
+          if(text==='absorbed-notification'){history.push({type:'system',subtype:'task_notification',uuid:randomUUID(),absorbed:true});save();}
         }
       });
       return query;

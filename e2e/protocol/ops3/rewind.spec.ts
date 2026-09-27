@@ -4,6 +4,8 @@
 // being removed. ADE then removes its own messages from that turn on, moves
 // the Conversation's history epoch so older pages are refused, and the search
 // index drops the removed text. The preview says exactly what goes.
+import { chmod } from 'node:fs/promises'
+import { join } from 'node:path'
 import { expect, send, startConversation, test, waitForIdle, type ScratchProfile } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 
@@ -183,4 +185,74 @@ test('R001: a rewind whose reply was lost is read back after a daemon crash and 
   expect((await messages(profile, conversationId)).map((message) => message.text))
     .toEqual(['first zebracorn', 'Hello Claude'])
   expect(await profile.call('conversation.rewind', rewind)).toEqual(reply)
+})
+
+test('F039: a file rewind that stops part way is reported as partial, with what failed and the safety checkpoint', async ({ profile, repo }) => {
+  await repo.commit('Add two files', { 'a/first.txt': 'one\n', 'b/second.txt': 'one\n' })
+  const { workspaceId, conversationId } = await startConversation(profile, 'codex', repo.path)
+  const { checkpoint } = await profile.call('checkpoint.create', { operation_id: 'cp-partial', workspace_id: workspaceId,
+    label: 'before the agent' })
+  await repo.write('a/first.txt', 'two\n')
+  await repo.write('b/second.txt', 'two\n')
+  const preview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId, scope: 'files',
+    checkpoint_id: checkpoint.checkpoint_id })
+  // Git restores a/ first, then cannot replace the file in the read-only b/.
+  const locked = join(repo.path, 'b')
+  await chmod(locked, 0o555)
+  try {
+    const rewind = { operation_id: 'rewind-partial', conversation_id: conversationId, scope: 'files' as const,
+      checkpoint_id: checkpoint.checkpoint_id, expected_state: preview.files!.state_token, confirm_overwrite: true }
+    const reply = await profile.call('conversation.rewind', rewind)
+    expect(reply).toMatchObject({ outcome: 'partial', control: 'rewind_files',
+      files: { outcome: 'partial', verified: false, safety_checkpoint: { kind: 'safety' } } })
+    expect(reply.files!.problems.join('\n')).toMatch(/failed part way/)
+    expect(reply.reason).toBe(reply.files!.problems.join('; '))
+    expect(await repo.read('a/first.txt')).toBe('one\n')
+    expect(await repo.read('b/second.txt')).toBe('two\n')
+    // The partial outcome is the recorded one: a replay returns it and writes nothing more.
+    expect(await profile.call('conversation.rewind', rewind)).toEqual(reply)
+    // The safety checkpoint holds the state before the restore.
+    const safetyId = reply.files!.safety_checkpoint!.checkpoint_id
+    expect((await profile.call('checkpoint.list', { workspace_id: workspaceId })).checkpoints
+      .map((entry) => entry.checkpoint_id)).toContain(safetyId)
+  } finally {
+    await chmod(locked, 0o755)
+  }
+})
+
+test('F039: a rewind Claude refuses at resume keeps both histories and the Conversation continues', async ({ profile }) => {
+  // The third turn absorbs a task notification after its answer, so the
+  // discarded range is not all from that turn and the CLI refuses the fork.
+  const { conversationId } = await startConversation(profile, 'claude')
+  await turn(profile, conversationId, 'first zebracorn')
+  await turn(profile, conversationId, 'second quokkaflux')
+  await turn(profile, conversationId, 'absorbed-notification')
+  const all = await messages(profile, conversationId)
+  const third = all[4]!
+  const preview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
+    scope: 'conversation', before_message_id: third.id })
+  const rewind = { operation_id: 'rewind-refused', conversation_id: conversationId, scope: 'conversation' as const,
+    before_message_id: third.id, expected_state: preview.history!.state_token }
+  const refused = await profile.call('conversation.rewind', rewind)
+  expect(refused).toMatchObject({ outcome: 'refused', control: 'rewind_conversation' })
+  expect(refused.history).toBeUndefined()
+  const [native] = await rewindQueries(profile)
+  expect(native).toMatchObject({ resumeDropsTurn: third.turn_id, rejected: true })
+
+  // ADE removed nothing and did not move the epoch; the refusal replays.
+  expect(await messages(profile, conversationId)).toEqual(all)
+  expect((await profile.call('conversation.get', { conversation_id: conversationId })).history_epoch).toBe(0)
+  expect(await profile.call('conversation.rewind', rewind)).toEqual(refused)
+  expect(await rewindQueries(profile)).toHaveLength(1)
+  expect(await hits(profile, 'quokkaflux')).toBe(1)
+
+  // The bridge resumed plainly: the next turn runs, and a resume reads Claude's kept history back.
+  await turn(profile, conversationId, 'fourth ocelotwave')
+  const texts = ['first zebracorn', 'Hello Claude', 'second quokkaflux', 'Hello Claude', 'absorbed-notification',
+    'Hello Claude', 'fourth ocelotwave', 'Hello Claude']
+  expect((await messages(profile, conversationId)).map((message) => message.text)).toEqual(texts)
+  await profile.call('agent.disconnect', { conversation_id: conversationId })
+  await profile.call('agent.resume', { conversation_id: conversationId })
+  await waitForIdle(profile, conversationId)
+  expect((await messages(profile, conversationId)).map((message) => message.text)).toEqual(texts)
 })
