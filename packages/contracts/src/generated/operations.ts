@@ -151,6 +151,12 @@ export const operations = {
   "resources.inspect": { tier: "query", domain: "resources", request: "ResourcesInspectRequest", response: "HostResourcesState" },
   "resources.claim.resolve": { tier: "effect_command", domain: "resources", request: "ResourcesClaimResolveRequest", response: "HostResourcesState" },
   "resources.registry.accept": { tier: "effect_command", domain: "resources", request: "ResourcesRegistryAcceptRequest", response: "HostResourcesState" },
+  "browser.diagnostics.attach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsAttachRequest", response: "BrowserDiagnosticsState" },
+  "browser.diagnostics.detach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsDetachRequest", response: "BrowserDiagnosticsState" },
+  "browser.diagnostics.read": { tier: "query", domain: "browser", request: "BrowserDiagnosticsReadRequest", response: "BrowserDiagnostics" },
+  "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
+  "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
+  "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

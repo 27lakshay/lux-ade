@@ -1,5 +1,6 @@
 import { dailyUseCommand } from '@ade/client'
 import { CliError, required, type CommandResult } from '../shared.js'
+import { browserDiagnosticsUsage, runBrowserDiagnosticsCommand } from './browser-diagnostics.js'
 
 export const browserUsage = `  browser owner                         Inspect the selected profile's live browser owner
   browser list OWNER_ID                 List tabs under that exact owner
@@ -8,7 +9,7 @@ export const browserUsage = `  browser owner                         Inspect the
   browser navigate OWNER_ID TAB_ID URL --request-id ID
   browser close OWNER_ID TAB_ID --request-id ID
   browser operation REQUEST_ID          Inspect a browser mutation receipt
-`
+${browserDiagnosticsUsage}`
 
 export async function runBrowserCommand(socketPath: string, area: string | undefined, action: string | undefined,
   rest: string[]): Promise<CommandResult | undefined> {
@@ -24,6 +25,9 @@ export async function runBrowserCommand(socketPath: string, area: string | undef
     if (action === 'list') return dailyUseCommand(socketPath, { op: 'browser.list', profile_id: profileId, owner_id: ownerId })
     return dailyUseCommand(socketPath, { op: 'browser.inspect', profile_id: profileId, owner_id: ownerId,
       tab_id: required(rest[1], 'TAB_ID') })
+  }
+  if (area === 'browser' && (action === 'diagnostics' || action === 'recording')) {
+    return runBrowserDiagnosticsCommand(socketPath, () => browserProfile(socketPath), action, rest)
   }
   if (area === 'browser' && action === 'operation') {
     if (rest.length !== 1) throw new CliError('usage', 'browser operation requires REQUEST_ID.')

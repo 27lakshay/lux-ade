@@ -129,7 +129,7 @@ async function syncDirectory(directory: string): Promise<void> {
   const handle = await open(directory, 'r')
   try { await handle.sync() } finally { await handle.close() }
 }
-async function writeDurableRecord(directory: string, name: string, value: unknown): Promise<void> {
+export async function writeDurableRecord(directory: string, name: string, value: unknown): Promise<void> {
   const temporary = join(directory, `.${name}.${randomUUID()}.tmp`)
   try {
     const file = await open(temporary, 'wx', 0o600)
@@ -1038,6 +1038,24 @@ export async function reconcileBrowserReceipts(browserProfileId: string, profile
     if (result.status !== 'pending') settled += 1
   }
   return settled
+}
+/**
+ * The live page of one exact tab under the live owner lease. It never falls
+ * back to the selected or focused tab; a missing tab is unavailable, and a tab
+ * without a live page returns `contents: null`.
+ */
+export async function browserTabPage(id: string, tabId: unknown): Promise<{ tabId: string; contents: Electron.WebContents | null }> {
+  const lease = liveBrowserLease(id)
+  const state = await stateFor(id)
+  requireBrowserLease(id, lease)
+  const tab = exact(state, id, tabId)
+  const view = state.views.get(tab.id)
+  return { tabId: tab.id, contents: view && !view.webContents.isDestroyed() ? view.webContents : null }
+}
+/** The browser profile's storage directory, only while its owner lease is live. */
+export function browserProfileDirectory(id: string): string {
+  liveBrowserLease(id)
+  return profilePath(id)
 }
 function liveBrowserLease(id: string): BrowserLease {
   const lease = browserLease

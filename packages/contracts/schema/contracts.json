@@ -1328,6 +1328,85 @@
         }
       ]
     },
+    "BrowserAttachment": {
+      "description": "The debugger capture of one tab.",
+      "properties": {
+        "attached_at_ms": {
+          "description": "Wall-clock milliseconds when capture last attached.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "holders": {
+          "description": "Who holds capture: `caller` and one entry per active recording ID.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "description": "Why capture is detached: `not_attached`, `requested`, `target_closed`,\n`target_replaced`, or the debugger's own detach reason.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/BrowserAttachmentState"
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "attached_at_ms",
+        "holders"
+      ],
+      "type": "object"
+    },
+    "BrowserAttachmentState": {
+      "description": "Whether the owner's debugger capture holds the tab.",
+      "oneOf": [
+        {
+          "enum": [
+            "attached"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "detached",
+          "description": "Never attached, detached by request, or detached by the page or\nDevTools; `reason` says which.",
+          "type": "string"
+        }
+      ]
+    },
+    "BrowserCaptureKind": {
+      "description": "What a recording captures.",
+      "oneOf": [
+        {
+          "const": "screenshots",
+          "description": "Periodic PNG stills of the tab's page.",
+          "type": "string"
+        },
+        {
+          "const": "page_events",
+          "description": "The page's navigations, titles, load failures, crashes and close.",
+          "type": "string"
+        },
+        {
+          "const": "console",
+          "description": "Redacted console messages and exceptions.",
+          "type": "string"
+        },
+        {
+          "const": "network",
+          "description": "Redacted network request summaries.",
+          "type": "string"
+        }
+      ]
+    },
     "BrowserCloseRequest": {
       "additionalProperties": false,
       "description": "`browser.close`: close an exact tab.",
@@ -1354,6 +1433,279 @@
         "owner_id",
         "operation_id",
         "tab_id"
+      ],
+      "type": "object"
+    },
+    "BrowserConsoleEntry": {
+      "description": "One console message, exception or browser log entry, redacted and cut to\n1024 characters.",
+      "properties": {
+        "at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "level": {
+          "description": "The console method or log level, such as `log`, `warning` or `error`.",
+          "type": "string"
+        },
+        "line": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "seq": {
+          "description": "Shared with network entries; increases for the owner's lifetime.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "description": "`console`, `exception` or `browser`.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "url": {
+          "description": "The redacted script or page URL, when the page reported one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "seq",
+        "at_ms",
+        "source",
+        "level",
+        "text",
+        "url",
+        "line"
+      ],
+      "type": "object"
+    },
+    "BrowserDiagnostics": {
+      "description": "The `browser.diagnostics.read` reply.",
+      "properties": {
+        "attachment": {
+          "$ref": "#/$defs/BrowserAttachment"
+        },
+        "console": {
+          "items": {
+            "$ref": "#/$defs/BrowserConsoleEntry"
+          },
+          "type": "array"
+        },
+        "dropped": {
+          "$ref": "#/$defs/BrowserDiagnosticsDropped"
+        },
+        "excluded": {
+          "description": "What capture never includes.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "in_flight": {
+          "description": "Requests seen but not yet finished; they appear once they end.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "more": {
+          "description": "True when more entries follow this page.",
+          "type": "boolean"
+        },
+        "network": {
+          "items": {
+            "$ref": "#/$defs/BrowserNetworkEntry"
+          },
+          "type": "array"
+        },
+        "next": {
+          "description": "Pass as `after` to read the next page.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "redaction": {
+          "description": "The redaction policy, such as `ade-browser-redaction-v1`.",
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_diagnostics` type tag.",
+          "enum": [
+            "browser_diagnostics"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "attachment",
+        "console",
+        "network",
+        "next",
+        "more",
+        "in_flight",
+        "dropped",
+        "redaction",
+        "excluded"
+      ],
+      "type": "object"
+    },
+    "BrowserDiagnosticsAttachRequest": {
+      "additionalProperties": false,
+      "description": "`browser.diagnostics.attach`: start capturing console and network\nsummaries for one exact tab. Attaching an attached tab changes nothing.\nA tab without a live page, or whose debugger another client holds, fails.",
+      "properties": {
+        "op": {
+          "const": "browser.diagnostics.attach"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "BrowserDiagnosticsDetachRequest": {
+      "additionalProperties": false,
+      "description": "`browser.diagnostics.detach`: stop the caller's capture on one exact tab.\nThe captured entries stay readable until the tab closes. Detaching a\ndetached tab changes nothing; an active recording keeps its own capture.",
+      "properties": {
+        "op": {
+          "const": "browser.diagnostics.detach"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "BrowserDiagnosticsDropped": {
+      "description": "Entries the owner discarded to stay within its bounds.",
+      "properties": {
+        "console": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "network": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "console",
+        "network"
+      ],
+      "type": "object"
+    },
+    "BrowserDiagnosticsReadRequest": {
+      "additionalProperties": false,
+      "description": "`browser.diagnostics.read`: one page of captured entries for one exact tab.",
+      "properties": {
+        "after": {
+          "description": "Return entries whose `seq` is greater than this; the previous page's\n`next`. From the oldest retained entry when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit": {
+          "description": "1 to 200 entries across both kinds; 100 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "browser.diagnostics.read"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id"
+      ],
+      "type": "object"
+    },
+    "BrowserDiagnosticsState": {
+      "description": "The `browser.diagnostics.attach` and `browser.diagnostics.detach` reply.",
+      "properties": {
+        "attachment": {
+          "$ref": "#/$defs/BrowserAttachment"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_diagnostics_state` type tag.",
+          "enum": [
+            "browser_diagnostics_state"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "attachment"
       ],
       "type": "object"
     },
@@ -1475,6 +1827,106 @@
         "url"
       ],
       "type": "object"
+    },
+    "BrowserNetworkEntry": {
+      "description": "One network request summary. It never carries headers, cookies or bodies.",
+      "properties": {
+        "at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "duration_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "encoded_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "mime_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/BrowserNetworkOutcome"
+        },
+        "resource_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "Without user information or fragment, credential-like query values\nreplaced, cut to 1024 characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "at_ms",
+        "method",
+        "url",
+        "resource_type",
+        "status",
+        "mime_type",
+        "encoded_bytes",
+        "duration_ms",
+        "outcome",
+        "error"
+      ],
+      "type": "object"
+    },
+    "BrowserNetworkOutcome": {
+      "description": "How a network request ended.",
+      "oneOf": [
+        {
+          "enum": [
+            "completed",
+            "failed",
+            "canceled",
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "incomplete",
+          "description": "Capture ended, or the in-flight table was full, before the request did.",
+          "type": "string"
+        }
+      ]
     },
     "BrowserOpenRequest": {
       "additionalProperties": false,
@@ -1708,6 +2160,256 @@
         "op",
         "profile_id",
         "owner_id"
+      ],
+      "type": "object"
+    },
+    "BrowserRecording": {
+      "description": "The `browser.recording.*` reply: the recording's manifest.",
+      "properties": {
+        "artifact_dir": {
+          "description": "The local artifact directory. Nothing is published.",
+          "type": "string"
+        },
+        "bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "capture": {
+          "items": {
+            "$ref": "#/$defs/BrowserCaptureKind"
+          },
+          "type": "array"
+        },
+        "console_entries": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "coverage_gaps": {
+          "description": "What this recording does not cover, in plain words.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "format": {
+          "description": "`ade-browser-recording-v1`.",
+          "type": "string"
+        },
+        "frames": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frames_unavailable": {
+          "description": "Screenshot ticks that produced no image, such as a hidden page.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "interval_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_duration_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "network_entries": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "page_events": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "recording_id": {
+          "type": "string"
+        },
+        "started_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/BrowserRecordingState"
+        },
+        "stop_reason": {
+          "description": "`requested`, `duration_reached`, `frame_limit`, `size_limit`,\n`target_closed`, `write_failed` or `owner_stopped`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stopped_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_recording` type tag.",
+          "enum": [
+            "browser_recording"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "recording_id",
+        "tab_id",
+        "format",
+        "state",
+        "capture",
+        "interval_ms",
+        "max_duration_ms",
+        "started_at_ms",
+        "stopped_at_ms",
+        "stop_reason",
+        "artifact_dir",
+        "frames",
+        "frames_unavailable",
+        "page_events",
+        "console_entries",
+        "network_entries",
+        "bytes",
+        "coverage_gaps"
+      ],
+      "type": "object"
+    },
+    "BrowserRecordingGetRequest": {
+      "additionalProperties": false,
+      "description": "`browser.recording.get`: read a recording's manifest.",
+      "properties": {
+        "op": {
+          "const": "browser.recording.get"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "recording_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "recording_id"
+      ],
+      "type": "object"
+    },
+    "BrowserRecordingStartRequest": {
+      "additionalProperties": false,
+      "description": "`browser.recording.start`: record one exact tab into a local artifact.\n`recording_id` is caller-owned. Repeating a start with the same ID and\nthe same target and scope returns that recording in its current state and\nnever starts it again; the same ID with another target or scope conflicts.",
+      "properties": {
+        "capture": {
+          "description": "One or more distinct kinds.",
+          "items": {
+            "$ref": "#/$defs/BrowserCaptureKind"
+          },
+          "type": "array"
+        },
+        "interval_ms": {
+          "description": "Milliseconds between screenshots, 250 to 60000; 2000 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_duration_ms": {
+          "description": "The recording window, 1000 to 1800000 milliseconds; 300000 when absent.\nThe recording stops by itself when it ends.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "browser.recording.start"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "recording_id": {
+          "description": "1 to 128 ASCII letters, digits, `-` or `_`.",
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "recording_id",
+        "capture"
+      ],
+      "type": "object"
+    },
+    "BrowserRecordingState": {
+      "description": "Where a recording stands.",
+      "oneOf": [
+        {
+          "enum": [
+            "recording",
+            "stopped"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "The owner that ran it ended before sealing it. It is never resumed;\nthe files on disk are what it captured.",
+          "type": "string"
+        }
+      ]
+    },
+    "BrowserRecordingStopRequest": {
+      "additionalProperties": false,
+      "description": "`browser.recording.stop`: end a recording and seal its manifest. Stopping a\nstopped or interrupted recording returns it unchanged.",
+      "properties": {
+        "op": {
+          "const": "browser.recording.stop"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "recording_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "recording_id"
       ],
       "type": "object"
     },
@@ -13963,6 +14665,48 @@
       "request": "ResourcesRegistryAcceptRequest",
       "response": "HostResourcesState",
       "tier": "effect_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.diagnostics.attach",
+      "request": "BrowserDiagnosticsAttachRequest",
+      "response": "BrowserDiagnosticsState",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.diagnostics.detach",
+      "request": "BrowserDiagnosticsDetachRequest",
+      "response": "BrowserDiagnosticsState",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.diagnostics.read",
+      "request": "BrowserDiagnosticsReadRequest",
+      "response": "BrowserDiagnostics",
+      "tier": "query"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.recording.start",
+      "request": "BrowserRecordingStartRequest",
+      "response": "BrowserRecording",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.recording.stop",
+      "request": "BrowserRecordingStopRequest",
+      "response": "BrowserRecording",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.recording.get",
+      "request": "BrowserRecordingGetRequest",
+      "response": "BrowserRecording",
+      "tier": "query"
     }
   ]
 }

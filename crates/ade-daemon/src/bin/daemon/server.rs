@@ -1,3 +1,4 @@
+mod browser_tools;
 mod diagnostics;
 
 use crate::browser_reconcile::{HeldReceipt, owner_settlement};
@@ -1639,6 +1640,8 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                         | "browser.operation"
                 ) {
                     Ok(host.browser_command(&request))
+                } else if browser_tools::is_browser_tool(op) {
+                    Ok(host.browser_tool(&request))
                 } else {
                     host.sessions.command(&request)
                 } {

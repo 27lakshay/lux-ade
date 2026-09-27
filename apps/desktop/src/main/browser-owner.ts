@@ -4,8 +4,20 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { dailyUseCommand } from '@ade/client'
 import { mutateBrowserOwner, readBrowserOperation, readBrowserOwner, reconcileBrowserReceipts } from './browser'
+import { diagnosticsAttach, diagnosticsDetach, diagnosticsRead } from './browser-diagnostics'
+import { browserRecordingRequest, stopAllRecordings } from './browser-recording'
 
 const maxRequestBytes = 64 * 1024
+const browserTools = new Set(['browser.diagnostics.attach', 'browser.diagnostics.detach', 'browser.diagnostics.read',
+  'browser.recording.start', 'browser.recording.stop', 'browser.recording.get'])
+
+/** Maps a diagnostics or recording failure to its wire code; unprefixed failures are unavailable. */
+function toolErrorCode(error: unknown): string {
+  const message = String(error)
+  if (message.includes('invalid_request:')) return 'invalid_request'
+  if (message.includes('conflict:')) return 'conflict'
+  return 'unavailable'
+}
 
 export class BrowserOwner {
   private constructor(readonly profileId: string, private readonly browserProfileId: string, readonly ownerId: string,
@@ -72,6 +84,10 @@ export class BrowserOwner {
       if (value.profile_id !== this.profileId || value.owner_id !== this.ownerId) {
         throw new Error('Browser owner changed')
       }
+      if (typeof value.op === 'string' && browserTools.has(value.op)) {
+        try { return { ...identity, ...(await this.tool(value.op, value)) } }
+        catch (error) { return { type: 'error', code: toolErrorCode(error), message: String(error), ...identity } }
+      }
       if (value.op !== 'browser.list' && value.op !== 'browser.inspect' && value.op !== 'browser.operation' &&
         value.op !== 'browser.open' && value.op !== 'browser.navigate' && value.op !== 'browser.close') {
         throw new Error('Unsupported browser operation')
@@ -104,6 +120,16 @@ export class BrowserOwner {
     }
   }
 
+  /** Diagnostics and recording for one exact tab or recording; see browser-diagnostics.ts. */
+  private tool(op: string, value: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (op === 'browser.diagnostics.attach') return diagnosticsAttach(this.browserProfileId, value.tab_id)
+    if (op === 'browser.diagnostics.detach') return diagnosticsDetach(this.browserProfileId, value.tab_id)
+    if (op === 'browser.diagnostics.read') {
+      return diagnosticsRead(this.browserProfileId, value.tab_id, value.after, value.limit)
+    }
+    return browserRecordingRequest(this.browserProfileId, op, value)
+  }
+
   async register(endpoint: string, bootId: string | null = null): Promise<void> {
     if (this.registeredBootId && bootId === this.registeredBootId && endpoint === this.endpoint) return
     // A crash of this owner's predecessor or of the daemon can leave receipts
@@ -122,6 +148,7 @@ export class BrowserOwner {
     const endpoint = this.endpoint
     this.endpoint = null
     this.registeredBootId = null
+    await stopAllRecordings().catch((error) => console.error('Browser recordings did not stop cleanly', error))
     for (const peer of this.peers) peer.destroy()
     await new Promise<void>((done) => this.server.close(() => done()))
     await unlink(this.socketPath).catch(() => undefined)
