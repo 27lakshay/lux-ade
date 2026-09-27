@@ -130,6 +130,12 @@ fn every_operation_declares_a_tier_and_named_types() {
             ("conversation.get", "query"),
             ("agent.send", "effect_command"),
             ("agent.answer", "effect_command"),
+            ("provider.list", "query"),
+            ("account.list", "query"),
+            ("account.create", "effect_command"),
+            ("account.inspect", "query"),
+            ("account.verify", "idempotent_command"),
+            ("account.disable", "idempotent_command"),
         ]
     );
     let kinds: Vec<_> = bundle["frames"]

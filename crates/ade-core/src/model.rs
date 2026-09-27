@@ -61,7 +61,7 @@ fn legacy_ambient_account_context() -> String {
 }
 
 /// Profile-owned account metadata. Credentials remain with the native provider.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct Account {
     pub id: String,
     pub provider: String,
@@ -77,7 +77,7 @@ pub struct Account {
     pub omp_identity: Option<OmpIdentity>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct ClaudeIdentity {
     pub auth_method: String,
     pub api_provider: String,
@@ -85,13 +85,13 @@ pub struct ClaudeIdentity {
     pub org_id: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct CodexIdentity {
     pub email: String,
     pub chatgpt_account_id: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct OmpIdentity {
     pub provider: String,
     pub credential_id: u64,

@@ -1,122 +1,153 @@
 //! Provider catalogue, `account.*` operations and the account generation check.
 use super::*;
+use ade_core::contract::accounts::{
+    AccountAck, AccountCreateRequest, AccountDisableRequest, AccountDisabled,
+    AccountInspectRequest, AccountInspection, AccountListRequest, AccountVerifyRequest,
+    AccountsReply, Inspection, ProviderListRequest, ProvidersReply,
+};
 
 impl Sessions {
     pub(super) fn account_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
-        let string = required_str(request);
         match request["op"].as_str().unwrap_or("") {
-            "provider.list" => Ok(provider::catalogue()),
-            "account.list" => Ok(
-                json!({"type":"accounts","accounts":self.data.lock().unwrap().store.accounts()?}),
-            ),
+            "provider.list" => {
+                let _: ProviderListRequest = decode(request)?;
+                reply(&ProvidersReply {
+                    tag: Default::default(),
+                    providers: provider::descriptors().to_vec(),
+                })
+            }
+            "account.list" => {
+                let _: AccountListRequest = decode(request)?;
+                reply(&AccountsReply {
+                    tag: Default::default(),
+                    accounts: self.data.lock().unwrap().store.accounts()?,
+                })
+            }
             "account.create" => {
-                let d = self.data.lock().unwrap();
-                let account = d
-                    .store
-                    .create_account(string("provider")?, string("name")?)?;
-                Ok(json!({"type":"ack","account":account}))
-            }
-            "account.inspect" | "account.verify" => {
-                let id = string("account_id")?;
-                let account = self.data.lock().unwrap().store.account(id)?;
-                ensure!(
-                    matches!(account.provider.as_str(), "claude" | "codex" | "omp"),
-                    "Managed account inspection is unavailable for this provider"
-                );
-                let expected_generation = if request["op"] == "account.verify" {
-                    Some(
-                        request["expected_generation"]
-                            .as_u64()
-                            .context("Missing expected account generation")?,
-                    )
-                } else {
-                    None
-                };
-                let expected_identity: Option<Value> = if request["op"] == "account.verify" {
-                    Some(request.get("expected_identity").cloned().with_context(|| {
-                        let provider = match account.provider.as_str() {
-                            "claude" => "Claude",
-                            "codex" => "Codex",
-                            _ => "Oh My Pi",
-                        };
-                        format!("Missing inspected {provider} identity")
-                    })?)
-                } else {
-                    None
-                };
-                let context = ade_core::model::AccountExecution {
-                    id: account.id.clone(),
-                    provider: account.provider.clone(),
-                    native_home: account.native_home.clone(),
-                    generation: account.generation,
-                    claude_identity: account.claude_identity.clone(),
-                    codex_identity: account.codex_identity.clone(),
-                    omp_identity: account.omp_identity.clone(),
-                };
-                let inspection: provider::account_probe::Inspection = serde_json::from_value(
-                    self.runtime
-                        .agent(json!({"op":"agent.account_inspect","account":context}))?,
-                )?;
-                if let Some(generation) = expected_generation {
-                    ensure!(
-                        inspection.state == "ready",
-                        "{} account is not ready: {}",
-                        account.provider,
-                        inspection.reason
-                    );
-                    let identity = inspection
-                        .identity
-                        .context("Account identity is unavailable")?;
-                    ensure!(
-                        expected_identity.as_ref() == Some(&identity),
-                        "Account identity changed since inspection; inspect again"
-                    );
-                    let d = self.data.lock().unwrap();
-                    let updated = if account.provider == "claude" {
-                        d.store.verify_claude_account(
-                            id,
-                            generation,
-                            serde_json::from_value(identity)
-                                .context("Invalid inspected Claude identity")?,
-                        )?
-                    } else if account.provider == "codex" {
-                        d.store.verify_codex_account(
-                            id,
-                            generation,
-                            serde_json::from_value(identity)
-                                .context("Invalid inspected Codex identity")?,
-                        )?
-                    } else {
-                        d.store.verify_omp_account(
-                            id,
-                            generation,
-                            serde_json::from_value(identity)
-                                .context("Invalid inspected Oh My Pi identity")?,
-                        )?
-                    };
-                    Ok(json!({"type":"ack","account":updated}))
-                } else {
-                    let current = self.data.lock().unwrap().store.account(id)?;
-                    ensure!(
-                        current.generation == account.generation,
-                        "Account changed during inspection; retry"
-                    );
-                    Ok(
-                        json!({"type":"account_inspection","account_id":id,"generation":account.generation,"inspection":inspection}),
-                    )
-                }
-            }
-            "account.disable" => {
+                let create: AccountCreateRequest = decode(request)?;
+                let provider = non_empty("provider", &create.provider)?;
+                let name = non_empty("name", &create.name)?;
                 let account = self
                     .data
                     .lock()
                     .unwrap()
                     .store
-                    .disable_account(string("account_id")?)?;
-                Ok(json!({"type":"ack","account":account,"native_logout":false}))
+                    .create_account(provider, name)?;
+                reply(&AccountAck {
+                    tag: Default::default(),
+                    account,
+                })
+            }
+            "account.inspect" => {
+                let inspect: AccountInspectRequest = decode(request)?;
+                let id = non_empty("account_id", &inspect.account_id)?;
+                let account = self.managed_account(id)?;
+                let inspection = self.inspect_account(&account)?;
+                let current = self.data.lock().unwrap().store.account(id)?;
+                ensure!(
+                    current.generation == account.generation,
+                    "Account changed during inspection; retry"
+                );
+                reply(&AccountInspection {
+                    tag: Default::default(),
+                    account_id: account.id,
+                    generation: account.generation,
+                    inspection,
+                })
+            }
+            "account.verify" => {
+                let verify: AccountVerifyRequest = decode(request)?;
+                let id = non_empty("account_id", &verify.account_id)?;
+                let account = self.managed_account(id)?;
+                let generation = verify
+                    .expected_generation
+                    .context("Missing expected account generation")?;
+                let expected_identity = verify.expected_identity.with_context(|| {
+                    let provider = match account.provider.as_str() {
+                        "claude" => "Claude",
+                        "codex" => "Codex",
+                        _ => "Oh My Pi",
+                    };
+                    format!("Missing inspected {provider} identity")
+                })?;
+                let inspection = self.inspect_account(&account)?;
+                ensure!(
+                    inspection.state == "ready",
+                    "{} account is not ready: {}",
+                    account.provider,
+                    inspection.reason
+                );
+                let identity = inspection
+                    .identity
+                    .context("Account identity is unavailable")?;
+                ensure!(
+                    expected_identity == identity,
+                    "Account identity changed since inspection; inspect again"
+                );
+                let d = self.data.lock().unwrap();
+                let updated = if account.provider == "claude" {
+                    d.store.verify_claude_account(
+                        id,
+                        generation,
+                        serde_json::from_value(identity)
+                            .context("Invalid inspected Claude identity")?,
+                    )?
+                } else if account.provider == "codex" {
+                    d.store.verify_codex_account(
+                        id,
+                        generation,
+                        serde_json::from_value(identity)
+                            .context("Invalid inspected Codex identity")?,
+                    )?
+                } else {
+                    d.store.verify_omp_account(
+                        id,
+                        generation,
+                        serde_json::from_value(identity)
+                            .context("Invalid inspected Oh My Pi identity")?,
+                    )?
+                };
+                reply(&AccountAck {
+                    tag: Default::default(),
+                    account: updated,
+                })
+            }
+            "account.disable" => {
+                let disable: AccountDisableRequest = decode(request)?;
+                let id = non_empty("account_id", &disable.account_id)?;
+                let account = self.data.lock().unwrap().store.disable_account(id)?;
+                reply(&AccountDisabled {
+                    tag: Default::default(),
+                    account,
+                    native_logout: false,
+                })
             }
             _ => bail!("Unknown session operation"),
         }
+    }
+    /// Loads an account whose provider supports native inspection.
+    fn managed_account(&self, id: &str) -> Result<Account> {
+        let account = self.data.lock().unwrap().store.account(id)?;
+        ensure!(
+            matches!(account.provider.as_str(), "claude" | "codex" | "omp"),
+            "Managed account inspection is unavailable for this provider"
+        );
+        Ok(account)
+    }
+    /// Runs the provider's native status probe against one account snapshot.
+    fn inspect_account(&self, account: &Account) -> Result<Inspection> {
+        let context = ade_core::model::AccountExecution {
+            id: account.id.clone(),
+            provider: account.provider.clone(),
+            native_home: account.native_home.clone(),
+            generation: account.generation,
+            claude_identity: account.claude_identity.clone(),
+            codex_identity: account.codex_identity.clone(),
+            omp_identity: account.omp_identity.clone(),
+        };
+        Ok(serde_json::from_value(self.runtime.agent(
+            json!({"op":"agent.account_inspect","account":context}),
+        )?)?)
     }
     pub(super) fn ensure_account_current(
         d: &Data,

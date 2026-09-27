@@ -1,5 +1,263 @@
 {
   "$defs": {
+    "Account": {
+      "description": "Profile-owned account metadata. Credentials remain with the native provider.",
+      "properties": {
+        "claude_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClaudeIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "codex_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CodexIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "native_home": {
+          "type": "string"
+        },
+        "omp_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OmpIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "provider",
+        "name",
+        "native_home",
+        "generation",
+        "state"
+      ],
+      "type": "object"
+    },
+    "AccountAck": {
+      "description": "The `account.create` and `account.verify` reply.",
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/Account"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "account"
+      ],
+      "type": "object"
+    },
+    "AccountCreateRequest": {
+      "additionalProperties": false,
+      "description": "`account.create`: register a new native account home for a provider.",
+      "properties": {
+        "name": {
+          "description": "Trimmed by the daemon; 1 to 80 characters without line breaks.",
+          "type": "string"
+        },
+        "op": {
+          "const": "account.create"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "provider",
+        "name"
+      ],
+      "type": "object"
+    },
+    "AccountDisableRequest": {
+      "additionalProperties": false,
+      "description": "`account.disable`: stop new ADE launches with this account.",
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "account.disable"
+        }
+      },
+      "required": [
+        "op",
+        "account_id"
+      ],
+      "type": "object"
+    },
+    "AccountDisabled": {
+      "description": "The `account.disable` reply. ADE never logs the native CLI out.",
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/Account"
+        },
+        "native_logout": {
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "account",
+        "native_logout"
+      ],
+      "type": "object"
+    },
+    "AccountInspectRequest": {
+      "additionalProperties": false,
+      "description": "`account.inspect`: probe a managed account's native readiness.",
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "account.inspect"
+        }
+      },
+      "required": [
+        "op",
+        "account_id"
+      ],
+      "type": "object"
+    },
+    "AccountInspection": {
+      "description": "The `account.inspect` reply.",
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "generation": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "inspection": {
+          "$ref": "#/$defs/Inspection"
+        },
+        "type": {
+          "description": "The `account_inspection` type tag.",
+          "enum": [
+            "account_inspection"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "account_id",
+        "generation",
+        "inspection"
+      ],
+      "type": "object"
+    },
+    "AccountListRequest": {
+      "additionalProperties": false,
+      "description": "`account.list`: every account in the profile.",
+      "properties": {
+        "op": {
+          "const": "account.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "AccountVerifyRequest": {
+      "additionalProperties": false,
+      "description": "`account.verify`: pin the identity an earlier `account.inspect` returned.",
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "expected_generation": {
+          "description": "The `generation` from `account.inspect`. Required on the wire; the\ndaemon reports its absence after it has found the account.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expected_identity": {
+          "description": "The `inspection.identity` object from `account.inspect`, as returned."
+        },
+        "op": {
+          "const": "account.verify"
+        }
+      },
+      "required": [
+        "op",
+        "account_id",
+        "expected_generation",
+        "expected_identity"
+      ],
+      "type": "object"
+    },
+    "AccountsReply": {
+      "description": "The `account.list` reply.",
+      "properties": {
+        "accounts": {
+          "items": {
+            "$ref": "#/$defs/Account"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `accounts` type tag.",
+          "enum": [
+            "accounts"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "accounts"
+      ],
+      "type": "object"
+    },
     "Ack": {
       "description": "A bare acceptance reply.",
       "properties": {
@@ -173,6 +431,44 @@
         "workspaces",
         "conversations",
         "windows"
+      ],
+      "type": "object"
+    },
+    "ClaudeIdentity": {
+      "properties": {
+        "api_provider": {
+          "type": "string"
+        },
+        "auth_method": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "org_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "auth_method",
+        "api_provider",
+        "email",
+        "org_id"
+      ],
+      "type": "object"
+    },
+    "CodexIdentity": {
+      "properties": {
+        "chatgpt_account_id": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "chatgpt_account_id"
       ],
       "type": "object"
     },
@@ -472,6 +768,34 @@
       ],
       "type": "object"
     },
+    "Inspection": {
+      "description": "A provider's native readiness report for one account.",
+      "properties": {
+        "identity": {
+          "description": "The provider-specific identity to pin; its shape depends on the provider."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "state": {
+          "description": "`ready` when the account can be verified.",
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "version",
+        "identity"
+      ],
+      "type": "object"
+    },
     "Message": {
       "properties": {
         "attachments": {
@@ -531,6 +855,52 @@
       ],
       "type": "object"
     },
+    "OmpIdentity": {
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "credential_id": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "credential_type": {
+          "type": "string"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identity_key": {
+          "type": "string"
+        },
+        "org_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "credential_id",
+        "credential_type",
+        "identity_key",
+        "email",
+        "account_id",
+        "org_id"
+      ],
+      "type": "object"
+    },
     "PendingRequest": {
       "properties": {
         "answer_attempt": {
@@ -577,6 +947,42 @@
         "status",
         "answer_dispatched",
         "answer_attempt"
+      ],
+      "type": "object"
+    },
+    "ProviderListRequest": {
+      "additionalProperties": false,
+      "description": "`provider.list`: the providers this daemon can launch.",
+      "properties": {
+        "op": {
+          "const": "provider.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ProvidersReply": {
+      "description": "The `provider.list` reply.",
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/Descriptor"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `providers` type tag.",
+          "enum": [
+            "providers"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "providers"
       ],
       "type": "object"
     },
@@ -719,6 +1125,48 @@
       "request": "AgentAnswerRequest",
       "response": "Ack",
       "tier": "effect_command"
+    },
+    {
+      "domain": "accounts",
+      "name": "provider.list",
+      "request": "ProviderListRequest",
+      "response": "ProvidersReply",
+      "tier": "query"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.list",
+      "request": "AccountListRequest",
+      "response": "AccountsReply",
+      "tier": "query"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.create",
+      "request": "AccountCreateRequest",
+      "response": "AccountAck",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.inspect",
+      "request": "AccountInspectRequest",
+      "response": "AccountInspection",
+      "tier": "query"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.verify",
+      "request": "AccountVerifyRequest",
+      "response": "AccountAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.disable",
+      "request": "AccountDisableRequest",
+      "response": "AccountDisabled",
+      "tier": "idempotent_command"
     }
   ]
 }

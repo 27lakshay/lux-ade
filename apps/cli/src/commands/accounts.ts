@@ -1,4 +1,4 @@
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand } from '@ade/client'
 import { CliError, jsonObject, required, type CommandResult } from '../shared.js'
 
 export const accountUsage = `  account list                           List profile accounts
@@ -22,22 +22,23 @@ export async function runAccountCommand(socketPath: string, area: string | undef
   rest: string[]): Promise<CommandResult | undefined> {
   if (area === 'account' && action === 'list') {
     if (rest.length) throw new CliError('usage', 'account list does not accept arguments.')
-    return requestDaemon(socketPath, 'account.list')
+    return dailyUseCommand(socketPath, { op: 'account.list' })
   }
   if (area === 'account' && action === 'create') {
     if (rest.length !== 2) throw new CliError('usage', 'account create requires PROVIDER NAME.')
-    return requestDaemon(socketPath, 'account.create', {
-      provider: required(rest[0], 'PROVIDER'), name: required(rest[1], 'NAME'),
+    return dailyUseCommand(socketPath, {
+      op: 'account.create', provider: required(rest[0], 'PROVIDER'), name: required(rest[1], 'NAME'),
     })
   }
   if (area === 'account' && (action === 'inspect' || action === 'verify' || action === 'disable')) {
     const count = action === 'verify' ? 3 : 1
     if (rest.length !== count) throw new CliError('usage', `account ${action} requires ${action === 'verify' ? 'ID EXPECTED_GENERATION IDENTITY_JSON' : 'ID'}.`)
-    return requestDaemon(socketPath, `account.${action}`, {
-      account_id: required(rest[0], 'ID'),
-      ...(action === 'verify' ? { expected_generation: generation(rest[1]),
-        expected_identity: jsonObject(rest[2], 'IDENTITY_JSON') } : {}),
-    })
+    const account_id = required(rest[0], 'ID')
+    if (action === 'verify') {
+      return dailyUseCommand(socketPath, { op: 'account.verify', account_id,
+        expected_generation: generation(rest[1]), expected_identity: jsonObject(rest[2], 'IDENTITY_JSON') })
+    }
+    return dailyUseCommand(socketPath, { op: action === 'inspect' ? 'account.inspect' : 'account.disable', account_id })
   }
   return undefined
 }
