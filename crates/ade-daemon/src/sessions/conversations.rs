@@ -1,5 +1,9 @@
 //! Conversation, draft, queue, attachment, agent and window operations.
 use super::*;
+use ade_core::contract::agents::{
+    AgentCancelRequest, AgentChildTranscriptRequest, AgentDisconnectRequest, AgentResumeRequest,
+    AgentSendReviewRequest, ChildTranscriptPage,
+};
 use ade_core::contract::conversations::{
     Ack, AgentAnswerRequest, AgentSendRequest, ConversationGetRequest, ConversationSnapshot,
 };
@@ -112,11 +116,12 @@ impl Sessions {
                 })
             }
             "agent.child_transcript" => {
-                let id = string("conversation_id")?;
-                let child = string("child_id")?;
-                let offset = request["offset"].as_u64().unwrap_or(0);
+                let page: AgentChildTranscriptRequest = decode(request)?;
+                let id = non_empty("conversation_id", &page.conversation_id)?;
+                let child = non_empty("child_id", &page.child_id)?;
+                let offset = page.offset.unwrap_or(0);
                 ensure!(offset <= 100_000, "Child transcript offset is too large");
-                let cursor = request["cursor"].as_str();
+                let cursor = page.cursor.as_deref();
                 ensure!(
                     cursor.is_none_or(|c| !c.is_empty() && c.len() <= 4096),
                     "Invalid child transcript cursor"
@@ -126,7 +131,7 @@ impl Sessions {
                     let c = d.store.conversation(id)?;
                     let message = d
                         .store
-                        .message(string("message_id")?)?
+                        .message(non_empty("message_id", &page.message_id)?)?
                         .context("Child record is unavailable")?;
                     ensure!(
                         message.conversation_id == id,
@@ -149,7 +154,10 @@ impl Sessions {
                             .context("Parent session is unavailable")?,
                     )
                 };
-                rpc.child_transcript(&session, child, offset, cursor)
+                let page: ChildTranscriptPage =
+                    serde_json::from_value(rpc.child_transcript(&session, child, offset, cursor)?)
+                        .context("Provider returned an invalid child transcript page")?;
+                reply(&page)
             }
             "draft.get" => Ok(
                 json!({"type":"draft","draft":self.data.lock().unwrap().store.draft(string("conversation_id")?,string("window_id")?)?}),
@@ -263,11 +271,14 @@ impl Sessions {
                 reply(&Ack::default())
             }
             "agent.send_review" => {
-                let conversation = string("conversation_id")?;
-                let key = string("request_id")?;
-                let text = request["text"].as_str().context("Missing prompt text")?;
-                let anchor = request.get("review_anchor");
-                let feedback = request.get("review_feedback");
+                // Keep the prompt-specific wording for a missing text field.
+                request["text"].as_str().context("Missing prompt text")?;
+                let review: AgentSendReviewRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &review.conversation_id)?;
+                let key = non_empty("request_id", &review.request_id)?;
+                let text = review.text.as_str();
+                let anchor = review.review_anchor.as_ref();
+                let feedback = review.review_feedback.as_ref();
                 ensure!(
                     anchor.is_some() != feedback.is_some(),
                     "Provide one review payload"
@@ -277,9 +288,7 @@ impl Sessions {
                 } else {
                     vec![anchor.context("Missing review anchor")?]
                 };
-                let attachments = serde_json::from_value::<Vec<crate::model::Attachment>>(
-                    request.get("attachments").cloned().unwrap_or(json!([])),
-                )?;
+                let attachments = review.attachments;
                 ensure!(
                     attachments.is_empty(),
                     "Review feedback cannot include attachments"
@@ -329,7 +338,7 @@ impl Sessions {
                             prelease: None,
                         },
                     )?;
-                    return Ok(json!({"type":"ack"}));
+                    return reply(&Ack::default());
                 }
                 let lease = {
                     let mut attempts = 0;
@@ -375,7 +384,7 @@ impl Sessions {
                         .reject_send_intent(conversation, key, text, &attachments);
                     return Err(error);
                 }
-                Ok(json!({"type":"ack"}))
+                reply(&Ack::default())
             }
             "queue.enqueue" | "queue.cancel" | "queue.pause" => {
                 let mut d = self.data.lock().unwrap();
@@ -418,7 +427,8 @@ impl Sessions {
                 Ok(json!({"type":"ack"}))
             }
             "agent.disconnect" => {
-                let id = string("conversation_id")?;
+                let disconnect: AgentDisconnectRequest = decode(request)?;
+                let id = non_empty("conversation_id", &disconnect.conversation_id)?;
                 let mut d = self.data.lock().unwrap();
                 let mut c = d.store.conversation(id)?;
                 ensure!(
@@ -440,15 +450,17 @@ impl Sessions {
                 c.updated_at = now_ms();
                 d.store.commit_conversation(&c, &[], &[])?;
                 self.changed(&mut d, &c, &[])?;
-                Ok(json!({"type":"ack"}))
+                reply(&Ack::default())
             }
             "agent.resume" => {
-                self.resume(string("conversation_id")?)?;
-                Ok(json!({"type":"ack"}))
+                let resume: AgentResumeRequest = decode(request)?;
+                self.resume(non_empty("conversation_id", &resume.conversation_id)?)?;
+                reply(&Ack::default())
             }
             "agent.cancel" => {
-                self.cancel(string("conversation_id")?)?;
-                Ok(json!({"type":"ack"}))
+                let cancel: AgentCancelRequest = decode(request)?;
+                self.cancel(non_empty("conversation_id", &cancel.conversation_id)?)?;
+                reply(&Ack::default())
             }
             "agent.answer" => {
                 let answer: AgentAnswerRequest = decode(request)?;

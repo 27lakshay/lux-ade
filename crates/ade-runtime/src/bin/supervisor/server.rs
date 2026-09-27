@@ -376,6 +376,9 @@ impl Drop for StreamGuard {
     }
 }
 fn agent_command(host: &Host, request: &Value) -> Result<Value> {
+    use ade_core::contract::agents::{
+        AgentAccountInspectRequest, AgentAccountInspection, AgentList, AgentListRequest, AgentRun,
+    };
     use ade_runtime::agent_runtime::{Run, Spec};
     let op = request["op"].as_str().unwrap_or("");
     let (run, admission) = {
@@ -385,8 +388,9 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
             return Err(runtime::OwnerFenced.into());
         }
         if op == "agent.account_inspect" {
+            let inspect: AgentAccountInspectRequest = serde_json::from_value(request.clone())?;
             let account: ade_core::model::AccountExecution =
-                serde_json::from_value(request["account"].clone())?;
+                serde_json::from_value(inspect.account)?;
             drop(data);
             let inspection = if account.provider == "omp" {
                 ade_runtime::provider::omp_probe::inspect(&account)
@@ -395,14 +399,25 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
             } else {
                 ade_runtime::provider::account_probe::inspect(&account)
             };
-            return Ok(serde_json::to_value(inspection)?);
+            return Ok(serde_json::to_value(AgentAccountInspection {
+                state: inspection.state,
+                reason: inspection.reason,
+                version: inspection.version,
+                identity: inspection.identity,
+            })?);
         }
         if op == "agent.list" {
+            let _: AgentListRequest = serde_json::from_value(request.clone())?;
             let agents: Vec<_> = data.agents.values().cloned().collect();
             drop(data);
-            return Ok(
-                json!({"type":"agents","agents":agents.iter().map(|r| r.describe()).collect::<Vec<_>>()}),
-            );
+            let agents = agents
+                .iter()
+                .map(|r| serde_json::from_value::<AgentRun>(r.describe()))
+                .collect::<Result<_, _>>()?;
+            return Ok(serde_json::to_value(AgentList {
+                tag: Default::default(),
+                agents,
+            })?);
         }
         if op == "agent.create" {
             let spec: Spec = serde_json::from_value(request["spec"].clone())?;

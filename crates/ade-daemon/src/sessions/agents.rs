@@ -933,15 +933,13 @@ impl Sessions {
             (rpc, p, native_resolved)
         };
         if native_resolved {
-            let agents = self.runtime.agent(json!({"op":"agent.list"}))?;
-            let present = agents["agents"].as_array().is_some_and(|items| {
-                items.iter().any(|item| {
-                    item["spec"]["run"] == native.run_id
-                        && item["commands"].as_array().is_some_and(|commands| {
-                            commands.contains(&json!(native.answer_command_key()))
-                        })
-                })
-            });
+            let agents: ade_core::contract::agents::AgentList =
+                serde_json::from_value(self.runtime.agent(json!({"op":"agent.list"}))?)?;
+            let key = native.answer_command_key();
+            let present = agents
+                .agents
+                .iter()
+                .any(|item| item.spec.run == native.run_id && item.commands.contains(&key));
             ensure!(
                 present,
                 "Native request ended without a recorded answer receipt; outcome is unknown"
