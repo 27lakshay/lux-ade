@@ -99,6 +99,29 @@ export type ContractDefinition =
   | DeliveryOutcome
   | DeliveryStatus
   | Descriptor
+  | DiagnosticClaims
+  | DiagnosticCounter
+  | DiagnosticCounterKind
+  | DiagnosticIdentity
+  | DiagnosticLive
+  | DiagnosticLogs
+  | DiagnosticProvenance
+  | DiagnosticQueue
+  | DiagnosticReceipts
+  | DiagnosticRedaction
+  | DiagnosticRetention
+  | DiagnosticRun
+  | DiagnosticService
+  | DiagnosticTerminal
+  | DiagnosticUnit
+  | DiagnosticUnknown
+  | DiagnosticUnknownSource
+  | DiagnosticUnresolvedClaim
+  | DiagnosticWindow
+  | DiagnosticsExport
+  | DiagnosticsExportRequest
+  | DiagnosticsStatus
+  | DiagnosticsStatusRequest
   | Draft
   | DraftGetRequest
   | DraftReply
@@ -540,6 +563,26 @@ export type DeliveryOutcome = 'shown' | 'failed' | 'suppressed'
  * Where one activity's delivery on one channel stands.
  */
 export type DeliveryStatus = 'claimed' | 'shown' | 'failed' | 'suppressed'
+/**
+ * What a diagnostic counter counts.
+ */
+export type DiagnosticCounterKind = 'dropped' | 'coalesced'
+/**
+ * How far a reported number can be trusted.
+ */
+export type DiagnosticProvenance = 'exact' | 'approximate' | 'unavailable'
+/**
+ * The window a counter covers.
+ */
+export type DiagnosticWindow = 'daemon_boot' | 'live_incarnations'
+/**
+ * The unit a queue gauge counts.
+ */
+export type DiagnosticUnit = 'items' | 'bytes'
+/**
+ * Where an unknown execution was found.
+ */
+export type DiagnosticUnknownSource = 'receipt' | 'claim' | 'terminal' | 'conversation' | 'runtime'
 /**
  * Why an entry does not reach a provider.
  */
@@ -1978,6 +2021,390 @@ export interface DelegateRequest {
    */
   title?: string
   workspace: WorkspaceChoice
+}
+/**
+ * Lease and claim state.
+ */
+export interface DiagnosticClaims {
+  active_git_operations: number
+  /**
+   * Worktree leases the session layer holds for service and script terminals.
+   */
+  session_worktree_leases: number
+  /**
+   * Workspaces whose worktree lease a live terminal holds.
+   */
+  terminal_worktree_leases: string[]
+  unresolved: DiagnosticUnresolvedClaim[]
+  [k: string]: unknown
+}
+/**
+ * A lease the daemon holds as unresolved.
+ */
+export interface DiagnosticUnresolvedClaim {
+  /**
+   * Whether the unresolved lease still holds the worktree lease.
+   */
+  holds_worktree: boolean
+  /**
+   * The run or terminal incarnation the lease expects, when recorded.
+   */
+  incarnation: string | null
+  /**
+   * `agent`, `service` or `script`.
+   */
+  kind: string
+  reason: string
+  /**
+   * The Conversation ID, service name or script run ID.
+   */
+  subject: string
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * A dropped or coalesced count.
+ */
+export interface DiagnosticCounter {
+  kind: DiagnosticCounterKind
+  name: string
+  note: string
+  provenance: DiagnosticProvenance
+  /**
+   * `null` when the source was unavailable.
+   */
+  value: number | null
+  window: DiagnosticWindow
+  [k: string]: unknown
+}
+/**
+ * The identities a report correlates.
+ */
+export interface DiagnosticIdentity {
+  application_protocol: string
+  arch: string
+  boot_id: string
+  /**
+   * `ADE_BUILD_ID`, or `null` when the daemon was built without one.
+   */
+  build_id: string | null
+  daemon_pid: number
+  /**
+   * A stable, non-reversible key for this host: 16 hex digits of the
+   * SHA-256 of its host name, or `unknown`.
+   */
+  host_key: string
+  os: string
+  profile_id: string
+  /**
+   * The runtime incarnation.
+   */
+  runtime_instance: string
+  runtime_pid: number
+  runtime_protocol: string
+  [k: string]: unknown
+}
+/**
+ * Live execution as the runtime reports it.
+ */
+export interface DiagnosticLive {
+  /**
+   * False when the runtime could not be asked; runs and terminals are then
+   * empty and every service's `running` is `null`.
+   */
+  observed: boolean
+  runs: DiagnosticRun[]
+  runtime_instance: string
+  services: DiagnosticService[]
+  terminals: DiagnosticTerminal[]
+  [k: string]: unknown
+}
+/**
+ * One live Agent run in the runtime.
+ */
+export interface DiagnosticRun {
+  /**
+   * Whether the run holds a pinned account context. The context itself is
+   * never reported.
+   */
+  account_pinned: boolean
+  conversation_id: string
+  pid: number | null
+  provider: string
+  /**
+   * The execution attempt.
+   */
+  run_id: string
+  [k: string]: unknown
+}
+/**
+ * One configured service and whether its terminal is live.
+ */
+export interface DiagnosticService {
+  /**
+   * The service identity.
+   */
+  identity: string
+  /**
+   * The incarnation of the service's last run.
+   */
+  last_run_transfer_id: string | null
+  name: string
+  revision: number
+  /**
+   * `null` when the runtime was not observed.
+   */
+  running: boolean | null
+  terminal_id: string | null
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * One runtime terminal.
+ */
+export interface DiagnosticTerminal {
+  clients: number | null
+  durable_log_failed: boolean
+  /**
+   * The recorded exit kind, when the shell exited.
+   */
+  exit_kind: string | null
+  reply_dropped_bytes: number | null
+  run_id: string | null
+  scrollback_bytes: number | null
+  shell_pid: number | null
+  shell_running: boolean
+  terminal_id: string
+  /**
+   * The terminal incarnation.
+   */
+  transfer_id: string | null
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * The local diagnostic log folder against its budget.
+ */
+export interface DiagnosticLogs {
+  available: boolean
+  bytes: number
+  /**
+   * Bytes one process may write to its current daily file.
+   */
+  daily_byte_budget: number
+  files: number
+  /**
+   * Rotated files kept per process.
+   */
+  max_files_per_process: number
+  [k: string]: unknown
+}
+/**
+ * The depth of one queue or spool.
+ */
+export interface DiagnosticQueue {
+  /**
+   * The bound, when the queue has one.
+   */
+  capacity: number | null
+  /**
+   * `null` when the source was unavailable.
+   */
+  depth: number | null
+  name: string
+  note: string
+  provenance: DiagnosticProvenance
+  unit: DiagnosticUnit
+  [k: string]: unknown
+}
+/**
+ * Effect receipts in one database, counted by status.
+ */
+export interface DiagnosticReceipts {
+  accepted: number
+  acknowledged: number
+  /**
+   * False when the database could not be read; every count is then zero.
+   */
+  available: boolean
+  dispatched: number
+  expired: number
+  /**
+   * Creation time of the oldest unexpired receipt, in Unix milliseconds.
+   */
+  oldest_created_at: number | null
+  /**
+   * Rows with a status this build does not know.
+   */
+  other: number
+  /**
+   * Unexpired receipts older than the retention window, awaiting pruning.
+   */
+  past_retention: number
+  settled: number
+  /**
+   * `sessions`, `lifecycle`, `review` or `browser`.
+   */
+  store: string
+  unknown: number
+  [k: string]: unknown
+}
+/**
+ * What redaction removed from a bundle.
+ */
+export interface DiagnosticRedaction {
+  /**
+   * Values dropped because their key names a credential.
+   */
+  credential_fields: number
+  /**
+   * Home-directory prefixes replaced with `~`.
+   */
+  home_paths: number
+  /**
+   * The rule set's version.
+   */
+  policy: string
+  /**
+   * Credential-shaped substrings replaced inside strings.
+   */
+  secret_patterns: number
+  /**
+   * Values dropped because their key names transcript or output content.
+   */
+  transcript_fields: number
+  /**
+   * Strings, arrays, objects or nesting cut to their bounds.
+   */
+  truncations: number
+  [k: string]: unknown
+}
+/**
+ * Retention state.
+ */
+export interface DiagnosticRetention {
+  /**
+   * Bytes of stored attachment data, or `null` when unreadable.
+   */
+  attachment_bytes: number | null
+  logs: DiagnosticLogs
+  receipt_retention_ms: number
+  /**
+   * Receipts past retention across every readable store, awaiting pruning.
+   */
+  receipts_past_retention: number
+  [k: string]: unknown
+}
+/**
+ * One execution whose outcome ADE cannot prove, and why.
+ */
+export interface DiagnosticUnknown {
+  /**
+   * The operation name, for a receipt.
+   */
+  operation: string | null
+  reason: string
+  /**
+   * The store or workspace that holds it.
+   */
+  scope: string | null
+  /**
+   * When it was last updated, in Unix milliseconds.
+   */
+  since: number | null
+  source: DiagnosticUnknownSource
+  /**
+   * The operation, Conversation, terminal or claim subject.
+   */
+  subject: string
+  [k: string]: unknown
+}
+/**
+ * The `diagnostics.export` reply: a bounded, redacted, inspectable bundle.
+ */
+export interface DiagnosticsExport {
+  /**
+   * Allow-listed operational log records, oldest first. Each carries only
+   * known fields: event, timestamp, process, pid, diagnostic and run IDs,
+   * operation family, elapsed time and fixed error codes.
+   */
+  events: unknown[]
+  /**
+   * Whether older records were left out to meet a bound.
+   */
+  events_truncated: boolean
+  /**
+   * What the bundle never contains.
+   */
+  excluded: string[]
+  /**
+   * The bundle format, `ade-diagnostics-v1`.
+   */
+  format: string
+  generated_at: number
+  /**
+   * The bound the serialized bundle stays under.
+   */
+  max_bytes: number
+  redaction: DiagnosticRedaction
+  status: DiagnosticsStatus
+  /**
+   * The `diagnostics_export` type tag.
+   */
+  type: 'diagnostics_export'
+  [k: string]: unknown
+}
+/**
+ * The `diagnostics.status` reply.
+ */
+export interface DiagnosticsStatus {
+  claims: DiagnosticClaims
+  counters: DiagnosticCounter[]
+  /**
+   * Fixed descriptions of sources that could not be read.
+   */
+  degraded: string[]
+  /**
+   * Unix milliseconds.
+   */
+  generated_at: number
+  identity: DiagnosticIdentity
+  live: DiagnosticLive
+  queues: DiagnosticQueue[]
+  receipts: DiagnosticReceipts[]
+  retention: DiagnosticRetention
+  /**
+   * The `diagnostics_status` type tag.
+   */
+  type: 'diagnostics_status'
+  /**
+   * At most 100 entries.
+   */
+  unknown: DiagnosticUnknown[]
+  /**
+   * Whether `unknown` was cut to its bound.
+   */
+  unknown_truncated: boolean
+  [k: string]: unknown
+}
+/**
+ * `diagnostics.export`: build a bounded, redacted diagnostics bundle. The
+ * daemon returns it; the caller decides where to save it.
+ */
+export interface DiagnosticsExportRequest {
+  /**
+   * The most recent operational log records to include, from 0 to 1000.
+   * Defaults to 200.
+   */
+  max_events?: number | null
+  op: 'diagnostics.export'
+}
+/**
+ * `diagnostics.status`: read queue, counter, receipt, execution, claim and
+ * retention state, with the reasons behind every unknown execution.
+ */
+export interface DiagnosticsStatusRequest {
+  op: 'diagnostics.status'
 }
 /**
  * The schema of [`Draft`], which the model defines without one.
@@ -5502,7 +5929,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -5611,6 +6038,8 @@ export interface RequestByOperation {
   "browser.navigate": BrowserNavigateRequest
   "browser.close": BrowserCloseRequest
   "browser.operation": BrowserOperationRequest
+  "diagnostics.status": DiagnosticsStatusRequest
+  "diagnostics.export": DiagnosticsExportRequest
   "activity.list": ActivityListRequest
   "activity.mark": ActivityMarkRequest
   "notification.delivery.claim": NotificationDeliveryClaimRequest
@@ -5761,6 +6190,8 @@ export interface ResponseByOperation {
   "browser.navigate": BrowserMutation
   "browser.close": BrowserMutation
   "browser.operation": BrowserOperation
+  "diagnostics.status": DiagnosticsStatus
+  "diagnostics.export": DiagnosticsExport
   "activity.list": ActivityList
   "activity.mark": ActivityMarked
   "notification.delivery.claim": NotificationDeliveryClaim

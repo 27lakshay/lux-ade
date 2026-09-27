@@ -150,7 +150,9 @@ pub fn export(directory: &Path, destination: &Path) -> anyhow::Result<()> {
     output.sync_all()?;
     Ok(())
 }
-fn safe_record(value: &serde_json::Value) -> Option<serde_json::Value> {
+/// Keeps only allow-listed operational fields of one log record, or `None`
+/// for an unknown event. `diagnostics.export` reuses it for recent events.
+pub fn safe_record(value: &serde_json::Value) -> Option<serde_json::Value> {
     let fields = value.get("fields")?;
     let event = fields.get("event")?.as_str()?;
     if !matches!(
@@ -209,6 +211,7 @@ fn safe_record(value: &serde_json::Value) -> Option<serde_json::Value> {
                 | "attachment"
                 | "catalog"
                 | "conversation"
+                | "diagnostics"
                 | "draft"
                 | "queue"
                 | "review"

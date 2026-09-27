@@ -32,6 +32,7 @@ mod accounts;
 mod activity;
 mod agents;
 mod conversations;
+mod inspection;
 mod leases;
 mod mcp;
 mod orchestration;
@@ -41,6 +42,7 @@ mod terminals;
 mod workspaces;
 
 use agents::{Agent, SendAdmission};
+pub use inspection::{FEED_QUEUE_CAPACITY, SessionInspection};
 use services::{HealthAttempt, HealthSample};
 use workspaces::selected_binding;
 
@@ -108,6 +110,7 @@ pub struct Sessions {
     pub boot_id: String,
     runtime: Arc<Supervisor>,
     queue_wake: mpsc::SyncSender<()>,
+    counters: inspection::Counters,
 }
 impl Sessions {
     /// A bounded join key for local diagnostics; never expose the Conversation contents.
@@ -139,6 +142,7 @@ impl Sessions {
             history,
             runtime,
             queue_wake,
+            counters: inspection::Counters::default(),
             worktrees,
             review,
             plugins,
@@ -199,7 +203,7 @@ impl Sessions {
                 }
             }
         });
-        let _ = sessions.queue_wake.try_send(());
+        sessions.wake_queue();
         Ok(sessions)
     }
     fn release_exited_script_leases(&self) -> Result<()> {
@@ -235,7 +239,7 @@ impl Sessions {
     }
     pub fn abort_restart(&self) {
         self.data.lock().unwrap().draining = false;
-        let _ = self.queue_wake.try_send(());
+        self.wake_queue();
     }
     fn restore(self: &Arc<Self>) -> Result<()> {
         // Retire only identity-checked terminal attachments from older builds.
@@ -475,7 +479,7 @@ impl Sessions {
         event["revision"] = json!(d.revision);
         event["boot_id"] = json!(self.boot_id);
         d.subscribers
-            .retain(|_, tx| tx.try_send(event.clone()).is_ok());
+            .retain(|_, tx| self.deliver(tx, event.clone()));
         self.subscribers
             .store(d.subscribers.len(), Ordering::Relaxed);
     }
@@ -493,6 +497,7 @@ impl Sessions {
             eprintln!("Activity feed: {error}");
         }
         let _ = self.queue_wake.try_send(());
+        self.wake_queue();
         Ok(())
     }
     pub fn subscribe(&self) -> Result<(String, mpsc::Receiver<Value>)> {

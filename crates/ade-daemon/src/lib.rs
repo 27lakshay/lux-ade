@@ -8,6 +8,7 @@ pub mod host_resources;
 pub mod history;
 pub mod listeners;
 pub mod plugins;
+pub mod observability;
 pub mod receipts;
 pub mod review;
 pub mod scripts;

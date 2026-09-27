@@ -7,6 +7,7 @@ import { DaemonRequestError, requestDaemon } from '@ade/client'
 import { accountUsage, runAccountCommand } from './commands/accounts.js'
 import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
+import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
@@ -75,6 +76,7 @@ const usage = [
   skillUsage,
   pluginUsage,
   orchestrationUsage,
+  diagnosticsUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -203,6 +205,7 @@ const commandAreas = [
   runSkillCommand,
   runPluginCommand,
   runOrchestrationCommand,
+  runDiagnosticsCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {
