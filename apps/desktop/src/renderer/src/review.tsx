@@ -255,8 +255,16 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     setGitUnknown(false)
     setGitMessage(`Retrying original Git operation ${pendingGit.request_id}`)
     try { await window.adeHost.review.request(pendingGit.op, pendingGit) }
-    catch (reason) { setGitMessage(`Git operation ${pendingGit.request_id} remains unconfirmed: ${String(reason)}`) }
-    finally { setGitBusy(false) }
+    catch (reason) {
+      setGitMessage(`Git operation ${pendingGit.request_id} remains unconfirmed: ${String(reason)}`)
+      try {
+        // Main releases the record only when the daemon refused the retry before admission.
+        const recorded = await window.adeHost.review.readGitJournal(workspace.id)
+        const active = recorded.pending as PendingGit | null
+        if (!active) { setPendingGit(null); setGitMessage(`Git operation was rejected before admission: ${String(reason)}`) }
+        else if (active.request_id !== pendingGit.request_id) setPendingGit(active)
+      } catch { /* Preserve the ID until recovery storage can be read. */ }
+    } finally { setGitBusy(false) }
   }
 
   const checkGit = (): void => { setGitUnknown(false); setGitInterrupted(false) }

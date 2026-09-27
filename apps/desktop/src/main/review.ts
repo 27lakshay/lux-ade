@@ -1,8 +1,9 @@
 import { ipcMain } from 'electron'
-import { dailyUseCommand, formatReviewFeedback, type DailyUseRequest, type DailyUseResponse,
+import { DaemonRequestError, dailyUseCommand, formatReviewFeedback, type DailyUseRequest, type DailyUseResponse,
   type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import { decideGitAdmission, gitAdmitted, pendingGitOperation } from '@ade/client/outbox'
 import type { GitIntent, GitJournal } from './git-journal'
+import { decideRefusedGitRecord, definiteRefusal, type RequestFailure } from './git-refusal'
 import { getClient, getClientGeneration, getSocket, journalProfileId } from './profile-connection'
 import { validId } from './validation'
 import { selectedWorkspaces } from './workspaces'
@@ -20,6 +21,31 @@ async function listGitOperations(endpoint: string, workspaceId: string,
   const response = await dailyUseCommand<'review.operation.list'>(endpoint, { op: 'review.operation.list',
     workspace_id: workspaceId, ...(includeAcknowledged ? { include_acknowledged: true } : {}) })
   return response.operations
+}
+function requestFailure(error: unknown): RequestFailure | null {
+  return error instanceof DaemonRequestError
+    ? { code: error.code, delivery: error.delivery, message: error.message } : null
+}
+/**
+ * Release a Git mutation's local record when the daemon definitely refused it
+ * before admission: the send failed with a daemon answer, and the daemon then
+ * neither knows nor lists the ID. Any doubt keeps the record for a retry.
+ */
+async function releaseRefusedGitRecord(endpoint: string, intent: GitIntent, error: unknown): Promise<void> {
+  const send = requestFailure(error)
+  if (!definiteRefusal(send)) return
+  let lookup: RequestFailure | null = null
+  try {
+    await dailyUseCommand<'review.operation'>(endpoint, { op: 'review.operation',
+      workspace_id: intent.workspace_id, operation_id: intent.request_id })
+  } catch (failure) { lookup = requestFailure(failure) }
+  let listed: string[] | null = null
+  try {
+    listed = (await listGitOperations(endpoint, intent.workspace_id, true)).map((entry) => entry.operation.id)
+  } catch { listed = null }
+  if (decideRefusedGitRecord(intent.request_id, send, lookup, listed) === 'release') {
+    await gitRecovery().release(intent.profile_id, intent.workspace_id, intent.request_id)
+  }
 }
 type ReviewStatus = DailyUseResponse<'review.status'>
 type ReviewDiff = DailyUseResponse<'review.diff_page'>
@@ -235,7 +261,15 @@ export function registerReviewIpc(): void {
         await gitRecovery().prepare(intent)
         assertReviewContext(context, workspaceId)
       }
-      const response = await dailyUseCommand<GitOperationName>(context.endpoint, request)
+      let response: DailyUseResponse<GitOperationName>
+      try { response = await dailyUseCommand<GitOperationName>(context.endpoint, request) }
+      catch (error) {
+        // A definite refusal before admission leaves no receipt, so the record
+        // would otherwise block every later Git operation in the workspace.
+        // A failed release keeps the record; the send failure is still what the caller sees.
+        if (intent) await releaseRefusedGitRecord(context.endpoint, intent, error).catch(() => undefined)
+        throw error
+      }
       assertReviewContext(context, workspaceId)
       const receipt = response.operation
       if (response.type !== 'review_operation' || !receipt || typeof receipt !== 'object' ||
