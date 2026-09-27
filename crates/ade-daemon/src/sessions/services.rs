@@ -1228,8 +1228,9 @@ impl Sessions {
             let w = d.store.workspace(workspace)?;
             let before = d.store.service(workspace, name)?;
             let targets = if before.terminal_owner.is_none() {
-                // A restored service whose secrets a backup withheld has no
-                // value to launch with; refuse before reserving anything.
+                // A restored service whose secrets a backup withheld, or a
+                // value still in plain text, has no reference to launch
+                // with; refuse before reserving anything.
                 before.config.ensure_secrets_present()?;
                 let targets = Self::peer_targets(&d, &before)?;
                 d.starting_services.insert(key.clone());
@@ -1277,6 +1278,10 @@ impl Sessions {
         // onto them. The catalogue shows no run and the probe found them free,
         // which retires this service's own quarantined claims.
         let peer_endpoints = self.resolve_peer_targets(&targets)?;
+        // Secrets resolve now, before anything is reserved: a reference that
+        // names nothing refuses the start. The values live only in memory
+        // until the launch below hands them to the process.
+        let secrets = crate::credentials::resolve_all(&before.config.secret_refs, "Secret")?;
         let lease = self.worktrees.agent_lease(&w.root)?;
         before.config.directory(&w.root)?;
         before.check_ports()?;
@@ -1334,7 +1339,7 @@ impl Sessions {
             (service, owner, d.store.workspace(workspace)?)
         };
         // Phase 4, without the lock: launch under the durable reservation.
-        let launch = service.launch(&w.root, &host, &peer_endpoints)?;
+        let launch = service.launch(&w.root, &host, &peer_endpoints, &secrets)?;
         w.terminal_id = owner.terminal_id.clone();
         ports.dispatch()?;
         let result = self.runtime.command(TerminalCommand::Launch {

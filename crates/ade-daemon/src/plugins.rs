@@ -37,6 +37,7 @@ mod supervision;
 use crate::receipts::{self, Admission, Status};
 use activation::{Activation, Registry};
 use ade_core::contract::hooks::{HookDispatch, HookHostStatus, HookSubscription, HookVerdict};
+use ade_core::contract::plugins::PluginSettingKind;
 use ade_core::contract::plugins::{
     PluginActivation, PluginCommandInvokeRequest, PluginCommandOutcome, PluginCommandResult,
     PluginDataRecord, PluginDetail, PluginDisableRequest, PluginEnableRequest,
@@ -49,6 +50,7 @@ use ade_core::contract::plugins::{
     PluginUninstallRequest, PluginUninstalled,
 };
 use ade_core::contract::providers::{ProviderWorker, ProviderWorkerPin};
+use ade_core::credentials::CredentialReference;
 use ade_core::model::now_ms;
 use anyhow::{Context, Result, anyhow, ensure};
 use manifest::SchemaAdmission;
@@ -253,6 +255,9 @@ impl Core {
         db.execute_batch(reload::SCHEMA)?;
         receipts::ensure(&db)?;
         settle_interrupted(&db)?;
+        if let Err(error) = migrate_credential_settings(&db) {
+            tracing::warn!("Plugin credential settings were not migrated: {error:#}");
+        }
         let artifacts = directory.join("artifacts");
         let staging = directory.join("staging");
         let _ = fs::remove_dir_all(&staging);
@@ -477,12 +482,37 @@ impl Core {
             )
             .into());
         };
-        let settings =
+        let declared =
             serde_json::from_value::<PluginSettings>(settings_reply(&state.db, plugin_id)?)?
-                .settings
-                .into_iter()
-                .map(|setting| (setting.key, setting.value))
-                .collect();
+                .settings;
+        // A credential setting gives the plugin its reference in `settings`
+        // and, at activation, the value it resolves to. A value stored in
+        // plain text is withheld from both.
+        let credentials = declared
+            .iter()
+            .filter(|setting| {
+                setting.kind == PluginSettingKind::CredentialRef && !setting.value.is_null()
+            })
+            .map(|setting| {
+                (
+                    setting.key.clone(),
+                    serde_json::from_value::<CredentialReference>(setting.value.clone()).ok(),
+                )
+            })
+            .collect();
+        let settings = declared
+            .into_iter()
+            .map(|setting| {
+                let value = if setting.kind == PluginSettingKind::CredentialRef
+                    && serde_json::from_value::<CredentialReference>(setting.value.clone()).is_err()
+                {
+                    Value::Null
+                } else {
+                    setting.value
+                };
+                (setting.key, value)
+            })
+            .collect();
         Ok(host::LaunchSpec {
             plugin_id: plugin_id.to_owned(),
             generation: live.activation.generation,
@@ -504,6 +534,7 @@ impl Core {
                 .map(|event| event.as_str().to_owned())
                 .collect(),
             settings,
+            credentials,
         })
     }
 
@@ -939,6 +970,11 @@ impl Core {
         let draining = self.hosts.draining(id).len();
         let released = dev::uninstall_plan(id, &leased, releasable, draining)
             .map_err(|message| coded("conflict", message))?;
+        let purged_credentials = if request.purge_data {
+            owned_references(&state.db, id)?
+        } else {
+            Vec::new()
+        };
         let tx = state.db.transaction()?;
         for session in &released {
             tx.execute(
@@ -971,6 +1007,8 @@ impl Core {
             now_ms(),
         )?;
         tx.commit()?;
+        // Purged settings no longer name the items ADE made for them.
+        crate::credentials::delete_owned_quietly(purged_credentials.iter());
         state.errors.remove(id);
         Ok(response)
     }
@@ -1131,13 +1169,27 @@ impl Core {
                     ),
                 )
             })?;
-        if let Some(problem) = manifest::setting_value_problem(declared.kind, &request.value) {
+        let previous = stored_reference(&state.db, &request.plugin_id, &request.key)?;
+        let mut value = request.value.clone();
+        // Items made for this change; dropped (and deleted) unless it commits.
+        let mut pending = crate::credentials::Pending::default();
+        if declared.kind == PluginSettingKind::CredentialRef {
+            value = credential_value(
+                &request.plugin_id,
+                &request.key,
+                value,
+                previous.as_ref(),
+                &mut pending,
+            )?;
+        }
+        if let Some(problem) = manifest::setting_value_problem(declared.kind, &value) {
             return Err(coded(
                 "invalid_request",
                 format!("Setting {} {problem}", request.key),
             )
             .into());
         }
+        let request = PluginSettingSetRequest { value, ..request };
         if request.value.is_null() {
             state.db.execute(
                 "DELETE FROM plugin_settings WHERE plugin_id=?1 AND key=?2",
@@ -1154,6 +1206,14 @@ impl Core {
                     now_ms()
                 ],
             )?;
+        }
+        pending.commit();
+        // The item the setting named before is ADE's to delete once nothing
+        // names it.
+        if let Some(previous) = previous
+            && serde_json::to_value(&previous)? != request.value
+        {
+            crate::credentials::delete_owned_quietly([&previous]);
         }
         let reply = settings_reply(&state.db, &request.plugin_id)?;
         drop(state);
@@ -1423,6 +1483,146 @@ fn read_record(
     .transpose()
 }
 
+/// What a credential setting's reply shows for a value stored before
+/// references were typed and not yet moved into the Keychain.
+const REDACTED_CREDENTIAL: &str = "[redacted]";
+
+/// The credential reference a stored setting holds, if it holds one.
+fn stored_reference(db: &Connection, id: &str, key: &str) -> Result<Option<CredentialReference>> {
+    let stored: Option<String> = db
+        .query_row(
+            "SELECT value FROM plugin_settings WHERE plugin_id=?1 AND key=?2",
+            params![id, key],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(stored.and_then(|text| serde_json::from_str::<CredentialReference>(&text).ok()))
+}
+
+/// Every Keychain item ADE made for a plugin's credential settings.
+fn owned_references(db: &Connection, id: &str) -> Result<Vec<CredentialReference>> {
+    let values = db
+        .prepare("SELECT value FROM plugin_settings WHERE plugin_id=?1")?
+        .query_map([id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(values
+        .iter()
+        .filter_map(|text| serde_json::from_str::<CredentialReference>(text).ok())
+        .filter(CredentialReference::ade_owned)
+        .collect())
+}
+
+/// The value a credential setting stores for `value` as sent. `{"secret":
+/// "..."}` moves the secret into a Keychain item ADE owns and stores its
+/// reference; sending the same secret again keeps the item it is already in.
+/// A reference to an item ADE made is accepted only for the setting it was
+/// made for, so ADE never deletes an item another setting still names.
+fn credential_value(
+    plugin_id: &str,
+    key: &str,
+    value: Value,
+    previous: Option<&CredentialReference>,
+    pending: &mut crate::credentials::Pending,
+) -> Result<Value> {
+    let invalid = |message: String| anyhow::Error::from(coded("invalid_request", message));
+    if let Some(object) = value.as_object()
+        && object.contains_key("secret")
+    {
+        let secret = match (object.len(), object.get("secret")) {
+            (1, Some(Value::String(secret))) if !secret.is_empty() => secret,
+            _ => {
+                return Err(invalid(format!(
+                    "Setting {key} secret must be a non-empty string sent alone"
+                )));
+            }
+        };
+        if let Some(previous) = previous
+            && crate::credentials::owned_holds(previous, secret)
+        {
+            return Ok(serde_json::to_value(previous)?);
+        }
+        let reference = pending
+            .store(&format!("plugin/{plugin_id}/{key}"), secret)
+            .map_err(|error| invalid(format!("Setting {key}: {error:#}")))?;
+        return Ok(serde_json::to_value(reference)?);
+    }
+    if let Ok(reference) = serde_json::from_value::<CredentialReference>(value.clone())
+        && reference.ade_owned()
+        && previous != Some(&reference)
+    {
+        return Err(invalid(format!(
+            "Setting {key} names a Keychain item ADE made for another secret; send the secret or your own reference"
+        )));
+    }
+    Ok(value)
+}
+
+/// Moves each credential setting stored before references were typed into
+/// a reference: `env:NAME` and `keychain:SERVICE/ACCOUNT` become the
+/// reference they name, and any other text, which may be the secret itself,
+/// moves into a Keychain item ADE owns. A value that cannot move stays, is
+/// never shown or given to a plugin, and is tried again on the next open.
+fn migrate_credential_settings(db: &Connection) -> Result<()> {
+    let rows = db
+        .prepare(
+            "SELECT s.plugin_id,s.key,s.value,p.manifest FROM plugin_settings s
+             JOIN plugins p ON p.id=s.plugin_id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut moved = false;
+    for (plugin_id, key, stored, manifest) in rows {
+        let Ok(manifest) = serde_json::from_str::<PluginManifest>(&manifest) else {
+            continue;
+        };
+        let credential =
+            manifest.contributes.settings.iter().any(|setting| {
+                setting.key == key && setting.kind == PluginSettingKind::CredentialRef
+            });
+        let Ok(Value::String(text)) = serde_json::from_str::<Value>(&stored) else {
+            continue;
+        };
+        if !credential {
+            continue;
+        }
+        let mut pending = crate::credentials::Pending::default();
+        let reference = match ade_core::credentials::legacy_reference(&text) {
+            Some(reference) => reference,
+            None => match pending.store(&format!("plugin/{plugin_id}/{key}"), &text) {
+                Ok(reference) => reference,
+                Err(error) => {
+                    tracing::warn!(
+                        "Plugin {plugin_id} setting {key} stayed in plain text because the Keychain refused it: {error:#}"
+                    );
+                    continue;
+                }
+            },
+        };
+        db.pragma_update(None, "secure_delete", "ON")?;
+        let updated = db.execute(
+            "UPDATE plugin_settings SET value=?3 WHERE plugin_id=?1 AND key=?2 AND value=?4",
+            params![plugin_id, key, serde_json::to_string(&reference)?, stored],
+        )?;
+        if updated == 1 {
+            pending.commit();
+            moved = true;
+        }
+    }
+    if moved {
+        db.execute_batch("VACUUM")?;
+        db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+    }
+    db.pragma_update(None, "secure_delete", "OFF")?;
+    Ok(())
+}
+
 fn settings_reply(db: &Connection, id: &str) -> Result<Value> {
     let plugin = read_installed(db, id)?;
     let stored: HashMap<String, String> = db
@@ -1441,6 +1641,17 @@ fn settings_reply(db: &Connection, id: &str) -> Result<Value> {
                 .map(|text| serde_json::from_str(text))
                 .transpose()
                 .context("Stored plugin setting is invalid")?;
+            // A credential shows only as a reference; text stored before
+            // references were typed may be the secret itself.
+            let value = value.map(|value: Value| {
+                if setting.kind == PluginSettingKind::CredentialRef
+                    && serde_json::from_value::<CredentialReference>(value.clone()).is_err()
+                {
+                    Value::String(REDACTED_CREDENTIAL.into())
+                } else {
+                    value
+                }
+            });
             Ok(match value {
                 Some(value) => PluginSettingValue {
                     key: setting.key.clone(),

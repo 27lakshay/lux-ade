@@ -8037,6 +8037,50 @@
         }
       ]
     },
+    "CredentialReference": {
+      "description": "Where a secret lives. Serialized as `{\"env\": \"NAME\"}` or\n`{\"keychain\": {\"service\": \"...\", \"account\": \"...\"}}`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "An uppercase variable name in the daemon's environment.",
+          "properties": {
+            "env": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "env"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A Keychain generic password.",
+          "properties": {
+            "keychain": {
+              "additionalProperties": false,
+              "properties": {
+                "account": {
+                  "type": "string"
+                },
+                "service": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "service",
+                "account"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "keychain"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "DaemonHello": {
       "description": "The `hello` reply: build identity and every protocol version.",
       "properties": {
@@ -22948,12 +22992,19 @@
               "type": "string"
             },
             "secret_env": {
-              "description": "Names of `env` entries whose values are secret. Replies show each one\nas [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.",
+              "description": "Names of `env` entries whose values are secret. ADE never stores or\nreturns their values: each shows as [`REDACTED`], and sending\n[`REDACTED`] back keeps the stored reference. A value sent here is\nmoved into the Keychain and replaced by a reference in `secret_refs`.",
               "items": {
                 "type": "string"
               },
               "type": "array",
               "uniqueItems": true
+            },
+            "secret_refs": {
+              "additionalProperties": {
+                "$ref": "#/$defs/CredentialReference"
+              },
+              "description": "Where each secret's value lives. Resolved only when the service\nlaunches; a reference that cannot be resolved refuses the start before\nanything is reserved. A secret with no reference was withheld by a\nbackup and must be sent again.",
+              "type": "object"
             }
           },
           "required": [
@@ -23125,12 +23176,19 @@
               "type": "string"
             },
             "secret_env": {
-              "description": "Names of `env` entries whose values are secret. Replies show each one\nas [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.",
+              "description": "Names of `env` entries whose values are secret. ADE never stores or\nreturns their values: each shows as [`REDACTED`], and sending\n[`REDACTED`] back keeps the stored reference. A value sent here is\nmoved into the Keychain and replaced by a reference in `secret_refs`.",
               "items": {
                 "type": "string"
               },
               "type": "array",
               "uniqueItems": true
+            },
+            "secret_refs": {
+              "additionalProperties": {
+                "$ref": "#/$defs/CredentialReference"
+              },
+              "description": "Where each secret's value lives. Resolved only when the service\nlaunches; a reference that cannot be resolved refuses the start before\nanything is reserved. A secret with no reference was withheld by a\nbackup and must be sent again.",
+              "type": "object"
             }
           },
           "required": [

@@ -22,9 +22,10 @@ use super::dev::{self, DrainStep};
 use super::supervision::{ExitOutcome, HostKey, Phase, StartDecision, Supervision};
 use ade_core::contract::hooks::HookVerdict;
 use ade_core::contract::plugins::{PluginHostState, PluginHostStatus};
+use ade_core::credentials::CredentialReference;
 use ade_core::model::now_ms;
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -67,6 +68,28 @@ pub struct LaunchSpec {
     /// The lifecycle events the manifest subscribes to (F058).
     pub hooks: Vec<String>,
     pub settings: Map<String, Value>,
+    /// Each set credential setting's reference (F059); none for a value
+    /// still stored in plain text, which is never given to the plugin. They
+    /// resolve at each host start, and the values live only in that
+    /// activation's request.
+    pub credentials: BTreeMap<String, Option<CredentialReference>>,
+}
+
+/// The values of a spec's credential settings, or why one cannot be read.
+fn resolve_credentials(spec: &LaunchSpec) -> Result<BTreeMap<String, String>, String> {
+    spec.credentials
+        .iter()
+        .map(|(key, reference)| {
+            let reference = reference.as_ref().ok_or_else(|| {
+                format!(
+                    "Credential setting {key} is still stored in plain text because it could not be moved to the Keychain; set it again"
+                )
+            })?;
+            crate::credentials::resolve(reference)
+                .map(|value| (key.clone(), value))
+                .map_err(|error| format!("Credential setting {key} cannot be resolved: {error:#}"))
+        })
+        .collect()
 }
 
 /// Why a host call produced no result.
@@ -669,6 +692,15 @@ impl Hosts {
         key: HostKey,
     ) -> Result<Arc<HostProcess>, String> {
         let spec = state.spec.clone().ok_or("Plugin host has no launch spec")?;
+        // A credential that names nothing refuses the start before any
+        // plugin code runs.
+        let credentials = match resolve_credentials(&spec) {
+            Ok(credentials) => credentials,
+            Err(error) => {
+                state.supervision.started(key, now_ms());
+                return Err(self.fail_start(state, key, error));
+            }
+        };
         let now = now_ms();
         let this = self.this.clone();
         let plugin_id = spec.plugin_id.clone();
@@ -693,6 +725,7 @@ impl Hosts {
                 "commands": spec.commands,
                 "hooks": spec.hooks,
                 "settings": spec.settings,
+                "credentials": credentials,
             }),
             ACTIVATE_TIMEOUT,
         );
@@ -1148,6 +1181,7 @@ mod tests {
             commands: Vec::new(),
             hooks: Vec::new(),
             settings: Map::new(),
+            credentials: BTreeMap::new(),
         }
     }
 
