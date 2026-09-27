@@ -173,6 +173,11 @@ impl Plugins {
         self.0.hook_subscriptions()
     }
 
+    /// The provider worker each live activation publishes (F023).
+    pub fn provider_workers(&self) -> Result<Vec<(String, ProviderWorker)>> {
+        self.0.provider_workers()
+    }
+
     /// Handles one `plugin.*` operation. Plugin errors carry a wire code.
     pub fn command(&self, request: &Value) -> Result<Value> {
         self.0.command(request)

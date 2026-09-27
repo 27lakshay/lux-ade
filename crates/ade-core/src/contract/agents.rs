@@ -168,6 +168,10 @@ pub struct AgentRunSpec {
     #[serde(default)]
     #[schemars(with = "Value")]
     pub account: Option<Value>,
+    /// The plugin provider worker a plugin-provider run is leased to; absent
+    /// for bundled providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<super::providers::ProviderWorker>,
 }
 
 /// `agent.account_inspect`: probe a provider account's native status. The

@@ -524,6 +524,7 @@ export type ContractDefinition =
   | ProviderRegistrationsRequest
   | ProviderSelection
   | ProviderSupport
+  | ProviderWorker
   | ProviderWorkerPin
   | ProvidersReply
   | ProxyAvailability
@@ -2525,7 +2526,47 @@ export interface AgentRunSpec {
   provider: string
   root: string
   run: string
+  /**
+   * The plugin provider worker a plugin-provider run is leased to; absent
+   * for bundled providers.
+   */
+  worker?: ProviderWorker | null
   [k: string]: unknown
+}
+/**
+ * What the runtime needs to start one plugin provider worker.
+ */
+export interface ProviderWorker {
+  /**
+   * The absolute, version-addressed artifact directory.
+   */
+  artifact_path: string
+  /**
+   * The manifest's `entry_points.provider`, relative to `artifact_path`.
+   */
+  entry: string
+  pin: ProviderWorkerPin
+  /**
+   * `plugin:<plugin_id>`.
+   */
+  provider: string
+}
+/**
+ * The artifact a provider worker runs. A session started on one pin stays
+ * on it: a newer version serves new sessions only (architecture section 8).
+ */
+export interface ProviderWorkerPin {
+  /**
+   * The plugin activation that published the registration. A lease does
+   * not depend on it: re-enabling the same artifact does not change code.
+   */
+  activation_generation: number
+  /**
+   * `sha256:<hex>` over the installed artifact's files.
+   */
+  artifact_digest: string
+  plugin_id: string
+  version: string
 }
 /**
  * `agent.list`: the runtime supervisor's live Agent runs. The profile daemon
@@ -8796,23 +8837,6 @@ export interface ProviderCapabilitiesRequest {
  */
 export interface ProviderListRequest {
   op: 'provider.list'
-}
-/**
- * The artifact a provider worker runs. A session started on one pin stays
- * on it: a newer version serves new sessions only (architecture section 8).
- */
-export interface ProviderWorkerPin {
-  /**
-   * The plugin activation that published the registration. A lease does
-   * not depend on it: re-enabling the same artifact does not change code.
-   */
-  activation_generation: number
-  /**
-   * `sha256:<hex>` over the installed artifact's files.
-   */
-  artifact_digest: string
-  plugin_id: string
-  version: string
 }
 /**
  * The `provider.quota` reply.

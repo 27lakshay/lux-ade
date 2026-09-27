@@ -1611,6 +1611,17 @@
         },
         "run": {
           "type": "string"
+        },
+        "worker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderWorker"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The plugin provider worker a plugin-provider run is leased to; absent\nfor bundled providers."
         }
       },
       "required": [
@@ -17080,6 +17091,34 @@
         "native",
         "unsupported_reason",
         "wired"
+      ],
+      "type": "object"
+    },
+    "ProviderWorker": {
+      "additionalProperties": false,
+      "description": "What the runtime needs to start one plugin provider worker.",
+      "properties": {
+        "artifact_path": {
+          "description": "The absolute, version-addressed artifact directory.",
+          "type": "string"
+        },
+        "entry": {
+          "description": "The manifest's `entry_points.provider`, relative to `artifact_path`.",
+          "type": "string"
+        },
+        "pin": {
+          "$ref": "#/$defs/ProviderWorkerPin"
+        },
+        "provider": {
+          "description": "`plugin:<plugin_id>`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "pin",
+        "artifact_path",
+        "entry"
       ],
       "type": "object"
     },
