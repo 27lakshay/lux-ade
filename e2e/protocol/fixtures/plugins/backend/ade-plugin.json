@@ -1,0 +1,23 @@
+{
+  "manifest_version": 1,
+  "id": "e2e.backend",
+  "name": "E2E backend",
+  "version": "1.0.0",
+  "api_version": 1,
+  "data_schema": 1,
+  "description": "Protocol E2E fixture: a backend entry with commands, a setting and a lifecycle hook.",
+  "entry_points": { "backend": "backend.mjs" },
+  "contributes": {
+    "commands": [
+      { "id": "e2e.backend.echo", "title": "Echo" },
+      { "id": "e2e.backend.fail", "title": "Fail" },
+      { "id": "e2e.backend.crash", "title": "Crash" },
+      { "id": "e2e.backend.hold", "title": "Hold" }
+    ],
+    "settings": [
+      { "key": "out_dir", "title": "Where the fixture writes what it saw", "kind": "string", "default": "" },
+      { "key": "token", "title": "A credential the plugin names by reference", "kind": "credential_ref" }
+    ],
+    "hooks": ["workspace.created", "turn.settled"]
+  }
+}

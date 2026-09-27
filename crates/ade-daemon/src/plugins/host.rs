@@ -20,6 +20,7 @@
 //! exited, timed out or broke protocol while the call was open).
 use super::dev::{self, DrainStep};
 use super::supervision::{ExitOutcome, HostKey, Phase, StartDecision, Supervision};
+use ade_core::contract::hooks::HookVerdict;
 use ade_core::contract::plugins::{PluginHostState, PluginHostStatus};
 use ade_core::model::now_ms;
 use serde_json::{Map, Value, json};
@@ -48,8 +49,8 @@ const LOG_LINE_BYTES: usize = 2048;
 
 /// JSON-RPC codes from `packages/plugin-host/src/protocol.mjs` that mean the
 /// request was refused before any plugin command code ran.
-const REFUSED_CODES: [i64; 8] = [
-    -32700, -32600, -32601, -32602, -32001, -32002, -32003, -32004,
+const REFUSED_CODES: [i64; 9] = [
+    -32700, -32600, -32601, -32602, -32001, -32002, -32003, -32004, -32005,
 ];
 /// The command handler ran and threw.
 const COMMAND_FAILED: i64 = -32010;
@@ -63,6 +64,8 @@ pub struct LaunchSpec {
     pub artifact_path: String,
     pub entry: String,
     pub commands: Vec<String>,
+    /// The lifecycle events the manifest subscribes to (F058).
+    pub hooks: Vec<String>,
     pub settings: Map<String, Value>,
 }
 
@@ -101,6 +104,24 @@ pub fn classify(frame: &Value) -> Result<Value, CallError> {
 }
 
 type Reply = Result<Value, CallError>;
+
+/// What one `hook` call proves about a lifecycle hook delivery (F058). Only a
+/// refusal before plugin code ran proves the handler never started; a lost
+/// answer is unknown, never retried on its own.
+pub fn hook_verdict(called: &Reply) -> HookVerdict {
+    match called {
+        Ok(_) => HookVerdict::Delivered,
+        Err(CallError::Failed(error)) => HookVerdict::Failed {
+            error: error.clone(),
+        },
+        Err(CallError::NotRun(reason)) => HookVerdict::NotStarted {
+            reason: reason.clone(),
+        },
+        Err(CallError::Unknown(detail)) => HookVerdict::Unknown {
+            detail: detail.clone(),
+        },
+    }
+}
 
 /// The open calls of one host. Once `closed`, no call can be added.
 #[derive(Default)]
@@ -619,6 +640,7 @@ impl Hosts {
                 "artifact_path": spec.artifact_path,
                 "entry": spec.entry,
                 "commands": spec.commands,
+                "hooks": spec.hooks,
                 "settings": spec.settings,
             }),
             ACTIVATE_TIMEOUT,
@@ -968,6 +990,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hook_verdicts_retry_only_what_never_started() {
+        let reply = |frame: Value| hook_verdict(&classify(&frame));
+        assert_eq!(
+            reply(json!({"id": 1, "result": {"delivered": true}})),
+            HookVerdict::Delivered
+        );
+        // No handler for the event: refused before plugin code ran.
+        assert!(matches!(
+            reply(json!({"id": 1, "error": {"code": -32005, "message": "none"}})),
+            HookVerdict::NotStarted { .. }
+        ));
+        assert!(matches!(
+            reply(json!({"id": 1, "error": {"code": -32010, "message": "boom"}})),
+            HookVerdict::Failed { .. }
+        ));
+        assert!(matches!(
+            reply(json!({"id": 1, "error": {"code": -1, "message": "odd"}})),
+            HookVerdict::Unknown { .. }
+        ));
+        assert!(matches!(
+            hook_verdict(&Err(CallError::Unknown("exited".into()))),
+            HookVerdict::Unknown { .. }
+        ));
+    }
+
+    #[test]
     fn classifies_responses_by_what_they_prove() {
         assert_eq!(
             classify(&json!({"jsonrpc": "2.0", "id": 1, "result": {"value": 2}})),
@@ -1000,6 +1048,7 @@ mod tests {
             artifact_path: "/a".into(),
             entry: "b.mjs".into(),
             commands: Vec::new(),
+            hooks: Vec::new(),
             settings: Map::new(),
         }
     }

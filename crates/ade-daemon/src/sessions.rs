@@ -164,6 +164,10 @@ impl Sessions {
         let history = crate::history::History::open(path)?;
         let usage = crate::usage::Usage::open(path)?;
         let presets = crate::capabilities::Presets::open(path)?;
+        let hooks = match &plugins {
+            Ok(plugins) => crate::hooks::Dispatcher::new(plugins.hook_host()),
+            Err(_) => crate::hooks::Dispatcher::default(),
+        };
         let sessions = Arc::new(Self {
             adapters: crate::adapters::Adapters::open(path)?,
             history,
@@ -175,7 +179,7 @@ impl Sessions {
             worktrees,
             review,
             plugins,
-            hooks: Default::default(),
+            hooks,
             files: crate::files::Files::new(),
             data: Mutex::new(Data {
                 draining: false,

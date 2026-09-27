@@ -354,7 +354,8 @@ pub trait HookHost: Send + Sync {
     fn deliver(&self, dispatch: &HookDispatch) -> HookVerdict;
 }
 
-/// No backend plugin host exists yet: every delivery waits in `awaiting_host`.
+/// Used while the plugin registry is unavailable: every delivery waits in
+/// `awaiting_host`.
 pub struct NoHost;
 
 impl HookHost for NoHost {
@@ -362,8 +363,7 @@ impl HookHost for NoHost {
         HookHostStatus {
             available: false,
             detail: Some(
-                "No backend plugin host runs in this daemon yet; deliveries wait until one does"
-                    .into(),
+                "The plugin registry is unavailable; deliveries wait until it opens".into(),
             ),
         }
     }
@@ -394,6 +394,13 @@ impl Default for Dispatcher {
 }
 
 impl Dispatcher {
+    pub fn new(host: Box<dyn HookHost>) -> Self {
+        Self {
+            host,
+            ..Self::default()
+        }
+    }
+
     pub fn mark_stale(&self) {
         self.stale.store(true, Ordering::Relaxed);
     }
