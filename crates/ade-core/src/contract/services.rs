@@ -321,12 +321,18 @@ pub enum ReadinessState {
     TcpListening,
     NotObserved,
     ObservationUnavailable,
+    /// The service's process tree listens, but not on every assigned port: it
+    /// most likely lost the bind and chose another port. Not ready, not wired.
+    BoundUnassignedPort,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadinessBasis {
+    /// Every verified listener is the service's direct process.
     DirectProcessTcpListener,
+    /// At least one verified listener is a descendant of the direct process.
+    ProcessTreeTcpListener,
     ExecutionState,
     IdentityChanged,
 }
@@ -855,6 +861,19 @@ mod tests {
             "durable_logs": {"available": false, "reason": "service_changed_during_inspection"},
             "effective_peers": {}, "peer_error": "Service changed during inspection; refresh",
             "health_monitor": {"state": "unknown", "basis": "identity_changed"}}),
+        );
+        response::<ServiceInspection>(
+            "service.inspect",
+            json!({"type": "service_inspection",
+            "service": service(), "execution_state": "running", "execution_error": null,
+            "readiness": {"state": "bound_unassigned_port", "basis": "process_tree_tcp_listener",
+                "application_ready": "unverified", "observation_error": null},
+            "logs": {"available": true, "transfer_id": "transfer_1", "text": "ok"},
+            "durable_logs": {"available": false, "reason": "not_started"},
+            "effective_peers": {}, "current_peer_endpoints": {}, "peer_error": null,
+            "health": {"state": "unhealthy", "basis": "assigned_port_not_bound",
+                "port_variable": "PORT", "path": "/health"},
+            "health_monitor": {"state": "disabled"}}),
         );
     }
 
