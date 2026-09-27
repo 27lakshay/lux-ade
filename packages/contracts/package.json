@@ -1,5 +1,5 @@
 {
-  "name": "@ade/client",
+  "name": "@ade/contracts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,17 +7,14 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@ade/contracts": "workspace:*"
-  },
   "devDependencies": {
-    "@types/node": "24.6.0",
     "typescript": "5.9.3"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./schema.json": "./schema/contracts.json"
   }
 }

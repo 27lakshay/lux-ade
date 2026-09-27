@@ -1,0 +1,724 @@
+{
+  "$defs": {
+    "Ack": {
+      "description": "A bare acceptance reply.",
+      "properties": {
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "AgentAnswerRequest": {
+      "additionalProperties": false,
+      "description": "`agent.answer`: answer a pending provider request by its ID.",
+      "properties": {
+        "answers": {
+          "description": "Structured answers; required by the `answer` decision."
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "op": {
+          "const": "agent.answer"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "request_id",
+        "decision"
+      ],
+      "type": "object"
+    },
+    "AgentSendRequest": {
+      "additionalProperties": false,
+      "description": "`agent.send`: submit a prompt. `request_id` is the caller-owned operation ID.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "agent.send"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "request_id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "Attachment": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "media_type",
+        "size"
+      ],
+      "type": "object"
+    },
+    "CatalogFrame": {
+      "description": "The `catalog.get` reply and the `catalog` feed frame.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "catalog": {
+          "$ref": "#/$defs/Catalogue"
+        },
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/Descriptor"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `catalog` type tag.",
+          "enum": [
+            "catalog"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "catalog",
+        "providers",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "CatalogGetRequest": {
+      "additionalProperties": false,
+      "description": "`catalog.get`: read the profile's workspaces, conversations and windows.",
+      "properties": {
+        "op": {
+          "const": "catalog.get"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "Catalogue": {
+      "properties": {
+        "conversations": {
+          "items": {
+            "$ref": "#/$defs/Conversation"
+          },
+          "type": "array"
+        },
+        "windows": {
+          "items": true,
+          "type": "array"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "workspaces",
+        "conversations",
+        "windows"
+      ],
+      "type": "object"
+    },
+    "Conversation": {
+      "properties": {
+        "account_context": {
+          "default": "legacy_ambient",
+          "type": "string"
+        },
+        "account_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "provider_config": {
+          "default": {
+            "model": null,
+            "permission_mode": "default",
+            "setting_sources": []
+          }
+        },
+        "provider_thread_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queue_paused": {
+          "default": false,
+          "type": "boolean"
+        },
+        "runtime_cursor": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtime_run": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtime_submission": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "terminal_owner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalOwner"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "view_terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalOwner"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "view_terminal",
+        "terminal_owner",
+        "queue_paused",
+        "runtime_run",
+        "runtime_cursor",
+        "runtime_submission",
+        "id",
+        "workspace_id",
+        "title",
+        "provider",
+        "account_id",
+        "account_context",
+        "provider_config",
+        "provider_thread_id",
+        "status",
+        "active_turn_id",
+        "error",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "ConversationChanged": {
+      "description": "The `conversation_changed` feed frame.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "conversation": {
+          "$ref": "#/$defs/Conversation"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "type": "array"
+        },
+        "queued": {
+          "items": {
+            "$ref": "#/$defs/QueuedPrompt"
+          },
+          "type": "array"
+        },
+        "requests": {
+          "items": {
+            "$ref": "#/$defs/PendingRequest"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `conversation_changed` type tag.",
+          "enum": [
+            "conversation_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation",
+        "messages",
+        "requests",
+        "queued",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ConversationGetRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.get`: one page of a conversation's messages, newest first.",
+      "properties": {
+        "before": {
+          "description": "Return messages with a sequence below this one.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "limit": {
+          "description": "Page size; the daemon uses 50 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "conversation.get"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationSnapshot": {
+      "description": "The `conversation.get` reply.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "conversation": {
+          "$ref": "#/$defs/Conversation"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "type": "array"
+        },
+        "queued": {
+          "items": {
+            "$ref": "#/$defs/QueuedPrompt"
+          },
+          "type": "array"
+        },
+        "requests": {
+          "items": {
+            "$ref": "#/$defs/PendingRequest"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `conversation_snapshot` type tag.",
+          "enum": [
+            "conversation_snapshot"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation",
+        "messages",
+        "requests",
+        "queued",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "Descriptor": {
+      "description": "The daemon advertises the same contract it uses to validate configuration.\nClients consume descriptors; they do not infer support from a provider name.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "permission_modes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "setting_sources": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "capabilities",
+        "permission_modes",
+        "setting_sources"
+      ],
+      "type": "object"
+    },
+    "Message": {
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "content": true,
+        "conversation_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "provider_item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_feedback": true,
+        "role": {
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "conversation_id",
+        "role",
+        "kind",
+        "text",
+        "status",
+        "turn_id",
+        "provider_item_id",
+        "sequence"
+      ],
+      "type": "object"
+    },
+    "PendingRequest": {
+      "properties": {
+        "answer_attempt": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "answer_dispatched": {
+          "default": false,
+          "type": "boolean"
+        },
+        "answer_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": true,
+        "rpc_id": true,
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "conversation_id",
+        "run_id",
+        "rpc_id",
+        "method",
+        "params",
+        "status",
+        "answer_dispatched",
+        "answer_attempt"
+      ],
+      "type": "object"
+    },
+    "QueuedPrompt": {
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "conversation_id",
+        "text",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TerminalOwner": {
+      "properties": {
+        "runtime_instance": {
+          "type": "string"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "terminal_id",
+        "transfer_id",
+        "runtime_instance"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRecord": {
+      "properties": {
+        "extra_terminals": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "needs_rebind": {
+          "default": false,
+          "type": "boolean"
+        },
+        "repository_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": "string"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "worktree_lifecycle_needs_rebind": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "extra_terminals",
+        "id",
+        "repository_id",
+        "root",
+        "name",
+        "terminal_id",
+        "needs_rebind",
+        "worktree_lifecycle_needs_rebind"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "ade-contracts",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "frames": [
+    {
+      "domain": "workspaces",
+      "frame": "CatalogFrame",
+      "type": "catalog"
+    },
+    {
+      "domain": "conversations",
+      "frame": "ConversationChanged",
+      "type": "conversation_changed"
+    }
+  ],
+  "operations": [
+    {
+      "domain": "workspaces",
+      "name": "catalog.get",
+      "request": "CatalogGetRequest",
+      "response": "CatalogFrame",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.get",
+      "request": "ConversationGetRequest",
+      "response": "ConversationSnapshot",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "agent.send",
+      "request": "AgentSendRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "agent.answer",
+      "request": "AgentAnswerRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    }
+  ]
+}

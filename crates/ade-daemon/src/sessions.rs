@@ -48,6 +48,32 @@ fn required_str<'a>(request: &'a Value) -> impl Fn(&str) -> Result<&'a str> + 'a
     }
 }
 
+/// Decodes a session request into its typed contract in `ade_core::contract`.
+/// An absent field keeps the `Missing <field>` wording of [`required_str`].
+fn decode<T: serde::de::DeserializeOwned>(request: &Value) -> Result<T> {
+    T::deserialize(request).map_err(|error| {
+        let text = error.to_string();
+        match text
+            .strip_prefix("missing field `")
+            .and_then(|rest| rest.split('`').next())
+        {
+            Some(field) => anyhow!("Missing {field}"),
+            None => anyhow!("Invalid request: {text}"),
+        }
+    })
+}
+
+/// Rejects an empty identifier, as [`required_str`] does.
+fn non_empty<'a>(field: &str, value: &'a str) -> Result<&'a str> {
+    ensure!(!value.is_empty(), "Missing {field}");
+    Ok(value)
+}
+
+/// Serializes a typed contract reply.
+fn reply<T: serde::Serialize>(value: &T) -> Result<Value> {
+    Ok(serde_json::to_value(value)?)
+}
+
 struct Data {
     draining: bool,
     store: Store,
@@ -380,7 +406,13 @@ impl Sessions {
             if d.revision != revision {
                 continue;
             }
-            tx.send(json!({"type":"catalog","catalog":catalog,"providers":provider::descriptors(),"boot_id":self.boot_id,"revision":revision}))?;
+            tx.send(reply(&ade_core::contract::workspaces::CatalogFrame {
+                tag: Default::default(),
+                catalog,
+                providers: provider::descriptors().to_vec(),
+                boot_id: self.boot_id.clone(),
+                revision,
+            })?)?;
             d.subscribers.insert(id.clone(), tx);
             self.subscribers
                 .store(d.subscribers.len(), Ordering::Relaxed);

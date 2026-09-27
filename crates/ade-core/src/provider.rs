@@ -6,7 +6,7 @@ use serde_json::Value;
 
 /// The daemon advertises the same contract it uses to validate configuration.
 /// Clients consume descriptors; they do not infer support from a provider name.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct Descriptor {
     pub id: String,
     pub name: String,

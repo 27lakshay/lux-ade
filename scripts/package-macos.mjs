@@ -8,6 +8,7 @@ const providers = join(stage, 'providers')
 const bin = join(stage, 'bin')
 const cli = join(stage, 'cli')
 const client = join(stage, 'client')
+const contracts = join(stage, 'contracts')
 const bunVersion = '1.3.14'
 
 function run(command, args) {
@@ -63,6 +64,11 @@ copyFileSync(join(root, 'apps/cli/package.json'), join(cli, 'package.json'))
 copyFileSync(join(root, 'packages/client/package.json'), join(client, 'package.json'))
 cpSync(join(root, 'apps/cli/dist'), join(cli, 'dist'), { recursive: true })
 cpSync(join(root, 'packages/client/dist'), join(client, 'dist'), { recursive: true })
+// @ade/client imports @ade/contracts at run time; the contracts have no runtime dependencies.
+mkdirSync(contracts, { recursive: true })
+copyFileSync(join(root, 'packages/contracts/package.json'), join(contracts, 'package.json'))
+cpSync(join(root, 'packages/contracts/dist'), join(contracts, 'dist'), { recursive: true })
+cpSync(join(root, 'packages/contracts/schema'), join(contracts, 'schema'), { recursive: true })
 writeFileSync(join(stage, 'ade'), `#!/bin/sh
 set -eu
 entry=$0

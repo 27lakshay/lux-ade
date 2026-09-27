@@ -1,5 +1,8 @@
 //! Conversation, draft, queue, attachment, agent and window operations.
 use super::*;
+use ade_core::contract::conversations::{
+    Ack, AgentAnswerRequest, AgentSendRequest, ConversationGetRequest, ConversationSnapshot,
+};
 
 impl Sessions {
     pub(super) fn conversation_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
@@ -94,11 +97,19 @@ impl Sessions {
                 Ok(json!({"type":"ack","conversation":c}))
             }
             "conversation.get" => {
+                let get: ConversationGetRequest = decode(request)?;
+                let id = non_empty("conversation_id", &get.conversation_id)?;
+                let limit = get.limit.unwrap_or(50) as usize;
                 let d = self.data.lock().unwrap();
-                let id = string("conversation_id")?;
-                Ok(
-                    json!({"type":"conversation_snapshot","conversation":d.store.conversation(id)?,"messages":d.store.messages(id,request["before"].as_i64(),request["limit"].as_u64().unwrap_or(50) as usize)?,"requests":d.store.pending(id)?,"queued":d.store.queued(id)?,"boot_id":self.boot_id,"revision":d.revision}),
-                )
+                reply(&ConversationSnapshot {
+                    tag: Default::default(),
+                    conversation: d.store.conversation(id)?,
+                    messages: d.store.messages(id, get.before, limit)?,
+                    requests: d.store.pending(id)?,
+                    queued: d.store.queued(id)?,
+                    boot_id: self.boot_id.clone(),
+                    revision: d.revision,
+                })
             }
             "agent.child_transcript" => {
                 let id = string("conversation_id")?;
@@ -230,27 +241,26 @@ impl Sessions {
                 Ok(json!({"type":"draft","draft":draft}))
             }
             "agent.send" => {
-                let conversation = string("conversation_id")?;
-                let key = string("request_id")?;
-                let text = request["text"].as_str().context("Missing prompt text")?;
-                let attachments = serde_json::from_value::<Vec<crate::model::Attachment>>(
-                    request.get("attachments").cloned().unwrap_or(json!([])),
-                )?;
+                let send: AgentSendRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &send.conversation_id)?;
+                let key = non_empty("request_id", &send.request_id)?;
+                let text = send.text.as_str();
+                let attachments = send.attachments.as_slice();
                 if let Err(error) = self.send(
                     conversation,
                     key,
                     text,
-                    &attachments,
+                    attachments,
                     false,
                     SendAdmission::ordinary(),
                 ) {
                     let data = self.data.lock().unwrap();
                     let _ = data
                         .store
-                        .reject_send_intent(conversation, key, text, &attachments);
+                        .reject_send_intent(conversation, key, text, attachments);
                     return Err(error);
                 }
-                Ok(json!({"type":"ack"}))
+                reply(&Ack::default())
             }
             "agent.send_review" => {
                 let conversation = string("conversation_id")?;
@@ -441,13 +451,14 @@ impl Sessions {
                 Ok(json!({"type":"ack"}))
             }
             "agent.answer" => {
+                let answer: AgentAnswerRequest = decode(request)?;
                 self.answer(
-                    string("conversation_id")?,
-                    string("request_id")?,
-                    string("decision")?,
-                    request.get("answers"),
+                    non_empty("conversation_id", &answer.conversation_id)?,
+                    non_empty("request_id", &answer.request_id)?,
+                    non_empty("decision", &answer.decision)?,
+                    answer.answers.as_ref(),
                 )?;
-                Ok(json!({"type":"ack"}))
+                reply(&Ack::default())
             }
             "window.save" => {
                 let window: WindowRecord = serde_json::from_value(request["window"].clone())?;

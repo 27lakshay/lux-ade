@@ -1,6 +1,7 @@
 //! Shared lux-ade models and wire contracts. No GUI, native, or process dependencies.
 #![forbid(unsafe_code)]
 
+pub mod contract;
 pub mod model;
 pub mod prompt;
 pub mod protocol;

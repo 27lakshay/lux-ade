@@ -1,8 +1,9 @@
 import { createConnection, type Socket } from 'node:net'
 import { DaemonRequestError, requestDaemon } from './request.js'
-import { decodeDailyUseFeedFrame, decodeDailyUseRequest, decodeDailyUseResponse,
-  type DailyUseFeedFrame, type DailyUseOperation, type DailyUseRequest,
-  type DailyUseResponse } from './generated.js'
+import { decodeFeedFrame as decodeDailyUseFeedFrame, decodeRequest as decodeDailyUseRequest,
+  decodeResponse as decodeDailyUseResponse, type FeedFrame as DailyUseFeedFrame,
+  type Operation as DailyUseOperation, type Request as DailyUseRequest,
+  type Response as DailyUseResponse } from '@ade/contracts'
 
 export { openTerminalConnection, type TerminalConnection, type TerminalFrame } from './terminal.js'
 export { requestDaemon, DaemonRequestError, type DaemonErrorCode, type DaemonResponse,
@@ -10,7 +11,7 @@ export { requestDaemon, DaemonRequestError, type DaemonErrorCode, type DaemonRes
 export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'
 export { decodeDailyUseFeedFrame, decodeDailyUseRequest, decodeDailyUseResponse,
   type DailyUseFeedFrame, type DailyUseOperation, type DailyUseRequest,
-  type DailyUseResponse } from './generated.js'
+  type DailyUseResponse }
 
 /** A typed command against the same profile daemon used by Electron and the CLI. */
 export async function dailyUseCommand<O extends DailyUseOperation>(endpoint: string,
