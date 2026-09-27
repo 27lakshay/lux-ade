@@ -76,6 +76,17 @@ impl Sessions {
                 if !d.agents.contains_key(&head.conversation_id) && d.agents.len() >= 16 {
                     continue;
                 }
+                // A provider session without a connected Agent must be
+                // resumed explicitly first; its queue waits for that resume
+                // instead of pausing on the refusal.
+                if !d.agents.contains_key(&head.conversation_id)
+                    && d.store
+                        .conversation(&head.conversation_id)?
+                        .provider_thread_id
+                        .is_some()
+                {
+                    continue;
+                }
             }
             if let Err(error) = self.send(
                 &head.conversation_id,
@@ -94,7 +105,7 @@ impl Sessions {
                 }
                 let mut c = d.store.conversation(&head.conversation_id)?;
                 let current = d.store.queued(&c.id)?;
-                if matches!(c.status.as_str(), "idle" | "ready")
+                if crate::store::QUEUE_DISPATCH_STATUSES.contains(&c.status.as_str())
                     && !c.queue_paused
                     && current
                         .first()
@@ -686,7 +697,8 @@ impl Sessions {
         self.fail_if(id, run, error, None);
     }
     pub(super) fn fail_if(&self, id: &str, run: &str, error: String, submission: Option<&str>) {
-        let error = if self.runtime.gone() {
+        let runtime_gone = self.runtime.gone();
+        let error = if runtime_gone {
             "Runtime supervisor exited. Restart lux-ade, then resume this Conversation. No prompt was resent.".into()
         } else {
             error
@@ -766,7 +778,13 @@ impl Sessions {
             for p in &mut requests {
                 p.status = "interrupted".into();
             }
-            d.store.commit_conversation(&c, &[], &requests)?;
+            // Without a confirmed stop, or with the runtime gone, nothing
+            // proves how a turn in flight ended: its outcome is unknown.
+            if runtime_gone || outcome.hold.is_some() {
+                d.store.commit_lost_run(&c, &requests)?;
+            } else {
+                d.store.commit_conversation(&c, &[], &requests)?;
+            }
             self.changed(&mut d, &c, &[])
         })();
         if let Err(error) = result {
@@ -961,12 +979,16 @@ impl Sessions {
                         order.push(mid.clone());
                         messages.insert(mid.clone(), m);
                     }
+                    // One message past 1 MiB is cut with a marker, never
+                    // a reason to fail the Conversation.
                     let m = messages.get_mut(&mid).unwrap();
-                    m.text.push_str(&text);
+                    crate::transcript::append_bounded(&mut m.text, &text);
                     if let Some(crate::transcript::Content::Tool { output, .. }) = &mut m.content {
-                        output.get_or_insert_with(String::new).push_str(&text);
+                        crate::transcript::append_bounded(
+                            output.get_or_insert_with(String::new),
+                            &text,
+                        );
                     }
-                    ensure!(m.text.len() <= 1024 * 1024, "Agent message exceeds 1 MiB");
                     changed = true;
                 }
                 Event::Resolved { id: request_id } => {

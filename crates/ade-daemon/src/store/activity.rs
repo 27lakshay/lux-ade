@@ -118,6 +118,15 @@ pub(crate) fn unknown_turn(prior: &Conversation, next: &Conversation) -> Recorde
     }
 }
 
+/// The activity for a status change that lost the run: its provider stop was
+/// not confirmed, or the runtime is gone. A turn in flight then has an unknown
+/// outcome, exactly as when a daemon restart finds it busy, so every ordering
+/// of a runtime crash records the same `operation_unknown` under the turn's key.
+pub(crate) fn lost_turn_activity(prior: &Conversation, next: &Conversation) -> Option<Recorded> {
+    (BUSY.contains(&prior.status.as_str()) && prior.status != next.status)
+        .then(|| unknown_turn(prior, next))
+}
+
 /// The activity a newly recorded pending request records.
 pub(crate) fn request_activity(
     conversation: &Conversation,
@@ -626,6 +635,24 @@ mod tests {
         let unconfirmed = turn_activity(&starting, &after(&starting, "interrupted", None)).unwrap();
         assert_eq!(unconfirmed.kind, ActivityKind::OperationUnknown);
         assert_eq!(unconfirmed.source_key, "turn:c:submission:unknown");
+    }
+
+    #[test]
+    fn a_turn_lost_with_its_run_is_unknown_whatever_noticed_it() {
+        for status in ["running", "waiting", "cancelling"] {
+            let busy = conversation(status);
+            let failed = after(&busy, "interrupted", Some("Runtime supervisor exited"));
+            let lost = lost_turn_activity(&busy, &failed).unwrap();
+            let restarted = unknown_turn(&busy, &after(&busy, "interrupted", Some("restart")));
+            assert_eq!(lost.kind, ActivityKind::OperationUnknown);
+            assert_eq!(source_key(&lost), source_key(&restarted));
+        }
+        let mut ready = conversation("ready");
+        ready.active_turn_id = None;
+        assert_eq!(
+            lost_turn_activity(&ready, &after(&ready, "interrupted", None)),
+            None
+        );
     }
 
     #[test]

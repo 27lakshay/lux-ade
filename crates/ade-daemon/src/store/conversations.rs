@@ -11,6 +11,11 @@ pub enum QueueEntry {
     Cancelled,
 }
 
+/// Statuses from which an unpaused queue dispatches its head. Every move into
+/// `interrupted` or `error` pauses the queue, so these dispatch only after the
+/// user resumes it, as `agent.send` may. Keep in step with `queue_heads`.
+pub const QUEUE_DISPATCH_STATUSES: &[&str] = &["idle", "ready", "interrupted", "error"];
+
 pub(super) fn message_by_id(db: &Connection, id: &str) -> Result<Option<Message>> {
     db.query_row("SELECT data FROM messages WHERE id=?1", [id], |r| {
         r.get::<_, String>(0)
@@ -324,7 +329,7 @@ impl Store {
         Ok(())
     }
     pub fn queue_heads(&self) -> Result<Vec<QueuedPrompt>> {
-        self.connection.prepare("SELECT q.id,q.conversation_id,q.text,q.status,q.attachments FROM queued_prompts q JOIN conversations c ON c.id=q.conversation_id WHERE q.status='queued' AND json_extract(c.data,'$.terminal_owner') IS NULL AND COALESCE(json_extract(c.data,'$.queue_paused'),0)=0 AND json_extract(c.data,'$.status') IN ('idle','ready') AND q.rowid=(SELECT MIN(h.rowid) FROM queued_prompts h WHERE h.conversation_id=q.conversation_id AND h.status='queued') ORDER BY q.rowid LIMIT 16")?
+        self.connection.prepare("SELECT q.id,q.conversation_id,q.text,q.status,q.attachments FROM queued_prompts q JOIN conversations c ON c.id=q.conversation_id WHERE q.status='queued' AND json_extract(c.data,'$.terminal_owner') IS NULL AND COALESCE(json_extract(c.data,'$.queue_paused'),0)=0 AND json_extract(c.data,'$.status') IN ('idle','ready','interrupted','error') AND q.rowid=(SELECT MIN(h.rowid) FROM queued_prompts h WHERE h.conversation_id=q.conversation_id AND h.status='queued') ORDER BY q.rowid LIMIT 16")?
             .query_map([],|row| Ok(QueuedPrompt {id:row.get(0)?,conversation_id:row.get(1)?,text:row.get(2)?,status:row.get(3)?,attachments:attachment_row(row,4)?}))?
             .collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
@@ -480,6 +485,25 @@ impl Store {
         messages: &[Message],
         requests: &[PendingRequest],
     ) -> Result<()> {
+        self.commit_conversation_as(conversation, messages, requests, false)
+    }
+    /// Commits a status change that lost the run: its provider stop was not
+    /// confirmed or the runtime is gone. A turn in flight is recorded as an
+    /// unknown outcome, never as interrupted or failed.
+    pub fn commit_lost_run(
+        &self,
+        conversation: &Conversation,
+        requests: &[PendingRequest],
+    ) -> Result<()> {
+        self.commit_conversation_as(conversation, &[], requests, true)
+    }
+    fn commit_conversation_as(
+        &self,
+        conversation: &Conversation,
+        messages: &[Message],
+        requests: &[PendingRequest],
+        lost_run: bool,
+    ) -> Result<()> {
         let started = std::time::Instant::now();
         activity::ensure(&self.connection)?;
         let tx = self.transaction()?;
@@ -487,7 +511,12 @@ impl Store {
         write_conversation(&tx, conversation)?;
         // Activity commits with the state change it records.
         let now = now_ms();
-        if let Some(recorded) = activity::turn_activity(&prior, conversation) {
+        let recorded = if lost_run {
+            activity::lost_turn_activity(&prior, conversation)
+        } else {
+            activity::turn_activity(&prior, conversation)
+        };
+        if let Some(recorded) = recorded {
             enqueue_turn_hook(&tx, &recorded, &conversation.provider, now)?;
             activity::record(&tx, recorded, now)?;
         }
@@ -549,7 +578,13 @@ impl Store {
                 );
                 message.sequence = next_sequence(&tx, &conversation.id)?;
             }
-            check_text(&message.text)?;
+            if message.role == "user" {
+                check_text(&message.text)?;
+            } else {
+                // Provider output is bounded with an explicit marker rather
+                // than refused, so a long reply cannot fail the Conversation.
+                crate::transcript::bound_message(&mut message.text, &mut message.content);
+            }
             if let Some(content) = &message.content {
                 content.validate()?;
             }
