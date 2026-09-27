@@ -165,9 +165,39 @@ impl Sessions {
                 let title = create.title.as_deref().unwrap_or("New Conversation");
                 ensure!(title.len() <= 256, "Title is too long");
                 let workspace = non_empty("workspace_id", &create.workspace_id)?;
-                let provider_config =
-                    serde_json::from_value(create.provider_config.unwrap_or_else(|| json!({})))?;
-                let provider = create.provider.as_deref().unwrap_or("codex");
+                let (provider, provider_config) = match create.preset.as_deref() {
+                    None => (
+                        create.provider.clone().unwrap_or_else(|| "codex".into()),
+                        serde_json::from_value(
+                            create.provider_config.unwrap_or_else(|| json!({})),
+                        )?,
+                    ),
+                    Some(name) => {
+                        ensure!(
+                            create.provider_config.is_none(),
+                            "Pass either a preset or provider settings, not both"
+                        );
+                        let preset = self
+                            .presets
+                            .get(name)?
+                            .ok_or_else(|| anyhow!("No preset is named {}", name.trim()))?;
+                        let checked = crate::capabilities::core::check(
+                            preset,
+                            &crate::capabilities::records(),
+                        );
+                        let settings =
+                            crate::capabilities::core::apply(&checked, create.provider.as_deref())?;
+                        (
+                            settings.provider.clone(),
+                            crate::provider::Config {
+                                model: settings.model.clone(),
+                                permission_mode: settings.permission_mode.clone(),
+                                setting_sources: vec![],
+                            },
+                        )
+                    }
+                };
+                let provider = provider.as_str();
                 // Adapters and plugin providers are validated through the
                 // provider registry, not the static catalogue.
                 let registered = self.registered_descriptor(provider)?;

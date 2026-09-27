@@ -5048,6 +5048,13 @@ export interface ConversationCreateRequest {
   account_id?: string
   op: 'conversation.create'
   /**
+   * A saved preset whose provider, model and permission mode the
+   * Conversation uses. Refused when the provider's current capabilities
+   * conflict with it; never combined with `provider_config`. A preset
+   * carries no account, so it never changes `account_id`.
+   */
+  preset?: string
+  /**
    * Provider ID; defaults to `codex`.
    */
   provider?: string

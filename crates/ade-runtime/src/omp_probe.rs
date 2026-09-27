@@ -158,8 +158,8 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         Ok(output) => output,
         Err(_) => {
             return result(
-                "incompatible",
-                "Oh My Pi version check failed or timed out",
+                "unavailable",
+                "Oh My Pi version check failed or timed out; retry",
                 None,
             );
         }
@@ -216,8 +216,8 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         Ok(output) => output,
         Err(_) => {
             return result(
-                "incompatible",
-                "Oh My Pi credential inspection failed or timed out",
+                "unavailable",
+                "Oh My Pi credential inspection failed or timed out; retry",
                 Some(version),
             );
         }

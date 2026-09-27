@@ -18,7 +18,7 @@ export function decodeReply<O extends DailyUseOperation>(op: O, response: unknow
 export const conversationUsage = `  conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
   conversation export ID FILE            Write complete readable JSON history to a new file
-  conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID]
+  conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID] [--preset NAME]
   conversation send ID TEXT [--request-id ID]
                                         Send a prompt; retain ID for safe lost-reply retries
   conversation cancel ID                Request cancellation of the active turn
@@ -129,19 +129,35 @@ export async function runConversationCommand(socketPath: string, area: string | 
     return exportConversation(socketPath, required(rest[0], 'ID'), required(rest[1], 'FILE'))
   }
   if (area === 'conversation' && action === 'create') {
-    const flag = rest.indexOf('--account')
-    const positionals = flag < 0 ? rest : rest.slice(0, flag)
-    if (positionals.length > 3 || positionals.some((word) => word.startsWith('--')) ||
-      (flag >= 0 && (flag !== rest.length - 2 || !rest[flag + 1]))) {
-      throw new CliError('usage', 'conversation create accepts WORKSPACE_ID [PROVIDER] [TITLE] [--account ID].')
+    const usage = 'conversation create accepts WORKSPACE_ID [PROVIDER] [TITLE] [--account ID] [--preset NAME].'
+    const flags: Record<string, string> = {}
+    const positionals: string[] = []
+    for (let index = 0; index < rest.length; index++) {
+      const word = rest[index]!
+      if (word === '--account' || word === '--preset') {
+        const value = rest[index + 1]
+        if (!value || value.startsWith('--') || word in flags) throw new CliError('usage', usage)
+        flags[word] = value
+        index++
+      } else if (word.startsWith('--')) {
+        throw new CliError('usage', usage)
+      } else {
+        positionals.push(word)
+      }
     }
-    if (positionals[2]?.startsWith('account_') && flag < 0) {
+    if (positionals.length > 3) throw new CliError('usage', usage)
+    if (positionals[2]?.startsWith('account_') && !('--account' in flags)) {
       throw new CliError('usage', 'Use --account ID to select an account; the third positional value is a title.')
     }
+    const preset = flags['--preset']
+    // A preset names its provider; an explicit PROVIDER must agree with it.
+    const provider = positionals[1] ?? (preset === undefined ? 'codex' : undefined)
     const fields: Fields<'conversation.create'> = {
-      workspace_id: required(positionals[0], 'WORKSPACE_ID'), provider: positionals[1] ?? 'codex',
+      workspace_id: required(positionals[0], 'WORKSPACE_ID'),
+      ...(provider !== undefined ? { provider } : {}),
       title: positionals[2] ?? 'New Conversation',
-      ...(flag >= 0 ? { account_id: rest[flag + 1] } : {}),
+      ...(flags['--account'] !== undefined ? { account_id: flags['--account'] } : {}),
+      ...(preset !== undefined ? { preset } : {}),
     }
     return decodeReply('conversation.create', await requestDaemon(socketPath, 'conversation.create', fields))
   }

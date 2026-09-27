@@ -219,6 +219,13 @@ pub struct ConversationCreateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub account_id: Option<String>,
+    /// A saved preset whose provider, model and permission mode the
+    /// Conversation uses. Refused when the provider's current capabilities
+    /// conflict with it; never combined with `provider_config`. A preset
+    /// carries no account, so it never changes `account_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub preset: Option<String>,
 }
 
 /// The `conversation.create` reply: an `ack` carrying the new Conversation.

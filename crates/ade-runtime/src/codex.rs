@@ -85,6 +85,12 @@ use std::{
     process::Command,
     sync::{Arc, Mutex, mpsc},
 };
+/// Whether a launch runs on the shared app-server transport, which Bun
+/// serves. A managed-account launch, and any launch with
+/// `ADE_CODEX_TRANSPORT=stdio`, runs the Codex CLI directly.
+pub fn shared_transport(managed: bool) -> bool {
+    !managed && std::env::var("ADE_CODEX_TRANSPORT").as_deref() != Ok("stdio")
+}
 pub struct Adapter {
     rpc: Arc<Rpc>,
     cwd: String,
@@ -101,8 +107,7 @@ impl Adapter {
         let managed_executable = account
             .map(crate::provider::codex_probe::verify_launch)
             .transpose()?;
-        let shared = managed_executable.is_none()
-            && std::env::var("ADE_CODEX_TRANSPORT").as_deref() != Ok("stdio");
+        let shared = shared_transport(managed_executable.is_some());
         let socket_directory = shared.then(|| {
             std::path::PathBuf::from(format!("/tmp/ade-codex-{}", uuid::Uuid::new_v4().simple()))
         });
@@ -791,11 +796,13 @@ pub const INSTALLATION: &[crate::capabilities::Executable] = &[
         check: "executable:codex",
         env: "ADE_CODEX_BIN",
         default: Some("codex"),
+        used_by: crate::capabilities::UsedBy::Every,
     },
     crate::capabilities::Executable {
         check: "runtime:bun",
         env: "ADE_BUN_BIN",
         default: Some("bun"),
+        used_by: crate::capabilities::UsedBy::CodexSharedTransport,
     },
 ];
 

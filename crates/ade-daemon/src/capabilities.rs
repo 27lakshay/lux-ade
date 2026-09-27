@@ -53,10 +53,12 @@ fn resolve(configured: OsString, search: Option<OsString>) -> Option<PathBuf> {
     std::env::split_paths(&search?).find_map(|directory| executable(directory.join(&candidate)))
 }
 
-/// Checks that each executable `provider` needs can be found on this host.
-/// The daemon and runtime share an environment, so this sees what a launch
-/// would, but an external update can change it at any time.
-pub fn installation(provider: &str) -> Result<Vec<ReadinessCheck>> {
+/// Checks that each executable `provider` needs can be found on this host,
+/// for a launch with or without a managed account. An executable that launch
+/// does not run is skipped rather than required. The daemon and runtime share
+/// an environment, so this sees what a launch would, but an external update
+/// can change it at any time.
+pub fn installation(provider: &str, managed: bool) -> Result<Vec<ReadinessCheck>> {
     let needs = ade_runtime::capabilities::installation(provider)
         .ok_or_else(|| anyhow!("Unknown provider: {provider}"))?;
     Ok(needs
@@ -64,6 +66,10 @@ pub fn installation(provider: &str) -> Result<Vec<ReadinessCheck>> {
         .map(|need| {
             let configured = std::env::var_os(need.env);
             let (state, detail) = match (configured, need.default) {
+                _ if !need.used(managed) => (
+                    CheckState::Skipped,
+                    "Not used by this launch; the provider CLI runs directly".to_owned(),
+                ),
                 (None, None) => (CheckState::Skipped, "Bundled with ADE".to_owned()),
                 (Some(value), _) => match resolve(value.clone(), std::env::var_os("PATH")) {
                     Some(path) => (CheckState::Passed, path.display().to_string()),

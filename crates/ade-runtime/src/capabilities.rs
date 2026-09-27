@@ -18,6 +18,28 @@ pub struct Executable {
     /// The name looked up on `PATH`. `None` means ADE ships it, so only an
     /// override set in `env` is checked.
     pub default: Option<&'static str>,
+    /// Which launches run it.
+    pub used_by: UsedBy,
+}
+
+/// Which launches of a provider run an executable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsedBy {
+    /// Every launch.
+    Every,
+    /// Only a Codex launch on the shared app-server transport; see
+    /// [`crate::codex::shared_transport`].
+    CodexSharedTransport,
+}
+
+impl Executable {
+    /// Whether a launch, with or without a managed account, runs this executable.
+    pub fn used(&self, managed: bool) -> bool {
+        match self.used_by {
+            UsedBy::Every => true,
+            UsedBy::CodexSharedTransport => crate::codex::shared_transport(managed),
+        }
+    }
 }
 
 /// Every adapter's declaration, in catalogue order. Fingerprints are empty;
@@ -79,6 +101,22 @@ mod tests {
             assert!(record.revision >= 1);
             assert!(installation(&record.provider).is_some());
         }
+    }
+
+    #[test]
+    fn managed_codex_launches_do_not_need_the_shared_transport_runtime() {
+        let codex = installation("codex").unwrap();
+        let bun = codex
+            .iter()
+            .find(|need| need.check == "runtime:bun")
+            .unwrap();
+        assert_eq!(bun.used_by, UsedBy::CodexSharedTransport);
+        assert!(!bun.used(true));
+        let cli = codex
+            .iter()
+            .find(|need| need.check == "executable:codex")
+            .unwrap();
+        assert!(cli.used(true) && cli.used(false));
     }
 
     #[test]

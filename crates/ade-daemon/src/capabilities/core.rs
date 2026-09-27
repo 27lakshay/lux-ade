@@ -169,6 +169,41 @@ pub fn check(preset: Preset, records: &[CapabilityRecord]) -> CheckedPreset {
     }
 }
 
+/// The settings a new Conversation takes from a checked preset. A preset
+/// with any conflict is refused and never adapted; one for another provider
+/// than the caller named is refused rather than switching provider. Launches
+/// carry no reasoning level yet, so a preset holding one is refused too.
+pub fn apply<'a>(checked: &'a CheckedPreset, provider: Option<&str>) -> Result<&'a PresetSettings> {
+    let preset = &checked.preset;
+    let settings = &preset.settings;
+    if let Some(provider) = provider {
+        ensure!(
+            provider == settings.provider,
+            "Preset {} is for {}, not {provider}",
+            preset.name,
+            settings.provider
+        );
+    }
+    ensure!(
+        checked.conflicts.is_empty(),
+        "Preset {} conflicts with the current {} capabilities: {}. Update the preset and retry",
+        preset.name,
+        settings.provider,
+        checked
+            .conflicts
+            .iter()
+            .map(|c| c.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
+    ensure!(
+        settings.reasoning.is_none(),
+        "Preset {} sets a reasoning level, which launches cannot carry yet",
+        preset.name
+    );
+    Ok(settings)
+}
+
 /// What a managed account contributes to a readiness verdict.
 pub struct AccountFacts<'a> {
     /// The stored account state: `unverified`, `verified` or `disabled`.
@@ -230,6 +265,8 @@ pub fn readiness(
             return (ReadinessState::MissingExecutable, inspection.reason.clone());
         }
         "incompatible" => return (ReadinessState::Incompatible, inspection.reason.clone()),
+        // The probe could not run or finish, which says nothing about the CLI.
+        "unavailable" => return (ReadinessState::Unavailable, inspection.reason.clone()),
         "unauthenticated" => {
             return (
                 ReadinessState::NeedsAuthentication,
@@ -546,6 +583,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn applying_a_preset_refuses_conflicts_instead_of_adapting() {
+        let records = [record()];
+        let fp = records[0].fingerprint.clone();
+        let mut fresh = preset(2, &fp, "default");
+        fresh.settings.model = Some("m-1".into());
+        let checked = check(fresh, &records);
+        let settings = apply(&checked, Some("p")).unwrap();
+        assert_eq!(settings.model.as_deref(), Some("m-1"));
+        assert_eq!(apply(&checked, None).unwrap(), settings);
+        assert!(
+            apply(&checked, Some("other"))
+                .unwrap_err()
+                .to_string()
+                .contains("is for p, not other")
+        );
+        let stale = check(preset(1, "old", "yolo"), &records);
+        assert!(
+            apply(&stale, None)
+                .unwrap_err()
+                .to_string()
+                .contains("conflicts with the current p capabilities")
+        );
+        let mut reasoning = preset(2, &fp, "default");
+        reasoning.settings.reasoning = Some("high".into());
+        assert!(apply(&check(reasoning, &records), None).is_err());
+    }
+
     fn passed() -> Vec<ReadinessCheck> {
         vec![ReadinessCheck {
             check: "executable:p".into(),
@@ -616,6 +681,7 @@ mod tests {
         for (state, expected) in [
             ("unauthenticated", ReadinessState::NeedsAuthentication),
             ("incompatible", ReadinessState::Incompatible),
+            ("unavailable", ReadinessState::Unavailable),
             ("missing_executable", ReadinessState::MissingExecutable),
             ("something_new", ReadinessState::Unavailable),
         ] {

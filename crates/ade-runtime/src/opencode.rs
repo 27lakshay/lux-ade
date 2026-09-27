@@ -197,10 +197,12 @@ pub const INSTALLATION: &[crate::capabilities::Executable] = &[
         check: "executable:opencode",
         env: "ADE_OPENCODE_BIN",
         default: Some("opencode"),
+        used_by: crate::capabilities::UsedBy::Every,
     },
     crate::capabilities::Executable {
         check: "runtime:node",
         env: "ADE_NODE_BIN",
         default: Some("node"),
+        used_by: crate::capabilities::UsedBy::Every,
     },
 ];
