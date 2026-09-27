@@ -6,11 +6,16 @@ import { basename, dirname, isAbsolute, join } from 'node:path'
 import { getBrowserOwner, getProfileState, getStartupProfileSelection, isSwitching, managedProfiles, setBrowserOwner,
   setSwitching, type Profile } from './profile-connection'
 import type { QuitGuard } from './quit-guards'
+import { reconcileBrowserEffect, type BrowserIntent } from './browser-reconcile'
 
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
 type BrowserMutation = 'browser.open' | 'browser.navigate' | 'browser.close'
+// A pending receipt records its intent (`target`, `url`, `priorUrl`) before the
+// effect runs, so a crash can be reconciled against the tabs. Receipts written
+// before intent was recorded lack those fields and stay unknown.
 type BrowserReceipt = { requestId: string; fingerprint: string; profileId: string; ownerId: string;
-  status: 'pending' | 'completed'; op: BrowserMutation; tabId: string | null }
+  status: 'pending' | 'completed' | 'not_applied'; op: BrowserMutation; tabId: string | null
+  target?: string | null; url?: string | null; priorUrl?: string | null; evidence?: string }
 type Saved = { version: 1; selectedId: string | null; tabs: Array<Pick<Tab, 'id' | 'profileId' | 'requestedUrl' | 'observedUrl' | 'title'>> }
 type ProfileTabs = { selectedId: string | null; tabs: Map<string, Tab>; views: Map<string, WebContentsView>;
   inFlightOperations: Map<string, BrowserReceipt>; writes: Promise<void> }
@@ -147,16 +152,21 @@ function validBrowserReceipt(value: unknown, requestId: string, profileId: strin
   const item = value as BrowserReceipt
   if (item.requestId !== requestId || item.profileId !== profileId || !validId(item.ownerId) ||
     !/^[a-f0-9]{64}$/.test(item.fingerprint) ||
-    !['pending', 'completed'].includes(item.status) ||
+    !['pending', 'completed', 'not_applied'].includes(item.status) ||
     !['browser.open', 'browser.navigate', 'browser.close'].includes(item.op) ||
     !(item.tabId === null || validId(item.tabId)) ||
-    (item.status === 'completed' && item.tabId === null)) {
+    (item.status === 'completed' && item.tabId === null) ||
+    !(item.target === undefined || item.target === null || validId(item.target)) ||
+    !(item.url === undefined || item.url === null || allowedUrl(item.url)) ||
+    !(item.priorUrl === undefined || item.priorUrl === null || typeof item.priorUrl === 'string') ||
+    !(item.evidence === undefined || (typeof item.evidence === 'string' && /^[a-z_]{1,64}$/.test(item.evidence)))) {
     throw new Error('Browser receipt is invalid; preserve it for review')
   }
   return item
 }
 async function readBrowserReceipt(id: string, profileId: string, requestId: string): Promise<BrowserReceipt | null> {
-  const value = await readSmallJson(join(browserReceiptDirectory(id), browserReceiptName(requestId)))
+  // Two recorded URLs of up to 8 KiB each fit within this bound.
+  const value = await readSmallJson(join(browserReceiptDirectory(id), browserReceiptName(requestId)), 32 * 1024)
   return value === null ? null : validBrowserReceipt(value, requestId, profileId)
 }
 async function writeBrowserReceipt(id: string, receipt: BrowserReceipt): Promise<void> {
@@ -954,15 +964,80 @@ export async function readBrowserOperation(browserProfileId: string, profileId: 
   const lease = liveBrowserLease(browserProfileId)
   const state = await stateFor(browserProfileId)
   requireBrowserLease(browserProfileId, lease)
-  const receipt = await readBrowserReceipt(browserProfileId, profileId, requestId) ?? state.inFlightOperations.get(requestId)
+  let receipt = await readBrowserReceipt(browserProfileId, profileId, requestId)
   requireBrowserLease(browserProfileId, lease)
+  // A pending receipt this process is not running was interrupted by a crash
+  // or a lost save; settle it from the tabs, or leave it unknown.
+  if (receipt) receipt = await reconcileBrowserReceipt(browserProfileId, state, lease, receipt, false)
+  receipt ??= state.inFlightOperations.get(requestId) ?? null
   if (!receipt) throw new Error('Browser operation is unavailable')
+  const running = state.inFlightOperations.has(requestId)
+  const identity = { profile_id: receipt.profileId, owner_id: receipt.ownerId, request_id: requestId,
+    payload_fingerprint: receipt.fingerprint }
+  const evidence = receipt.evidence ? { evidence: receipt.evidence } : {}
+  const result = receipt.status === 'not_applied'
+    ? { type: 'error', code: 'not_applied', op: receipt.op, ...identity, ...evidence,
+      message: 'Browser effect was not applied; use a new request ID to try again' }
+    : receipt.tabId ? { type: 'browser_mutation', op: receipt.op, tab_id: receipt.tabId, ...identity, ...evidence }
+      : null
   return { type: 'browser_operation', request_id: requestId,
-    state: receipt.status === 'completed' && !state.inFlightOperations.has(requestId) ? 'completed' : 'unknown',
-    payload_fingerprint: receipt.fingerprint, op: receipt.op,
-    ...(receipt.tabId ? { result: { type: 'browser_mutation', op: receipt.op, tab_id: receipt.tabId,
-      profile_id: receipt.profileId, owner_id: receipt.ownerId, request_id: requestId,
-      payload_fingerprint: receipt.fingerprint } } : {}) }
+    state: receipt.status !== 'pending' && !running ? 'completed' : 'unknown',
+    payload_fingerprint: receipt.fingerprint, op: receipt.op, ...(result ? { result } : {}) }
+}
+function browserIntent(receipt: BrowserReceipt): BrowserIntent | null {
+  if (receipt.target === undefined) return null
+  return { op: receipt.op, target: receipt.target, url: receipt.url ?? null, priorUrl: receipt.priorUrl ?? null }
+}
+/**
+ * Settles a pending receipt from the owner's tabs without re-running its
+ * effect. `own` is true when the caller holds this request's in-flight slot.
+ * A verdict that cannot be saved leaves the receipt pending, so it stays unknown.
+ */
+async function reconcileBrowserReceipt(id: string, state: ProfileTabs, lease: BrowserLease,
+  receipt: BrowserReceipt, own: boolean): Promise<BrowserReceipt> {
+  if (receipt.status !== 'pending') return receipt
+  // Let queued tab saves land so the tabs match what a restart would load.
+  await state.writes.catch(() => undefined)
+  requireBrowserLease(id, lease)
+  const verdict = reconcileBrowserEffect(browserIntent(receipt),
+    !own && state.inFlightOperations.has(receipt.requestId), state.tabs)
+  if (verdict.outcome === 'unknown') return receipt
+  const settled: BrowserReceipt = verdict.outcome === 'applied'
+    ? { ...receipt, status: 'completed', tabId: verdict.tabId, evidence: verdict.evidence }
+    : { ...receipt, status: 'not_applied', evidence: verdict.evidence }
+  try { await writeBrowserReceipt(id, settled) } catch { return receipt }
+  return settled
+}
+/**
+ * Reconciles every interrupted receipt of the active profile. The owner runs
+ * this before it registers with a daemon, so an effect cut short by an owner
+ * or daemon crash is settled from the tabs before new work arrives.
+ */
+export async function reconcileBrowserReceipts(browserProfileId: string, profileId: string): Promise<number> {
+  const lease = liveBrowserLease(browserProfileId)
+  const state = await stateFor(browserProfileId)
+  requireBrowserLease(browserProfileId, lease)
+  const directory = browserReceiptDirectory(browserProfileId)
+  let names: string[]
+  try { names = await readdir(directory) } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+    throw error
+  }
+  let settled = 0
+  for (const name of names.slice(0, 4096)) {
+    if (!/^[a-f0-9]{64}\.json$/.test(name)) continue
+    let receipt: BrowserReceipt
+    try {
+      const value = await readSmallJson(join(directory, name), 32 * 1024)
+      const requestId = (value as { requestId?: unknown } | null)?.requestId
+      if (typeof requestId !== 'string' || browserReceiptName(requestId) !== name) continue
+      receipt = validBrowserReceipt(value, requestId, profileId)
+    } catch { continue } // An unreadable receipt stays on disk for review.
+    if (receipt.status !== 'pending') continue
+    const result = await reconcileBrowserReceipt(browserProfileId, state, lease, receipt, false)
+    if (result.status !== 'pending') settled += 1
+  }
+  return settled
 }
 function liveBrowserLease(id: string): BrowserLease {
   const lease = browserLease
@@ -976,7 +1051,7 @@ function requireBrowserLease(id: string, lease: BrowserLease): void {
     throw new Error('Browser owner changed')
   }
 }
-async function openBrowserTab(id: string, url: unknown): Promise<string> {
+async function openBrowserTab(id: string, url: unknown, tabId: string = randomUUID()): Promise<string> {
   if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
   const lease = liveBrowserLease(id)
   const state = await stateFor(id)
@@ -984,7 +1059,8 @@ async function openBrowserTab(id: string, url: unknown): Promise<string> {
   await e2eBrowserPause('open-before-mutation', url as string)
   requireBrowserLease(id, lease)
   const address = url as string
-  const tab: Tab = { id: randomUUID(), profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '' }
+  if (state.tabs.has(tabId)) throw new Error('Browser tab ID is already in use')
+  const tab: Tab = { id: tabId, profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '' }
   state.tabs.set(tab.id, tab)
   state.selectedId = tab.id
   viewFor(id, state, tab)
@@ -1060,28 +1136,49 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
     throw new Error('outcome_unknown: browser effect is already in progress')
   }
   state.inFlightOperations.set(requestId, receipt)
+  // Until the pending receipt is written, no effect has run and a failure is final.
+  let recorded = false
   try {
     const previous = await readBrowserReceipt(browserProfileId, profileId, requestId)
     requireBrowserLease(browserProfileId, lease)
     if (previous) {
       if (previous.fingerprint !== fingerprint) throw new Error('Browser request ID conflicts with a different target')
-      if (previous.status !== 'completed' || !previous.tabId) {
-        throw new Error('outcome_unknown: browser effect needs reconciliation')
+      // An earlier attempt may have run the effect, so failures from here are unknown.
+      recorded = true
+      // A retry after a crash never re-runs the effect: settle it from the tabs.
+      const known = await reconcileBrowserReceipt(browserProfileId, state, lease, previous, true)
+      if (known.status === 'not_applied') {
+        throw new Error('not_applied: browser effect was not applied; use a new request ID to try again')
       }
-      return { type: 'browser_mutation', op, tab_id: previous.tabId }
+      if (known.status !== 'completed' || !known.tabId) throw new Error('browser effect needs reconciliation')
+      return { type: 'browser_mutation', op, tab_id: known.tabId }
     }
+    // Record the intent reconciliation needs before the effect runs.
+    if (op === 'browser.open') {
+      receipt.target = randomUUID()
+      receipt.url = url as string
+      receipt.priorUrl = null
+    } else {
+      const tab = exact(state, browserProfileId, tabId)
+      receipt.target = tab.id
+      receipt.url = op === 'browser.navigate' ? url as string : null
+      receipt.priorUrl = op === 'browser.navigate' ? tab.requestedUrl : null
+    }
+    recorded = true
     await writeBrowserReceipt(browserProfileId, receipt)
     requireBrowserLease(browserProfileId, lease)
-    const resultId = op === 'browser.open' ? await openBrowserTab(browserProfileId, url)
+    const resultId = op === 'browser.open' ? await openBrowserTab(browserProfileId, url, receipt.target)
       : op === 'browser.navigate' ? await navigateBrowserTab(browserProfileId, tabId, url)
       : await closeBrowserTab(browserProfileId, tabId)
     receipt.tabId = resultId
     receipt.status = 'completed'
     try { await writeBrowserReceipt(browserProfileId, receipt) }
-    catch { receipt.status = 'pending'; throw new Error('outcome_unknown: browser receipt could not be saved') }
+    catch { receipt.status = 'pending'; throw new Error('browser receipt could not be saved') }
     return { type: 'browser_mutation', op, tab_id: resultId }
   } catch (error) {
-    if (receipt.status !== 'completed' && !String(error).includes('conflicts with a different target')) {
+    // A failed receipt write may still have reached the disk, so any failure
+    // once recording starts stays unknown until reconciliation proves otherwise.
+    if (recorded && receipt.status !== 'completed' && !String(error).includes('not_applied:')) {
       throw new Error(`outcome_unknown: ${String(error)}`)
     }
     throw error

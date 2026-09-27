@@ -3,7 +3,7 @@ import { requestDaemon, type DaemonResponse } from '@ade/client'
 export type CommandResult = DaemonResponse | Record<string, unknown>
 
 export type ErrorCode = 'usage' | 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' |
-  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded'
+  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded' | 'not_applied'
 
 export class CliError extends Error {
   constructor(public readonly code: ErrorCode, message: string) {

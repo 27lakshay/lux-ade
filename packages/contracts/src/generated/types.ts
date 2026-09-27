@@ -237,7 +237,7 @@ export type BranchPolicy = 'keep' | 'merged'
 /**
  * Where a browser mutation stands.
  */
-export type BrowserOperationState = 'completed' | 'accepted' | 'unknown'
+export type BrowserOperationState = 'accepted' | 'unknown' | 'completed'
 /**
  * Whether a service's recorded run is live in the current runtime.
  */
