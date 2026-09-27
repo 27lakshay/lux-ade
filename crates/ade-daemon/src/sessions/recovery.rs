@@ -170,6 +170,22 @@ pub(super) struct Facts {
     pub native_session: bool,
 }
 
+/// Whether a Conversation's provider turn was in flight when its runtime
+/// stopped. `status` is `None` for a missing Conversation, which counts as
+/// mid-turn. A busy status is in flight. So is `interrupted` when the old
+/// incarnation recorded the very run the Conversation still names: a daemon
+/// that outlived its runtime marks the lost turn interrupted and clears it
+/// before the next start reconciles, so the busy status alone would report
+/// the lost turn's outcome as known.
+pub(super) fn turn_in_flight(status: Option<&str>, recorded_run: bool) -> bool {
+    match status {
+        None => true,
+        Some("starting" | "running" | "waiting" | "cancelling") => true,
+        Some("interrupted") => recorded_run,
+        Some(_) => false,
+    }
+}
+
 /// Everything observed about one attempt after the restart.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Evidence {
@@ -435,6 +451,21 @@ mod tests {
             Ports::Held { port: 3000, pid: 9 }
         );
         assert!(matches!(ports(&[3000], Err("lsof")), Ports::Unreadable(_)));
+    }
+
+    #[test]
+    fn a_turn_interrupted_by_a_surviving_daemon_stays_in_flight_only_for_its_recorded_run() {
+        for busy in ["starting", "running", "waiting", "cancelling"] {
+            assert!(turn_in_flight(Some(busy), false));
+        }
+        assert!(turn_in_flight(None, false));
+        // The daemon saw its runtime go and marked the turn interrupted.
+        assert!(turn_in_flight(Some("interrupted"), true));
+        // Interrupted by an earlier incarnation: this one never ran it.
+        assert!(!turn_in_flight(Some("interrupted"), false));
+        for idle in ["ready", "idle", "error", "disconnected"] {
+            assert!(!turn_in_flight(Some(idle), true));
+        }
     }
 
     fn facts(kind: RecoveredAttemptKind, in_flight: bool) -> Facts {

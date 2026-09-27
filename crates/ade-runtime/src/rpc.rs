@@ -134,9 +134,14 @@ impl Rpc {
                             WireEvent::Notification(method.into(), message["params"].clone())
                         };
                         if let Some(event) = decode(event)? {
+                            // Block while the run's journal drains this bounded
+                            // queue: backpressure reaches the provider's pipe,
+                            // and the journal alone decides overflow (an output
+                            // failure, never a forced exit). It fails only once
+                            // the run stopped draining.
                             events
-                                .try_send(event)
-                                .map_err(|_| TransportError::Overloaded)?;
+                                .send(event)
+                                .map_err(|_| TransportError::Disconnected)?;
                         }
                     } else if let Some(id) = message.get("id")
                         && let Some(reply) = this
