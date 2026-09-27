@@ -1,117 +1,39 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { TerminalBridge, TerminalFrame } from '@ade/terminal'
+import { browser } from './browser'
+import { conversations } from './conversations'
+import { files } from './files'
+import { profiles } from './profiles'
+import { review } from './review'
+import { services } from './services'
+import { terminal } from './terminal'
+import { workspaces } from './workspaces'
 
-const terminal: TerminalBridge = {
-  async attach(workspaceId, terminalId, onFrame, onClose) {
-    const connectionId = globalThis.crypto.randomUUID()
-    const frameListener = (_event: Electron.IpcRendererEvent, id: string, frame: TerminalFrame): void => {
-      if (id === connectionId) onFrame(frame)
-    }
-    const closeListener = (_event: Electron.IpcRendererEvent, id: string, reason: string): void => {
-      if (id === connectionId) onClose(reason)
-    }
-    ipcRenderer.on('ade:terminal-frame', frameListener)
-    ipcRenderer.on('ade:terminal-close', closeListener)
-    try {
-      await ipcRenderer.invoke('ade:terminal-attach', connectionId, workspaceId, terminalId)
-    } catch (error) {
-      ipcRenderer.removeListener('ade:terminal-frame', frameListener)
-      ipcRenderer.removeListener('ade:terminal-close', closeListener)
-      throw error
-    }
-    return {
-      input: (data) => ipcRenderer.send('ade:terminal-input', connectionId, data),
-      binary: (bytes) => ipcRenderer.send('ade:terminal-binary', connectionId, bytes),
-      resize: (cols, rows, widthPx, heightPx) =>
-        ipcRenderer.send('ade:terminal-resize', connectionId, cols, rows, widthPx, heightPx),
-      dispose: () => {
-        ipcRenderer.removeListener('ade:terminal-frame', frameListener)
-        ipcRenderer.removeListener('ade:terminal-close', closeListener)
-        ipcRenderer.send('ade:terminal-detach', connectionId)
-      },
-    }
-  },
+// Flat names the existing E2E specs still call through `window.evaluate`. The
+// renderer and its `Window.adeHost` type use only the domain namespaces. Remove
+// an alias once no spec under e2e/ calls it.
+const e2eAliases = {
+  getClientState: profiles.getClientState,
+  getProfileState: profiles.getState,
+  createProfile: profiles.create,
+  selectProfile: profiles.select,
+  adoptBrowserSession: browser.adoptSession,
+  captureBrowserProfile: browser.captureProfile,
+  restoreBrowserProfile: browser.restoreProfile,
+  exportSendJournalProfile: conversations.exportSendJournal,
+  importSendJournalProfile: conversations.importSendJournal,
+  requestConversation: conversations.request,
+  rebindRestored: workspaces.rebindRestored,
 }
 
 contextBridge.exposeInMainWorld('adeHost', {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('ade:app-version'),
-  getClientState: () => ipcRenderer.invoke('ade:client-state'),
-  getProfileState: () => ipcRenderer.invoke('ade:profile-state'),
-  listProfiles: () => ipcRenderer.invoke('ade:profile-list'),
-  createProfile: (name: string) => ipcRenderer.invoke('ade:profile-create', name),
-  selectProfile: (id: string) => ipcRenderer.invoke('ade:profile-select', id),
-  adoptBrowserSession: (profileId: string) => ipcRenderer.invoke('ade:browser-adopt', profileId),
-  captureBrowserProfile: (profileId: string, destination: string) =>
-    ipcRenderer.invoke('ade:browser-backup-capture', profileId, destination),
-  restoreBrowserProfile: (bundle: string, profileId: string) =>
-    ipcRenderer.invoke('ade:browser-backup-restore', bundle, profileId),
-  exportSendJournalProfile: (profileId: string, destination: string) =>
-    ipcRenderer.invoke('ade:send-journal-export', profileId, destination),
-  importSendJournalProfile: (bundle: string, sourceProfileId: string, targetProfileId: string) =>
-    ipcRenderer.invoke('ade:send-journal-import', bundle, sourceProfileId, targetProfileId),
-  openWorkspace: (folder: string) => ipcRenderer.invoke('ade:workspace-open', folder),
-  chooseWorkspace: () => ipcRenderer.invoke('ade:workspace-choose'),
-  listRestoreBindings: () => ipcRenderer.invoke('ade:restore-bindings'),
-  rebindRestored: (profileId: string, kind: 'worktree' | 'repository' | 'workspace', id: string, folder: string) =>
-    ipcRenderer.invoke('ade:restore-binding', profileId, kind, id, folder),
-  chooseRestoreFolder: () => ipcRenderer.invoke('ade:restore-choose-folder'),
-  selectWorkspace: (id: string, conversationId: string | null): Promise<boolean> =>
-    ipcRenderer.invoke('ade:workspace-select', id, conversationId),
-  onProfileState: (listener: (state: unknown) => void): (() => void) => {
-    const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
-    ipcRenderer.on('ade:profile-state-changed', receive)
-    return () => ipcRenderer.removeListener('ade:profile-state-changed', receive)
-  },
-  requestConversation: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('ade:conversation-request', op, fields),
-  listPendingSends: () => ipcRenderer.invoke('ade:pending-sends'),
-  requestService: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('ade:service-request', op, fields),
-  requestScript: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('ade:script-request', op, fields),
-  requestReview: (op: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('ade:review-request', op, fields),
-  readGitJournal: (workspaceId: string): Promise<Record<string, unknown>> => ipcRenderer.invoke('ade:git-journal-read', workspaceId),
-  acknowledgeGitJournal: (workspaceId: string, requestId: string, kind: 'settle' | 'interrupted'): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('ade:git-journal-ack', workspaceId, requestId, kind),
-  requestFile: (op: 'file.list' | 'file.search' | 'file.preview', fields: Record<string, unknown>): Promise<Record<string, unknown>> =>
-    ipcRenderer.invoke('ade:file-request', op, fields),
-  onDraftError: (listener: (value: { conversationId: string; message: string }) => void): (() => void) => {
-    const receive = (_event: Electron.IpcRendererEvent, value: { conversationId: string; message: string }): void => listener(value)
-    ipcRenderer.on('ade:draft-error', receive)
-    return () => ipcRenderer.removeListener('ade:draft-error', receive)
-  },
-  onClientState: (listener: (state: unknown) => void): (() => void) => {
-    const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
-    ipcRenderer.on('ade:client-state-changed', receive)
-    return () => ipcRenderer.removeListener('ade:client-state-changed', receive)
-  },
-  onFeedFrame: (listener: (frame: unknown) => void): (() => void) => {
-    const receive = (_event: Electron.IpcRendererEvent, frame: unknown): void => listener(frame)
-    ipcRenderer.on('ade:feed-frame', receive)
-    return () => ipcRenderer.removeListener('ade:feed-frame', receive)
-  },
-  browser: {
-    list: () => ipcRenderer.invoke('ade:browser-list'),
-    open: (url: string) => ipcRenderer.invoke('ade:browser-open', url),
-    select: (id: string) => ipcRenderer.invoke('ade:browser-select', id),
-    newTab: () => ipcRenderer.invoke('ade:browser-new'),
-    navigate: (id: string, url: string) => ipcRenderer.invoke('ade:browser-navigate', id, url),
-    history: (id: string, direction: 'back' | 'forward') => ipcRenderer.invoke('ade:browser-history', id, direction),
-    close: (id: string) => ipcRenderer.invoke('ade:browser-close', id),
-    bounds: (id: string, rect: { x: number; y: number; width: number; height: number }) =>
-      ipcRenderer.invoke('ade:browser-bounds', id, rect),
-    hide: () => ipcRenderer.invoke('ade:browser-hide'),
-    onState: (listener: (state: unknown) => void): (() => void) => {
-      const receive = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
-      ipcRenderer.on('ade:browser-state', receive)
-      return () => ipcRenderer.removeListener('ade:browser-state', receive)
-    },
-    onLeaseLost: (listener: (profileId: string) => void): (() => void) => {
-      const receive = (_event: Electron.IpcRendererEvent, profileId: string): void => listener(profileId)
-      ipcRenderer.on('ade:browser-lease-lost', receive)
-      return () => ipcRenderer.removeListener('ade:browser-lease-lost', receive)
-    },
-  },
+  profiles,
+  conversations,
+  workspaces,
+  services,
+  review,
+  files,
+  browser,
   terminal,
+  ...e2eAliases,
 })

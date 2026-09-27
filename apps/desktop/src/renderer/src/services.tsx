@@ -65,8 +65,8 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     const load = async (): Promise<void> => {
       try {
         const [services, listeners] = await Promise.allSettled([
-          window.adeHost.requestService('service.list', { workspace_id: workspace.id }),
-          window.adeHost.requestService('listener.list', {}),
+          window.adeHost.services.request('service.list', { workspace_id: workspace.id }),
+          window.adeHost.services.request('listener.list', {}),
         ])
         if (disposed) return
         if (services.status === 'fulfilled') { setList(services.value as ServiceList); setError('') }
@@ -89,7 +89,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     let timer: ReturnType<typeof setTimeout> | undefined
     const load = async (): Promise<void> => {
       try {
-        const result = await window.adeHost.requestService('service.inspect', {
+        const result = await window.adeHost.services.request('service.inspect', {
           workspace_id: workspace.id, name: detailName, tail_bytes: 4096,
         })
         if (!disposed) { setInspection(result as ServiceInspection); setError('') }
@@ -106,7 +106,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     healthRequest.current++
     setHealthResult(null)
     try {
-      await window.adeHost.requestService(`service.${action}`, { workspace_id: workspace.id, name })
+      await window.adeHost.services.request(`service.${action}`, { workspace_id: workspace.id, name })
       setError('')
       setRefresh((value) => value + 1)
     } catch (reason) { setError(String(reason)) }
@@ -118,7 +118,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     setHealthBusy(true)
     setHealthResult(null)
     try {
-      const result = await window.adeHost.requestService('service.inspect', {
+      const result = await window.adeHost.services.request('service.inspect', {
         workspace_id: workspace.id, name, tail_bytes: 4096,
         health_check: { port_variable: healthPort, path: healthPath, timeout_ms: 500 },
       }) as ServiceInspection
@@ -135,7 +135,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     const key = `${name}:${variable}`
     setProxyBusy(`${name}:${variable}`)
     try {
-      const result = await window.adeHost.requestService('service.proxy.ensure', {
+      const result = await window.adeHost.services.request('service.proxy.ensure', {
         workspace_id: workspace.id, name, port_variable: variable,
       })
       const route = proxyRoute(result)
@@ -147,7 +147,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
       setError(String(reason))
       if (String(reason).includes('Service target changed')) {
         try {
-          const route = await window.adeHost.requestService('service.proxy.inspect', {
+          const route = await window.adeHost.services.request('service.proxy.inspect', {
             workspace_id: workspace.id, name, port_variable: variable,
           })
           const pinned = proxyRoute(route)
@@ -168,7 +168,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     const key = `${service.name}:${variable}`
     setProxyBusy(key)
     try {
-      const result = await window.adeHost.requestService('service.proxy.remap', {
+      const result = await window.adeHost.services.request('service.proxy.remap', {
         workspace_id: workspace.id, name: service.name, port_variable: variable,
         expected_service_identity: service.identity, expected_target_port: service.ports[variable],
         expected_route_identity: previous.identity, expected_route_port: previous.port,
@@ -186,7 +186,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     const key = `${service.name}:${variable}`
     setProxyBusy(key)
     try {
-      await window.adeHost.requestService('service.proxy.retire', {
+      await window.adeHost.services.request('service.proxy.retire', {
         workspace_id: workspace.id, name: service.name, port_variable: variable,
         expected_route_id: route.route_id, expected_service_identity: route.service_identity,
         expected_target_port: route.target_port, expected_proxy_port: route.port,
@@ -202,7 +202,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     if (proxyRecoveryBusy) return
     setProxyRecoveryBusy(true)
     try {
-      const result = await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery
+      const result = await window.adeHost.services.request('service.proxy.recovery.inspect', {}) as ProxyRecovery
       setProxyRecovery(result)
       setConfirmProxyReset(false)
       setError('')
@@ -213,7 +213,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     if (proxyRecoveryBusy) return
     setProxyRecoveryBusy(true)
     try {
-      const result = await window.adeHost.requestService('service.proxy.recovery.retry', {
+      const result = await window.adeHost.services.request('service.proxy.recovery.retry', {
         workspace_id: route.workspace_id, name: route.name, port_variable: route.port_variable,
         expected_route_id: route.route_id, expected_service_identity: route.service_identity,
         expected_target_port: route.target_port, expected_proxy_port: route.port,
@@ -222,7 +222,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
       const key = `${route.name}:${route.port_variable}`
       setProxyUrls((urls) => ({ ...urls, [key]: rebound.url }))
       setProxyRouteMeta((routes) => ({ ...routes, [key]: rebound }))
-      setProxyRecovery(await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery)
+      setProxyRecovery(await window.adeHost.services.request('service.proxy.recovery.inspect', {}) as ProxyRecovery)
       setError('')
     } catch (reason) { setError(String(reason)) }
     finally { setProxyRecoveryBusy(false) }
@@ -231,7 +231,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     if (proxyRecoveryBusy) return
     setProxyRecoveryBusy(true)
     try {
-      await window.adeHost.requestService('service.proxy.retire', {
+      await window.adeHost.services.request('service.proxy.retire', {
         workspace_id: route.workspace_id, name: route.name, port_variable: route.port_variable,
         expected_route_id: route.route_id, expected_service_identity: route.service_identity,
         expected_target_port: route.target_port, expected_proxy_port: route.port,
@@ -239,7 +239,7 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
       const key = `${route.name}:${route.port_variable}`
       setProxyUrls((urls) => { const next = { ...urls }; delete next[key]; return next })
       setProxyRouteMeta((routes) => { const next = { ...routes }; delete next[key]; return next })
-      setProxyRecovery(await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery)
+      setProxyRecovery(await window.adeHost.services.request('service.proxy.recovery.inspect', {}) as ProxyRecovery)
       setError('')
     } catch (reason) { setError(String(reason)) }
     finally { setProxyRecoveryBusy(false) }
@@ -248,11 +248,11 @@ export function ServicePane({ workspace }: { workspace: Workspace }): React.JSX.
     if (proxyRecoveryBusy || !confirmProxyReset || !proxyRecovery?.registry_sha256) return
     setProxyRecoveryBusy(true)
     try {
-      const result = await window.adeHost.requestService('service.proxy.recovery.reset', {
+      const result = await window.adeHost.services.request('service.proxy.recovery.reset', {
         expected_registry_sha256: proxyRecovery.registry_sha256, confirm_reset: true,
       })
       setProxyArchive(String(result.archive ?? ''))
-      setProxyRecovery(await window.adeHost.requestService('service.proxy.recovery.inspect', {}) as ProxyRecovery)
+      setProxyRecovery(await window.adeHost.services.request('service.proxy.recovery.inspect', {}) as ProxyRecovery)
       setConfirmProxyReset(false)
       setError('')
     } catch (reason) { setError(String(reason)); setConfirmProxyReset(false) }

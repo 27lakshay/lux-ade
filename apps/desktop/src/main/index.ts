@@ -1,9 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
-import { closeBrowserWindow, flushBrowserSessions, registerBrowserIpc, setBrowserProfile } from './browser'
+import { browserQuitGuard, closeBrowserWindow, registerBrowserIpc, setBrowserProfile } from './browser'
 import { BrowserOwner } from './browser-owner'
 import { registerConversationIpc } from './conversations/ipc'
+import { draftQuitGuard, warnPendingSends } from './conversations/quit-guard'
 import { drafts, flushDraft, persistentWindowId, reconcileAcceptedSend, setSendJournal, unsafePending,
   windowIds } from './conversations/send-pipeline'
 import { registerFileIpc } from './files'
@@ -12,6 +13,7 @@ import { broadcast, fixedSocket, getBrowserOwner, getClient, managedProfiles, pu
   setBrowserOwner, setStartupProfileSelection, setUnsubscribeClient, setUnsubscribeFeed,
   stopClient } from './profile-connection'
 import { registerProfileIpc, selectProfile } from './profiles'
+import { holdQuit, registerQuitGuard } from './quit-guards'
 import { registerReviewIpc, setGitJournal } from './review'
 import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
@@ -33,29 +35,9 @@ registerReviewIpc()
 registerFileIpc()
 registerTerminalIpc()
 
-let warnedPendingSends: string | null = null
-async function warnPendingSends(window?: BrowserWindow): Promise<void> {
-  const pending = [...drafts.entries()]
-    .filter(([key, entry]) => entry.send && (!window || key.startsWith(`${window.webContents.id}:`)))
-    .map(([key, entry]) => `${key}:${entry.send?.requestId}`)
-    .sort()
-    .join('\n')
-  if (!pending || pending === warnedPendingSends) return
-  warnedPendingSends = pending
-  if (process.env.ADE_E2E_USER_DATA_DIR) {
-    console.error('Prompt delivery is unconfirmed; pending request IDs:', pending)
-    return
-  }
-  const options = window
-    ? { type: 'warning' as const, title: 'Prompt delivery is unconfirmed',
-        message: 'This window is staying open until the prompt is reconciled.',
-        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' }
-    : { type: 'warning' as const, title: 'Prompt delivery is unconfirmed',
-        message: 'ADE is staying open until the prompt is reconciled.',
-        detail: 'Reconnect the profile daemon and use Retry prompt delivery. ADE will reuse the original request ID.' }
-  if (window) await dialog.showMessageBox(window, options)
-  else await dialog.showMessageBox(options)
-}
+// Order matters: drafts are saved before browser sessions are flushed.
+registerQuitGuard(draftQuitGuard)
+registerQuitGuard(browserQuitGuard)
 
 function openMainWindow(): void {
   const window = new BrowserWindow({
@@ -175,65 +157,10 @@ app.whenReady().then(async () => {
   app.quit()
 })
 
-let readyToQuit = false
-let quitFlushInProgress = false
-let browserReadyToQuit = false
-let browserFlushInProgress = false
 let quitRequested = false
 app.on('before-quit', (event) => {
   quitRequested = true
-  if (!readyToQuit && (process.env.ADE_E2E_HIDE_WINDOW !== '1' || process.env.ADE_E2E_TEST_CLOSE_GUARD === '1')) {
-    const owned = [...drafts.values()]
-    if (owned.some((entry) => entry.send || entry.timer || entry.savedRevision < entry.draft.revision)) {
-      event.preventDefault()
-      if (quitFlushInProgress) return
-      quitFlushInProgress = true
-      void (async () => {
-        await Promise.allSettled(owned.filter((entry) => entry.send).map(reconcileAcceptedSend))
-        if (await unsafePending(owned)) {
-          await warnPendingSends()
-          return
-        }
-        const pending = owned.filter((entry) => !entry.send && (entry.timer || entry.savedRevision < entry.draft.revision))
-        const results = await Promise.allSettled(pending.map(flushDraft))
-        if (results.some((result) => result.status === 'rejected')) {
-          if (process.env.ADE_E2E_USER_DATA_DIR) console.error('Draft was not saved during app quit')
-          else await dialog.showMessageBox({ type: 'error', title: 'Draft was not saved',
-            message: 'ADE is staying open because a draft could not be saved.',
-            detail: 'Restore the profile daemon and try closing ADE again.' })
-          return
-        }
-        if (await unsafePending(owned)) {
-          await warnPendingSends()
-          return
-        }
-        readyToQuit = true
-        app.quit()
-      })().finally(() => { quitFlushInProgress = false })
-      return
-    }
-  }
-  if (!browserReadyToQuit) {
-    event.preventDefault()
-    if (!browserFlushInProgress) {
-      browserFlushInProgress = true
-      void flushBrowserSessions().then(async () => {
-        await getBrowserOwner()?.close()
-        setBrowserOwner(null)
-        browserReadyToQuit = true
-        app.quit()
-      }).catch((error) => {
-        browserFlushInProgress = false
-        if (process.env.ADE_E2E_USER_DATA_DIR || process.env.ADE_E2E_HIDE_WINDOW === '1') {
-          console.error('Browser state could not be saved', error)
-          browserReadyToQuit = true
-          app.quit()
-        } else void dialog.showMessageBox({ type: 'error', title: 'Browser state was not saved',
-          message: 'ADE is staying open because browser state could not be saved.', detail: String(error) })
-      })
-    }
-    return
-  }
+  if (holdQuit(event)) return
   closeAllTerminals()
   stopClient()
 })

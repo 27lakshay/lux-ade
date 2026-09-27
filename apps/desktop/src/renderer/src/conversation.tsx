@@ -88,10 +88,10 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
 
   React.useEffect(() => {
     let disposed = false
-    const unsubscribe = window.adeHost.onDraftError((value) => {
+    const unsubscribe = window.adeHost.conversations.onDraftError((value) => {
       if (value.conversationId === conversation.id) setDraftError(value.message)
     })
-    void window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id }).then((response) => {
+    void window.adeHost.conversations.request('draft.get', { conversation_id: conversation.id }).then((response) => {
       if (disposed) return
       const saved = response.draft as { text: string }
       const sentText = typeof response.sent_text === 'string' ? response.sent_text : ''
@@ -106,7 +106,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
 
   const updateDraft = (text: string): void => {
     setDraft(text)
-    void window.adeHost.requestConversation('draft.save', { conversation_id: conversation.id, text })
+    void window.adeHost.conversations.request('draft.save', { conversation_id: conversation.id, text })
       .then((response) => { if (typeof response.error === 'string' && response.error) setDraftError(response.error) })
       .catch((reason) => setDraftError(`Draft could not be saved: ${String(reason)}`))
   }
@@ -156,7 +156,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
       if (loading || disposed) return
       loading = true
       try {
-        const value = await window.adeHost.requestConversation('conversation.get', { conversation_id: conversation.id }) as Snapshot
+        const value = await window.adeHost.conversations.request('conversation.get', { conversation_id: conversation.id }) as Snapshot
         if (!disposed) {
           current = value
           setSnapshot(value)
@@ -176,7 +176,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
         if (!disposed && reloadRequested) { reloadRequested = false; void load() }
       }
     }
-    const unsubscribe = window.adeHost.onFeedFrame(apply)
+    const unsubscribe = window.adeHost.conversations.onFeedFrame(apply)
     void load()
     return () => { disposed = true; unsubscribe() }
   }, [conversation.id, bootId, refresh])
@@ -187,7 +187,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
     if (fenced || !text || busy || sentDraftPendingClear || sendPending) return
     setBusy(true)
     try {
-      const response = await window.adeHost.requestConversation('agent.send', {
+      const response = await window.adeHost.conversations.request('agent.send', {
         conversation_id: conversation.id, request_id: crypto.randomUUID(), text,
       })
       if (response.type === 'send_pending') {
@@ -205,7 +205,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
     } catch (reason) {
       setError(String(reason))
       try {
-        const state = await window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id })
+        const state = await window.adeHost.conversations.request('draft.get', { conversation_id: conversation.id })
         setSendPending(Boolean(state.send_pending))
       } catch { /* Keep the pending state until the daemon can be queried again. */ }
     }
@@ -214,7 +214,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
   const retryPendingSend = async (): Promise<void> => {
     setBusy(true)
     try {
-      const response = await window.adeHost.requestConversation('agent.retry_send', { conversation_id: conversation.id })
+      const response = await window.adeHost.conversations.request('agent.retry_send', { conversation_id: conversation.id })
       if (response.type === 'send_pending') { setError('Prompt delivery is still unconfirmed. Retry when the profile daemon is available.'); return }
       const clearError = typeof response.draft_error === 'string' ? response.draft_error : ''
       if (!clearError) setDraft('')
@@ -226,7 +226,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
     } catch (reason) {
       setError(String(reason))
       try {
-        const state = await window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id })
+        const state = await window.adeHost.conversations.request('draft.get', { conversation_id: conversation.id })
         setSendPending(Boolean(state.send_pending))
       } catch { /* Keep the pending state until the daemon can be queried again. */ }
     }
@@ -235,7 +235,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
   const retryClear = async (): Promise<void> => {
     setBusy(true)
     try {
-      await window.adeHost.requestConversation('draft.flush', { conversation_id: conversation.id })
+      await window.adeHost.conversations.request('draft.flush', { conversation_id: conversation.id })
       setDraft('')
       setDraftError('')
       setSentDraftPendingClear(false)
@@ -246,7 +246,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
     if (fenced) return
     setBusy(true)
     try {
-      await window.adeHost.requestConversation('agent.answer', {
+      await window.adeHost.conversations.request('agent.answer', {
         conversation_id: conversation.id, request_id: request.id, decision, answers,
       })
       setError('')
@@ -259,7 +259,7 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
     if (fenced || busy) return
     setBusy(true)
     try {
-      await window.adeHost.requestConversation(`agent.${action}`, { conversation_id: conversation.id })
+      await window.adeHost.conversations.request(`agent.${action}`, { conversation_id: conversation.id })
       setError('')
       setRefresh((value) => value + 1)
     } catch (reason) { setError(String(reason)) }

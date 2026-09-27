@@ -22,7 +22,7 @@ export function AccountsPanel({ bootId, accounts, onAccounts }: {
   const [accountBusy, setAccountBusy] = React.useState(false)
   const [accountError, setAccountError] = React.useState('')
   const refreshAccounts = async (): Promise<Account[]> => {
-    const response = await window.adeHost.requestConversation('account.list', {})
+    const response = await window.adeHost.conversations.request('account.list', {})
     const found = Array.isArray(response.accounts) ? response.accounts as Account[] : []
     onAccounts(found)
     setInspection(null)
@@ -30,7 +30,7 @@ export function AccountsPanel({ bootId, accounts, onAccounts }: {
   }
   React.useEffect(() => {
     let disposed = false
-    void window.adeHost.requestConversation('account.list', {}).then((response) => {
+    void window.adeHost.conversations.request('account.list', {}).then((response) => {
       if (!disposed && Array.isArray(response.accounts)) onAccounts(response.accounts as Account[])
     }).catch((reason) => { if (!disposed) setAccountError(String(reason)) })
     return () => { disposed = true }
@@ -40,7 +40,7 @@ export function AccountsPanel({ bootId, accounts, onAccounts }: {
     setAccountBusy(true)
     setInspection(null)
     try {
-      const response = await window.adeHost.requestConversation('account.inspect', { account_id: id })
+      const response = await window.adeHost.conversations.request('account.inspect', { account_id: id })
       setInspection({ accountId: id, value: response.inspection as AccountInspection, generation: response.generation as number })
       setAccountError('')
     } catch (reason) { setAccountError(String(reason)) }
@@ -51,7 +51,7 @@ export function AccountsPanel({ bootId, accounts, onAccounts }: {
     if (!accountName.trim() || accountBusy) return
     setAccountBusy(true)
     try {
-      const response = await window.adeHost.requestConversation('account.create', { provider: accountProvider, name: accountName.trim() })
+      const response = await window.adeHost.conversations.request('account.create', { provider: accountProvider, name: accountName.trim() })
       const created = response.account as Account
       await refreshAccounts()
       setAccountId(created.id)
@@ -68,7 +68,7 @@ export function AccountsPanel({ bootId, accounts, onAccounts }: {
       inspection.value.state !== 'ready' || !inspection.value.identity)) return
     setAccountBusy(true)
     try {
-      await window.adeHost.requestConversation(op, { account_id: selected.id,
+      await window.adeHost.conversations.request(op, { account_id: selected.id,
         ...(op === 'account.verify' ? { expected_generation: inspection!.generation,
           expected_identity: inspection!.value.identity } : {}) })
       await refreshAccounts()
