@@ -10,10 +10,14 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 /// The format this build writes. Format 3 adds directory entries and the
-/// plugin stores, and leaves the history search index out.
-pub const FORMAT: i64 = 3;
-/// The oldest format restore still reads: one format behind.
-pub const PREVIOUS_FORMAT: i64 = 2;
+/// plugin stores, and leaves the history search index out. Format 4 adds the
+/// browser library.
+pub const FORMAT: i64 = 4;
+/// The oldest format restore still reads. Format 4 only adds a store, so
+/// restore keeps reading formats 2 and 3.
+pub const OLDEST_FORMAT: i64 = 2;
+/// The first format that leaves the history search index out.
+pub const PROJECTION_EXCLUDED_SINCE: i64 = 3;
 pub const SCOPE: &str = "backend-snapshot-only";
 /// A non-SQLite manifest file stays small.
 pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -50,6 +54,9 @@ pub struct Store {
 }
 
 pub const PLUGINS_DB: &str = "sessions.plugins.sqlite3";
+/// `browser_library::LIBRARY_FILE`: named partitions, imported bookmarks and
+/// history, and held design captures.
+pub const BROWSER_LIBRARY: &str = "browser-library.sqlite3";
 pub const PLUGIN_ARTIFACTS: &str = "sessions.plugins/artifacts";
 
 /// Stores in copy order. The plugin registry is copied before its artifacts:
@@ -93,6 +100,12 @@ pub const STORES: &[Store] = &[
         schema: 0,
         since: 3,
     },
+    Store {
+        path: BROWSER_LIBRARY,
+        kind: Kind::Sqlite,
+        schema: 0,
+        since: 4,
+    },
 ];
 
 pub fn store(path: &str) -> Option<&'static Store> {
@@ -106,6 +119,16 @@ pub const EXCLUDED_V2: &[&str] = &[
     "external projects, repositories and worktrees",
     "service routes, logs, owner locks, sockets and processes",
 ];
+/// Exclusions a format-3 bundle declares.
+pub const EXCLUDED_V3: &[&str] = &[
+    "browser sessions, tabs, cookies and pending sends",
+    "provider-native homes and credentials",
+    "external projects, repositories and worktrees",
+    "service routes, logs, owner locks, sockets and processes",
+    "history search index: a rebuildable projection of sessions.sqlite; the daemon rebuilds it after restore",
+    "host-level HostResources registry and its claims: host-owned, not profile-owned; the restored profile binds to the registry on its host",
+    "plugin install staging and plugin-private files outside the plugin registry",
+];
 /// Exclusions this format declares, including what restore rebuilds.
 pub const EXCLUDED: &[&str] = &[
     "browser sessions, tabs, cookies and pending sends",
@@ -115,6 +138,52 @@ pub const EXCLUDED: &[&str] = &[
     "history search index: a rebuildable projection of sessions.sqlite; the daemon rebuilds it after restore",
     "host-level HostResources registry and its claims: host-owned, not profile-owned; the restored profile binds to the registry on its host",
     "plugin install staging and plugin-private files outside the plugin registry",
+    "browser import staging: transient copies of import sources",
+];
+
+/// How a format-3 bundle treats each profile store.
+pub const COVERAGE_V3: &[(&str, &str, &str)] = &[
+    (
+        "sessions.sqlite",
+        "backed_up",
+        "conversations, attachments, activity and notification deliveries, the MCP catalog, and the skill catalog with its bundle blobs",
+    ),
+    ("sessions.review.sqlite3", "backed_up", "review feedback"),
+    (
+        "sessions.worktrees/lifecycle.sqlite3",
+        "backed_up",
+        "worktree lifecycle ledger; restore fences it",
+    ),
+    (
+        "sessions.worktrees/empty.toml",
+        "backed_up",
+        "worktree manifest",
+    ),
+    (
+        PLUGINS_DB,
+        "backed_up",
+        "plugin registry, records and settings",
+    ),
+    (
+        PLUGIN_ARTIFACTS,
+        "backed_up",
+        "installed plugin artifacts, one hash per file",
+    ),
+    (
+        "sessions.sqlite#history_index",
+        "rebuilt",
+        "the history search index is a projection of messages",
+    ),
+    (
+        "host-resources.sqlite3",
+        "excluded",
+        "host-owned registry shared by every profile on the host",
+    ),
+    (
+        "sessions.plugins/staging",
+        "excluded",
+        "transient install scratch",
+    ),
 ];
 
 /// How a backup treats each profile store: `backed_up`, `rebuilt` or `excluded`.
@@ -160,12 +229,25 @@ pub const COVERAGE: &[(&str, &str, &str)] = &[
         "excluded",
         "transient install scratch",
     ),
+    (
+        BROWSER_LIBRARY,
+        "backed_up",
+        "named browser partitions, imported bookmarks and history, and held design captures",
+    ),
+    (
+        "browser-import-staging",
+        "excluded",
+        "transient copies of import sources",
+    ),
 ];
 
 pub fn coverage() -> Value {
+    coverage_of(COVERAGE)
+}
+
+fn coverage_of(list: &[(&str, &str, &str)]) -> Value {
     Value::Array(
-        COVERAGE
-            .iter()
+        list.iter()
             .map(|(store, disposition, reason)| {
                 json!({"store":store,"disposition":disposition,"reason":reason})
             })
@@ -458,18 +540,19 @@ fn files(value: &Value) -> Result<Vec<FileRecord>> {
 /// digest must be the sum and tree digest of its files.
 pub fn check_manifest(value: &Value) -> Result<Plan> {
     let format = value["format_version"].as_i64().unwrap_or(-1);
-    let excluded = match format {
-        FORMAT => EXCLUDED,
-        PREVIOUS_FORMAT => EXCLUDED_V2,
+    let (excluded, coverage) = match format {
+        FORMAT => (EXCLUDED, Some(COVERAGE)),
+        3 => (EXCLUDED_V3, Some(COVERAGE_V3)),
+        OLDEST_FORMAT => (EXCLUDED_V2, None),
         _ => bail!("Unsupported backend backup format or scope"),
     };
     ensure!(
         value["scope"] == SCOPE && value["excluded"] == json!(excluded),
         "Unsupported backend backup format or scope"
     );
-    if format == FORMAT {
+    if let Some(list) = coverage {
         ensure!(
-            value["coverage"] == coverage(),
+            value["coverage"] == coverage_of(list),
             "Backup coverage does not match this format"
         );
     }
@@ -739,7 +822,7 @@ mod tests {
         let mut no_coverage = manifest(vec![core()]);
         no_coverage["coverage"] = Value::Null;
         let mut future = manifest(vec![core()]);
-        future["format_version"] = json!(4);
+        future["format_version"] = json!(FORMAT + 1);
         for (value, expected) in [
             (wrong_exclusions, "format or scope"),
             (no_coverage, "coverage"),
@@ -759,6 +842,43 @@ mod tests {
             let error = check_manifest(&value).unwrap_err().to_string();
             assert!(error.contains(expected), "{expected}: {error}");
         }
+    }
+
+    #[test]
+    fn the_browser_library_is_backed_up_from_format_4() {
+        // The daemon creates the library beside sessions.sqlite; a backup that
+        // leaves it out drops the profile's partitions and imports.
+        let library = ade_daemon::browser_library::LIBRARY_FILE;
+        assert_eq!(library, BROWSER_LIBRARY);
+        let entry = store(library).expect("browser library is a backup store");
+        assert_eq!(
+            (entry.kind, entry.schema, entry.since),
+            (Kind::Sqlite, 0, 4)
+        );
+        assert!(
+            COVERAGE
+                .iter()
+                .any(|(path, disposition, _)| *path == library && *disposition == "backed_up")
+        );
+        let library_entry = json!({"path":library,"kind":"sqlite","size":4096,
+            "sha256":sha('e'),"schema":0});
+        let plan = check_manifest(&manifest(vec![core(), library_entry.clone()])).unwrap();
+        assert!(plan.has(library));
+
+        // A format-3 bundle keeps its own exclusions and coverage, and may not
+        // claim the library.
+        let v3 = |entries: Vec<Value>| {
+            json!({"format_version":3,"scope":SCOPE,"entries":entries,
+                "excluded":EXCLUDED_V3,"coverage":coverage_of(COVERAGE_V3)})
+        };
+        assert_eq!(check_manifest(&v3(vec![core()])).unwrap().format, 3);
+        let error = check_manifest(&v3(vec![core(), library_entry]))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Unknown"), "{error}");
+        let mut v3_with_v4_coverage = v3(vec![core()]);
+        v3_with_v4_coverage["coverage"] = coverage();
+        assert!(check_manifest(&v3_with_v4_coverage).is_err());
     }
 
     #[test]
