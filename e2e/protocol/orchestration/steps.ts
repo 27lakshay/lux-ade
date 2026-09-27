@@ -1,0 +1,53 @@
+// Orchestration steps over the SDK, shared by this area's specs. Every wait
+// repeats a non-blocking daemon query; none sleeps for a fixed time.
+import { expect, type ScratchProfile } from '../fixtures'
+
+/** An `orchestration.child.wait` reply, with its flattened state fields. */
+export type Wait = {
+  type: string
+  child_conversation_id: string
+  message_id: string
+  state: string
+  done: boolean
+  deadline_ms: number
+  outcome?: string
+  error?: string | null
+  phase?: string
+  request_ids?: string[]
+  reason?: string
+}
+
+let operationNumber = 0
+/** A fresh caller-owned operation ID. */
+export function opId(label: string): string {
+  return `e2e-${label}-${process.pid}-${++operationNumber}`
+}
+
+/** One `orchestration.child.wait` observation. */
+export async function waitOnce(profile: ScratchProfile, child: string,
+  options: { messageId?: string; timeoutMs?: number; deadlineMs?: number } = {}): Promise<Wait> {
+  return await profile.call('orchestration.child.wait', {
+    child_conversation_id: child,
+    ...(options.messageId ? { message_id: options.messageId } : {}),
+    ...(options.timeoutMs !== undefined ? { timeout_ms: options.timeoutMs } : {}),
+    ...(options.deadlineMs !== undefined ? { deadline_ms: options.deadlineMs } : {}),
+  }) as unknown as Wait
+}
+
+/** Repeat the wait until it reports `state` (and `outcome`, when given), and return that reply. */
+export async function waitForChild(profile: ScratchProfile, child: string, state: string,
+  options: { messageId?: string; outcome?: string; timeout?: number } = {}): Promise<Wait> {
+  let last: Wait | undefined
+  await expect.poll(async () => {
+    last = await waitOnce(profile, child, { messageId: options.messageId, timeoutMs: 0 })
+    return options.outcome ? `${last.state}:${last.outcome}` : last.state
+  }, { timeout: options.timeout ?? 20_000 }).toBe(options.outcome ? `${state}:${options.outcome}` : state)
+  return last as Wait
+}
+
+/** Open a workspace at `path` and create a parent Conversation on `provider` in it. */
+export async function parentIn(profile: ScratchProfile, path: string, provider: 'codex' | 'claude' = 'codex') {
+  const { workspace } = await profile.call('workspace.open', { path })
+  const { conversation } = await profile.call('conversation.create', { workspace_id: workspace.id, provider })
+  return { workspace, parent: conversation.id }
+}

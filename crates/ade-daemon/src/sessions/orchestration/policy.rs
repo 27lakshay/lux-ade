@@ -17,6 +17,15 @@ pub const MAX_WAIT_MS: u64 = 86_400_000;
 const TEXT_LIMIT: usize = 64 * 1024;
 const TITLE_LIMIT: usize = 256;
 const ID_LIMIT: usize = 256;
+/// Child statuses from which the prompt queue submits, now or when the turn ends.
+const QUEUE_MOVES: &[&str] = &[
+    "idle",
+    "ready",
+    "starting",
+    "running",
+    "waiting",
+    "cancelling",
+];
 
 /// Rejects an empty or oversized caller-owned identifier.
 pub fn check_id(field: &str, value: &str) -> Result<()> {
@@ -238,6 +247,15 @@ fn observe(message_id: &str, progress: Progress, child: &ChildView) -> WaitState
                 .error
                 .unwrap_or("The child's prompt queue is paused")
                 .into(),
+        },
+        // The queue submits only to an idle or ready Conversation, and a busy
+        // one returns there when its turn ends. A stopped Conversation holds
+        // its queue until someone resumes it.
+        Progress::Queued if !QUEUE_MOVES.contains(&child.status) => WaitState::Blocked {
+            reason: format!(
+                "The child Conversation is {}; resume it to deliver queued messages",
+                child.status
+            ),
         },
         Progress::Queued => WaitState::Pending {
             phase: PendingPhase::Queued,
@@ -509,6 +527,16 @@ mod tests {
                 reason: "Prompt queue paused: no login".into()
             }
         );
+        for busy in ["running", "waiting", "cancelling"] {
+            assert!(!resolve_wait("m9", Progress::Queued, Some(&view(busy)), 0, 10).1);
+        }
+        // An unpaused queue on a stopped child still needs a resume to move.
+        for stopped in ["error", "interrupted", "disconnected"] {
+            assert!(matches!(
+                resolve_wait("m9", Progress::Queued, Some(&view(stopped)), 0, 10),
+                (WaitState::Blocked { .. }, true)
+            ));
+        }
         let mut terminal = view("terminal");
         terminal.terminal_owned = true;
         assert!(matches!(
