@@ -47,6 +47,7 @@ export type ContractDefinition =
   | AttachmentReclaimPreviewReply
   | AttachmentReclaimPreviewRequest
   | AttachmentReply
+  | BackendCompatibility
   | BranchPolicy
   | BrowserAttachment
   | BrowserAttachmentState
@@ -240,6 +241,7 @@ export type ContractDefinition =
   | OutputCoverageReason
   | OutputCoverageStatus
   | PackageRegistry
+  | PairingState
   | PeerEndpoint
   | PendingPhase
   | PendingRequest
@@ -302,6 +304,23 @@ export type ContractDefinition =
   | RegistryScope
   | RegistryState
   | RegistryStatus
+  | RemoteDaemon
+  | RemoteHost
+  | RemoteHostAddRequest
+  | RemoteHostListRequest
+  | RemoteHostProbe
+  | RemoteHostProbeRequest
+  | RemoteHostRemoveRequest
+  | RemoteHostRemoved
+  | RemoteHostReply
+  | RemoteHostStart
+  | RemoteHostStartRequest
+  | RemoteHosts
+  | RemotePairRequest
+  | RemotePairing
+  | RemotePairingReply
+  | RemotePlatform
+  | RemoteRevokeRequest
   | RepositoryAck
   | RepositoryRebindCatalog
   | RepositoryRebindEntry
@@ -417,6 +436,7 @@ export type ContractDefinition =
   | SkillScope
   | SkillSourceKind
   | SkillSummary
+  | StartOutcome
   | TerminalCreateRequest
   | TerminalCreated
   | TerminalOperation
@@ -425,6 +445,7 @@ export type ContractDefinition =
   | TerminalRestartRequest
   | TerminalRetireRequest
   | TerminalStopRequest
+  | TokenReference
   | UsageCostMeasure
   | UsageGroup
   | UsageGroupBy
@@ -814,6 +835,7 @@ export type OutputCoverageReason =
  * Whether the returned output covers everything the run produced.
  */
 export type OutputCoverageStatus = 'complete' | 'pending' | 'incomplete'
+export type PairingState = 'active' | 'revoked'
 /**
  * What the daemon knows about an unresolved send.
  */
@@ -881,6 +903,20 @@ export type ReadinessState =
   | 'bound_unassigned_port'
 export type RecoveryStatus = 'healthy' | 'degraded' | 'corrupt'
 export type RegistryScope = 'host' | 'profile'
+/**
+ * Where the pairing token lives. The daemon stores the reference only.
+ */
+export type TokenReference =
+  | {
+      env: string
+    }
+  | {
+      keychain: {
+        account: string
+        service: string
+      }
+    }
+export type StartOutcome = 'running' | 'failed' | 'unknown'
 /**
  * What one diff line is.
  */
@@ -1554,6 +1590,27 @@ export interface AttachmentReply {
    * The `attachment` type tag.
    */
   type: 'attachment'
+  [k: string]: unknown
+}
+/**
+ * Whether the remote ADE backend can serve this daemon.
+ */
+export interface BackendCompatibility {
+  application_protocol: string | null
+  compatible: boolean
+  /**
+   * The `ade-control` the probe found; null when none was found.
+   */
+  control_path: string | null
+  /**
+   * Each version or platform mismatch, stated exactly.
+   */
+  incompatible: string[]
+  /**
+   * Each artifact or capability the host lacks, stated exactly.
+   */
+  missing: string[]
+  runtime_protocol: string | null
   [k: string]: unknown
 }
 /**
@@ -4869,6 +4926,222 @@ export interface Readiness {
   [k: string]: unknown
 }
 /**
+ * The remote daemon's identity as its `hello` reported it.
+ */
+export interface RemoteDaemon {
+  application_protocol: string
+  boot_id: string
+  build_id: string | null
+  pid: number
+  profile_id: string
+  runtime_protocol: string
+  /**
+   * The daemon's socket path on the remote host.
+   */
+  socket: string
+  [k: string]: unknown
+}
+/**
+ * One registered remote host.
+ */
+export interface RemoteHost {
+  /**
+   * Absolute path of `ade-control` on the remote host; null uses its `PATH`.
+   */
+  backend_path: string | null
+  created_at_ms: number
+  host_id: string
+  /**
+   * The pinned key's OpenSSH SHA-256 fingerprint, `SHA256:...`.
+   */
+  host_key_fingerprint: string
+  /**
+   * The pinned host key algorithm, such as `ssh-ed25519`.
+   */
+  host_key_type: string
+  label: string
+  /**
+   * The active pairing, or else the most recent revoked one; null when never paired.
+   */
+  pairing: RemotePairing | null
+  /**
+   * The remote profile to start; null uses the remote host's selected profile.
+   */
+  remote_profile_id: string | null
+  /**
+   * What `ssh` is given: an alias from the user's SSH config or `user@host`.
+   */
+  ssh_target: string
+  [k: string]: unknown
+}
+/**
+ * One pairing between this profile and a remote host.
+ */
+export interface RemotePairing {
+  paired_at_ms: number
+  pairing_id: string
+  revoked_at_ms: number | null
+  state: PairingState
+  token_reference: TokenReference
+  [k: string]: unknown
+}
+/**
+ * `remote.host.add`: verify and record a host.
+ */
+export interface RemoteHostAddRequest {
+  backend_path?: string | null
+  /**
+   * The host key fingerprint obtained out of band, `SHA256:...`.
+   */
+  expected_fingerprint: string
+  /**
+   * Lowercase letters, digits and `-`, at most 64 characters.
+   */
+  host_id: string
+  /**
+   * The host's public key line. Required when the target is reached through
+   * a proxy; otherwise the daemon reads the keys with `ssh-keyscan`.
+   */
+  host_public_key?: string | null
+  label?: string | null
+  op: 'remote.host.add'
+  remote_profile_id?: string | null
+  ssh_target: string
+}
+/**
+ * `remote.host.list`: every registered host, in ID order.
+ */
+export interface RemoteHostListRequest {
+  op: 'remote.host.list'
+}
+/**
+ * The `remote.host.probe` reply. It is only returned after the host
+ * presented the pinned key.
+ */
+export interface RemoteHostProbe {
+  backend: BackendCompatibility
+  host_id: string
+  host_key_fingerprint: string
+  platform: RemotePlatform
+  /**
+   * The `remote_host_probe` type tag.
+   */
+  type: 'remote_host_probe'
+  [k: string]: unknown
+}
+/**
+ * The remote operating system and machine, from `uname`.
+ */
+export interface RemotePlatform {
+  arch: string
+  os: string
+  [k: string]: unknown
+}
+/**
+ * `remote.host.probe`: check the host key and the remote backend.
+ */
+export interface RemoteHostProbeRequest {
+  host_id: string
+  op: 'remote.host.probe'
+}
+/**
+ * `remote.host.remove`: forget a host that has no active pairing.
+ */
+export interface RemoteHostRemoveRequest {
+  host_id: string
+  op: 'remote.host.remove'
+}
+/**
+ * The `remote.host.remove` reply. `removed` is false when no host existed.
+ */
+export interface RemoteHostRemoved {
+  host_id: string
+  removed: boolean
+  /**
+   * The `remote_host_removed` type tag.
+   */
+  type: 'remote_host_removed'
+  [k: string]: unknown
+}
+/**
+ * The `remote.host.add` reply.
+ */
+export interface RemoteHostReply {
+  host: RemoteHost
+  /**
+   * The `remote_host` type tag.
+   */
+  type: 'remote_host'
+  [k: string]: unknown
+}
+/**
+ * The `remote.host.start` reply.
+ */
+export interface RemoteHostStart {
+  daemon: RemoteDaemon | null
+  detail: string | null
+  host_id: string
+  operation_id: string
+  outcome: StartOutcome
+  /**
+   * The `remote_host_start` type tag.
+   */
+  type: 'remote_host_start'
+  [k: string]: unknown
+}
+/**
+ * `remote.host.start`: start or attach the remote profile daemon.
+ */
+export interface RemoteHostStartRequest {
+  host_id: string
+  op: 'remote.host.start'
+  operation_id: string
+}
+/**
+ * The `remote.host.list` reply.
+ */
+export interface RemoteHosts {
+  hosts: RemoteHost[]
+  /**
+   * The `remote_hosts` type tag.
+   */
+  type: 'remote_hosts'
+  [k: string]: unknown
+}
+/**
+ * `remote.host.pair`: record an explicit pairing and its token reference.
+ */
+export interface RemotePairRequest {
+  host_id: string
+  op: 'remote.host.pair'
+  token_reference: TokenReference
+}
+/**
+ * The `remote.host.pair` and `remote.host.revoke` reply.
+ */
+export interface RemotePairingReply {
+  /**
+   * Where revocation takes effect. `local_profile`: this profile refuses to
+   * start or attach the host; the remote backend does not yet check tokens.
+   */
+  enforcement: string
+  host_id: string
+  pairing: RemotePairing
+  /**
+   * The `remote_pairing` type tag.
+   */
+  type: 'remote_pairing'
+  [k: string]: unknown
+}
+/**
+ * `remote.host.revoke`: invalidate one pairing.
+ */
+export interface RemoteRevokeRequest {
+  host_id: string
+  op: 'remote.host.revoke'
+  pairing_id: string
+}
+/**
  * The `repository.rebind` reply.
  */
 export interface RepositoryAck {
@@ -7191,7 +7464,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -7358,6 +7631,13 @@ export interface RequestByOperation {
   "usage.summary": UsageSummaryRequest
   "usage.turns": UsageTurnsRequest
   "usage.limits": UsageLimitsRequest
+  "remote.host.list": RemoteHostListRequest
+  "remote.host.add": RemoteHostAddRequest
+  "remote.host.remove": RemoteHostRemoveRequest
+  "remote.host.probe": RemoteHostProbeRequest
+  "remote.host.pair": RemotePairRequest
+  "remote.host.revoke": RemoteRevokeRequest
+  "remote.host.start": RemoteHostStartRequest
   "browser.diagnostics.attach": BrowserDiagnosticsAttachRequest
   "browser.diagnostics.detach": BrowserDiagnosticsDetachRequest
   "browser.diagnostics.read": BrowserDiagnosticsReadRequest
@@ -7531,6 +7811,13 @@ export interface ResponseByOperation {
   "usage.summary": UsageSummary
   "usage.turns": UsageTurns
   "usage.limits": UsageLimits
+  "remote.host.list": RemoteHosts
+  "remote.host.add": RemoteHostReply
+  "remote.host.remove": RemoteHostRemoved
+  "remote.host.probe": RemoteHostProbe
+  "remote.host.pair": RemotePairingReply
+  "remote.host.revoke": RemotePairingReply
+  "remote.host.start": RemoteHostStart
   "browser.diagnostics.attach": BrowserDiagnosticsState
   "browser.diagnostics.detach": BrowserDiagnosticsState
   "browser.diagnostics.read": BrowserDiagnostics

@@ -1,0 +1,686 @@
+//! `remote.*` operations: the profile's remote host registry, pairings and
+//! SSH bootstrap (F122, F124).
+//!
+//! The registry lives in the profile state database. It holds the pinned host
+//! key (a public value), the SSH target and a reference to each pairing token,
+//! never a secret. Decisions are the pure functions in [`crate::remote`]; this
+//! module owns storage, receipts and the `ssh` processes. The data lock is
+//! never held while `ssh` runs.
+use super::*;
+use crate::receipts::{self, Admission, Status};
+use crate::remote::{self as decide, Finished, HostKey};
+use ade_core::contract::remote::{
+    PairingState, RemoteHost, RemoteHostAddRequest, RemoteHostListRequest, RemoteHostProbe,
+    RemoteHostProbeRequest, RemoteHostRemoveRequest, RemoteHostRemoved, RemoteHostReply,
+    RemoteHostStart, RemoteHostStartRequest, RemoteHosts, RemotePairRequest, RemotePairing,
+    RemotePairingReply, RemoteRevokeRequest, StartOutcome,
+};
+use ade_core::protocol::{APPLICATION_PROTOCOL, RUNTIME_PROTOCOL};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use std::{
+    process::Stdio,
+    time::{Duration, Instant},
+};
+
+const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS remote_hosts(host_id TEXT PRIMARY KEY, label TEXT NOT NULL, ssh_target TEXT NOT NULL, host_key TEXT NOT NULL, host_key_fingerprint TEXT NOT NULL, backend_path TEXT, remote_profile_id TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS remote_pairings(pairing_id TEXT PRIMARY KEY, host_id TEXT NOT NULL, token_reference TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','revoked')), paired_at INTEGER NOT NULL, revoked_at INTEGER);
+CREATE UNIQUE INDEX IF NOT EXISTS remote_pairings_one_active ON remote_pairings(host_id) WHERE state='active';";
+
+/// Revocation is enforced where this profile starts or attaches the host.
+const ENFORCEMENT: &str = "local_profile";
+const OUTPUT_LIMIT: u64 = 1024 * 1024;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(45);
+const START_TIMEOUT: Duration = Duration::from_secs(60);
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(10);
+const KEYSCAN_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn ensure_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch(SCHEMA)?;
+    receipts::ensure(connection)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            elapsed.as_millis().min(i64::MAX as u128) as i64
+        })
+}
+
+/// A registry row with its pinned key.
+struct Stored {
+    host: RemoteHost,
+    key: HostKey,
+}
+
+fn read_host(connection: &Connection, host_id: &str) -> Result<Option<Stored>> {
+    let row = connection
+        .query_row(
+            "SELECT label,ssh_target,host_key,host_key_fingerprint,backend_path,remote_profile_id,created_at FROM remote_hosts WHERE host_id=?1",
+            [host_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((label, ssh_target, host_key, fingerprint, backend_path, remote_profile_id, created)) =
+        row
+    else {
+        return Ok(None);
+    };
+    // A stored key that no longer matches its fingerprint is never used.
+    let key = decide::parse_public_key(&host_key)
+        .ok()
+        .filter(|key| key.fingerprint() == fingerprint)
+        .with_context(|| format!("Stored host key for {host_id} is unreadable"))?;
+    Ok(Some(Stored {
+        host: RemoteHost {
+            host_id: host_id.to_owned(),
+            label,
+            ssh_target,
+            host_key_type: key.key_type.clone(),
+            host_key_fingerprint: fingerprint,
+            backend_path,
+            remote_profile_id,
+            created_at_ms: created,
+            pairing: latest_pairing(connection, host_id)?,
+        },
+        key,
+    }))
+}
+
+fn required_host(connection: &Connection, host_id: &str) -> Result<Stored> {
+    read_host(connection, host_id)?.with_context(|| format!("Unknown remote host {host_id}"))
+}
+
+fn latest_pairing(connection: &Connection, host_id: &str) -> Result<Option<RemotePairing>> {
+    connection
+        .query_row(
+            "SELECT pairing_id,state,token_reference,paired_at,revoked_at FROM remote_pairings WHERE host_id=?1 ORDER BY state='active' DESC, paired_at DESC, rowid DESC LIMIT 1",
+            [host_id],
+            pairing_row,
+        )
+        .optional()?
+        .map(stored_pairing)
+        .transpose()
+}
+
+type PairingRow = (String, String, String, i64, Option<i64>);
+
+fn pairing_row(row: &rusqlite::Row) -> rusqlite::Result<PairingRow> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+    ))
+}
+
+fn stored_pairing(
+    (pairing_id, state, token_reference, paired_at, revoked_at): PairingRow,
+) -> Result<RemotePairing> {
+    Ok(RemotePairing {
+        state: match state.as_str() {
+            "active" => PairingState::Active,
+            "revoked" => PairingState::Revoked,
+            other => bail!("Stored pairing {pairing_id} has unknown state {other}"),
+        },
+        token_reference: serde_json::from_str(&token_reference)
+            .with_context(|| format!("Stored pairing {pairing_id} is unreadable"))?,
+        pairing_id,
+        paired_at_ms: paired_at,
+        revoked_at_ms: revoked_at,
+    })
+}
+
+fn transaction(connection: &Connection) -> Result<Transaction<'_>> {
+    Ok(Transaction::new_unchecked(
+        connection,
+        TransactionBehavior::Immediate,
+    )?)
+}
+
+/// A private one-line known-hosts file, removed when dropped.
+struct KnownHosts {
+    directory: std::path::PathBuf,
+    file: String,
+}
+
+impl KnownHosts {
+    fn write(alias: &str, key: &HostKey) -> Result<Self> {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        let directory =
+            std::env::temp_dir().join(format!("ade-remote-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        let guard = Self {
+            file: directory.join("known_hosts").to_string_lossy().into_owned(),
+            directory,
+        };
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&guard.file)?;
+        file.write_all(key.known_hosts_line(alias).as_bytes())?;
+        file.sync_all()?;
+        Ok(guard)
+    }
+}
+
+impl Drop for KnownHosts {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+/// Runs a program with bounded output and a deadline; a late process is killed
+/// and reported as timed out, never as finished.
+fn run(program: &str, args: &[String], stdin: Option<&str>, timeout: Duration) -> Result<Finished> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("DISPLAY")
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("Could not run {program}"))?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        let text = text.to_owned();
+        std::thread::spawn(move || {
+            let _ = pipe.write_all(text.as_bytes());
+        });
+    }
+    let reader = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(pipe) = pipe {
+                let mut bytes = Vec::new();
+                let _ = pipe.take(OUTPUT_LIMIT).read_to_end(&mut bytes);
+                text = String::from_utf8_lossy(&bytes).into_owned();
+            }
+            text
+        })
+    };
+    let stdout = reader(child.stdout.take().map(|p| Box::new(p) as _));
+    let stderr = reader(child.stderr.take().map(|p| Box::new(p) as _));
+    let deadline = Instant::now() + timeout;
+    let (code, timed_out) = loop {
+        if let Some(status) = child.try_wait()? {
+            break (status.code(), false);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break (None, true);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    Ok(Finished {
+        code,
+        timed_out,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
+/// Runs `/bin/sh -s` on the host with `script` on stdin, pinned to its key.
+fn remote_shell(stored: &Stored, script: &str, timeout: Duration) -> Result<Finished> {
+    let alias = decide::host_key_alias(&stored.host.host_id);
+    let known_hosts = KnownHosts::write(&alias, &stored.key)?;
+    let args = decide::ssh_args(
+        &stored.host.ssh_target,
+        &known_hosts.file,
+        &alias,
+        &stored.key,
+        "/bin/sh -s",
+    )?;
+    run("ssh", &args, Some(script), timeout)
+}
+
+/// The host key `remote.host.add` pins, or why none can be.
+fn obtain_key(request: &RemoteHostAddRequest) -> Result<HostKey> {
+    if let Some(line) = &request.host_public_key {
+        let key = decide::parse_public_key(line)?;
+        return decide::select_pinned(&[key], &request.expected_fingerprint);
+    }
+    let resolved = run(
+        "ssh",
+        &["-G".to_owned(), "--".to_owned(), request.ssh_target.clone()],
+        None,
+        RESOLVE_TIMEOUT,
+    )?;
+    ensure!(
+        resolved.code == Some(0),
+        "ssh -G could not resolve {}: {}",
+        request.ssh_target,
+        decide::diagnostic(&resolved.stderr)
+    );
+    let target = decide::parse_ssh_config(&resolved.stdout)?;
+    ensure!(
+        !target.proxied,
+        "{} is reached through a proxy, which ssh-keyscan cannot follow. Pass the host's public key line (host_public_key)",
+        request.ssh_target
+    );
+    let scan = run(
+        "ssh-keyscan",
+        &[
+            "-T".to_owned(),
+            "10".to_owned(),
+            "-p".to_owned(),
+            target.port.to_string(),
+            "-t".to_owned(),
+            "ed25519,ecdsa,rsa".to_owned(),
+            "--".to_owned(),
+            target.hostname.clone(),
+        ],
+        None,
+        KEYSCAN_TIMEOUT,
+    )?;
+    ensure!(
+        !scan.timed_out,
+        "ssh-keyscan did not finish; nothing was recorded"
+    );
+    decide::select_pinned(
+        &decide::parse_keyscan(&scan.stdout),
+        &request.expected_fingerprint,
+    )
+}
+
+/// The probe: connect with the pinned key and describe the backend.
+fn probe(stored: &Stored) -> Result<RemoteHostProbe> {
+    let backend_path = stored.host.backend_path.as_deref();
+    let finished = remote_shell(stored, &decide::probe_script(backend_path), PROBE_TIMEOUT)?;
+    ensure!(
+        !finished.timed_out,
+        "The probe of {} did not finish in time",
+        stored.host.host_id
+    );
+    if finished.code != Some(0) {
+        ensure!(
+            !decide::host_key_rejected(&finished.stderr),
+            "{} did not present the pinned host key {}; nothing ran on it. Verify a rotated key out of band, then remove and re-add the host",
+            stored.host.host_id,
+            stored.host.host_key_fingerprint
+        );
+        bail!(
+            "ssh could not probe {}: {}",
+            stored.host.host_id,
+            decide::diagnostic(&finished.stderr)
+        );
+    }
+    let report = decide::parse_probe(&finished.stdout)?;
+    let (platform, backend) = decide::compatibility(
+        &report,
+        backend_path,
+        APPLICATION_PROTOCOL,
+        RUNTIME_PROTOCOL,
+    );
+    Ok(RemoteHostProbe {
+        tag: Default::default(),
+        host_id: stored.host.host_id.clone(),
+        host_key_fingerprint: stored.host.host_key_fingerprint.clone(),
+        platform,
+        backend,
+    })
+}
+
+fn start_reply(
+    operation_id: &str,
+    host_id: &str,
+    outcome: StartOutcome,
+    detail: Option<String>,
+    daemon: Option<ade_core::contract::remote::RemoteDaemon>,
+) -> RemoteHostStart {
+    RemoteHostStart {
+        tag: Default::default(),
+        operation_id: operation_id.to_owned(),
+        host_id: host_id.to_owned(),
+        outcome,
+        detail,
+        daemon,
+    }
+}
+
+/// Probes, then starts or attaches. Only a start that ran can be unknown.
+fn attempt_start(stored: &Stored, operation_id: &str) -> RemoteHostStart {
+    let host_id = &stored.host.host_id;
+    let failed = |detail: String| {
+        start_reply(
+            operation_id,
+            host_id,
+            StartOutcome::Failed,
+            Some(detail),
+            None,
+        )
+    };
+    let probe = match probe(stored) {
+        Ok(probe) => probe,
+        Err(error) => return failed(format!("{error:#}; nothing was started")),
+    };
+    let Some(control) = probe
+        .backend
+        .control_path
+        .as_deref()
+        .filter(|_| probe.backend.compatible)
+    else {
+        let gaps = probe
+            .backend
+            .missing
+            .iter()
+            .map(|gap| format!("missing {gap}"))
+            .chain(probe.backend.incompatible.iter().cloned())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return failed(format!(
+            "The remote backend is not compatible ({gaps}); nothing was installed or started"
+        ));
+    };
+    let script = decide::start_script(control, stored.host.remote_profile_id.as_deref());
+    let finished = match remote_shell(stored, &script, START_TIMEOUT) {
+        Ok(finished) => finished,
+        Err(error) => return failed(format!("{error:#}; nothing was started")),
+    };
+    let (outcome, detail, daemon) =
+        decide::classify_start(&finished, APPLICATION_PROTOCOL, RUNTIME_PROTOCOL);
+    start_reply(operation_id, host_id, outcome, detail, daemon)
+}
+
+impl Sessions {
+    pub(super) fn remote_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
+        match request["op"].as_str().unwrap_or("") {
+            "remote.host.list" => {
+                let _: RemoteHostListRequest = decode(request)?;
+                self.remote_store(|connection| {
+                    let mut statement =
+                        connection.prepare("SELECT host_id FROM remote_hosts ORDER BY host_id")?;
+                    let ids = statement
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    let hosts = ids
+                        .iter()
+                        .map(|id| required_host(connection, id).map(|stored| stored.host))
+                        .collect::<Result<Vec<_>>>()?;
+                    reply(&RemoteHosts {
+                        tag: Default::default(),
+                        hosts,
+                    })
+                })
+            }
+            "remote.host.add" => self.remote_add(decode(request)?),
+            "remote.host.remove" => {
+                let remove: RemoteHostRemoveRequest = decode(request)?;
+                self.remote_store(|connection| {
+                    let tx = transaction(connection)?;
+                    if let Some(pairing) = latest_pairing(&tx, &remove.host_id)?
+                        .filter(|pairing| pairing.state == PairingState::Active)
+                    {
+                        bail!(
+                            "Revoke pairing {} before removing {}",
+                            pairing.pairing_id,
+                            remove.host_id
+                        );
+                    }
+                    tx.execute(
+                        "DELETE FROM remote_pairings WHERE host_id=?1",
+                        [&remove.host_id],
+                    )?;
+                    let removed = tx.execute(
+                        "DELETE FROM remote_hosts WHERE host_id=?1",
+                        [&remove.host_id],
+                    )? > 0;
+                    tx.commit()?;
+                    reply(&RemoteHostRemoved {
+                        tag: Default::default(),
+                        host_id: remove.host_id,
+                        removed,
+                    })
+                })
+            }
+            "remote.host.probe" => {
+                let request: RemoteHostProbeRequest = decode(request)?;
+                let stored =
+                    self.remote_store(|connection| required_host(connection, &request.host_id))?;
+                reply(&probe(&stored)?)
+            }
+            "remote.host.pair" => {
+                let pair: RemotePairRequest = decode(request)?;
+                decide::validate_token_reference(&pair.token_reference)?;
+                self.remote_store(|connection| pair_host(connection, &pair))
+            }
+            "remote.host.revoke" => {
+                let revoke: RemoteRevokeRequest = decode(request)?;
+                self.remote_store(|connection| revoke_pairing(connection, &revoke))
+            }
+            "remote.host.start" => self.remote_start(request),
+            _ => bail!("Unknown session operation"),
+        }
+    }
+
+    /// Runs `work` against the profile database under the data lock.
+    fn remote_store<T>(&self, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let data = self.data.lock().unwrap();
+        let connection = &data.store.connection;
+        persistence_result(ensure_schema(connection).and_then(|()| work(connection)))
+    }
+
+    fn remote_add(&self, request: RemoteHostAddRequest) -> Result<Value> {
+        decide::validate_host_id(&request.host_id)?;
+        decide::validate_target(&request.ssh_target)?;
+        let label = request
+            .label
+            .clone()
+            .unwrap_or_else(|| request.host_id.clone());
+        decide::validate_label(&label)?;
+        if let Some(path) = &request.backend_path {
+            decide::validate_remote_path(path)?;
+        }
+        if let Some(id) = &request.remote_profile_id {
+            decide::validate_profile_id(id)?;
+        }
+        let expected = decide::normalize_fingerprint(&request.expected_fingerprint)?;
+        let same = |host: &RemoteHost| {
+            host.label == label
+                && host.ssh_target == request.ssh_target
+                && host.host_key_fingerprint == expected
+                && host.backend_path == request.backend_path
+                && host.remote_profile_id == request.remote_profile_id
+        };
+        let existing = |connection: &Connection| -> Result<Option<Value>> {
+            let Some(stored) = read_host(connection, &request.host_id)? else {
+                return Ok(None);
+            };
+            ensure!(
+                same(&stored.host),
+                "Remote host {} is registered with a different definition; remove it first",
+                request.host_id
+            );
+            Ok(Some(reply(&RemoteHostReply {
+                tag: Default::default(),
+                host: stored.host,
+            })?))
+        };
+        if let Some(stored) = self.remote_store(existing)? {
+            return Ok(stored);
+        }
+        // Network reads run without the data lock.
+        let key = obtain_key(&request)?;
+        self.remote_store(|connection| {
+            let tx = transaction(connection)?;
+            if let Some(stored) = existing(&tx)? {
+                return Ok(stored);
+            }
+            tx.execute(
+                "INSERT INTO remote_hosts(host_id,label,ssh_target,host_key,host_key_fingerprint,backend_path,remote_profile_id,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![
+                    request.host_id,
+                    label,
+                    request.ssh_target,
+                    key.public_line(),
+                    key.fingerprint(),
+                    request.backend_path,
+                    request.remote_profile_id,
+                    now_ms()
+                ],
+            )?;
+            let host = required_host(&tx, &request.host_id)?.host;
+            tx.commit()?;
+            reply(&RemoteHostReply {
+                tag: Default::default(),
+                host,
+            })
+        })
+    }
+
+    fn remote_start(&self, request: &Value) -> Result<Value> {
+        let start: RemoteHostStartRequest = decode(request)?;
+        let operation_id = start.operation_id.as_str();
+        ensure!(
+            !operation_id.is_empty() && operation_id.len() <= 512,
+            "Missing operation_id"
+        );
+        let admitted = self.remote_store(|connection| {
+            let tx = transaction(connection)?;
+            match receipts::begin(&tx, operation_id, "remote.host.start", request, None, now_ms())? {
+                Admission::New => {}
+                // A stored result is replayed; an attempt that never recorded
+                // one is not run again.
+                Admission::Replay(receipt) => {
+                    return Ok(Err(match receipt.result {
+                        Some(result) => result,
+                        None => reply(&start_reply(
+                            operation_id,
+                            &start.host_id,
+                            StartOutcome::Unknown,
+                            Some(format!(
+                                "An earlier attempt with this operation ID is {}; it was not run again. Probe the host, then use a new operation ID",
+                                receipt.status.as_str()
+                            )),
+                            None,
+                        ))?,
+                    }));
+                }
+                Admission::Conflict => {
+                    bail!("Operation ID was already used for different parameters")
+                }
+                Admission::Expired => {
+                    bail!("Operation ID is past its 30-day receipt retention; use a new operation ID")
+                }
+            }
+            let stored = required_host(&tx, &start.host_id)?;
+            match &stored.host.pairing {
+                Some(pairing) if pairing.state == PairingState::Active => {}
+                Some(pairing) => bail!(
+                    "Pairing {} with {} was revoked; pair again before starting it",
+                    pairing.pairing_id,
+                    start.host_id
+                ),
+                None => bail!("{} is not paired; pair it before starting it", start.host_id),
+            }
+            receipts::settle(&tx, operation_id, Status::Dispatched, None, now_ms())?;
+            tx.commit()?;
+            Ok(Ok(stored))
+        })?;
+        let stored = match admitted {
+            Ok(stored) => stored,
+            Err(replayed) => return Ok(replayed),
+        };
+        let result = reply(&attempt_start(&stored, operation_id))?;
+        let status = if result["outcome"] == "unknown" {
+            Status::Unknown
+        } else {
+            Status::Settled
+        };
+        self.remote_store(|connection| {
+            receipts::settle(connection, operation_id, status, Some(&result), now_ms())
+        })?;
+        Ok(result)
+    }
+}
+
+fn pair_host(connection: &Connection, pair: &RemotePairRequest) -> Result<Value> {
+    let tx = transaction(connection)?;
+    let stored = required_host(&tx, &pair.host_id)?;
+    let pairing = match stored.host.pairing {
+        Some(active) if active.state == PairingState::Active => {
+            ensure!(
+                active.token_reference == pair.token_reference,
+                "{} already has active pairing {}; revoke it before pairing again",
+                pair.host_id,
+                active.pairing_id
+            );
+            active
+        }
+        _ => {
+            let pairing = RemotePairing {
+                pairing_id: uuid::Uuid::new_v4().to_string(),
+                state: PairingState::Active,
+                token_reference: pair.token_reference.clone(),
+                paired_at_ms: now_ms(),
+                revoked_at_ms: None,
+            };
+            tx.execute(
+                "INSERT INTO remote_pairings(pairing_id,host_id,token_reference,state,paired_at,revoked_at) VALUES(?1,?2,?3,'active',?4,NULL)",
+                params![
+                    pairing.pairing_id,
+                    pair.host_id,
+                    serde_json::to_string(&pairing.token_reference)?,
+                    pairing.paired_at_ms
+                ],
+            )?;
+            pairing
+        }
+    };
+    tx.commit()?;
+    pairing_reply(&pair.host_id, pairing)
+}
+
+fn revoke_pairing(connection: &Connection, revoke: &RemoteRevokeRequest) -> Result<Value> {
+    let tx = transaction(connection)?;
+    tx.execute(
+        "UPDATE remote_pairings SET state='revoked',revoked_at=?3 WHERE pairing_id=?1 AND host_id=?2 AND state='active'",
+        params![revoke.pairing_id, revoke.host_id, now_ms()],
+    )?;
+    let pairing = tx
+        .query_row(
+            "SELECT pairing_id,state,token_reference,paired_at,revoked_at FROM remote_pairings WHERE pairing_id=?1 AND host_id=?2",
+            params![revoke.pairing_id, revoke.host_id],
+            pairing_row,
+        )
+        .optional()?
+        .map(stored_pairing)
+        .transpose()?
+        .with_context(|| {
+            format!(
+                "Unknown pairing {} for {}",
+                revoke.pairing_id, revoke.host_id
+            )
+        })?;
+    tx.commit()?;
+    pairing_reply(&revoke.host_id, pairing)
+}
+
+fn pairing_reply(host_id: &str, pairing: RemotePairing) -> Result<Value> {
+    reply(&RemotePairingReply {
+        tag: Default::default(),
+        host_id: host_id.to_owned(),
+        pairing,
+        enforcement: ENFORCEMENT.to_owned(),
+    })
+}

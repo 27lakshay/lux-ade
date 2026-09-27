@@ -562,6 +562,21 @@ fn runtime_command(args: &[String]) -> Result<Value> {
     Ok(launched)
 }
 
+/// What this backend offers a remote bootstrap: its protocols and whether the
+/// executables `profiles start` needs sit beside it. It reads only.
+fn backend_version() -> Result<Value> {
+    let control = std::env::current_exe()?;
+    let executable = |name: &str| {
+        fs::metadata(control.with_file_name(name))
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    };
+    Ok(
+        json!({"type":"backend_version","application_protocol":APPLICATION_PROTOCOL,
+        "runtime_protocol":RUNTIME_PROTOCOL,
+        "artifacts":{"ade-daemon":executable("ade-daemon"),"ade-runtime":executable("ade-runtime")}}),
+    )
+}
+
 fn run() -> Result<Value> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
@@ -582,7 +597,8 @@ fn run() -> Result<Value> {
         }
         Some("runtime") => runtime_command(&args[1..]),
         Some("backup") => backup::command(&args[1..]),
-        _ => bail!("Expected profiles, locate, browser-lease, or backup"),
+        Some("version") => backend_version(),
+        _ => bail!("Expected profiles, locate, browser-lease, backup or version"),
     }
 }
 fn main() {

@@ -11,6 +11,7 @@ pub mod listeners;
 pub mod observability;
 pub mod plugins;
 pub mod receipts;
+pub mod remote;
 pub mod review;
 pub mod scripts;
 pub mod services;
