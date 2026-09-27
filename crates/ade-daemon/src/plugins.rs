@@ -10,22 +10,36 @@
 //! receipt. A receipt still open when the registry opens therefore proves the
 //! operation was not applied, and is settled as `not_applied`.
 //!
-//! No plugin host runs yet. Enabling a plugin creates an activation in the
-//! registry and records its manifest's static contributions under it.
+//! Enabling a plugin creates an activation in the registry and records its
+//! manifest's static contributions under it. A plugin with a `backend` entry
+//! point also gets a headless Node host (F057, `host.rs`), started lazily on
+//! the first `plugin.command.invoke` and stopped on disable. A host crash
+//! never takes the registry down: invocations fail explicitly while the
+//! supervisor restarts the host with bounded backoff.
+//!
+//! `plugin.command.invoke` is an effect command whose effect happens outside
+//! this database, so it has two durable steps: the receipt moves to
+//! `dispatched` before the request is written to the host, and settles when
+//! the host answers. A receipt found `accepted` after a restart was never
+//! sent (`not_applied`); one found `dispatched` may have run, so it becomes
+//! `unknown` and is never run again under that ID.
 mod activation;
 mod artifact;
+mod host;
 mod manifest;
+mod supervision;
 
 use crate::receipts::{self, Admission, Status};
 use activation::{Activation, Registry};
 use ade_core::contract::plugins::{
-    PluginActivation, PluginDataRecord, PluginDetail, PluginDisableRequest, PluginEnableRequest,
-    PluginInspectRequest, PluginInstallRequest, PluginList, PluginListRequest, PluginManifest,
-    PluginRecordDeleteRequest, PluginRecordDeleted, PluginRecordGetRequest, PluginRecordList,
-    PluginRecordListRequest, PluginRecordPutRequest, PluginRecordReply, PluginRegistrationKind,
-    PluginReply, PluginSettingListRequest, PluginSettingSetRequest, PluginSettingValue,
-    PluginSettings, PluginSourceKind, PluginSourcePin, PluginStatus, PluginSummary,
-    PluginUninstallRequest, PluginUninstalled,
+    PluginActivation, PluginCommandInvokeRequest, PluginCommandOutcome, PluginCommandResult,
+    PluginDataRecord, PluginDetail, PluginDisableRequest, PluginEnableRequest, PluginHostReply,
+    PluginHostRestartRequest, PluginHostStatusRequest, PluginInspectRequest, PluginInstallRequest,
+    PluginList, PluginListRequest, PluginManifest, PluginRecordDeleteRequest, PluginRecordDeleted,
+    PluginRecordGetRequest, PluginRecordList, PluginRecordListRequest, PluginRecordPutRequest,
+    PluginRecordReply, PluginRegistrationKind, PluginReply, PluginSettingListRequest,
+    PluginSettingSetRequest, PluginSettingValue, PluginSettings, PluginSourceKind, PluginSourcePin,
+    PluginStatus, PluginSummary, PluginUninstallRequest, PluginUninstalled,
 };
 use ade_core::model::now_ms;
 use anyhow::{Context, Result, anyhow, ensure};
@@ -36,7 +50,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS plugins(
@@ -59,6 +73,9 @@ const MAX_RECORD_BYTES: usize = 64 * 1024;
 const MAX_RECORD_KEY: usize = 256;
 const MAX_LISTED_RECORDS: usize = 1000;
 const EFFECT_OPS: [&str; 2] = ["plugin.install", "plugin.uninstall"];
+/// The effect command whose effect runs in a plugin host.
+const INVOKE_OP: &str = "plugin.command.invoke";
+const MAX_INVOKE_ARGS_BYTES: usize = 256 * 1024;
 
 /// An error with a wire code the client SDK knows.
 #[derive(Debug)]
@@ -131,6 +148,8 @@ struct State {
 
 pub struct Plugins {
     state: Mutex<State>,
+    /// Backend hosts. No host call runs while `state` is locked.
+    hosts: Arc<host::Hosts>,
     artifacts: PathBuf,
     staging: PathBuf,
 }
@@ -164,6 +183,7 @@ impl Plugins {
                 errors: HashMap::new(),
                 inflight: HashSet::new(),
             }),
+            hosts: host::Hosts::new(),
             artifacts,
             staging,
         };
@@ -221,6 +241,9 @@ impl Plugins {
             "plugin.record.delete" => self.record_delete(decode(request)?),
             "plugin.setting.list" => self.setting_list(decode(request)?),
             "plugin.setting.set" => self.setting_set(decode(request)?),
+            "plugin.command.invoke" => self.invoke(decode(request)?),
+            "plugin.host.status" => self.host_status(decode(request)?),
+            "plugin.host.restart" => self.host_restart(decode(request)?),
             _ => Err(anyhow!("Unknown plugin operation")),
         })();
         Ok(result.unwrap_or_else(envelope))
@@ -271,20 +294,205 @@ impl Plugins {
     }
 
     fn disable(&self, request: PluginDisableRequest) -> Result<Value> {
-        let mut state = self.state.lock().unwrap();
         let id = &request.plugin_id;
-        let current = installed(&state, id)?;
-        if current.enabled {
-            state.db.execute(
-                "UPDATE plugins SET enabled=0,updated_at=?2 WHERE id=?1",
-                params![id, now_ms()],
-            )?;
-        }
-        state.errors.remove(id);
-        if let Some(live) = state.live.remove(id) {
-            state.registry.deactivate(&live.activation);
-        }
+        let through = {
+            let mut state = self.state.lock().unwrap();
+            let current = installed(&state, id)?;
+            if current.enabled {
+                state.db.execute(
+                    "UPDATE plugins SET enabled=0,updated_at=?2 WHERE id=?1",
+                    params![id, now_ms()],
+                )?;
+            }
+            state.errors.remove(id);
+            if let Some(live) = state.live.remove(id) {
+                state.registry.deactivate(&live.activation);
+            }
+            current.detail.summary.activation_generation
+        };
+        // Outside the registry lock: the plugin's deactivate hook runs with a
+        // bounded wait, and every generation issued so far is retired.
+        self.hosts.stop(id, through);
+        let state = self.state.lock().unwrap();
         detail_reply(&state, id)
+    }
+
+    /// The launch spec for the plugin's live activation, or why it has none.
+    fn launch_spec(&self, plugin_id: &str) -> Result<host::LaunchSpec> {
+        let state = self.state.lock().unwrap();
+        let plugin = installed(&state, plugin_id)?;
+        let Some(live) = state.live.get(plugin_id) else {
+            return Err(coded(
+                "invalid_request",
+                format!("Plugin {plugin_id} is not enabled"),
+            )
+            .into());
+        };
+        let Some(entry) = plugin.detail.manifest.entry_points.backend.clone() else {
+            return Err(coded(
+                "invalid_request",
+                format!("Plugin {plugin_id} declares no backend entry point"),
+            )
+            .into());
+        };
+        let settings =
+            serde_json::from_value::<PluginSettings>(settings_reply(&state.db, plugin_id)?)?
+                .settings
+                .into_iter()
+                .map(|setting| (setting.key, setting.value))
+                .collect();
+        Ok(host::LaunchSpec {
+            plugin_id: plugin_id.to_owned(),
+            generation: live.activation.generation,
+            artifact_path: plugin.detail.artifact_path.clone(),
+            entry,
+            commands: state
+                .registry
+                .registrations(plugin_id)
+                .into_iter()
+                .filter(|registration| registration.kind == PluginRegistrationKind::Command)
+                .map(|registration| registration.id)
+                .collect(),
+            settings,
+        })
+    }
+
+    fn invoke(&self, request: PluginCommandInvokeRequest) -> Result<Value> {
+        let payload = serde_json::to_value(&request)?;
+        let operation_id = request.operation_id.clone();
+        if let Some(stored) = self.admit(INVOKE_OP, &operation_id, &payload)? {
+            return Ok(stored);
+        }
+        let prepared = (|| {
+            ensure!(
+                request.args.to_string().len() <= MAX_INVOKE_ARGS_BYTES,
+                coded(
+                    "invalid_request",
+                    format!("Command arguments exceed {MAX_INVOKE_ARGS_BYTES} bytes")
+                )
+            );
+            let spec = self.launch_spec(&request.plugin_id)?;
+            ensure!(
+                spec.commands.contains(&request.command_id),
+                coded(
+                    "invalid_request",
+                    format!(
+                        "Plugin {} activation {} has no command {}",
+                        request.plugin_id, spec.generation, request.command_id
+                    )
+                )
+            );
+            let process = self.hosts.ensure(&spec).map_err(|message| {
+                coded("not_applied", format!("{message}; the command did not run"))
+            })?;
+            // The last durable step before plugin code can run.
+            let state = self.state.lock().unwrap();
+            receipts::settle(&state.db, &operation_id, Status::Dispatched, None, now_ms())?;
+            Ok(process)
+        })();
+        let process = match prepared {
+            Ok(process) => process,
+            Err(error) => return Ok(self.settle_failure(&operation_id, error)),
+        };
+        let called = process.call(
+            "invoke",
+            json!({
+                "generation": process.key.generation,
+                "command_id": request.command_id,
+                "args": request.args,
+                "invocation_id": operation_id,
+            }),
+            host::INVOKE_TIMEOUT,
+        );
+        let outcome = match called {
+            Ok(result) => PluginCommandOutcome::Completed {
+                value: result.get("value").cloned().unwrap_or(Value::Null),
+            },
+            Err(host::CallError::Failed(message)) => PluginCommandOutcome::Failed { message },
+            Err(host::CallError::NotRun(message)) => {
+                return Ok(self.settle_failure(
+                    &operation_id,
+                    coded("not_applied", format!("{message}; the command did not run")).into(),
+                ));
+            }
+            Err(host::CallError::Unknown(message)) => {
+                // A host that stopped answering is killed; its exit counts as
+                // a crash and the supervisor restarts it with backoff.
+                self.hosts.kill(&request.plugin_id, process.key);
+                return Ok(self.settle_unknown(&operation_id, &message));
+            }
+        };
+        let response = reply(&PluginCommandResult {
+            tag: Default::default(),
+            plugin_id: request.plugin_id,
+            command_id: request.command_id,
+            generation: process.key.generation,
+            attempt: process.key.attempt,
+            outcome,
+        })?;
+        let mut state = self.state.lock().unwrap();
+        state.inflight.remove(&operation_id);
+        if let Err(error) = receipts::settle(
+            &state.db,
+            &operation_id,
+            Status::Settled,
+            Some(&response),
+            now_ms(),
+        ) {
+            // The command ran; only its record failed. The caller gets the
+            // result; a replay finds the receipt open and reports it unknown.
+            tracing::warn!(target: "ade", event = "plugin_receipt_settle_failed", error = %error);
+        }
+        Ok(response)
+    }
+
+    /// Records an invocation whose outcome cannot be proven. The receipt
+    /// stays `unknown`; a replay reports `outcome_unknown` and never re-runs.
+    fn settle_unknown(&self, operation_id: &str, message: &str) -> Value {
+        let reply = json!({"type": "error", "code": "outcome_unknown",
+            "message": format!("{message}. The command may or may not have run; inspect the plugin's state before retrying with a new operation ID")});
+        let mut state = self.state.lock().unwrap();
+        state.inflight.remove(operation_id);
+        if let Err(error) = receipts::settle(
+            &state.db,
+            operation_id,
+            Status::Unknown,
+            Some(&reply),
+            now_ms(),
+        ) {
+            tracing::warn!(target: "ade", event = "plugin_receipt_settle_failed", error = %error);
+        }
+        reply
+    }
+
+    fn host_reply(&self, plugin_id: &str) -> Result<Value> {
+        let (has_backend, generation) = {
+            let state = self.state.lock().unwrap();
+            let plugin = installed(&state, plugin_id)?;
+            (
+                plugin.detail.manifest.entry_points.backend.is_some(),
+                state
+                    .live
+                    .get(plugin_id)
+                    .map(|live| live.activation.generation),
+            )
+        };
+        reply(&PluginHostReply {
+            tag: Default::default(),
+            host: self.hosts.status(plugin_id, has_backend, generation),
+        })
+    }
+
+    fn host_status(&self, request: PluginHostStatusRequest) -> Result<Value> {
+        self.host_reply(&request.plugin_id)
+    }
+
+    fn host_restart(&self, request: PluginHostRestartRequest) -> Result<Value> {
+        let spec = self.launch_spec(&request.plugin_id)?;
+        self.hosts
+            .restart(&spec)
+            .map_err(|message| coded("not_applied", message))?;
+        self.host_reply(&request.plugin_id)
     }
 
     /// Admits an effect command. Returns the stored reply for a known ID.
@@ -303,7 +511,8 @@ impl Plugins {
                 Ok(None)
             }
             Admission::Replay(receipt) => match (receipt.status, receipt.result) {
-                (Status::Settled, Some(result)) => Ok(Some(result)),
+                // An unknown outcome replays its stored explanation; it never re-runs.
+                (Status::Settled | Status::Unknown, Some(result)) => Ok(Some(result)),
                 _ if state.inflight.contains(operation_id) => Err(coded(
                     "in_progress",
                     format!("Operation {operation_id} is still running; inspect the plugin"),
@@ -741,13 +950,19 @@ impl Plugins {
 /// Each plugin effect commits its state change and settles its receipt in one
 /// transaction, so an open receipt proves the change never committed.
 fn settle_interrupted(db: &Connection) -> Result<()> {
-    let open: Vec<(String, String)> = db
+    let open: Vec<(String, String, String)> = db
         .prepare(
-            "SELECT id,op FROM operations WHERE status IN ('accepted','dispatched','acknowledged','unknown')",
+            "SELECT id,op,status FROM operations WHERE status IN ('accepted','dispatched','acknowledged','unknown')",
         )?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    for (id, op) in open {
+    for (id, op, status) in open {
+        if op == INVOKE_OP {
+            if let Some((next, reply)) = interrupted_invocation(Status::parse(&status)?) {
+                receipts::settle(db, &id, next, Some(&reply), now_ms())?;
+            }
+            continue;
+        }
         if !EFFECT_OPS.contains(&op.as_str()) {
             continue;
         }
@@ -756,6 +971,25 @@ fn settle_interrupted(db: &Connection) -> Result<()> {
         receipts::settle(db, &id, Status::Settled, Some(&reply), now_ms())?;
     }
     Ok(())
+}
+
+/// What an invocation receipt left open by a previous process becomes. One
+/// never marked dispatched was never written to a host, so it did not run. One
+/// marked dispatched may have run in a host that died with the daemon.
+fn interrupted_invocation(status: Status) -> Option<(Status, Value)> {
+    match status {
+        Status::Accepted => Some((
+            Status::Settled,
+            json!({"type": "error", "code": "not_applied",
+                "message": "plugin.command.invoke was interrupted before it reached the plugin host; the command did not run. Retry with a new operation ID"}),
+        )),
+        Status::Dispatched | Status::Acknowledged => Some((
+            Status::Unknown,
+            json!({"type": "error", "code": "outcome_unknown",
+                "message": "plugin.command.invoke was interrupted after it reached the plugin host; the command may or may not have run. Inspect the plugin's state before retrying with a new operation ID"}),
+        )),
+        Status::Settled | Status::Unknown => None,
+    }
 }
 
 /// Bumps and persists the plugin's generation, verifies its artifact, then
@@ -999,4 +1233,24 @@ fn settings_reply(db: &Connection, id: &str) -> Result<Value> {
         plugin_id: id.to_owned(),
         settings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_interrupted_invocation_is_not_applied_only_if_it_never_left_the_daemon() {
+        let (status, reply) = interrupted_invocation(Status::Accepted).unwrap();
+        assert_eq!(status, Status::Settled);
+        assert_eq!(reply["code"], "not_applied");
+        for open in [Status::Dispatched, Status::Acknowledged] {
+            let (status, reply) = interrupted_invocation(open).unwrap();
+            assert_eq!(status, Status::Unknown);
+            assert_eq!(reply["code"], "outcome_unknown");
+            assert!(open.may_become(status));
+        }
+        assert!(interrupted_invocation(Status::Unknown).is_none());
+        assert!(interrupted_invocation(Status::Settled).is_none());
+    }
 }

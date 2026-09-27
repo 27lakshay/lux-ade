@@ -19,6 +19,10 @@ export const pluginUsage = `  plugin list                            List instal
                                         Read and write the plugin's namespaced records
   plugin setting list PLUGIN_ID
   plugin setting set PLUGIN_ID KEY JSON  Set a declared setting; null restores the default
+  plugin invoke PLUGIN_ID COMMAND_ID --request-id ID [--args JSON]
+                                        Run a backend command; starts the plugin host on first use
+  plugin host status PLUGIN_ID           Show the backend host's state, crashes, backoff and log tail
+  plugin host restart PLUGIN_ID          Clear the crash count and start a fresh backend host
 `
 
 type Options = { positionals: string[]; values: Record<string, string>; flags: Set<string> }
@@ -48,7 +52,7 @@ function options(words: string[], valueNames: readonly string[], flagNames: read
 function requestId(parsed: Options, command: string): string {
   const id = parsed.values['--request-id']
   if (!id || id.length > 256) {
-    throw new CliError('usage', `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same install.`)
+    throw new CliError('usage', `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`)
   }
   return id
 }
@@ -146,6 +150,22 @@ function setting(socketPath: string, rest: string[]): Promise<CommandResult> {
   throw new CliError('usage', 'plugin setting requires list or set.')
 }
 
+function invoke(socketPath: string, rest: string[]): Promise<CommandResult> {
+  const parsed = options(rest, ['--request-id', '--args'])
+  const [plugin_id, command_id] = count(parsed, 2, 'plugin invoke requires PLUGIN_ID COMMAND_ID --request-id ID')
+  const operation_id = requestId(parsed, 'plugin invoke')
+  const args = parsed.values['--args']
+  return dailyUseCommand(socketPath, { op: 'plugin.command.invoke', operation_id, plugin_id, command_id,
+    ...(args === undefined ? {} : { args: json(args, '--args') }) })
+}
+
+function host(socketPath: string, rest: string[]): Promise<CommandResult> {
+  const [action, ...tail] = rest
+  if (action !== 'status' && action !== 'restart') throw new CliError('usage', 'plugin host requires status or restart.')
+  const [plugin_id] = count(options(tail, []), 1, `plugin host ${action} requires PLUGIN_ID`)
+  return dailyUseCommand(socketPath, { op: `plugin.host.${action}`, plugin_id })
+}
+
 export async function runPluginCommand(socketPath: string, area: string | undefined, action: string | undefined,
   rest: string[]): Promise<CommandResult | undefined> {
   if (area !== 'plugin') return undefined
@@ -172,6 +192,10 @@ export async function runPluginCommand(socketPath: string, area: string | undefi
       return record(socketPath, rest)
     case 'setting':
       return setting(socketPath, rest)
+    case 'invoke':
+      return invoke(socketPath, rest)
+    case 'host':
+      return host(socketPath, rest)
     default:
       throw new CliError('usage', 'Unknown plugin command. Run ade --help for usage.')
   }

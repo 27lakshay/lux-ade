@@ -34,3 +34,5 @@ extraResources:
     to: providers
   - from: .ade/package-stage/bin
     to: bin
+  - from: .ade/package-stage/packages
+    to: packages

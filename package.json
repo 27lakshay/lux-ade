@@ -11,7 +11,7 @@
     "contract:check": "node scripts/generate-contracts.mjs --check",
     "build:backend": "node scripts/cargo.mjs build --locked -p ade-daemon -p ade-runtime --features ade-runtime/native-terminal --bins",
     "package:mac": "node scripts/package-macos.mjs",
-    "typecheck": "pnpm --filter @ade/contracts typecheck && pnpm --filter @ade/client typecheck && pnpm --filter @ade/terminal typecheck && pnpm --filter @ade/cli typecheck && pnpm --filter @ade/desktop typecheck",
+    "typecheck": "pnpm --filter @ade/contracts typecheck && pnpm --filter @ade/client typecheck && pnpm --filter @ade/terminal typecheck && pnpm --filter @ade/plugin-host typecheck &&pnpm --filter @ade/cli typecheck && pnpm --filter @ade/desktop typecheck",
     "test:e2e": "pnpm build:backend && pnpm build && playwright test",
     "test:e2e:package": "playwright test --config playwright.package.config.ts",
     "test:e2e:live": "python3 scripts/live_provider_check.py",

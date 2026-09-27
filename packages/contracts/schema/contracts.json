@@ -8708,6 +8708,114 @@
       ],
       "type": "object"
     },
+    "PluginCommandInvokeRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.command.invoke`: run a command the plugin's backend registered.\nThe host starts on first use. A command whose outcome cannot be proven,\nbecause its host crashed or timed out while running it, settles as\n`outcome_unknown` and is never run again under the same operation ID.",
+      "properties": {
+        "args": {
+          "description": "JSON arguments passed to the handler, at most 256 KiB."
+        },
+        "command_id": {
+          "description": "A command the manifest declares and the current activation registered.",
+          "type": "string"
+        },
+        "op": {
+          "const": "plugin.command.invoke"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "plugin_id",
+        "command_id"
+      ],
+      "type": "object"
+    },
+    "PluginCommandOutcome": {
+      "description": "What a command handler did.",
+      "oneOf": [
+        {
+          "description": "The handler returned; `value` is its JSON result, null for none.",
+          "properties": {
+            "status": {
+              "const": "completed",
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "status",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The handler ran and threw. Any effects it had before throwing stand.",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "status": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PluginCommandResult": {
+      "description": "The `plugin.command.invoke` reply.",
+      "properties": {
+        "attempt": {
+          "description": "The host start attempt within that generation.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "command_id": {
+          "type": "string"
+        },
+        "generation": {
+          "description": "The activation generation whose host ran the command.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/$defs/PluginCommandOutcome"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `plugin_command_result` type tag.",
+          "enum": [
+            "plugin_command_result"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin_id",
+        "command_id",
+        "generation",
+        "attempt",
+        "outcome"
+      ],
+      "type": "object"
+    },
     "PluginContributions": {
       "additionalProperties": false,
       "description": "Static contributions the registry records for each activation.",
@@ -8934,6 +9042,200 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "PluginHostReply": {
+      "description": "The `plugin.host.status` and `plugin.host.restart` reply.",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/PluginHostStatus"
+        },
+        "type": {
+          "description": "The `plugin_host` type tag.",
+          "enum": [
+            "plugin_host"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host"
+      ],
+      "type": "object"
+    },
+    "PluginHostRestartRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.host.restart`: clear the crash count and start a fresh host for\nthe current activation. Invocations running in the old host settle as\n`outcome_unknown`.",
+      "properties": {
+        "op": {
+          "const": "plugin.host.restart"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginHostState": {
+      "description": "The backend host's state.",
+      "oneOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "no_backend",
+          "description": "The plugin declares no backend entry point.",
+          "type": "string"
+        },
+        {
+          "const": "inactive",
+          "description": "The plugin has no live activation.",
+          "type": "string"
+        },
+        {
+          "const": "idle",
+          "description": "Activated; the host starts on the first invocation.",
+          "type": "string"
+        },
+        {
+          "const": "backoff",
+          "description": "Crashed; an automatic restart is scheduled at `retry_at`.",
+          "type": "string"
+        },
+        {
+          "const": "errored",
+          "description": "Crashed more often than the restart schedule allows; run `plugin.host.restart`.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "Stopped by the daemon; the next invocation starts it again.",
+          "type": "string"
+        }
+      ]
+    },
+    "PluginHostStatus": {
+      "description": "One plugin's backend host as the supervisor sees it.",
+      "properties": {
+        "attempt": {
+          "description": "The last host start attempt within the generation; 0 before the first.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "crashes": {
+          "description": "Consecutive crashes counted toward the restart schedule.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "description": "The activation generation the host serves.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "log_tail": {
+          "description": "The last lines the host wrote to stderr, oldest first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "registered": {
+          "description": "Commands the running host reports as registered.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "responsive": {
+          "description": "Whether a running host answered a health probe; null when none ran.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "retry_at": {
+          "description": "When the next automatic restart is due, in backoff.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "started_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/PluginHostState"
+        }
+      },
+      "required": [
+        "plugin_id",
+        "state",
+        "generation",
+        "attempt",
+        "pid",
+        "started_at",
+        "crashes",
+        "retry_at",
+        "last_error",
+        "responsive",
+        "registered",
+        "log_tail"
+      ],
+      "type": "object"
+    },
+    "PluginHostStatusRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.host.status`: the backend host's supervision state. It never\nstarts a host.",
+      "properties": {
+        "op": {
+          "const": "plugin.host.status"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
       "type": "object"
     },
     "PluginInspectRequest": {
@@ -18505,6 +18807,27 @@
       "name": "plugin.setting.set",
       "request": "PluginSettingSetRequest",
       "response": "PluginSettings",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.command.invoke",
+      "request": "PluginCommandInvokeRequest",
+      "response": "PluginCommandResult",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.host.status",
+      "request": "PluginHostStatusRequest",
+      "response": "PluginHostReply",
+      "tier": "query"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.host.restart",
+      "request": "PluginHostRestartRequest",
+      "response": "PluginHostReply",
       "tier": "idempotent_command"
     },
     {

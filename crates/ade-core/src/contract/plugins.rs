@@ -5,6 +5,11 @@
 //! An installed plugin tracks three separate identities: the artifact version
 //! (the manifest `version` plus its source pin), the activation generation (a
 //! per-plugin counter that rises on every activation) and the data schema.
+//!
+//! A plugin with a `backend` entry point runs in a headless Node host process
+//! (F057). The daemon starts one host per activation generation, lazily, on
+//! the first command invocation, restarts it after a crash with bounded
+//! backoff, and stops it when the plugin is disabled.
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -59,6 +64,18 @@ pub fn operations() -> Vec<OperationSpec> {
         ),
         OperationSpec::new::<PluginSettingSetRequest, PluginSettings>(
             "plugin.setting.set",
+            Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<PluginCommandInvokeRequest, PluginCommandResult>(
+            "plugin.command.invoke",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<PluginHostStatusRequest, PluginHostReply>(
+            "plugin.host.status",
+            Tier::Query,
+        ),
+        OperationSpec::new::<PluginHostRestartRequest, PluginHostReply>(
+            "plugin.host.restart",
             Tier::IdempotentCommand,
         ),
     ]
@@ -295,6 +312,37 @@ pub struct PluginSettingSetRequest {
     pub value: Value,
 }
 
+/// `plugin.command.invoke`: run a command the plugin's backend registered.
+/// The host starts on first use. A command whose outcome cannot be proven,
+/// because its host crashed or timed out while running it, settles as
+/// `outcome_unknown` and is never run again under the same operation ID.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginCommandInvokeRequest {
+    pub operation_id: String,
+    pub plugin_id: String,
+    /// A command the manifest declares and the current activation registered.
+    pub command_id: String,
+    /// JSON arguments passed to the handler, at most 256 KiB.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    #[schemars(with = "Value")]
+    pub args: Value,
+}
+
+/// `plugin.host.status`: the backend host's supervision state. It never
+/// starts a host.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginHostStatusRequest {
+    pub plugin_id: String,
+}
+
+/// `plugin.host.restart`: clear the crash count and start a fresh host for
+/// the current activation. Invocations running in the old host settle as
+/// `outcome_unknown`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginHostRestartRequest {
+    pub plugin_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // Replies
 // ---------------------------------------------------------------------------
@@ -306,6 +354,8 @@ wire_tag!(PluginRecordTag, "plugin_record");
 wire_tag!(PluginRecordsTag, "plugin_records");
 wire_tag!(PluginRecordDeletedTag, "plugin_record_deleted");
 wire_tag!(PluginSettingsTag, "plugin_settings");
+wire_tag!(PluginCommandResultTag, "plugin_command_result");
+wire_tag!(PluginHostTag, "plugin_host");
 
 /// The kind of source a plugin was installed from.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
@@ -487,6 +537,84 @@ pub struct PluginSettings {
     pub settings: Vec<PluginSettingValue>,
 }
 
+/// What a command handler did.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PluginCommandOutcome {
+    /// The handler returned; `value` is its JSON result, null for none.
+    Completed {
+        #[schemars(with = "Value")]
+        value: Value,
+    },
+    /// The handler ran and threw. Any effects it had before throwing stand.
+    Failed { message: String },
+}
+
+/// The `plugin.command.invoke` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginCommandResult {
+    #[serde(rename = "type")]
+    pub tag: PluginCommandResultTag,
+    pub plugin_id: String,
+    pub command_id: String,
+    /// The activation generation whose host ran the command.
+    pub generation: u64,
+    /// The host start attempt within that generation.
+    pub attempt: u64,
+    pub outcome: PluginCommandOutcome,
+}
+
+/// The backend host's state.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginHostState {
+    /// The plugin declares no backend entry point.
+    NoBackend,
+    /// The plugin has no live activation.
+    Inactive,
+    /// Activated; the host starts on the first invocation.
+    Idle,
+    Running,
+    /// Crashed; an automatic restart is scheduled at `retry_at`.
+    Backoff,
+    /// Crashed more often than the restart schedule allows; run `plugin.host.restart`.
+    Errored,
+    /// Stopped by the daemon; the next invocation starts it again.
+    Stopped,
+}
+
+/// One plugin's backend host as the supervisor sees it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct PluginHostStatus {
+    pub plugin_id: String,
+    pub state: PluginHostState,
+    /// The activation generation the host serves.
+    pub generation: Option<u64>,
+    /// The last host start attempt within the generation; 0 before the first.
+    pub attempt: u64,
+    pub pid: Option<u32>,
+    pub started_at: Option<i64>,
+    /// Consecutive crashes counted toward the restart schedule.
+    pub crashes: u32,
+    /// When the next automatic restart is due, in backoff.
+    pub retry_at: Option<i64>,
+    pub last_error: Option<String>,
+    /// Whether a running host answered a health probe; null when none ran.
+    pub responsive: Option<bool>,
+    /// Commands the running host reports as registered.
+    pub registered: Vec<String>,
+    /// The last lines the host wrote to stderr, oldest first.
+    pub log_tail: Vec<String>,
+}
+
+/// The `plugin.host.status` and `plugin.host.restart` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginHostReply {
+    #[serde(rename = "type")]
+    pub tag: PluginHostTag,
+    pub host: PluginHostStatus,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,6 +716,25 @@ mod tests {
             "plugin.setting.set",
             json!({"op": "plugin.setting.set", "plugin_id": "a.b", "key": "k", "value": null}),
         );
+        request::<PluginCommandInvokeRequest>(
+            "plugin.command.invoke",
+            json!({"op": "plugin.command.invoke", "operation_id": "o", "plugin_id": "a.b",
+                "command_id": "a.b.run", "args": {"n": 1}}),
+        );
+        request::<PluginCommandInvokeRequest>(
+            "plugin.command.invoke",
+            json!({"op": "plugin.command.invoke", "operation_id": "o", "plugin_id": "a.b",
+                "command_id": "a.b.run"}),
+        );
+        request::<PluginHostRestartRequest>(
+            "plugin.host.restart",
+            json!({"op": "plugin.host.restart", "plugin_id": "a.b"}),
+        );
+        let (name, _) = names("plugin.command.invoke");
+        assert!(!valid(
+            &name,
+            &json!({"op": "plugin.command.invoke", "plugin_id": "a.b", "command_id": "a.b.run"})
+        ));
         let (name, _) = names("plugin.install");
         assert!(!valid(
             &name,
@@ -625,6 +772,23 @@ mod tests {
             "plugin.record.list",
             json!({"type": "plugin_records", "plugin_id": "a.b", "namespace": "n", "records": [
                 {"namespace": "n", "key": "k", "value": 1, "revision": 2, "data_schema": 1, "updated_at": 3}]}),
+        );
+        response::<PluginCommandResult>(
+            "plugin.command.invoke",
+            json!({"type": "plugin_command_result", "plugin_id": "a.b", "command_id": "a.b.run",
+                "generation": 2, "attempt": 1, "outcome": {"status": "completed", "value": {"n": 2}}}),
+        );
+        response::<PluginCommandResult>(
+            "plugin.command.invoke",
+            json!({"type": "plugin_command_result", "plugin_id": "a.b", "command_id": "a.b.run",
+                "generation": 2, "attempt": 1, "outcome": {"status": "failed", "message": "boom"}}),
+        );
+        response::<PluginHostReply>(
+            "plugin.host.status",
+            json!({"type": "plugin_host", "host": {"plugin_id": "a.b", "state": "backoff",
+                "generation": 2, "attempt": 1, "pid": null, "started_at": 4, "crashes": 1,
+                "retry_at": 9, "last_error": "exited with status 70", "responsive": null,
+                "registered": [], "log_tail": ["boom"]}}),
         );
         response::<PluginSettings>(
             "plugin.setting.list",
