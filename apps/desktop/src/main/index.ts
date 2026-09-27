@@ -8,6 +8,7 @@ import { draftQuitGuard, warnPendingSends } from './conversations/quit-guard'
 import { drafts, flushDraft, persistentWindowId, reconcileAcceptedSend, setSendJournal, unsafePending,
   windowIds } from './conversations/send-pipeline'
 import { registerFileIpc } from './files'
+import { watchActivity } from './notifications'
 import { GitJournal } from './git-journal'
 import { broadcast, fixedSocket, getBrowserOwner, getClient, managedProfiles, publishProfile, refreshProfiles,
   setBrowserOwner, setStartupProfileSelection, setUnsubscribeClient, setUnsubscribeFeed,
@@ -137,7 +138,9 @@ app.whenReady().then(async () => {
         console.error('Browser owner registration failed', error))
     }
   }))
-  setUnsubscribeFeed(getClient().subscribeFeed((frame) => broadcast('ade:feed-frame', frame)))
+  const stopFeed = getClient().subscribeFeed((frame) => broadcast('ade:feed-frame', frame))
+  const stopActivity = watchActivity(getClient())
+  setUnsubscribeFeed(() => { stopFeed(); stopActivity() })
   getClient().start()
   openMainWindow()
   if (managedProfiles) {

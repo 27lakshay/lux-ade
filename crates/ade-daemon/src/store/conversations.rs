@@ -457,8 +457,15 @@ impl Store {
         requests: &[PendingRequest],
     ) -> Result<()> {
         let started = std::time::Instant::now();
+        activity::ensure(&self.connection)?;
         let tx = self.transaction()?;
+        let prior: Conversation = one(&tx, "conversations", &conversation.id)?;
         write_conversation(&tx, conversation)?;
+        // Activity commits with the state change it records.
+        let now = now_ms();
+        if let Some(recorded) = activity::turn_activity(&prior, conversation) {
+            activity::record(&tx, recorded, now)?;
+        }
         for incoming in messages {
             check_id(&incoming.id)?;
 
@@ -556,6 +563,8 @@ impl Store {
                         || request.status == prior.status,
                     "Resolved request cannot be reopened or resolved again"
                 );
+            } else if let Some(recorded) = activity::request_activity(conversation, request) {
+                activity::record(&tx, recorded, now)?;
             }
             tx.execute("INSERT INTO requests VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET status=excluded.status,data=excluded.data",params![request.id,request.conversation_id,request.status,encode(request)?])?;
         }
@@ -567,11 +576,13 @@ impl Store {
         self.recover_except(&std::collections::HashSet::new())
     }
     pub fn recover_except(&self, live: &std::collections::HashSet<String>) -> Result<()> {
+        activity::ensure(&self.connection)?;
         let tx = self.transaction()?;
         for mut conversation in all::<Conversation>(&tx, "SELECT data FROM conversations")? {
             if live.contains(&conversation.id) {
                 continue;
             }
+            let prior = conversation.clone();
             if BUSY.contains(&conversation.status.as_str()) {
                 conversation.status = "interrupted".into();
                 // Runtime loss interrupts queue ordering as well as the turn.
@@ -580,6 +591,8 @@ impl Store {
                 conversation.queue_paused = true;
                 conversation.error=Some("The daemon restarted during this turn. Its previous process and approval requests are no longer active; resume the conversation explicitly.".into());
                 conversation.updated_at = now_ms();
+                let lost = activity::unknown_turn(&prior, &conversation);
+                activity::record(&tx, lost, conversation.updated_at)?;
             } else if conversation.provider_thread_id.is_some() && conversation.status == "ready" {
                 conversation.status = "disconnected".into();
                 conversation.updated_at = now_ms();

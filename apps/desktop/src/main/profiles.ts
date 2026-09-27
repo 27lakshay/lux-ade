@@ -10,6 +10,7 @@ import { broadcast, getBrowserOwner, getClient, getClientGeneration, getProfileS
   getStartupProfileSelection, getUnsubscribeClient, getUnsubscribeFeed, isRestoringBinding, isSwitching, launcher,
   managedProfiles, nextClientGeneration, publishProfile, refreshProfiles, setBrowserOwner, setClient, setSocket,
   setSwitching, setUnsubscribeClient, setUnsubscribeFeed, type ProfileState } from './profile-connection'
+import { watchActivity } from './notifications'
 import { closeSenderTerminals } from './terminals'
 import { selectedWorkspaces, selectionRequests } from './workspaces'
 
@@ -45,9 +46,11 @@ async function attachClient(endpoint: string, profileId: string): Promise<void> 
       }
     }
   }))
-  setUnsubscribeFeed(next.subscribeFeed((frame) => {
+  const stopFeed = next.subscribeFeed((frame) => {
     if (generation === getClientGeneration()) broadcast('ade:feed-frame', frame)
-  }))
+  })
+  const stopActivity = watchActivity(next)
+  setUnsubscribeFeed(() => { stopFeed(); stopActivity() })
   next.start()
 }
 

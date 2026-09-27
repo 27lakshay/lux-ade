@@ -28,6 +28,7 @@ use std::{
 };
 
 mod accounts;
+mod activity;
 mod agents;
 mod conversations;
 mod leases;
@@ -88,6 +89,8 @@ struct Data {
     active_health_samples: usize,
     subscribers: HashMap<String, mpsc::SyncSender<Value>>,
     revision: u64,
+    /// The last activity sequence published as a feed frame.
+    activity_published: Option<u64>,
 }
 pub struct Sessions {
     pub review: Arc<crate::review::Review>,
@@ -137,11 +140,13 @@ impl Sessions {
                 active_health_samples: 0,
                 subscribers: HashMap::new(),
                 revision: 0,
+                activity_published: None,
             }),
             subscribers: Arc::new(AtomicUsize::new(0)),
             boot_id: new_id("boot"),
         });
         sessions.restore()?;
+        sessions.start_activity_feed()?;
         let weak = Arc::downgrade(&sessions);
         std::thread::spawn(move || {
             loop {
@@ -173,6 +178,9 @@ impl Sessions {
                 }
                 if let Err(error) = hub.sample_due_service_health() {
                     eprintln!("Service health monitor: {error}");
+                }
+                if let Err(error) = hub.flush_activity(&mut hub.data.lock().unwrap()) {
+                    eprintln!("Activity feed: {error}");
                 }
             }
         });
@@ -468,6 +476,9 @@ impl Sessions {
         crate::bench::agent_messages("provider_to_durable_us", messages);
         let queued = d.store.queued(&c.id)?;
         self.publish(d,json!({"type":"conversation_changed","conversation":c,"messages":messages,"requests":requests,"queued":queued}));
+        if let Err(error) = self.flush_activity(d) {
+            eprintln!("Activity feed: {error}");
+        }
         let _ = self.queue_wake.try_send(());
         Ok(())
     }
@@ -661,6 +672,11 @@ impl Sessions {
             | "repository.rebind"
             | "workspace.rebind" => self.workspace_command(request),
             "terminal.create" | "terminal.operation" => self.terminal_command(request),
+            "activity.list"
+            | "activity.mark"
+            | "notification.delivery.claim"
+            | "notification.delivery.report"
+            | "notification.delivery.list" => self.activity_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"

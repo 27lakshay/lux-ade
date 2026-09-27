@@ -108,6 +108,11 @@ export const operations = {
   "browser.navigate": { tier: "effect_command", domain: "daemon", request: "BrowserNavigateRequest", response: "BrowserMutation" },
   "browser.close": { tier: "effect_command", domain: "daemon", request: "BrowserCloseRequest", response: "BrowserMutation" },
   "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
+  "activity.list": { tier: "query", domain: "activity", request: "ActivityListRequest", response: "ActivityList" },
+  "activity.mark": { tier: "idempotent_command", domain: "activity", request: "ActivityMarkRequest", response: "ActivityMarked" },
+  "notification.delivery.claim": { tier: "idempotent_command", domain: "activity", request: "NotificationDeliveryClaimRequest", response: "NotificationDeliveryClaim" },
+  "notification.delivery.report": { tier: "idempotent_command", domain: "activity", request: "NotificationDeliveryReportRequest", response: "NotificationDeliveryReply" },
+  "notification.delivery.list": { tier: "query", domain: "activity", request: "NotificationDeliveryListRequest", response: "NotificationDeliveries" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */
@@ -115,4 +120,5 @@ export const frames = {
   "catalog": { domain: "workspaces", frame: "CatalogFrame" },
   "conversation_changed": { domain: "conversations", frame: "ConversationChanged" },
   "service_changed": { domain: "services", frame: "ServiceChanged" },
+  "activity_changed": { domain: "activity", frame: "ActivityChanged" },
 } as const
