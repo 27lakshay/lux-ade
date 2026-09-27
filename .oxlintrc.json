@@ -1,6 +1,8 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "react", "react-hooks", "unicorn", "oxc", "import"],
+  // ADE's own rules, each tested in scripts/oxlint-plugin-ade.test.mjs.
+  "jsPlugins": ["./scripts/oxlint-plugin-ade.mjs"],
   "categories": {
     "correctness": "error"
   },
@@ -77,6 +79,12 @@
         "no-unsafe-optional-chaining": "off",
         // Specs stringify caught errors, which are typed unknown.
         "typescript/no-base-to-string": "off"
+      }
+    },
+    {
+      "files": ["apps/desktop/src/main/**"],
+      "rules": {
+        "ade/electron-web-preferences": "error"
       }
     },
     {
