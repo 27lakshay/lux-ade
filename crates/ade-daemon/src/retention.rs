@@ -75,7 +75,10 @@ pub fn attachment(facts: &AttachmentFacts, now: i64) -> Verdict {
     if now.saturating_sub(facts.created_at) < ATTACHMENT_GRACE_MS {
         return Verdict::Keep("may be an in-flight upload");
     }
-    Verdict::Remove("unreferenced past the in-flight grace period")
+    // Age alone does not prove a client abandoned an upload. Until uploads
+    // carry durable leases, unreferenced payloads are reclaimed only through
+    // the explicit attachment.reclaim operations (store/attachments.rs).
+    Verdict::Keep("unreferenced upload; reclaim it explicitly")
 }
 
 /// Skill files belong to a bundle; the install writes both in one
@@ -214,14 +217,14 @@ mod tests {
     }
 
     #[test]
-    fn attachments_go_only_when_live_unreferenced_and_past_grace() {
+    fn attachments_are_never_swept_without_upload_leases() {
         let none: Vec<String> = vec![];
         let draft = vec!["draft".to_owned()];
         let old = NOW - ATTACHMENT_GRACE_MS;
-        assert!(matches!(
+        assert_eq!(
             attachment(&facts("live", &none, old), NOW),
-            Verdict::Remove(_)
-        ));
+            Verdict::Keep("unreferenced upload; reclaim it explicitly")
+        );
         assert_eq!(
             attachment(&facts("live", &draft, old), NOW),
             Verdict::Keep("referenced")

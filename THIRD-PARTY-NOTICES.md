@@ -27,3 +27,14 @@ Copyright: Copyright (c) 2026 Lovecast Inc.
 | ADE file | Source path | Changes |
 |---|---|---|
 | `crates/ade-daemon/src/observability/redact.rs` | `src/main/observability/redactor.ts` | Ported to Rust: key-family blocklist, labeled key-value rule, provider-key fingerprints with tagged replacements, URL userinfo stripping |
+| `apps/desktop/src/main/browser-diagnostics-core.ts` | `src/main/observability/redactor.ts` | Adapted: labeled key-value rule, provider-key patterns, URL userinfo rule |
+
+## t3code (MIT)
+
+Source: https://github.com/pingdotgg/t3code at `e4eb9977`
+Copyright: Copyright (c) 2026 T3 Tools Inc.
+
+| ADE file | Source path | Changes |
+|---|---|---|
+| `crates/ade-daemon/src/checkpoints.rs` | `apps/server/src/vcs/GitVcsDriver.ts` | Ported to Rust: checkpoint commit and restore through Git plumbing |
+| `crates/ade-daemon/src/usage/core.rs` | `apps/server/src/provider/Layers/CodexAdapter.ts`, `apps/server/src/provider/Layers/claudeUsageLimits.ts` | Ported to Rust: per-turn deltas of the Codex token total; units of Claude's rate-limit event |
