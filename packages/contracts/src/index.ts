@@ -1,11 +1,17 @@
 // Typed ADE wire contracts. The Rust types in crates/ade-core/src/contract are
 // the authority; everything under ./generated comes from them.
-import { frames, operationIdOperations, operations } from './generated/operations.js'
-import type { FeedFrame, Operation, RequestByOperation, ResponseByOperation } from './generated/types.js'
+import { frames, operationIdOperations, operations, terminalFrames } from './generated/operations.js'
+import type {
+  FeedFrame,
+  Operation,
+  RequestByOperation,
+  ResponseByOperation,
+  TerminalStreamFrame,
+} from './generated/types.js'
 import * as generatedValidators from './generated/validators.js'
 
 export type * from './generated/types.js'
-export { frames, operationIdOperations, operations }
+export { frames, operationIdOperations, operations, terminalFrames }
 
 export type Tier = (typeof operations)[Operation]['tier']
 export type Request<O extends Operation = Operation> = RequestByOperation[O]
@@ -72,4 +78,13 @@ export function decodeFeedFrame(value: unknown): FeedFrame {
   }
   check(frames[value.type as keyof typeof frames].frame, value, 'feed')
   return value as FeedFrame
+}
+
+/** Validate a frame of a terminal attachment stream. */
+export function decodeTerminalFrame(value: unknown): TerminalStreamFrame {
+  if (!record(value) || typeof value.type !== 'string' || !Object.hasOwn(terminalFrames, value.type)) {
+    throw new ContractError('terminal.type', 'unknown frame type')
+  }
+  check(terminalFrames[value.type as keyof typeof terminalFrames].frame, value, 'terminal')
+  return value as TerminalStreamFrame
 }

@@ -10,6 +10,7 @@ use super::conversations::{Ack, AckTag};
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub fn operations() -> Vec<OperationSpec> {
     vec![
@@ -27,10 +28,255 @@ pub fn operations() -> Vec<OperationSpec> {
     ]
 }
 
-/// Terminal stream frames bypass `session.subscribe`: the daemon copies them
-/// from the runtime without parsing, so they have no feed contract.
+/// Terminal stream frames bypass `session.subscribe`, so they are not feed
+/// frames. They have their own stream contract: [`stream_frames`].
 pub fn frames() -> Vec<FrameSpec> {
     vec![]
+}
+
+/// Every frame a terminal attachment can receive. The runtime's terminal host
+/// writes them (crates/ade-runtime/src/bin/supervisor/terminal_host.rs) and the
+/// daemon copies them to the client without parsing; the daemon and the
+/// supervisor add only `error` frames of their own. The SDK checks each frame
+/// against this contract as it arrives.
+pub fn stream_frames() -> Vec<FrameSpec> {
+    vec![
+        FrameSpec::new::<TerminalSnapshotFrame>("snapshot"),
+        FrameSpec::new::<TerminalOutputFrame>("terminal"),
+        FrameSpec::new::<TerminalResizeFrame>("terminal_resize"),
+        FrameSpec::new::<TerminalViewportFrame>("viewport"),
+        FrameSpec::new::<TerminalMetricsFrame>("metrics"),
+        FrameSpec::new::<TerminalDetachedFrame>("detached"),
+        FrameSpec::new::<TerminalWarningFrame>("warning"),
+        FrameSpec::new::<TerminalErrorFrame>("error"),
+        FrameSpec::new::<TerminalConversationFrame>("conversation"),
+        FrameSpec::new::<Ack>("ack"),
+    ]
+}
+
+wire_tag!(TerminalSnapshotTag, "snapshot");
+wire_tag!(TerminalOutputTag, "terminal");
+wire_tag!(TerminalResizeTag, "terminal_resize");
+wire_tag!(TerminalViewportTag, "viewport");
+wire_tag!(TerminalMetricsTag, "metrics");
+wire_tag!(TerminalDetachedTag, "detached");
+wire_tag!(TerminalWarningTag, "warning");
+wire_tag!(TerminalErrorTag, "error");
+wire_tag!(TerminalConversationTag, "conversation");
+
+/// The first frame of an attachment, and a later one marked `resync` when the
+/// runtime skipped output this viewer could not keep up with. Which recovery
+/// fields it carries depends on the `snapshot_format` the attachment asked for.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalSnapshotFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalSnapshotTag,
+    /// The terminal incarnation this attachment is bound to.
+    pub run_id: String,
+    pub attachment: u64,
+    /// Set on a snapshot that replaces the screen mid-stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resync: Option<bool>,
+    pub metrics: TerminalMetrics,
+    /// The runtime's simulated conversation text (a prototype leftover).
+    pub conversation: String,
+    pub streaming: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_owner: Option<String>,
+    /// `ghostty-snapshot-v1-herdr-<pin>` or `xterm-replay-v1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_snapshot_format: Option<String>,
+    /// The Ghostty snapshot, when the attachment asked for base64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_snapshot_base64: Option<String>,
+    /// The Ghostty snapshot as bytes, when the attachment did not ask for base64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_snapshot_bytes: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_recovery: Option<TerminalRecovery>,
+    /// The active screen, in a plain snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_screen_bytes: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_screen_error: Option<String>,
+}
+
+/// How a snapshot restores the screen, by snapshot format.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(untagged)]
+pub enum TerminalRecovery {
+    Ghostty(GhosttyRecovery),
+    XtermReplay(XtermReplayRecovery),
+    Plain(PlainScreenRecovery),
+}
+
+/// A Ghostty snapshot: both screens, history up to the limit, and any
+/// unfinished escape sequence.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct GhosttyRecovery {
+    pub scope: String,
+    pub history_limit_bytes: u64,
+    pub continuation_limit_bytes: u64,
+}
+
+/// Recorded output and resizes from the start of the process, up to a limit.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct XtermReplayRecovery {
+    /// False when the output passed `limit_bytes`; `events` is then empty.
+    pub complete: bool,
+    pub reason: Option<String>,
+    pub initial_cols: u16,
+    pub initial_rows: u16,
+    /// The live-output offset the replay reaches.
+    pub through_offset: u64,
+    pub limit_bytes: u64,
+    pub events: Vec<XtermReplayEvent>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum XtermReplayEvent {
+    Output { offset: u64, bytes_base64: String },
+    Resize { offset: u64, cols: u16, rows: u16 },
+}
+
+/// The active screen's text grid as the runtime's parser holds it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PlainScreenRecovery {
+    pub parser: String,
+    pub scope: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub cursor_col: u16,
+    pub cursor_row: u16,
+    pub alternate_screen: bool,
+    pub cursor_visible: bool,
+    pub parser_ground: bool,
+}
+
+/// PTY output. `offset` is where these bytes start in the terminal's output.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalOutputFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalOutputTag,
+    /// The bytes as lossy UTF-8.
+    pub data: String,
+    pub bytes: Vec<u8>,
+    pub offset: u64,
+    pub run_id: String,
+}
+
+/// The PTY's size changed, at this point in its output.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalResizeFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalResizeTag,
+    pub cols: u16,
+    pub rows: u16,
+    pub offset: u64,
+    pub run_id: String,
+}
+
+/// This attachment gained or lost ownership of the terminal's size.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalViewportFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalViewportTag,
+    pub owner: bool,
+    pub attachment: u64,
+    pub run_id: String,
+}
+
+/// The reply to `ping`, and a broadcast every second while the shell runs.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalMetricsFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalMetricsTag,
+    pub metrics: TerminalMetrics,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalMetrics {
+    /// The runtime supervisor's process ID.
+    pub pid: u32,
+    pub uptime_ms: u64,
+    /// Attachments and session subscribers.
+    pub clients: u64,
+    pub workspace_id: String,
+    pub terminal_id: String,
+    pub run_id: String,
+    /// A service or script run's incarnation; null for shells.
+    pub transfer_id: Option<String>,
+    /// All output so far, in bytes: the offset the next output frame starts at.
+    pub terminal_bytes: u64,
+    pub events: u64,
+    pub reply_dropped_bytes: u64,
+    pub viewer_resyncs: u64,
+    pub viewer_queue_limit_bytes: u64,
+    /// `[width, height]` in pixels.
+    pub pixel_size: (u16, u16),
+    pub scrollback_bytes: u64,
+    /// The attachment that owns the terminal's size.
+    pub resize_owner: Option<u64>,
+    pub shell_pid: Option<u32>,
+    pub shell_running: bool,
+    pub durable_log_error: Option<String>,
+    pub descendants: Vec<TerminalDescendant>,
+    /// How the process ended, once it has. Its shape varies with how it ended
+    /// and whether its process tree was confirmed stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_status: Option<Value>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalDescendant {
+    pub pid: i32,
+    pub started: u64,
+}
+
+/// The reply to `detach`; the connection closes after it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalDetachedFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalDetachedTag,
+    pub attachment: u64,
+    pub run_id: String,
+}
+
+/// Something went wrong that the terminal keeps running through, such as
+/// dropped PTY replies.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalWarningFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalWarningTag,
+    pub message: String,
+}
+
+/// A refused or failed request, a failed restore, or the process exiting.
+/// `code` is set for refusals a client acts on: `stale_incarnation` and
+/// `incarnation_exited` from the runtime, `needs_rebind` and other typed codes
+/// from the daemon, and the SDK's own `output_gap`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalErrorFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalErrorTag,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+}
+
+/// The runtime's simulated conversation (a prototype leftover), broadcast to
+/// every attachment while `simulate` runs.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalConversationFrame {
+    #[serde(rename = "type")]
+    pub tag: TerminalConversationTag,
+    pub text: String,
+    pub streaming: bool,
 }
 
 /// `terminal.create`: add another terminal to a workspace.

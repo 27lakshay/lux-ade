@@ -425,25 +425,60 @@ test('the SDK passes a resync snapshot on and refuses a real output gap', async 
   // skips ahead, live output from its offset, then a frame after a gap.
   const socketPath = join(ade.root, 'peer.sock')
   const events = [{ type: 'output', offset: 0, bytes_base64: Buffer.from('abc').toString('base64') }]
+  // Every frame is complete by the terminal stream contract, which the SDK checks.
+  const metrics = (terminalBytes: number) => ({
+    pid: 1,
+    uptime_ms: 0,
+    clients: 1,
+    workspace_id: 'ws',
+    terminal_id: 'term',
+    run_id: 'run-1',
+    transfer_id: null,
+    terminal_bytes: terminalBytes,
+    events: 0,
+    reply_dropped_bytes: 0,
+    viewer_resyncs: 0,
+    viewer_queue_limit_bytes: 4 * 1024 * 1024,
+    pixel_size: [0, 0],
+    scrollback_bytes: terminalBytes,
+    resize_owner: null,
+    shell_pid: 2,
+    shell_running: true,
+    durable_log_error: null,
+    descendants: [],
+  })
   const snapshot = (throughOffset: number, extra: Record<string, unknown>) => ({
     type: 'snapshot',
     run_id: 'run-1',
+    attachment: 1,
+    conversation: '',
+    streaming: false,
+    metrics: metrics(throughOffset),
     terminal_snapshot_format: 'xterm-replay-v1',
     ...extra,
     terminal_recovery: {
       complete: throughOffset === 3,
+      reason: throughOffset === 3 ? null : 'replay_limit_exceeded',
       through_offset: throughOffset,
       initial_cols: 80,
       initial_rows: 24,
+      limit_bytes: 4 * 1024 * 1024,
       events: throughOffset === 3 ? events : [],
     },
   })
+  const output = (offset: number, bytes: number[]) => ({
+    type: 'terminal',
+    run_id: 'run-1',
+    offset,
+    bytes,
+    data: Buffer.from(bytes).toString('latin1'),
+  })
   const frames = [
     snapshot(3, {}),
-    { type: 'terminal', run_id: 'run-1', offset: 3, bytes: [100] },
+    output(3, [100]),
     snapshot(10, { resync: true }),
-    { type: 'terminal', run_id: 'run-1', offset: 10, bytes: [101, 102] },
-    { type: 'terminal', run_id: 'run-1', offset: 20, bytes: [103] },
+    output(10, [101, 102]),
+    output(20, [103]),
   ]
   const server = createServer((connection) => {
     connection.once('data', () => connection.write(frames.map((frame) => `${JSON.stringify(frame)}\n`).join('')))

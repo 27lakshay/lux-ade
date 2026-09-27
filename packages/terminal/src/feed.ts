@@ -2,7 +2,10 @@
 // and writes live output in order. It needs no DOM, so the protocol E2E drives a bare
 // `GhosttyTerminalCore` with it in Node, as the window drives a `GhosttyTerminalSurface`.
 
-export type TerminalFrame = Record<string, unknown> & { type: string }
+import type { TerminalSnapshotFrame, TerminalStreamFrame } from '@ade/contracts'
+
+/** A frame of a terminal attachment. The SDK has checked it against its contract. */
+export type TerminalFrame = TerminalStreamFrame
 
 /**
  * The snapshot format of the runtime's Ghostty. The window's Ghostty is built from the same pinned
@@ -35,30 +38,16 @@ function decodeBase64(base64: string): Uint8Array {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0))
 }
 
-function isByteArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
-}
-
-function outputBytes(frame: TerminalFrame): Uint8Array | null {
-  return isByteArray(frame.bytes) ? Uint8Array.from(frame.bytes) : null
-}
-
-/** The snapshot's bytes and the live offset it was taken at. Throws on a malformed frame. */
-function readSnapshot(frame: TerminalFrame): { bytes: Uint8Array; offset: number } {
+/** The snapshot's Ghostty state and the live offset it was taken at. Throws if it has none. */
+function readSnapshot(frame: TerminalSnapshotFrame): { bytes: Uint8Array; offset: number } {
   if (frame.terminal_snapshot_format !== GHOSTTY_SNAPSHOT_FORMAT) {
     throw new Error('This daemon runs a different Ghostty; its terminal state cannot be restored here.')
   }
-  const metrics = frame.metrics as Record<string, unknown> | undefined
-  const offset = metrics?.terminal_bytes
-  if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) {
-    throw new Error('Terminal snapshot offset is invalid.')
-  }
+  const offset = frame.metrics.terminal_bytes
   if (typeof frame.terminal_snapshot_base64 === 'string') {
     return { bytes: decodeBase64(frame.terminal_snapshot_base64), offset }
   }
-  if (isByteArray(frame.terminal_snapshot_bytes)) {
-    return { bytes: Uint8Array.from(frame.terminal_snapshot_bytes), offset }
-  }
+  if (frame.terminal_snapshot_bytes) return { bytes: Uint8Array.from(frame.terminal_snapshot_bytes), offset }
   throw new Error('Terminal snapshot has no state.')
 }
 
@@ -104,13 +93,13 @@ export class TerminalFeed {
   }
 
   private queue(frame: TerminalFrame): void {
-    this.pendingBytes += Array.isArray(frame.bytes) ? frame.bytes.length : JSON.stringify(frame).length
+    this.pendingBytes += frame.type === 'terminal' ? frame.bytes.length : JSON.stringify(frame).length
     if (this.pending.length >= MAX_PENDING_FRAMES || this.pendingBytes > MAX_PENDING_BYTES) {
       this.fail('Terminal output exceeded the restore queue; reopen this view to restore it.')
     } else this.pending.push(frame)
   }
 
-  private restore(frame: TerminalFrame): void {
+  private restore(frame: TerminalSnapshotFrame): void {
     let snapshot: { bytes: Uint8Array; offset: number }
     try {
       snapshot = readSnapshot(frame)
@@ -130,15 +119,14 @@ export class TerminalFeed {
 
   private applyLive(frame: TerminalFrame): void {
     if (frame.type === 'terminal') {
-      const bytes = outputBytes(frame)
-      if (!bytes || frame.offset !== this.expectedOffset) {
+      if (frame.offset !== this.expectedOffset) {
         this.events.status('Terminal output is incomplete. Reconnect to restore it.')
         return
       }
-      this.expectedOffset += bytes.length
-      this.screen.write(bytes)
+      this.expectedOffset += frame.bytes.length
+      this.screen.write(Uint8Array.from(frame.bytes))
     } else if (frame.type === 'error' || frame.type === 'warning') {
-      this.events.status(typeof frame.message === 'string' ? frame.message : 'Terminal reported an error.')
+      this.events.status(frame.message)
     }
     // `terminal_resize` needs nothing here: the view sizes its own grid from its container and
     // reports it (`onResize`), and Ghostty reflows the screen when it changes.

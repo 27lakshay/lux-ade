@@ -219,6 +219,19 @@ pub const DOMAINS: &[Domain] = &[
     },
 ];
 
+/// Streams outside `session.subscribe`, each with its own frames. Their frames
+/// are not feed frames: a terminal attachment carries PTY output, not catalog
+/// or conversation changes.
+pub const STREAMS: &[Stream] = &[Stream {
+    name: "terminal",
+    frames: terminals::stream_frames,
+}];
+
+pub struct Stream {
+    pub name: &'static str,
+    pub frames: fn() -> Vec<FrameSpec>,
+}
+
 pub struct Domain {
     pub name: &'static str,
     pub operations: fn() -> Vec<OperationSpec>,
@@ -312,6 +325,14 @@ pub fn bundle() -> Value {
             frames.push(json!({"type": spec.kind, "domain": domain.name, "frame": frame}));
         }
     }
+    let mut streams = Map::new();
+    for stream in STREAMS {
+        let stream_frames: Vec<Value> = (stream.frames)()
+            .into_iter()
+            .map(|spec| json!({"type": spec.kind, "frame": reference(&(spec.frame)(&mut replies))}))
+            .collect();
+        streams.insert(stream.name.into(), Value::Array(stream_frames));
+    }
     let mut definitions = replies.take_definitions(true);
     for (name, schema) in requests.take_definitions(true) {
         match definitions.get(&name) {
@@ -335,6 +356,7 @@ pub fn bundle() -> Value {
         "$id": "ade-contracts",
         "operations": operations,
         "frames": frames,
+        "streams": streams,
         "$defs": definitions,
     });
     safe_integers(&mut bundle["$defs"]);

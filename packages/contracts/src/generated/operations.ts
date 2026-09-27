@@ -373,3 +373,17 @@ export const frames = {
   "service_changed": { domain: "services", frame: "ServiceChanged" },
   "activity_changed": { domain: "activity", frame: "ActivityChanged" },
 } as const
+
+/** Each terminal attachment frame's `type` tag and the validator name for it. */
+export const terminalFrames = {
+  "snapshot": { frame: "TerminalSnapshotFrame" },
+  "terminal": { frame: "TerminalOutputFrame" },
+  "terminal_resize": { frame: "TerminalResizeFrame" },
+  "viewport": { frame: "TerminalViewportFrame" },
+  "metrics": { frame: "TerminalMetricsFrame" },
+  "detached": { frame: "TerminalDetachedFrame" },
+  "warning": { frame: "TerminalWarningFrame" },
+  "error": { frame: "TerminalErrorFrame" },
+  "conversation": { frame: "TerminalConversationFrame" },
+  "ack": { frame: "Ack" },
+} as const

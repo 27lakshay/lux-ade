@@ -11970,6 +11970,30 @@
       ],
       "type": "object"
     },
+    "GhosttyRecovery": {
+      "description": "A Ghostty snapshot: both screens, history up to the limit, and any\nunfinished escape sequence.",
+      "properties": {
+        "continuation_limit_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "history_limit_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "history_limit_bytes",
+        "continuation_limit_bytes"
+      ],
+      "type": "object"
+    },
     "GitOperation": {
       "description": "A Git mutation's receipt.",
       "properties": {
@@ -15715,6 +15739,58 @@
       "required": [
         "type",
         "placements"
+      ],
+      "type": "object"
+    },
+    "PlainScreenRecovery": {
+      "description": "The active screen's text grid as the runtime's parser holds it.",
+      "properties": {
+        "alternate_screen": {
+          "type": "boolean"
+        },
+        "cols": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cursor_col": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cursor_row": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cursor_visible": {
+          "type": "boolean"
+        },
+        "parser": {
+          "type": "string"
+        },
+        "parser_ground": {
+          "type": "boolean"
+        },
+        "rows": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parser",
+        "scope",
+        "cols",
+        "rows",
+        "cursor_col",
+        "cursor_row",
+        "alternate_screen",
+        "cursor_visible",
+        "parser_ground"
       ],
       "type": "object"
     },
@@ -25581,6 +25657,30 @@
         }
       ]
     },
+    "TerminalConversationFrame": {
+      "description": "The runtime's simulated conversation (a prototype leftover), broadcast to\nevery attachment while `simulate` runs.",
+      "properties": {
+        "streaming": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `conversation` type tag.",
+          "enum": [
+            "conversation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text",
+        "streaming"
+      ],
+      "type": "object"
+    },
     "TerminalCreateRequest": {
       "additionalProperties": false,
       "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID; `request_id` is accepted as\nits older name. Without one, every call creates a new terminal.",
@@ -25619,6 +25719,252 @@
       "required": [
         "type",
         "terminal_id"
+      ],
+      "type": "object"
+    },
+    "TerminalDescendant": {
+      "properties": {
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "started": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid",
+        "started"
+      ],
+      "type": "object"
+    },
+    "TerminalDetachedFrame": {
+      "description": "The reply to `detach`; the connection closes after it.",
+      "properties": {
+        "attachment": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `detached` type tag.",
+          "enum": [
+            "detached"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "attachment",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "TerminalErrorFrame": {
+      "description": "A refused or failed request, a failed restore, or the process exiting.\n`code` is set for refusals a client acts on: `stale_incarnation` and\n`incarnation_exited` from the runtime, `needs_rebind` and other typed codes\nfrom the daemon, and the SDK's own `output_gap`.",
+      "properties": {
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "recovery": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `error` type tag.",
+          "enum": [
+            "error"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "message"
+      ],
+      "type": "object"
+    },
+    "TerminalMetrics": {
+      "properties": {
+        "clients": {
+          "description": "Attachments and session subscribers.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "descendants": {
+          "items": {
+            "$ref": "#/$defs/TerminalDescendant"
+          },
+          "type": "array"
+        },
+        "durable_log_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "events": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exit_status": {
+          "description": "How the process ended, once it has. Its shape varies with how it ended\nand whether its process tree was confirmed stopped."
+        },
+        "pid": {
+          "description": "The runtime supervisor's process ID.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pixel_size": {
+          "description": "`[width, height]` in pixels.",
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        },
+        "reply_dropped_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resize_owner": {
+          "description": "The attachment that owns the terminal's size.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "scrollback_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shell_pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shell_running": {
+          "type": "boolean"
+        },
+        "terminal_bytes": {
+          "description": "All output so far, in bytes: the offset the next output frame starts at.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "description": "A service or script run's incarnation; null for shells.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uptime_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewer_queue_limit_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewer_resyncs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pid",
+        "uptime_ms",
+        "clients",
+        "workspace_id",
+        "terminal_id",
+        "run_id",
+        "transfer_id",
+        "terminal_bytes",
+        "events",
+        "reply_dropped_bytes",
+        "viewer_resyncs",
+        "viewer_queue_limit_bytes",
+        "pixel_size",
+        "scrollback_bytes",
+        "resize_owner",
+        "shell_pid",
+        "shell_running",
+        "durable_log_error",
+        "descendants"
+      ],
+      "type": "object"
+    },
+    "TerminalMetricsFrame": {
+      "description": "The reply to `ping`, and a broadcast every second while the shell runs.",
+      "properties": {
+        "metrics": {
+          "$ref": "#/$defs/TerminalMetrics"
+        },
+        "type": {
+          "description": "The `metrics` type tag.",
+          "enum": [
+            "metrics"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "metrics"
       ],
       "type": "object"
     },
@@ -25671,6 +26017,46 @@
       ],
       "type": "object"
     },
+    "TerminalOutputFrame": {
+      "description": "PTY output. `offset` is where these bytes start in the terminal's output.",
+      "properties": {
+        "bytes": {
+          "items": {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "data": {
+          "description": "The bytes as lossy UTF-8.",
+          "type": "string"
+        },
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `terminal` type tag.",
+          "enum": [
+            "terminal"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data",
+        "bytes",
+        "offset",
+        "run_id"
+      ],
+      "type": "object"
+    },
     "TerminalOwner": {
       "properties": {
         "runtime_instance": {
@@ -25687,6 +26073,58 @@
         "terminal_id",
         "transfer_id",
         "runtime_instance"
+      ],
+      "type": "object"
+    },
+    "TerminalRecovery": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GhosttyRecovery"
+        },
+        {
+          "$ref": "#/$defs/XtermReplayRecovery"
+        },
+        {
+          "$ref": "#/$defs/PlainScreenRecovery"
+        }
+      ],
+      "description": "How a snapshot restores the screen, by snapshot format."
+    },
+    "TerminalResizeFrame": {
+      "description": "The PTY's size changed, at this point in its output.",
+      "properties": {
+        "cols": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `terminal_resize` type tag.",
+          "enum": [
+            "terminal_resize"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "cols",
+        "rows",
+        "offset",
+        "run_id"
       ],
       "type": "object"
     },
@@ -25746,6 +26184,113 @@
       ],
       "type": "object"
     },
+    "TerminalSnapshotFrame": {
+      "description": "The first frame of an attachment, and a later one marked `resync` when the\nruntime skipped output this viewer could not keep up with. Which recovery\nfields it carries depends on the `snapshot_format` the attachment asked for.",
+      "properties": {
+        "attachment": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "conversation": {
+          "description": "The runtime's simulated conversation text (a prototype leftover).",
+          "type": "string"
+        },
+        "metrics": {
+          "$ref": "#/$defs/TerminalMetrics"
+        },
+        "response_owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resync": {
+          "description": "Set on a snapshot that replaces the screen mid-stream.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "run_id": {
+          "description": "The terminal incarnation this attachment is bound to.",
+          "type": "string"
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "terminal_recovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalRecovery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_screen_bytes": {
+          "description": "The active screen, in a plain snapshot.",
+          "items": {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "terminal_screen_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal_snapshot_base64": {
+          "description": "The Ghostty snapshot, when the attachment asked for base64.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terminal_snapshot_bytes": {
+          "description": "The Ghostty snapshot as bytes, when the attachment did not ask for base64.",
+          "items": {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "terminal_snapshot_format": {
+          "description": "`ghostty-snapshot-v1-herdr-<pin>` or `xterm-replay-v1`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `snapshot` type tag.",
+          "enum": [
+            "snapshot"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "run_id",
+        "attachment",
+        "metrics",
+        "conversation",
+        "streaming"
+      ],
+      "type": "object"
+    },
     "TerminalStopRequest": {
       "additionalProperties": false,
       "description": "`terminal.stop`: stop a workspace terminal's shell.",
@@ -25769,6 +26314,56 @@
         "operation_id",
         "workspace_id",
         "terminal_id"
+      ],
+      "type": "object"
+    },
+    "TerminalViewportFrame": {
+      "description": "This attachment gained or lost ownership of the terminal's size.",
+      "properties": {
+        "attachment": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `viewport` type tag.",
+          "enum": [
+            "viewport"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "owner",
+        "attachment",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "TerminalWarningFrame": {
+      "description": "Something went wrong that the terminal keeps running through, such as\ndropped PTY replies.",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `warning` type tag.",
+          "enum": [
+            "warning"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "message"
       ],
       "type": "object"
     },
@@ -28332,6 +28927,114 @@
         "target"
       ],
       "type": "object"
+    },
+    "XtermReplayEvent": {
+      "oneOf": [
+        {
+          "properties": {
+            "bytes_base64": {
+              "type": "string"
+            },
+            "offset": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "output",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "offset",
+            "bytes_base64"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cols": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rows": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "resize",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "offset",
+            "cols",
+            "rows"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XtermReplayRecovery": {
+      "description": "Recorded output and resizes from the start of the process, up to a limit.",
+      "properties": {
+        "complete": {
+          "description": "False when the output passed `limit_bytes`; `events` is then empty.",
+          "type": "boolean"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/XtermReplayEvent"
+          },
+          "type": "array"
+        },
+        "initial_cols": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "initial_rows": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "through_offset": {
+          "description": "The live-output offset the replay reaches.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "complete",
+        "reason",
+        "initial_cols",
+        "initial_rows",
+        "through_offset",
+        "limit_bytes",
+        "events"
+      ],
+      "type": "object"
     }
   },
   "$id": "ade-contracts",
@@ -30310,5 +31013,49 @@
       "response": "ContextPlan",
       "tier": "query"
     }
-  ]
+  ],
+  "streams": {
+    "terminal": [
+      {
+        "frame": "TerminalSnapshotFrame",
+        "type": "snapshot"
+      },
+      {
+        "frame": "TerminalOutputFrame",
+        "type": "terminal"
+      },
+      {
+        "frame": "TerminalResizeFrame",
+        "type": "terminal_resize"
+      },
+      {
+        "frame": "TerminalViewportFrame",
+        "type": "viewport"
+      },
+      {
+        "frame": "TerminalMetricsFrame",
+        "type": "metrics"
+      },
+      {
+        "frame": "TerminalDetachedFrame",
+        "type": "detached"
+      },
+      {
+        "frame": "TerminalWarningFrame",
+        "type": "warning"
+      },
+      {
+        "frame": "TerminalErrorFrame",
+        "type": "error"
+      },
+      {
+        "frame": "TerminalConversationFrame",
+        "type": "conversation"
+      },
+      {
+        "frame": "Ack",
+        "type": "ack"
+      }
+    ]
+  }
 }

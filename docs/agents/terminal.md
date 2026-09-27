@@ -23,6 +23,10 @@ The TypeScript around it is adapted from t3code (`THIRD-PARTY-NOTICES.md`).
 - **Keep output outside React.** Bytes go from the stream bridge to the feed to Ghostty.
 - **The view owns its grid.** The surface fits to its container and reports the size
   (`onResize`); a restored snapshot is refit to the container.
+- **Frames are typed by the terminal stream contract** (`stream_frames` in
+  `crates/ade-core/src/contract/terminals.rs`, generated as `TerminalStreamFrame`). The SDK checks
+  every frame against it as it arrives, so code past `openTerminalConnection` can trust the types.
+  A new frame kind starts there, then `pnpm contract:generate`.
 - **Snapshots come as `ghostty-snapshot-v1-herdr-<pin>`.** The SDK asks for them with
   `openTerminalConnection(…, { snapshotFormat: 'ghostty' })`. The live offset after a snapshot is
   `metrics.terminal_bytes`. The CLI still uses `xterm-replay-v1`.

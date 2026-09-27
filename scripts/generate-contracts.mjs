@@ -26,6 +26,7 @@ if (cargo.status !== 0) {
 }
 const bundle = JSON.parse(cargo.stdout)
 const { operations, frames } = bundle
+const terminalFrames = bundle.streams.terminal
 const definitions = bundle.$defs
 const banner =
   '// Generated from the Rust contracts in crates/ade-core/src/contract by scripts/generate-contracts.mjs. Do not edit.'
@@ -83,6 +84,8 @@ ${operations.map((operation) => `  ${quote(operation.name)}: ${operation.respons
 }
 
 export type FeedFrame = ${frames.map((frame) => frame.frame).join(' | ')}
+
+export type TerminalStreamFrame = ${terminalFrames.map((frame) => frame.frame).join(' | ')}
 `
 
 const operationIdOperations = operations
@@ -111,6 +114,11 @@ ${operationIdOperations.map((name) => `  ${quote(name)},`).join('\n')}
 export const frames = {
 ${frames.map((frame) => `  ${quote(frame.type)}: { domain: ${quote(frame.domain)}, frame: ${quote(frame.frame)} },`).join('\n')}
 } as const
+
+/** Each terminal attachment frame's \`type\` tag and the validator name for it. */
+export const terminalFrames = {
+${terminalFrames.map((frame) => `  ${quote(frame.type)}: { frame: ${quote(frame.frame)} },`).join('\n')}
+} as const
 `
 
 const ajv = new Ajv2020({ code: { source: true, esm: true }, strict: true, allErrors: false })
@@ -119,6 +127,7 @@ const exported = [
   ...new Set([
     ...operations.flatMap((operation) => [operation.request, operation.response]),
     ...frames.map((frame) => frame.frame),
+    ...terminalFrames.map((frame) => frame.frame),
   ]),
 ].sort()
 const validatorCode = standaloneCode(

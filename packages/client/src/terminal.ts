@@ -1,8 +1,15 @@
 import { createConnection } from 'node:net'
+import {
+  ContractError,
+  decodeTerminalFrame,
+  type TerminalSnapshotFrame,
+  type TerminalStreamFrame,
+} from '@ade/contracts'
 
 const MAX_FRAME_BYTES = 32 * 1024 * 1024
 
-export type TerminalFrame = Record<string, unknown> & { type: string }
+/** A frame of a terminal attachment, checked against its contract (crates/ade-core terminals.rs). */
+export type TerminalFrame = TerminalStreamFrame
 
 export interface TerminalConnection {
   input(data: string): void
@@ -37,22 +44,22 @@ export interface TerminalConnectionOptions {
 }
 
 /**
+ * The live-output offset a snapshot resumes at: an xterm-replay-v1 snapshot's `through_offset`, or
+ * the byte count any other snapshot was taken at.
+ */
+function snapshotOffset(frame: TerminalSnapshotFrame): number {
+  const recovery = frame.terminal_recovery
+  const through = recovery && 'through_offset' in recovery ? recovery.through_offset : undefined
+  return typeof through === 'number' ? through : frame.metrics.terminal_bytes
+}
+
+/**
  * Decides whether a frame belongs to the incarnation an attachment is bound to.
  * Frames without a `run_id` come from hosts that predate fencing and are kept.
  */
-/**
- * The live-output offset a snapshot resumes at, if it names one: an xterm-replay-v1 snapshot's
- * `through_offset`, or the byte count a Ghostty snapshot was taken at.
- */
-function snapshotOffset(frame: TerminalFrame): number | null {
-  const recovery = frame.terminal_recovery as Record<string, unknown> | undefined
-  const metrics = frame.metrics as Record<string, unknown> | undefined
-  const offset = recovery?.through_offset ?? metrics?.terminal_bytes
-  return typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0 ? offset : null
-}
-
 function sameIncarnation(bound: string | null, frame: TerminalFrame): boolean {
-  return bound === null || frame.run_id === undefined || frame.run_id === bound
+  const runId = 'run_id' in frame ? frame.run_id : undefined
+  return bound === null || runId === undefined || runId === null || runId === bound
 }
 
 export function openTerminalConnection(
@@ -113,12 +120,11 @@ export function openTerminalConnection(
       buffered = buffered.subarray(end + 1)
       let frame: TerminalFrame
       try {
-        frame = JSON.parse(line.toString('utf8')) as TerminalFrame
-      } catch {
+        frame = decodeTerminalFrame(JSON.parse(line.toString('utf8')))
+      } catch (error) {
+        if (error instanceof ContractError)
+          return finish(`Terminal sent a frame that fails its contract: ${error.message}`)
         return finish('Terminal sent invalid JSON.')
-      }
-      if (!frame || typeof frame !== 'object' || typeof frame.type !== 'string') {
-        return finish('Terminal sent an invalid frame.')
       }
       if (frame.type === 'snapshot' && incarnation === null && typeof frame.run_id === 'string') {
         incarnation = frame.run_id
@@ -134,8 +140,8 @@ export function openTerminalConnection(
         if (frame.resync === true) resyncs += 1
         expected = snapshotOffset(frame)
       } else if (frame.type === 'terminal' && expected !== null) {
-        const length = Array.isArray(frame.bytes) ? frame.bytes.length : -1
-        if (frame.offset !== expected || length < 0) {
+        const length = frame.bytes.length
+        if (frame.offset !== expected) {
           onFrame({ type: 'error', code: 'output_gap', message: 'Terminal output has a gap; reattach to restore it.' })
           return finish('Terminal output has a gap.')
         }

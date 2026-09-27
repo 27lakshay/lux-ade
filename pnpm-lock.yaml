@@ -501,6 +501,10 @@ importers:
         version: 7.0.2
 
   packages/terminal:
+    dependencies:
+      '@ade/contracts':
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       vite:
         specifier: 8.3.1

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { expect, type ScratchProfile } from '../fixtures'
 import { clientSdk, type TerminalFrame as StreamFrame } from '../fixtures/terminals'
 import { repositoryRoot } from '../fixtures/environment'
-import { TerminalFeed, type TerminalFrame } from '../../../packages/terminal/src/feed'
+import { TerminalFeed } from '../../../packages/terminal/src/feed'
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, type GhosttyRow } from '../../../packages/terminal/src/ghostty/core'
 import { setGhosttyWasmSource } from '../../../packages/terminal/src/ghostty/runtime'
 
@@ -89,10 +89,11 @@ export async function newViewer(): Promise<TerminalViewer> {
   return { screen, feed, statuses, failed: () => failed }
 }
 
-/** The screen a new view restores from `snapshot` alone. */
-export async function restoredScreen(snapshot: TerminalFrame): Promise<ScreenState> {
+/** The screen a new view restores from `snapshot` alone, checked against its contract first. */
+export async function restoredScreen(snapshot: unknown): Promise<ScreenState> {
   const viewer = await newViewer()
-  viewer.feed.push(snapshot)
+  const { decodeTerminalFrame } = await clientSdk()
+  viewer.feed.push(decodeTerminalFrame(snapshot))
   if (!viewer.feed.ready) throw new Error(`Restore failed: ${viewer.statuses.join('; ')}`)
   const screen = screenOf(viewer.screen)
   viewer.screen.dispose()

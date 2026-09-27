@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { GHOSTTY_SNAPSHOT_FORMAT, type TerminalFrame } from './feed'
+import type { TerminalFrame } from './feed'
 import { GhosttyTerminalCore } from './ghostty/core'
-import { encodeSnapshot } from './ghostty/testing'
+import { snapshotFrame } from './ghostty/testing'
 import { mountTerminal, type TerminalBridge, type TerminalChannel } from './index'
 import { terminalThemeFrom } from './theme'
 
@@ -52,12 +52,7 @@ describe('mountTerminal', () => {
   it('restores the snapshot, reports its grid, and sends typed input', async () => {
     const source = await GhosttyTerminalCore.create(40, 5, 8, 16, theme)
     source.write('hello')
-    const snapshot: TerminalFrame = {
-      type: 'snapshot',
-      terminal_snapshot_format: GHOSTTY_SNAPSHOT_FORMAT,
-      terminal_snapshot_base64: btoa(String.fromCharCode(...(await encodeSnapshot(source)))),
-      metrics: { terminal_bytes: 5 },
-    }
+    const snapshot = await snapshotFrame(source, 5)
     source.dispose()
 
     const mount = container()

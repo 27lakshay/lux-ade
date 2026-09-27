@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { GHOSTTY_SNAPSHOT_FORMAT, TerminalFeed, type TerminalFrame } from './feed'
+import type { TerminalSnapshotFrame } from '@ade/contracts'
+import { GHOSTTY_SNAPSHOT_FORMAT, TerminalFeed } from './feed'
 import { GhosttyTerminalCore } from './ghostty/core'
-import { encodeSnapshot } from './ghostty/testing'
+import { outputFrame, snapshotFrame } from './ghostty/testing'
 import vendoredVersion from './ghostty/vendor/VERSION?raw'
 
 const theme = {
@@ -26,24 +27,14 @@ const lineText = (core: GhosttyTerminalCore, row: number): string =>
 
 const toBase64 = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes))
 
-/** A snapshot frame as the runtime sends it to a viewer that asked for base64 Ghostty state. */
-async function snapshotFrame(text: string, extra: Record<string, unknown> = {}): Promise<TerminalFrame> {
+/** A snapshot frame of a terminal that has shown `text`, taken after it. */
+async function snapshotOf(text: string, extra: Partial<TerminalSnapshotFrame> = {}): Promise<TerminalSnapshotFrame> {
   const source = await newCore()
   source.write(text)
-  return {
-    type: 'snapshot',
-    terminal_snapshot_format: GHOSTTY_SNAPSHOT_FORMAT,
-    terminal_snapshot_base64: toBase64(await encodeSnapshot(source)),
-    metrics: { terminal_bytes: new TextEncoder().encode(text).length },
-    ...extra,
-  }
+  return snapshotFrame(source, new TextEncoder().encode(text).length, extra)
 }
 
-const output = (text: string, offset: number): TerminalFrame => ({
-  type: 'terminal',
-  offset,
-  bytes: Array.from(new TextEncoder().encode(text)),
-})
+const output = outputFrame
 
 function feedInto(core: GhosttyTerminalCore) {
   const log = { statuses: [] as string[], ready: 0, failed: 0 }
@@ -67,7 +58,7 @@ describe('TerminalFeed', () => {
   })
 
   it('restores the snapshot, then writes live output from its offset', async () => {
-    const snapshot = await snapshotFrame('hello\r\n')
+    const snapshot = await snapshotOf('hello\r\n')
     const core = await newCore()
     const { feed, log } = feedInto(core)
     expect(feed.ready).toBe(false)
@@ -85,14 +76,14 @@ describe('TerminalFeed', () => {
   it('reports a gap and skips output that does not start at the expected offset', async () => {
     const core = await newCore()
     const { feed, log } = feedInto(core)
-    feed.push(await snapshotFrame('hello\r\n'))
+    feed.push(await snapshotOf('hello\r\n'))
     feed.push(output('lost', 9))
     expect(lineText(core, 1)).toBe('')
     expect(log.statuses).toEqual(['Terminal output is incomplete. Reconnect to restore it.'])
   })
 
   it('holds output that arrives before the snapshot and applies it after', async () => {
-    const snapshot = await snapshotFrame('hello\r\n')
+    const snapshot = await snapshotOf('hello\r\n')
     const core = await newCore()
     const { feed } = feedInto(core)
     feed.push(output('late', 7))
@@ -103,9 +94,9 @@ describe('TerminalFeed', () => {
   it('replaces the screen with a resync snapshot and continues from its offset', async () => {
     const core = await newCore()
     const { feed, log } = feedInto(core)
-    feed.push(await snapshotFrame('stale\r\n'))
+    feed.push(await snapshotOf('stale\r\n'))
     feed.push(output('skipped', 7))
-    feed.push(await snapshotFrame('\x1b[2J\x1b[Hfresh\r\n', { resync: true }))
+    feed.push(await snapshotOf('\x1b[2J\x1b[Hfresh\r\n', { resync: true }))
     expect(lineText(core, 0)).toBe('fresh')
     feed.push(output('next', new TextEncoder().encode('\x1b[2J\x1b[Hfresh\r\n').length))
     expect(lineText(core, 1)).toBe('next')
@@ -116,7 +107,7 @@ describe('TerminalFeed', () => {
     const core = await newCore()
     core.write('kept')
     const { feed, log } = feedInto(core)
-    feed.push({ ...(await snapshotFrame('other')), terminal_snapshot_format: 'ghostty-snapshot-v1-herdr-0000000' })
+    feed.push({ ...(await snapshotOf('other')), terminal_snapshot_format: 'ghostty-snapshot-v1-herdr-0000000' })
     expect(feed.ready).toBe(false)
     expect(log.failed).toBe(1)
     expect(lineText(core, 0)).toBe('kept')
@@ -126,7 +117,7 @@ describe('TerminalFeed', () => {
     const core = await newCore()
     core.write('kept')
     const { feed, log } = feedInto(core)
-    feed.push({ ...(await snapshotFrame('other')), terminal_snapshot_base64: toBase64(new Uint8Array([1, 2, 3, 4])) })
+    feed.push({ ...(await snapshotOf('other')), terminal_snapshot_base64: toBase64(new Uint8Array([1, 2, 3, 4])) })
     expect(log.failed).toBe(1)
     expect(log.statuses).toEqual(['Terminal state could not be restored; reopen this view to try again.'])
     expect(lineText(core, 0)).toBe('kept')

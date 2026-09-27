@@ -346,6 +346,7 @@ export type ContractDefinition =
   | FilePreviewRequest
   | FileSearch
   | FileSearchRequest
+  | GhosttyRecovery
   | GitOperation
   | GitOperationStatus
   | GrantCapabilities
@@ -466,6 +467,7 @@ export type ContractDefinition =
   | PlacementResolveRequest
   | PlacementSource
   | Placements
+  | PlainScreenRecovery
   | PlanRejection
   | PlannedPart
   | PluginActivation
@@ -775,14 +777,26 @@ export type ContractDefinition =
   | StartOutcome
   | Support
   | SwitchContinuity
+  | TerminalConversationFrame
   | TerminalCreateRequest
   | TerminalCreated
+  | TerminalDescendant
+  | TerminalDetachedFrame
+  | TerminalErrorFrame
+  | TerminalMetrics
+  | TerminalMetricsFrame
   | TerminalOperation
   | TerminalOperationRequest
+  | TerminalOutputFrame
   | TerminalOwner
+  | TerminalRecovery
+  | TerminalResizeFrame
   | TerminalRestartRequest
   | TerminalRetireRequest
+  | TerminalSnapshotFrame
   | TerminalStopRequest
+  | TerminalViewportFrame
+  | TerminalWarningFrame
   | TokenReference
   | TrackedDescendant
   | TransportCoverage
@@ -850,6 +864,8 @@ export type ContractDefinition =
   | WorktreeSetupRequest
   | WorktreeState
   | WorktreeSwitchRequest
+  | XtermReplayEvent
+  | XtermReplayRecovery
 /**
  * The child's provider account, stated explicitly.
  */
@@ -1919,6 +1935,24 @@ export type SkillSourceKind = 'local_directory' | 'adopted'
  * What a placement did at its provider path.
  */
 export type SkillPlaceOutcome = 'created' | 'replaced' | 'up_to_date' | 'external_identical'
+/**
+ * How a snapshot restores the screen, by snapshot format.
+ */
+export type TerminalRecovery = GhosttyRecovery | XtermReplayRecovery | PlainScreenRecovery
+export type XtermReplayEvent =
+  | {
+      bytes_base64: string
+      offset: number
+      type: 'output'
+      [k: string]: unknown
+    }
+  | {
+      cols: number
+      offset: number
+      rows: number
+      type: 'resize'
+      [k: string]: unknown
+    }
 /**
  * Which agents a turn's figures cover.
  */
@@ -7041,6 +7075,16 @@ export interface FileSearchRequest {
   workspace_id: string
 }
 /**
+ * A Ghostty snapshot: both screens, history up to the limit, and any
+ * unfinished escape sequence.
+ */
+export interface GhosttyRecovery {
+  continuation_limit_bytes: number
+  history_limit_bytes: number
+  scope: string
+  [k: string]: unknown
+}
+/**
  * A Git mutation's receipt.
  */
 export interface GitOperation {
@@ -8740,6 +8784,21 @@ export interface Placements {
    * The `placements` type tag.
    */
   type: 'placements'
+  [k: string]: unknown
+}
+/**
+ * The active screen's text grid as the runtime's parser holds it.
+ */
+export interface PlainScreenRecovery {
+  alternate_screen: boolean
+  cols: number
+  cursor_col: number
+  cursor_row: number
+  cursor_visible: boolean
+  parser: string
+  parser_ground: boolean
+  rows: number
+  scope: string
   [k: string]: unknown
 }
 /**
@@ -12469,6 +12528,19 @@ export interface SkillRemoved {
   [k: string]: unknown
 }
 /**
+ * The runtime's simulated conversation (a prototype leftover), broadcast to
+ * every attachment while `simulate` runs.
+ */
+export interface TerminalConversationFrame {
+  streaming: boolean
+  text: string
+  /**
+   * The `conversation` type tag.
+   */
+  type: 'conversation'
+  [k: string]: unknown
+}
+/**
  * `terminal.create`: add another terminal to a workspace.
  *
  * `operation_id` is the caller-owned receipt ID; `request_id` is accepted as
@@ -12493,6 +12565,99 @@ export interface TerminalCreated {
   type: 'ack'
   [k: string]: unknown
 }
+export interface TerminalDescendant {
+  pid: number
+  started: number
+  [k: string]: unknown
+}
+/**
+ * The reply to `detach`; the connection closes after it.
+ */
+export interface TerminalDetachedFrame {
+  attachment: number
+  run_id: string
+  /**
+   * The `detached` type tag.
+   */
+  type: 'detached'
+  [k: string]: unknown
+}
+/**
+ * A refused or failed request, a failed restore, or the process exiting.
+ * `code` is set for refusals a client acts on: `stale_incarnation` and
+ * `incarnation_exited` from the runtime, `needs_rebind` and other typed codes
+ * from the daemon, and the SDK's own `output_gap`.
+ */
+export interface TerminalErrorFrame {
+  code?: string | null
+  message: string
+  recovery?: string | null
+  run_id?: string | null
+  /**
+   * The `error` type tag.
+   */
+  type: 'error'
+  [k: string]: unknown
+}
+export interface TerminalMetrics {
+  /**
+   * Attachments and session subscribers.
+   */
+  clients: number
+  descendants: TerminalDescendant[]
+  durable_log_error: string | null
+  events: number
+  /**
+   * How the process ended, once it has. Its shape varies with how it ended
+   * and whether its process tree was confirmed stopped.
+   */
+  exit_status?: unknown
+  /**
+   * The runtime supervisor's process ID.
+   */
+  pid: number
+  /**
+   * `[width, height]` in pixels.
+   *
+   * @minItems 2
+   * @maxItems 2
+   */
+  pixel_size: [unknown, unknown]
+  reply_dropped_bytes: number
+  /**
+   * The attachment that owns the terminal's size.
+   */
+  resize_owner: number | null
+  run_id: string
+  scrollback_bytes: number
+  shell_pid: number | null
+  shell_running: boolean
+  /**
+   * All output so far, in bytes: the offset the next output frame starts at.
+   */
+  terminal_bytes: number
+  terminal_id: string
+  /**
+   * A service or script run's incarnation; null for shells.
+   */
+  transfer_id: string | null
+  uptime_ms: number
+  viewer_queue_limit_bytes: number
+  viewer_resyncs: number
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * The reply to `ping`, and a broadcast every second while the shell runs.
+ */
+export interface TerminalMetricsFrame {
+  metrics: TerminalMetrics
+  /**
+   * The `metrics` type tag.
+   */
+  type: 'metrics'
+  [k: string]: unknown
+}
 /**
  * The `terminal.operation` reply. `request_id` echoes the requested
  * operation ID under its older name.
@@ -12515,6 +12680,56 @@ export interface TerminalOperationRequest {
   op: 'terminal.operation'
   operation_id: string
   workspace_id: string
+}
+/**
+ * PTY output. `offset` is where these bytes start in the terminal's output.
+ */
+export interface TerminalOutputFrame {
+  bytes: number[]
+  /**
+   * The bytes as lossy UTF-8.
+   */
+  data: string
+  offset: number
+  run_id: string
+  /**
+   * The `terminal` type tag.
+   */
+  type: 'terminal'
+  [k: string]: unknown
+}
+/**
+ * Recorded output and resizes from the start of the process, up to a limit.
+ */
+export interface XtermReplayRecovery {
+  /**
+   * False when the output passed `limit_bytes`; `events` is then empty.
+   */
+  complete: boolean
+  events: XtermReplayEvent[]
+  initial_cols: number
+  initial_rows: number
+  limit_bytes: number
+  reason: string | null
+  /**
+   * The live-output offset the replay reaches.
+   */
+  through_offset: number
+  [k: string]: unknown
+}
+/**
+ * The PTY's size changed, at this point in its output.
+ */
+export interface TerminalResizeFrame {
+  cols: number
+  offset: number
+  rows: number
+  run_id: string
+  /**
+   * The `terminal_resize` type tag.
+   */
+  type: 'terminal_resize'
+  [k: string]: unknown
 }
 /**
  * `terminal.restart`: start a new shell in an exited terminal. Without
@@ -12547,6 +12762,52 @@ export interface TerminalRetireRequest {
   workspace_id: string
 }
 /**
+ * The first frame of an attachment, and a later one marked `resync` when the
+ * runtime skipped output this viewer could not keep up with. Which recovery
+ * fields it carries depends on the `snapshot_format` the attachment asked for.
+ */
+export interface TerminalSnapshotFrame {
+  attachment: number
+  /**
+   * The runtime's simulated conversation text (a prototype leftover).
+   */
+  conversation: string
+  metrics: TerminalMetrics
+  response_owner?: string | null
+  /**
+   * Set on a snapshot that replaces the screen mid-stream.
+   */
+  resync?: boolean | null
+  /**
+   * The terminal incarnation this attachment is bound to.
+   */
+  run_id: string
+  streaming: boolean
+  terminal_recovery?: TerminalRecovery | null
+  /**
+   * The active screen, in a plain snapshot.
+   */
+  terminal_screen_bytes?: number[] | null
+  terminal_screen_error?: string | null
+  /**
+   * The Ghostty snapshot, when the attachment asked for base64.
+   */
+  terminal_snapshot_base64?: string | null
+  /**
+   * The Ghostty snapshot as bytes, when the attachment did not ask for base64.
+   */
+  terminal_snapshot_bytes?: number[] | null
+  /**
+   * `ghostty-snapshot-v1-herdr-<pin>` or `xterm-replay-v1`.
+   */
+  terminal_snapshot_format?: string | null
+  /**
+   * The `snapshot` type tag.
+   */
+  type: 'snapshot'
+  [k: string]: unknown
+}
+/**
  * `terminal.stop`: stop a workspace terminal's shell.
  */
 export interface TerminalStopRequest {
@@ -12559,6 +12820,31 @@ export interface TerminalStopRequest {
   operation_id: string
   terminal_id: string
   workspace_id: string
+}
+/**
+ * This attachment gained or lost ownership of the terminal's size.
+ */
+export interface TerminalViewportFrame {
+  attachment: number
+  owner: boolean
+  run_id: string
+  /**
+   * The `viewport` type tag.
+   */
+  type: 'viewport'
+  [k: string]: unknown
+}
+/**
+ * Something went wrong that the terminal keeps running through, such as
+ * dropped PTY replies.
+ */
+export interface TerminalWarningFrame {
+  message: string
+  /**
+   * The `warning` type tag.
+   */
+  type: 'warning'
+  [k: string]: unknown
 }
 /**
  * A cost total over a group of turns.
@@ -14029,3 +14315,5 @@ export interface ResponseByOperation {
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ServiceChanged | ActivityChanged
+
+export type TerminalStreamFrame = TerminalSnapshotFrame | TerminalOutputFrame | TerminalResizeFrame | TerminalViewportFrame | TerminalMetricsFrame | TerminalDetachedFrame | TerminalWarningFrame | TerminalErrorFrame | TerminalConversationFrame | Ack
