@@ -24,6 +24,64 @@ fn decode_with<T: serde::de::DeserializeOwned>(
     })
 }
 
+/// How far a service terminal's stop has got.
+#[derive(Debug, PartialEq, Eq)]
+enum StopProgress {
+    /// The process and its tree are proven stopped; ownership may be released.
+    Exited,
+    /// Still running, or the runtime is still verifying the process tree.
+    Pending,
+    /// The process was reaped but its tree was not proven stopped.
+    Unconfirmed(String),
+}
+fn stop_progress(metrics: &Value) -> StopProgress {
+    match super::leases::terminal_liveness(metrics) {
+        super::leases::Liveness::Exited => StopProgress::Exited,
+        super::leases::Liveness::Unknown
+            if metrics["shell_running"] == false && metrics["exit_status"]["verifying"] != true =>
+        {
+            StopProgress::Unconfirmed(
+                metrics["exit_status"]["reason"]
+                    .as_str()
+                    .unwrap_or("exit status unknown")
+                    .to_owned(),
+            )
+        }
+        _ => StopProgress::Pending,
+    }
+}
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+    #[test]
+    fn a_live_or_unverified_tree_never_counts_as_stopped() {
+        // A descendant survived SIGKILL: the runtime reports the stop as unknown.
+        let live = json!({"shell_running": false, "exit_status": {"kind": "unknown",
+            "reason": "tree live", "child": {"kind": "signaled", "signal": 9},
+            "descendants": {"verdict": "live"}}});
+        assert_eq!(
+            stop_progress(&live),
+            StopProgress::Unconfirmed("tree live".into())
+        );
+        // While the runtime verifies the tree, the stop keeps waiting.
+        let verifying = json!({"shell_running": false, "exit_status": {"kind": "unknown",
+            "verifying": true, "child": {"kind": "signaled", "signal": 15}}});
+        assert_eq!(stop_progress(&verifying), StopProgress::Pending);
+        assert_eq!(
+            stop_progress(&json!({"shell_running": true})),
+            StopProgress::Pending
+        );
+        // A reaped process with no exit status is not proof either.
+        assert!(matches!(
+            stop_progress(&json!({"shell_running": false})),
+            StopProgress::Unconfirmed(_)
+        ));
+        let exited = json!({"shell_running": false, "exit_status": {"kind": "signaled",
+            "signal": 15, "descendants": {"verdict": "exited"}}});
+        assert_eq!(stop_progress(&exited), StopProgress::Exited);
+    }
+}
+
 pub(super) struct HealthCheck {
     port_variable: String,
     path: String,
@@ -1237,8 +1295,12 @@ impl Sessions {
                     && terminal["metrics"]["transfer_id"] == owner.transfer_id,
                 "Service terminal ownership changed"
             );
-            if terminal["metrics"]["shell_running"] == false {
-                break;
+            match stop_progress(&terminal["metrics"]) {
+                StopProgress::Exited => break,
+                StopProgress::Unconfirmed(reason) => bail!(
+                    "Service process tree was not confirmed stopped ({reason}); its reservation is kept"
+                ),
+                StopProgress::Pending => {}
             }
             if !sent {
                 self.runtime.command(TerminalCommand::Stop {

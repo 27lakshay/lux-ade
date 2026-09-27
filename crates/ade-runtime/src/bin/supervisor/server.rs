@@ -42,6 +42,12 @@ struct State {
     handoff: Option<Handoff>,
     terminals: HashMap<String, Terminal>,
     agents: HashMap<String, Arc<ade_runtime::agent_runtime::Run>>,
+    /// Agents reserved by `agent.create` whose launch is still running.
+    starting: HashMap<String, Starting>,
+}
+struct Starting {
+    conversation: String,
+    spec: Value,
 }
 struct Host {
     data: Mutex<State>,
@@ -360,6 +366,78 @@ impl Drop for StreamGuard {
         }
     }
 }
+/// Frees an Agent reservation whose launch unwound without settling it.
+struct StartingGuard<'a> {
+    host: &'a Host,
+    run: Option<String>,
+}
+impl Drop for StartingGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(run) = self.run.take() {
+            self.host.data.lock().unwrap().starting.remove(&run);
+        }
+    }
+}
+/// One live or starting Agent, as `agent.create` admission sees it.
+struct AgentSlot {
+    run: String,
+    conversation: String,
+    spec: Value,
+    starting: bool,
+}
+#[derive(Debug, PartialEq, Eq)]
+enum CreateAdmission {
+    /// The same Agent already runs.
+    Existing,
+    /// The same Agent is being launched by another request; wait for it.
+    Starting,
+    /// Reserve the run and launch it.
+    Spawn,
+}
+fn agent_slots(data: &State) -> Result<Vec<AgentSlot>> {
+    let mut slots = Vec::new();
+    for run in data.agents.values() {
+        slots.push(AgentSlot {
+            run: run.spec.run.clone(),
+            conversation: run.spec.conversation.clone(),
+            spec: serde_json::to_value(&run.spec)?,
+            starting: false,
+        });
+    }
+    for (run, starting) in &data.starting {
+        slots.push(AgentSlot {
+            run: run.clone(),
+            conversation: starting.conversation.clone(),
+            spec: starting.spec.clone(),
+            starting: true,
+        });
+    }
+    Ok(slots)
+}
+/// Decides an `agent.create`. A starting Agent counts like a live one, so the
+/// limit and the one-Agent-per-Conversation rule hold while launches run
+/// outside the state lock.
+fn admit_create(
+    raw: &Value,
+    run: &str,
+    conversation: &str,
+    slots: &[AgentSlot],
+) -> Result<CreateAdmission> {
+    if let Some(slot) = slots.iter().find(|slot| slot.run == run) {
+        ensure!(slot.spec == *raw, "Agent identity changed");
+        return Ok(if slot.starting {
+            CreateAdmission::Starting
+        } else {
+            CreateAdmission::Existing
+        });
+    }
+    ensure!(slots.len() < 16, "Limit of 16 connected Agents reached");
+    ensure!(
+        !slots.iter().any(|slot| slot.conversation == conversation),
+        "Conversation already has a live Agent"
+    );
+    Ok(CreateAdmission::Spawn)
+}
 fn agent_command(host: &Host, request: &Value) -> Result<Value> {
     use ade_core::contract::agents::{AgentAccountInspection, AgentList, AgentRun};
     use ade_runtime::agent_runtime::{Run, Spec};
@@ -407,31 +485,54 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
                     !spec.run.is_empty() && !spec.conversation.is_empty(),
                     "Missing Agent identity"
                 );
-                if let Some(run) = data.agents.get(&spec.run) {
-                    ensure!(
-                        serde_json::to_value(&run.spec)? == *raw,
-                        "Agent identity changed"
-                    );
-                } else {
-                    ensure!(
-                        data.agents.len() < 16,
-                        "Limit of 16 connected Agents reached"
-                    );
-                    ensure!(
-                        !data
-                            .agents
-                            .values()
-                            .any(|r| r.spec.conversation == spec.conversation),
-                        "Conversation already has a live Agent"
-                    );
-                    let run = Run::spawn(spec)?;
-                    if ade_core::diagnostics::valid_run_id(&run.spec.run) {
-                        let run_id = run.spec.run.as_str();
-                        let pid = run.describe()["pid"].as_u64().unwrap_or(0);
-                        tracing::info!(target: "ade", event = "agent_run_started", run_id, pid);
+                // Admit under the lock, but launch without it: a provider
+                // launch probes the CLI for seconds, and every owner command
+                // waits on this lock.
+                loop {
+                    let slots = agent_slots(&data)?;
+                    match admit_create(raw, &spec.run, &spec.conversation, &slots)? {
+                        CreateAdmission::Existing => return Ok(json!({"type":"ack"})),
+                        CreateAdmission::Spawn => break,
+                        CreateAdmission::Starting => {
+                            drop(data);
+                            std::thread::sleep(Duration::from_millis(25));
+                            data = host.data.lock().unwrap();
+                            let owner = data.owner.as_ref().context("No runtime owner")?;
+                            if token != owner.token || owner.draining {
+                                return Err(runtime::OwnerFenced.into());
+                            }
+                        }
                     }
-                    data.agents.insert(run.spec.run.clone(), run);
                 }
+                data.starting.insert(
+                    spec.run.clone(),
+                    Starting {
+                        conversation: spec.conversation.clone(),
+                        spec: serde_json::to_value(&spec)?,
+                    },
+                );
+                drop(data);
+                let mut reservation = StartingGuard {
+                    host,
+                    run: Some(spec.run.clone()),
+                };
+                let launched = Run::spawn(spec);
+                let mut data = host.data.lock().unwrap();
+                if let Some(id) = reservation.run.take() {
+                    data.starting.remove(&id);
+                }
+                let run = launched?;
+                if host.stop.load(Ordering::Acquire) {
+                    drop(data);
+                    run.stop();
+                    anyhow::bail!("Runtime stopped while the Agent was starting");
+                }
+                if ade_core::diagnostics::valid_run_id(&run.spec.run) {
+                    let run_id = run.spec.run.as_str();
+                    let pid = run.describe()["pid"].as_u64().unwrap_or(0);
+                    tracing::info!(target: "ade", event = "agent_run_started", run_id, pid);
+                }
+                data.agents.insert(run.spec.run.clone(), run);
                 return Ok(json!({"type":"ack"}));
             }
             _ => (),
@@ -508,6 +609,7 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
             ensure!(
                 stop.stop_active
                     || (data.agents.is_empty()
+                        && data.starting.is_empty()
                         && !data
                             .terminals
                             .values()
@@ -615,6 +717,7 @@ pub(super) fn serve(directory: PathBuf) -> Result<()> {
             handoff: None,
             terminals: HashMap::new(),
             agents: HashMap::new(),
+            starting: HashMap::new(),
         }),
         proxies: service_proxy::Manager::open(&directory)?,
         directory,
@@ -657,4 +760,54 @@ pub(super) fn serve(directory: PathBuf) -> Result<()> {
     }
     host.proxies.shutdown();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn slot(run: &str, conversation: &str, starting: bool) -> AgentSlot {
+        AgentSlot {
+            run: run.into(),
+            conversation: conversation.into(),
+            spec: json!({"run": run, "conversation": conversation}),
+            starting,
+        }
+    }
+    #[test]
+    fn a_starting_agent_blocks_duplicates_but_not_unrelated_creates() {
+        // One Conversation's launch is probing its CLI outside the lock.
+        let slots = [slot("run-a", "conversation-a", true)];
+        // A second queued Conversation is admitted at once, not after the probe.
+        let other = json!({"run": "run-b", "conversation": "conversation-b"});
+        assert_eq!(
+            admit_create(&other, "run-b", "conversation-b", &slots).unwrap(),
+            CreateAdmission::Spawn
+        );
+        // A retry of the same create waits for the launch instead of spawning twice.
+        let same = json!({"run": "run-a", "conversation": "conversation-a"});
+        assert_eq!(
+            admit_create(&same, "run-a", "conversation-a", &slots).unwrap(),
+            CreateAdmission::Starting
+        );
+        // A second run for the starting Conversation is refused.
+        let rival = json!({"run": "run-c", "conversation": "conversation-a"});
+        assert!(admit_create(&rival, "run-c", "conversation-a", &slots).is_err());
+        // A changed spec for the same run is refused.
+        let changed = json!({"run": "run-a", "conversation": "conversation-z"});
+        assert!(admit_create(&changed, "run-a", "conversation-z", &slots).is_err());
+    }
+    #[test]
+    fn starting_agents_count_toward_the_limit() {
+        let slots: Vec<_> = (0..16)
+            .map(|i| slot(&format!("run-{i}"), &format!("c-{i}"), i % 2 == 0))
+            .collect();
+        let next = json!({"run": "run-16", "conversation": "c-16"});
+        assert!(admit_create(&next, "run-16", "c-16", &slots).is_err());
+        let live = [slot("run-a", "conversation-a", false)];
+        let same = json!({"run": "run-a", "conversation": "conversation-a"});
+        assert_eq!(
+            admit_create(&same, "run-a", "conversation-a", &live).unwrap(),
+            CreateAdmission::Existing
+        );
+    }
 }

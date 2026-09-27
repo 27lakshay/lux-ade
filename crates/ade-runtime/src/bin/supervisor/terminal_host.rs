@@ -587,15 +587,53 @@ pub struct Runtime {
 type Tree = Arc<Mutex<ade_runtime::descendants::Shutdown>>;
 /// Record a reaped terminal child under the state lock, so a later stop never
 /// signals a reused process ID.
-fn record_exit(s: &mut State, status: &portable_pty::ExitStatus) {
-    s.exit_status = Some(match status.signal() {
+///
+/// With a tracked tree the child's exit proves nothing about its descendants,
+/// so the status stays `unknown` (`verifying`) until [`settle_exit`] applies
+/// the tree's verdict.
+fn record_exit(s: &mut State, status: &portable_pty::ExitStatus, tracked: bool) {
+    let child = match status.signal() {
         Some(signal) => json!({"kind":"signaled","signal":signal}),
         None if status.success() => {
             json!({"kind":"success","code":status.exit_code()})
         }
         None => json!({"kind":"failure","code":status.exit_code()}),
+    };
+    s.exit_status = Some(if tracked {
+        json!({"kind":"unknown","verifying":true,
+            "reason":"Confirming that the process tree stopped","child":child})
+    } else {
+        child
     });
     s.shell_running = false;
+}
+/// The exit status to report once the tree's shutdown verdict is known. Only an
+/// `exited` verdict reports the child's own status; a live or unverifiable
+/// tree reports `unknown`, so nothing releases ownership without proof.
+fn settle_exit(
+    recorded: Option<Value>,
+    verdict: &ade_runtime::descendants::Verdict,
+) -> Option<Value> {
+    let mut recorded = recorded?;
+    let descendants = json!({"verdict":verdict.code(),"detail":verdict.detail()});
+    let child = if recorded["verifying"] == true {
+        recorded["child"].take()
+    } else {
+        recorded
+    };
+    let mut outcome =
+        if child["kind"] == "unknown" || *verdict == ade_runtime::descendants::Verdict::Exited {
+            child
+        } else {
+            json!({"kind":"unknown","child":child,"reason":format!(
+                "The process exited, but its process tree was not confirmed stopped: {}",
+                verdict.detail()
+            )})
+        };
+    if let Value::Object(fields) = &mut outcome {
+        fields.insert("descendants".into(), descendants);
+    }
+    Some(outcome)
 }
 pub fn spawn_runtime(
     workspace: &WorkspaceRecord,
@@ -735,7 +773,7 @@ pub fn spawn_runtime(
                 let mut s = terminal_state.lock().unwrap();
                 match child.try_wait()? {
                     Some(status) => {
-                        record_exit(&mut s, &status);
+                        record_exit(&mut s, &status, true);
                         Ok(true)
                     }
                     None => Ok(false),
@@ -751,7 +789,7 @@ pub fn spawn_runtime(
                 Ok(Some(status)) => {
                     // Reap and update the state under the same lock as stop(),
                     // so a later stop never signals a reused process ID.
-                    record_exit(&mut s, &status);
+                    record_exit(&mut s, &status, descendants.is_some());
                     break true;
                 }
                 Err(error) => {
@@ -765,14 +803,8 @@ pub fn spawn_runtime(
             std::thread::sleep(Duration::from_millis(10));
         };
         let mut s = terminal_state.lock().unwrap();
-        if let Some(verdict) = &descendants
-            && let Some(Value::Object(outcome)) = s.exit_status.as_mut()
-        {
-            // Additive: the child's own status stays as it was reported.
-            outcome.insert(
-                "descendants".into(),
-                json!({"verdict":verdict.code(),"detail":verdict.detail()}),
-            );
+        if let Some(verdict) = &descendants {
+            s.exit_status = settle_exit(s.exit_status.take(), verdict);
         }
         if exited {
             let message = match &descendants {
@@ -906,6 +938,50 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_an_exited_tree_reports_the_child_status() {
+        use ade_runtime::descendants::Verdict;
+        let verifying = || {
+            Some(json!({"kind":"unknown","verifying":true,"reason":"r",
+                "child":{"kind":"signaled","signal":9}}))
+        };
+        // A descendant survived SIGKILL: the stop must not read as an exit.
+        let live = settle_exit(verifying(), &Verdict::Live { pids: vec![42] }).unwrap();
+        assert_eq!(live["kind"], "unknown");
+        assert_eq!(live["child"]["kind"], "signaled");
+        assert_eq!(live["descendants"]["verdict"], "live");
+        assert!(live.get("verifying").is_none());
+        // The process table could not be read.
+        let unverifiable = settle_exit(
+            verifying(),
+            &Verdict::Unverifiable {
+                reason: "proc_listpids failed".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(unverifiable["kind"], "unknown");
+        assert_eq!(unverifiable["descendants"]["verdict"], "unverifiable");
+        // Proven exit keeps the child's own status.
+        let exited = settle_exit(verifying(), &Verdict::Exited).unwrap();
+        assert_eq!(exited["kind"], "signaled");
+        assert_eq!(exited["signal"], 9);
+        assert_eq!(exited["descendants"]["verdict"], "exited");
+        // A status recorded without the verifying marker is still downgraded.
+        let plain = settle_exit(
+            Some(json!({"kind":"success","code":0})),
+            &Verdict::Live { pids: vec![7] },
+        )
+        .unwrap();
+        assert_eq!(plain["kind"], "unknown");
+        // An already unknown exit stays unknown with its own reason.
+        let unknown = settle_exit(
+            Some(json!({"kind":"unknown","reason":"wait failed"})),
+            &Verdict::Exited,
+        )
+        .unwrap();
+        assert_eq!(unknown["kind"], "unknown");
+        assert_eq!(unknown["reason"], "wait failed");
+    }
     #[test]
     fn reply_backpressure_does_not_block_output() {
         let (tx, rx) = mpsc::sync_channel(1);

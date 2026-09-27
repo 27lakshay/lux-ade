@@ -207,6 +207,24 @@ pub(super) fn reconcile(claims: &[Claim], observed: &Observation) -> Vec<(Claim,
     plan
 }
 
+/// Reads one terminal's metrics. Only a reaped process with a known exit status
+/// is `Exited`; the runtime reports `unknown` while it verifies the process
+/// tree and when a descendant may still run.
+pub(super) fn terminal_liveness(metrics: &Value) -> Liveness {
+    if metrics["shell_running"] == true {
+        Liveness::Running
+    } else if metrics["shell_running"] == false
+        && matches!(
+            metrics["exit_status"]["kind"].as_str(),
+            Some("success" | "failure" | "signaled")
+        )
+    {
+        Liveness::Exited
+    } else {
+        Liveness::Unknown
+    }
+}
+
 /// Reads the runtime's `terminal.list` reply.
 pub(super) fn observe_terminals(catalogue: &Value) -> Result<Vec<ObservedTerminal>> {
     catalogue["terminals"]
@@ -216,15 +234,7 @@ pub(super) fn observe_terminals(catalogue: &Value) -> Result<Vec<ObservedTermina
         .map(|item| {
             let text = |value: &Value| value.as_str().map(str::to_owned);
             let metrics = &item["metrics"];
-            let liveness = if metrics["shell_running"] == true {
-                Liveness::Running
-            } else if metrics["shell_running"] == false
-                && metrics["exit_status"]["kind"] != "unknown"
-            {
-                Liveness::Exited
-            } else {
-                Liveness::Unknown
-            };
+            let liveness = terminal_liveness(metrics);
             Ok(ObservedTerminal {
                 workspace_id: text(&item["workspace"]["id"])
                     .context("Invalid terminal catalogue")?,

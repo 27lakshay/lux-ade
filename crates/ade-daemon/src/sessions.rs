@@ -248,7 +248,8 @@ impl Sessions {
             .as_array()
             .context("Invalid terminal catalogue")?
             .iter()
-            .filter(|item| item["metrics"]["shell_running"] == false)
+            // A reaped script whose process tree is unverified keeps its lease.
+            .filter(|item| leases::terminal_liveness(&item["metrics"]) == leases::Liveness::Exited)
             .filter_map(|item| item["workspace"]["terminal_id"].as_str())
             .collect::<HashSet<_>>();
         self.data.lock().unwrap().terminal_leases.retain(|id, _| {
