@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { expect, isRunning, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
   type AdeHarness, type ScratchProfile } from '../fixtures'
 import { mockDirectory } from '../fixtures/providers'
-import { recoveryFixtures, waitForAttemptRecord, waitForPidFile } from '../fixtures/recovery'
+import { recoveryFixtures, waitForAttemptRecord, waitForPidFile, waitForRecordedDescendant } from '../fixtures/recovery'
 
 /** Workspace recipes: a shell that ignores TERM and HUP and starts an escaping descendant. */
 async function writeRecipes(root: string): Promise<void> {
@@ -129,23 +129,61 @@ test('a script tree that survives a runtime kill is quarantined and blocks the w
   await profile.call('script.start', { workspace_id: workspaceId, name: 'quick' })
 })
 
-// Gap (R006; architecture section 4, "Limits"): restart reconciliation knows
-// only the recorded process and its group. A descendant that left the group
-// before the runtime crashed is not recorded, so the attempt settles and the
-// workspace is released while that descendant still runs. Closing it needs the
-// runtime to report the descendants it tracks per attempt, and the daemon to
-// record them with the attempt identity.
-test.fixme('an escaped descendant that survives a runtime kill keeps its script attempt quarantined', async ({ ade, profile }) => {
-  const { workspaceId, runId, shellPid, escapedPid } = await startStubborn(ade, profile, 'stubborn')
-  const key = `script:${workspaceId}:${runId}`
-  await waitForAttemptRecord(profile, `terminal:${workspaceId}:${runId}`)
-  await profile.killRuntime()
-  await profile.restartDaemon()
-  process.kill(shellPid, 'SIGKILL')
-  await expect.poll(() => isRunning(shellPid)).toBe(false)
-  const attempt = async () => (await profile.call('runtime.recovery', {})).reports
-    .flatMap((report) => report.attempts).find((candidate) => candidate.key === key)
-  expect((await attempt())?.pids).toContain(escapedPid)
-  await expect(profile.call('script.start', { workspace_id: workspaceId, name: 'quick' })).rejects.toThrow()
-  process.kill(escapedPid, 'SIGKILL')
-})
+// R006: a descendant that left the process group is part of the attempt. The
+// runtime reports the descendants it tracks per terminal, the daemon records
+// them with the attempt's identity, and restart reconciliation extends the
+// tree from a recorded process that still runs. So once the shell exits, the
+// escaped descendant alone keeps the attempt quarantined: across a fresh
+// observation, a later daemon start, and until it exits itself.
+// 'stubborn': the escapee is the shell's child when the runtime dies.
+// 'orphaning': it lost its parent to launchd before the runtime died, so only
+// the record made while the runtime lived ties it to the attempt.
+for (const name of ['stubborn', 'orphaning'] as const) {
+  test(`an escaped descendant that survives a runtime kill keeps its script attempt quarantined${name === 'orphaning' ? ' after it was orphaned before the kill' : ''}`, async ({ ade, profile }) => {
+    test.setTimeout(90_000)
+    const { workspaceId, runId, shellPid, escapedPid } = await startStubborn(ade, profile, name)
+    const key = `script:${workspaceId}:${runId}`
+    const recordKey = `terminal:${workspaceId}:${runId}`
+    await waitForAttemptRecord(profile, recordKey)
+    // The runtime reports the escapee among the descendants it tracks for this run.
+    await expect.poll(async () => {
+      const run = (await profile.call('script.runs', { workspace_id: workspaceId })).runs
+        .find((candidate) => candidate.run_id === runId)
+      const reported = (run?.metrics as { descendants?: Array<{ pid: number }> } | undefined)?.descendants ?? []
+      return reported.map((descendant) => descendant.pid)
+    }, { message: 'the runtime to report the escaped descendant' }).toContain(escapedPid)
+    // Without a parent in the tree, the escapee is known only if it was
+    // recorded while the runtime lived. Wait for that record, not a time.
+    if (name === 'orphaning') await waitForRecordedDescendant(profile, recordKey, escapedPid)
+    await profile.killRuntime()
+    await profile.restartDaemon()
+    process.kill(shellPid, 'SIGKILL')
+    await expect.poll(() => isRunning(shellPid)).toBe(false)
+    expect(await isRunning(escapedPid)).toBe(true)
+
+    const attempt = async () => (await profile.call('runtime.recovery', {})).reports
+      .flatMap((report) => report.attempts).find((candidate) => candidate.key === key)
+    const reportId = async () => (await profile.call('runtime.recovery', {})).reports
+      .find((report) => report.attempts.some((candidate) => candidate.key === key))!.id
+    expect(await attempt()).toMatchObject({ kind: 'script', classification: 'quarantined', resolved_at: null })
+    expect((await attempt())?.pids).toContain(escapedPid)
+    // Each release observes again now that the shell is gone: the escapee alone refuses it.
+    const refusesWhileEscapeeRuns = async () => {
+      await expect(profile.call('runtime.recovery.release', { report_id: await reportId(), attempt_key: key }))
+        .rejects.toThrow(/still running/)
+      await expect(profile.call('script.retire', { workspace_id: workspaceId, run_id: runId })).rejects.toThrow()
+      await expect(profile.call('script.start', { workspace_id: workspaceId, name: 'quick' })).rejects.toThrow()
+    }
+    await refusesWhileEscapeeRuns()
+    // The record is durable: a new daemon still attributes the escapee to the attempt.
+    await profile.restartDaemon('kill')
+    await refusesWhileEscapeeRuns()
+    expect(await attempt()).toMatchObject({ classification: 'quarantined', resolved_at: null })
+
+    // Once the escapee exits, a later observation settles the attempt and the workspace admits work again.
+    process.kill(escapedPid, 'SIGKILL')
+    await expect.poll(() => isRunning(escapedPid)).toBe(false)
+    await expect.poll(async () => (await attempt())?.resolved_at ?? null, { timeout: 30_000 }).not.toBeNull()
+    await profile.call('script.start', { workspace_id: workspaceId, name: 'quick' })
+  })
+}

@@ -32,9 +32,9 @@ pub fn native(provider: &str, control: ConversationControl) -> Result<&'static s
         (_, RewindFiles) => Ok(CHECKPOINTS),
         ("codex", Steer) => Ok("turn/steer"),
         ("codex", Compact) => Ok("thread/compact/start"),
-        ("codex", RewindConversation) => missing(
-            "Codex removed thread/rollback, and thread/revert rewrites only paginated threads while ADE's adapter starts legacy ones; thread/fork at an earlier turn exists but ADE's adapter does not call it",
-        ),
+        // thread/fork with lastTurnId, which also forks legacy threads;
+        // thread/revert rewrites only paginated ones and thread/rollback was removed.
+        ("codex", RewindConversation) => Ok("codex.thread_fork"),
         ("claude", Steer) => {
             missing("ADE's Claude adapter admits one turn at a time and has no native steer path")
         }
@@ -210,28 +210,33 @@ mod tests {
     }
 
     #[test]
-    fn conversation_rewind_runs_only_on_an_idle_connected_claude_agent() {
-        for provider in ["codex", "omp", "opencode"] {
+    fn conversation_rewind_runs_only_on_an_idle_connected_claude_or_codex_agent() {
+        for provider in ["omp", "opencode"] {
             assert!(!decide(&facts(provider, "ready"), RewindConversation).available);
         }
-        let claude = decide(&facts("claude", "ready"), RewindConversation);
-        assert!(claude.available);
-        assert_eq!(claude.mechanism.as_deref(), Some("claude.fork_session"));
-        for status in ["running", "waiting", "starting", "cancelling"] {
-            let busy = decide(&facts("claude", status), RewindConversation);
-            assert!(!busy.available, "{status}");
-            assert!(busy.reason.unwrap().contains("stop it before rewinding"));
+        for (provider, mechanism) in [
+            ("claude", "claude.fork_session"),
+            ("codex", "codex.thread_fork"),
+        ] {
+            let decided = decide(&facts(provider, "ready"), RewindConversation);
+            assert!(decided.available);
+            assert_eq!(decided.mechanism.as_deref(), Some(mechanism));
+            for status in ["running", "waiting", "starting", "cancelling"] {
+                let busy = decide(&facts(provider, status), RewindConversation);
+                assert!(!busy.available, "{status}");
+                assert!(busy.reason.unwrap().contains("stop it before rewinding"));
+            }
+            let disconnected = Facts {
+                connected: false,
+                ..facts(provider, "ready")
+            };
+            assert!(
+                decide(&disconnected, RewindConversation)
+                    .reason
+                    .unwrap()
+                    .contains("not connected")
+            );
         }
-        let disconnected = Facts {
-            connected: false,
-            ..facts("claude", "ready")
-        };
-        assert!(
-            decide(&disconnected, RewindConversation)
-                .reason
-                .unwrap()
-                .contains("not connected")
-        );
     }
 
     #[test]

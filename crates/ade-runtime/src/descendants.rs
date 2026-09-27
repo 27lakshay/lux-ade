@@ -139,6 +139,19 @@ impl Tracker {
             .collect()
     }
 
+    /// Adds identities another observer reported as members of this tree,
+    /// such as the runtime's per-attempt report. A later [`Tracker::observe`]
+    /// extends from them only while the same identity runs, and
+    /// [`Tracker::forget_exited`] drops them once they exit or their PID is
+    /// reused, so a stale report never adopts an unrelated process.
+    pub fn adopt(&mut self, identities: &[Identity]) {
+        for identity in identities {
+            if identity.pid > 1 {
+                self.tracked.entry(identity.pid).or_insert(identity.started);
+            }
+        }
+    }
+
     /// Record that the pre-signal observation failed. Later reads can still
     /// show the group empty, but never prove escaped descendants stopped.
     pub fn mark_blind(&mut self, reason: &str) {
@@ -377,7 +390,22 @@ impl Shutdown {
     pub fn track(&mut self) {
         if let Ok(rows) = observe(self.tracker.pgid, &self.tracker.parents()) {
             self.tracker.observe(&rows);
+            // The read holds every tracked PID's own row, so what it shows
+            // exited or reused is forgotten and the set stays bounded.
+            self.tracker.forget_exited(&rows);
         }
+    }
+
+    /// The identities tracked in the tree other than the leader, as last
+    /// observed. The owner reports them per attempt, so a daemon can keep
+    /// an escaped descendant attributed after this process is gone (R006).
+    pub fn descendants(&self) -> Vec<Identity> {
+        let root = self.tracker.root;
+        self.tracker
+            .tracked()
+            .into_iter()
+            .filter(|identity| identity.pid != root)
+            .collect()
     }
 
     /// Observe, then send `SIGKILL` to the group and every tracked process at
@@ -739,6 +767,34 @@ mod tests {
         assert_eq!(
             tracker.tracked().iter().map(|i| i.pid).collect::<Vec<_>>(),
             vec![100]
+        );
+    }
+
+    #[test]
+    fn adopted_identities_are_kept_only_while_the_same_process_runs() {
+        let mut tracker = Tracker::new(100, 100);
+        tracker.observe(&[row(100, 10, 1, 100)]);
+        // Reported by another observer: 102 escaped and runs, 103 was reused.
+        tracker.adopt(&[
+            Identity {
+                pid: 102,
+                started: 12,
+            },
+            Identity {
+                pid: 103,
+                started: 13,
+            },
+        ]);
+        let later = [
+            row(100, 10, 1, 100),
+            row(102, 12, 1, 102),
+            row(103, 99, 1, 103),
+        ];
+        tracker.observe(&later);
+        tracker.forget_exited(&later);
+        assert_eq!(
+            tracker.tracked().iter().map(|i| i.pid).collect::<Vec<_>>(),
+            vec![100, 102]
         );
     }
 
