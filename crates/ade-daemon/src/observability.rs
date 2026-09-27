@@ -37,18 +37,15 @@ const LOG_FILES_READ: usize = 16;
 /// The profile daemon's databases, by the names `Sessions::open` gives them.
 pub struct Stores {
     pub sessions: PathBuf,
-    pub lifecycle: PathBuf,
-    pub review: PathBuf,
+    /// Every other store that carries effect receipts, by report name.
+    pub receipts: Vec<(&'static str, PathBuf)>,
 }
 
 impl Stores {
     pub fn in_directory(directory: &Path) -> Self {
         let sessions = directory.join("sessions.sqlite");
         Self {
-            lifecycle: sessions
-                .with_extension("worktrees")
-                .join("lifecycle.sqlite3"),
-            review: sessions.with_extension("review.sqlite3"),
+            receipts: receipts::side_stores(&sessions),
             sessions,
         }
     }
@@ -400,6 +397,48 @@ mod tests {
     use super::*;
     use ade_core::model::WorkspaceRecord;
     use serde_json::json;
+
+    #[test]
+    fn stores_report_every_receipt_store_including_plugins() {
+        let stores = Stores::in_directory(Path::new("/profile"));
+        assert_eq!(stores.sessions, Path::new("/profile/sessions.sqlite"));
+        assert_eq!(
+            stores.receipts,
+            vec![
+                (
+                    "lifecycle",
+                    PathBuf::from("/profile/sessions.worktrees/lifecycle.sqlite3")
+                ),
+                ("review", PathBuf::from("/profile/sessions.review.sqlite3")),
+                (
+                    "plugins",
+                    PathBuf::from("/profile/sessions.plugins.sqlite3")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn plugin_store_unknown_receipt_is_reported() {
+        let connection = Connection::open_in_memory().unwrap();
+        receipts::ensure(&connection).unwrap();
+        receipts::begin(
+            &connection,
+            "op_1",
+            "plugin.command",
+            &json!({}),
+            Some("plugin"),
+            10,
+        )
+        .unwrap();
+        receipts::settle(&connection, "op_1", Status::Unknown, None, 20).unwrap();
+        let (tally, unknown) = receipts(&connection, "plugins", 30).unwrap();
+        assert_eq!(tally.store, "plugins");
+        assert_eq!(tally.unknown, 1);
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0].subject, "op_1");
+        assert_eq!(unknown[0].scope.as_deref(), Some("plugins"));
+    }
 
     #[test]
     fn tally_counts_statuses_and_keeps_expired_out_of_retention() {

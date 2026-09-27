@@ -5734,7 +5734,7 @@ export interface DiagnosticReceipts {
   past_retention: number
   settled: number
   /**
-   * `sessions`, `lifecycle`, `review` or `browser`.
+   * `sessions`, `lifecycle`, `review`, `plugins` or `browser`.
    */
   store: string
   unknown: number

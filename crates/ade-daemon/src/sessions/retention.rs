@@ -24,21 +24,6 @@ use std::path::PathBuf;
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS retention_applies(generation TEXT PRIMARY KEY, result TEXT NOT NULL, applied_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS retention_prunes(store TEXT PRIMARY KEY, ran_at INTEGER NOT NULL, expired INTEGER, error TEXT);";
 
-/// The daemon stores that carry an `operations` table, by the paths
-/// `Sessions::open` derives from the profile database.
-fn receipt_stores(sessions: &Path) -> Vec<(&'static str, PathBuf)> {
-    vec![
-        (
-            "lifecycle",
-            sessions
-                .with_extension("worktrees")
-                .join("lifecycle.sqlite3"),
-        ),
-        ("review", sessions.with_extension("review.sqlite3")),
-        ("plugins", sessions.with_extension("plugins.sqlite3")),
-    ]
-}
-
 fn has_table(connection: &Connection, name: &str) -> Result<bool> {
     Ok(connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
@@ -529,7 +514,7 @@ impl Sessions {
         let mut stores = vec![("sessions", None)];
         if let Some(path) = &path {
             stores.extend(
-                receipt_stores(path)
+                receipts::side_stores(path)
                     .into_iter()
                     .map(|(name, path)| (name, Some(path))),
             );
@@ -705,7 +690,7 @@ impl Sessions {
         };
         let mut outcomes = vec![("sessions", outcome)];
         if let Some(path) = path {
-            for (name, store) in receipt_stores(&path) {
+            for (name, store) in receipts::side_stores(&path) {
                 match open_existing(&store, OpenFlags::SQLITE_OPEN_READ_WRITE) {
                     Ok(None) => {}
                     Ok(Some(connection)) => {
