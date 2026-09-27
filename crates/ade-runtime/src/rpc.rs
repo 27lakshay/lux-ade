@@ -28,8 +28,16 @@ struct Owned {
     child: Child,
     shutdown: crate::descendants::Shutdown,
 }
+/// How often the provider's tree is observed while it runs. It is shorter
+/// than the daemon's 2-second record, so a descendant that leaves the group
+/// and loses its parent between two daemon records is still seen here first.
+const TRACK_INTERVAL: Duration = Duration::from_millis(200);
+
 pub struct Rpc {
     child: Mutex<Owned>,
+    /// The tree's tracked descendants as last observed. Kept apart from
+    /// `child` so a reader never waits on a stop that holds that lock.
+    descendants: Mutex<Vec<crate::descendants::Identity>>,
     pid: u32,
     input: Mutex<ChildStdin>,
     pending: Mutex<HashMap<String, mpsc::SyncSender<Reply>>>,
@@ -47,6 +55,37 @@ pub enum Framing {
 impl Rpc {
     pub fn pid(&self) -> u32 {
         self.pid
+    }
+    /// The processes tracked in the provider's tree other than the provider,
+    /// as last observed, including those that left its process group (R006).
+    pub fn descendants(&self) -> Vec<crate::descendants::Identity> {
+        self.descendants
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+    }
+    /// Observe the tree once without signalling it and publish what is
+    /// tracked. It never waits for the tree lock, which a stop holds while
+    /// proving shutdown, and stops once the transport closed or the leader
+    /// was reaped: its group ID may then belong to another process.
+    fn track(&self) -> bool {
+        if self.closed.load(Ordering::SeqCst) {
+            return false;
+        }
+        let Ok(mut owned) = self.child.try_lock() else {
+            return true;
+        };
+        if owned.shutdown.leader_reaped() {
+            return false;
+        }
+        owned.shutdown.track();
+        let descendants = owned.shutdown.descendants();
+        drop(owned);
+        *self
+            .descendants
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = descendants;
+        true
     }
     pub fn spawn(
         command: Command,
@@ -103,6 +142,7 @@ impl Rpc {
                 child,
                 shutdown: crate::descendants::Shutdown::new(pid),
             }),
+            descendants: Mutex::new(Vec::new()),
             pid,
             input: Mutex::new(input),
             pending: Mutex::new(HashMap::new()),
@@ -190,6 +230,21 @@ impl Rpc {
                 };
                 // Blocking only after pending RPCs have been released; no lost lifecycle event.
                 let _ = events.send(crate::provider::Event::Exited { error });
+            }
+        });
+        // Track the tree from the start and while it runs, so a descendant
+        // that later leaves the group and loses its parent stays known.
+        this.track();
+        let tracked = Arc::downgrade(&this);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(TRACK_INTERVAL);
+                let Some(this) = tracked.upgrade() else {
+                    return;
+                };
+                if !this.track() {
+                    return;
+                }
             }
         });
         tracing::info!(target: "ade", event = "provider_started", pid);

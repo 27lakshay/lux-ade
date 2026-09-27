@@ -1616,6 +1616,16 @@
           },
           "type": "array"
         },
+        "descendants": {
+          "description": "The processes the runtime tracks in the provider's tree other than the\nprovider itself, as last observed. It includes descendants that left\nthe provider's process group. The daemon records them with the attempt,\nso one that escapes between the daemon's own observations stays\nattributed after a runtime loss (R006). Absent from a runtime that\ndoes not track provider trees.",
+          "items": {
+            "$ref": "#/$defs/TrackedDescendant"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "pid": {
           "description": "The provider process ID, when the adapter has one.",
           "maximum": 9007199254740991,
@@ -25805,6 +25815,27 @@
           "type": "object"
         }
       ]
+    },
+    "TrackedDescendant": {
+      "description": "One process a runtime tracks by identity: a PID with the platform start\nstamp that tells a reused PID apart.",
+      "properties": {
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "started": {
+          "description": "Platform start stamp; only equality and ordering are meaningful.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid",
+        "started"
+      ],
+      "type": "object"
     },
     "TransportCoverage": {
       "description": "Whether ADE accepts one transport, and why.",

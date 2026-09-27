@@ -173,6 +173,23 @@ pub struct AgentRun {
     pub pid: Option<u32>,
     /// Command keys the run holds receipts for.
     pub commands: Vec<String>,
+    /// The processes the runtime tracks in the provider's tree other than the
+    /// provider itself, as last observed. It includes descendants that left
+    /// the provider's process group. The daemon records them with the attempt,
+    /// so one that escapes between the daemon's own observations stays
+    /// attributed after a runtime loss (R006). Absent from a runtime that
+    /// does not track provider trees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descendants: Option<Vec<TrackedDescendant>>,
+}
+
+/// One process a runtime tracks by identity: a PID with the platform start
+/// stamp that tells a reused PID apart.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrackedDescendant {
+    pub pid: i32,
+    /// Platform start stamp; only equality and ordering are meaningful.
+    pub started: u64,
 }
 
 /// The identity an Agent run was created with.
@@ -385,9 +402,18 @@ mod tests {
                 "spec": {"conversation": "d", "run": "run_2", "provider": "claude",
                     "root": "/tmp/project", "account": {"id": "account_1"}},
                 "pid": null, "commands": [],
+                "descendants": [{"pid": 43, "started": 1_700_000_000_000_000_u64}],
             }]}),
         );
         assert_eq!(list.agents[0].spec.run, "run_1");
+        assert_eq!(list.agents[0].descendants, None);
+        assert_eq!(
+            list.agents[1].descendants,
+            Some(vec![TrackedDescendant {
+                pid: 43,
+                started: 1_700_000_000_000_000
+            }])
+        );
         request::<AgentAccountInspectRequest>(
             "agent.account_inspect",
             json!({"op": "agent.account_inspect", "token": "owner",

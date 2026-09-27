@@ -188,6 +188,9 @@ impl Provider for Adapter {
     fn pid(&self) -> Option<u32> {
         Some(self.rpc.pid())
     }
+    fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
+        Some(self.rpc.descendants())
+    }
     /// Codex 0.157.0 `thread/start` and `thread/resume` take `config`, which
     /// overrides `config.toml` keys for the thread; each server goes in as
     /// its own `mcp_servers.<name>` key (see `mcp_overrides`).

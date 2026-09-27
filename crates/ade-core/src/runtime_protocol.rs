@@ -245,7 +245,8 @@ pub enum AgentOp {
     /// Probe an account; `account` is an `ade_core::model::AccountExecution`.
     #[serde(rename = "agent.account_inspect")]
     AccountInspect { account: Value },
-    /// List live runs; answered with `contract::agents::AgentList`.
+    /// List live runs; answered with `contract::agents::AgentList`. Each run
+    /// carries the descendants the runtime tracks in its provider's tree.
     #[serde(rename = "agent.list")]
     List,
     /// Start a run. `spec` is the runtime's run spec, compared verbatim with a

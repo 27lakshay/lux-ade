@@ -31,6 +31,11 @@ pub trait Provider: Send + Sync {
     fn pid(&self) -> Option<u32> {
         None
     }
+    /// The processes tracked in the provider's tree other than the provider,
+    /// as last observed; `None` when the adapter does not track its tree.
+    fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
+        None
+    }
     /// Receives the provider-native MCP server map (F131) before `open`. Only
     /// adapters in `ade_core::mcp::WIRED_PROVIDERS` accept it; any other
     /// adapter refuses rather than launch without servers it was given.
