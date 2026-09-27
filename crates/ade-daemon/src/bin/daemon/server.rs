@@ -1672,8 +1672,14 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
             let event = if op == "hello" {
                 decode::<HelloRequest>(&request).map_or_else(error_response, |_| host.hello())
             } else {
-                if op == "worktree.remove" {
-                    host.refresh_leases()?;
+                match ade_daemon::worktrees::needs_live_leases(op) {
+                    Some(ade_daemon::worktrees::LeaseRefresh::Required) => host.refresh_leases()?,
+                    Some(ade_daemon::worktrees::LeaseRefresh::BestEffort) => {
+                        if let Err(error) = host.refresh_leases() {
+                            eprintln!("Terminal leases were not refreshed for {op}: {error}");
+                        }
+                    }
+                    None => {}
                 }
                 match if op == "service.proxy.ensure" || op == "service.proxy.remap" {
                     host.proxy_ensure(&request)

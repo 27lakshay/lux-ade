@@ -50,6 +50,7 @@ pub use ade_core::worktrees::Config;
 mod carry;
 mod hooks;
 mod policy;
+pub use policy::{LeaseRefresh, needs_live_leases};
 mod resources;
 mod transfer;
 use hooks::{HookContext, last_verdict, run_hooks};
@@ -284,26 +285,13 @@ fn authority(db: &Connection, repository: &str, path: &str) -> Result<policy::Au
         return Ok(policy::Authority::None);
     };
     let owner: Value = serde_json::from_str(&owner)?;
-    // Records written before identities were kept have none to compare.
-    let same_tree = match (owner["device"].as_str(), owner["inode"].as_str()) {
-        (Some(device), Some(inode)) => {
-            identity(path).is_ok_and(|found| found.0 == device && found.1 == inode)
-        }
-        _ => true,
-    };
-    Ok(
-        if owner["repository_id"] == repository
-            && same_tree
-            && std::fs::read_to_string(owner["marker"].as_str().unwrap_or(""))
-                .ok()
-                .as_deref()
-                == owner["token"].as_str()
-        {
-            policy::Authority::Verified
-        } else {
-            policy::Authority::Changed
-        },
-    )
+    let marker = std::fs::read_to_string(owner["marker"].as_str().unwrap_or("")).ok();
+    Ok(policy::authority_of(
+        Some(&owner),
+        repository,
+        identity(path).ok(),
+        marker.as_deref(),
+    ))
 }
 
 /// Parses `git worktree list --porcelain -z` into listing items.
@@ -937,9 +925,23 @@ fn creation_path(repo: &Repository, request: &Value) -> Result<PathBuf> {
     Ok(candidate)
 }
 
-fn claim_worktree(db: &Connection, repository_id: &str, path: &str, adopted: bool) -> Result<()> {
-    let admin = git(path, &["rev-parse", "--absolute-git-dir"])?;
-    let marker = Path::new(&admin).join("ade-owner");
+/// The tree's Git admin directory. Callers read it before taking the data
+/// lock: a lease's drop takes that lock while the Sessions lock is held, so a
+/// slow Git here must not run under it.
+fn admin_dir(path: &str) -> Result<String> {
+    git(path, &["rev-parse", "--absolute-git-dir"])
+}
+
+/// Records ADE's removal authority over `path`, whose admin directory
+/// [`admin_dir`] read. Touches only the filesystem and `db`.
+fn claim_worktree(
+    db: &Connection,
+    repository_id: &str,
+    path: &str,
+    admin: &str,
+    adopted: bool,
+) -> Result<()> {
+    let marker = Path::new(admin).join("ade-owner");
     let token = new_id("ownership");
     // The tree's physical identity: authority stops if the path is replaced.
     let (device, inode) = identity(path)?;
@@ -2006,6 +2008,7 @@ impl Worktrees {
             "Worktree belongs to another repository"
         );
         let physical = identity(text)?;
+        let admin = admin_dir(text)?;
         let d = self.data.lock().unwrap();
         ensure!(
             !d.busy.contains(id) && !d.leases.keys().any(|held| held.starts_with(&path)),
@@ -2036,7 +2039,7 @@ impl Worktrees {
                 std::fs::canonicalize(text)? == path && identity(text)? == physical,
                 ade_core::error::NeedsRebind
             );
-            claim_worktree(&d.db, id, text, true)
+            claim_worktree(&d.db, id, text, &admin, true)
         })();
         self.resources.settle(&claim, Settlement::Release);
         granted?;
@@ -2160,20 +2163,10 @@ impl Worktrees {
                 );
                 let path = std::fs::canonicalize(valid("path", &remove.path)?)?;
                 let text = path.to_str().context("Path must be UTF-8")?;
-                let owner: Option<String> =
-                    d.db.query_row("SELECT data FROM owned WHERE id=?1", [text], |r| r.get(0))
-                        .optional()?;
-                let ownership: Value = serde_json::from_str(&owner.context(
-                    "This external worktree has no ADE removal authority; explicitly adopt it first.",
-                )?)?;
-                ensure!(
-                    ownership["repository_id"] == id
-                        && std::fs::read_to_string(ownership["marker"].as_str().unwrap_or(""))
-                            .ok()
-                            .as_deref()
-                            == ownership["token"].as_str(),
-                    "Worktree removal authority changed; refresh and inspect before retrying"
-                );
+                // The same check setup, carry, resources and cleanup apply:
+                // repository, marker token and the recorded physical
+                // identity, so a replacement at the same path is refused.
+                policy::may_remove(authority(&d.db, id, text)?)?;
                 ensure!(
                     path != Path::new(&repo.root),
                     "Cannot remove the repository command directory; open the main checkout first"
@@ -2225,13 +2218,22 @@ impl Worktrees {
         };
         // A supervisor retains the lock if this daemon dies. Its Git child does not
         // inherit the descriptor, so background Git helpers cannot strand it.
-        let lock = OpenOptions::new()
+        // No effect has started, so every claim taken above is released on
+        // any failure to take the lock, including failing to open it.
+        let lock = match OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
             .mode(0o600)
-            .open(self.directory.join(format!("{id}.lock")))?;
+            .open(self.directory.join(format!("{id}.lock")))
+        {
+            Ok(lock) => lock,
+            Err(error) => {
+                release_claim();
+                return Err(error.into());
+            }
+        };
         if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             if let Some(p) = &remove_path {
                 d.removing.remove(p);
@@ -2565,6 +2567,14 @@ impl Worktrees {
                 let path = remove_path.as_ref().context("Missing removal path")?;
                 let ownership: Value = {
                     let d = self.data.lock().unwrap();
+                    ensure!(
+                        authority(
+                            &d.db,
+                            &repo.id,
+                            path.to_str().context("Path must be UTF-8")?
+                        )? == policy::Authority::Verified,
+                        "Worktree ownership changed before removal"
+                    );
                     let stored: String = d.db.query_row(
                         "SELECT data FROM owned WHERE id=?1",
                         [path.to_string_lossy().as_ref()],
@@ -2706,7 +2716,14 @@ impl Worktrees {
                             before.as_array().unwrap().iter().any(|i| i["path"] == path);
                         // Only claim the requested branch, never another process's tree.
                         if !was_present && item["branch"] == spec["target"] && creating {
-                            claim_worktree(&self.data.lock().unwrap().db, &repo.id, path, false)?;
+                            let admin = admin_dir(path)?;
+                            claim_worktree(
+                                &self.data.lock().unwrap().db,
+                                &repo.id,
+                                path,
+                                &admin,
+                                false,
+                            )?;
                             created = Some(PathBuf::from(path));
                         }
                     }
