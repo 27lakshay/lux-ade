@@ -4,8 +4,9 @@
 //! pinned after matching a fingerprint the user supplied, and at most one
 //! active pairing. A pairing stores a reference to its token, never the token.
 //! Execution, credentials and workspaces stay on the remote host; these
-//! operations only verify it, report what its ADE backend lacks, and start or
-//! attach the daemon that is already installed there. Nothing is installed.
+//! operations verify it, report what its ADE backend lacks, install this
+//! installation's own backend into an ADE-owned directory there only when asked
+//! explicitly, and start or attach the remote daemon.
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,13 @@ pub fn operations() -> Vec<OperationSpec> {
         // Starts the remote profile daemon or attaches to the running one.
         OperationSpec::new::<RemoteHostStartRequest, RemoteHostStart>(
             "remote.host.start",
+            Tier::EffectCommand,
+        ),
+        // Copies this installation's backend into an ADE-owned directory on
+        // the host. It never replaces a backend the user named or changes the
+        // host's shell configuration, and it transfers no credentials.
+        OperationSpec::new::<RemoteHostInstallRequest, RemoteHostInstall>(
+            "remote.host.install",
             Tier::EffectCommand,
         ),
     ]
@@ -99,6 +107,10 @@ pub struct RemoteHost {
     pub backend_path: Option<String>,
     /// The remote profile to start; null uses the remote host's selected profile.
     pub remote_profile_id: Option<String>,
+    /// The `ade-control` that `remote.host.install` put on the host. Probe and
+    /// start use it when `backend_path` is null. Absent until an install succeeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_backend_path: Option<String>,
     pub created_at_ms: i64,
     /// The active pairing, or else the most recent revoked one; null when never paired.
     pub pairing: Option<RemotePairing>,
@@ -161,12 +173,20 @@ pub struct RemoteHostStartRequest {
     pub host_id: String,
 }
 
+/// `remote.host.install`: install this installation's backend on the host.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RemoteHostInstallRequest {
+    pub operation_id: String,
+    pub host_id: String,
+}
+
 wire_tag!(RemoteHostsTag, "remote_hosts");
 wire_tag!(RemoteHostTag, "remote_host");
 wire_tag!(RemoteHostRemovedTag, "remote_host_removed");
 wire_tag!(RemoteHostProbeTag, "remote_host_probe");
 wire_tag!(RemotePairingTag, "remote_pairing");
 wire_tag!(RemoteHostStartTag, "remote_host_start");
+wire_tag!(RemoteHostInstallTag, "remote_host_install");
 
 /// The `remote.host.list` reply.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -274,6 +294,34 @@ pub struct RemoteHostStart {
     pub daemon: Option<RemoteDaemon>,
 }
 
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallOutcome {
+    /// Every artifact was copied and the host now probes compatible.
+    Installed,
+    /// The host already had a compatible backend; nothing was written.
+    AlreadyCompatible,
+    /// Nothing was written on the host; `detail` says why.
+    Failed,
+    /// Some artifacts may have been written; probe the host. Installing again is safe.
+    Unknown,
+}
+
+/// The `remote.host.install` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct RemoteHostInstall {
+    #[serde(rename = "type")]
+    pub tag: RemoteHostInstallTag,
+    pub operation_id: String,
+    pub host_id: String,
+    pub outcome: InstallOutcome,
+    pub detail: Option<String>,
+    /// The installed `ade-control`, when installed or already compatible.
+    pub control_path: Option<String>,
+    /// The artifacts this attempt wrote on the host.
+    pub installed: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +358,10 @@ mod tests {
                 "runtime_protocol": null, "missing": ["ade-control"], "incompatible": []}}));
         round_trip::<RemoteHostStart>(json!({"type": "remote_host_start", "operation_id": "o",
             "host_id": "devbox", "outcome": "unknown", "detail": "d", "daemon": null}));
+        round_trip::<RemoteHostInstall>(json!({"type": "remote_host_install", "operation_id": "o",
+            "host_id": "devbox", "outcome": "installed", "detail": null,
+            "control_path": "/home/me/.ade/backend/v/ade-control",
+            "installed": ["ade-runtime", "ade-daemon", "ade-control"]}));
     }
 
     #[test]

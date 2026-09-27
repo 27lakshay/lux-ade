@@ -12682,6 +12682,30 @@
       ],
       "type": "object"
     },
+    "InstallOutcome": {
+      "oneOf": [
+        {
+          "const": "installed",
+          "description": "Every artifact was copied and the host now probes compatible.",
+          "type": "string"
+        },
+        {
+          "const": "already_compatible",
+          "description": "The host already had a compatible backend; nothing was written.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Nothing was written on the host; `detail` says why.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Some artifacts may have been written; probe the host. Installing again is safe.",
+          "type": "string"
+        }
+      ]
+    },
     "Installation": {
       "description": "How the server's code reached this host. ADE records it; it installs nothing.",
       "oneOf": [
@@ -17873,6 +17897,13 @@
           "description": "The pinned public key, `type base64`. A public value: clients pin every\nSSH connection they open to this host to it, as the daemon does.",
           "type": "string"
         },
+        "installed_backend_path": {
+          "description": "The `ade-control` that `remote.host.install` put on the host. Probe and\nstart use it when `backend_path` is null. Absent until an install succeeds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "label": {
           "type": "string"
         },
@@ -17962,6 +17993,78 @@
         "host_id",
         "ssh_target",
         "expected_fingerprint"
+      ],
+      "type": "object"
+    },
+    "RemoteHostInstall": {
+      "description": "The `remote.host.install` reply.",
+      "properties": {
+        "control_path": {
+          "description": "The installed `ade-control`, when installed or already compatible.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "installed": {
+          "description": "The artifacts this attempt wrote on the host.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/InstallOutcome"
+        },
+        "type": {
+          "description": "The `remote_host_install` type tag.",
+          "enum": [
+            "remote_host_install"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "host_id",
+        "outcome",
+        "detail",
+        "control_path",
+        "installed"
+      ],
+      "type": "object"
+    },
+    "RemoteHostInstallRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.install`: install this installation's backend on the host.",
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "remote.host.install"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "host_id"
       ],
       "type": "object"
     },
@@ -27666,6 +27769,13 @@
       "name": "remote.host.start",
       "request": "RemoteHostStartRequest",
       "response": "RemoteHostStart",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.install",
+      "request": "RemoteHostInstallRequest",
+      "response": "RemoteHostInstall",
       "tier": "effect_command"
     },
     {
