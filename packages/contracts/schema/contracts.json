@@ -2499,6 +2499,81 @@
       ],
       "type": "object"
     },
+    "CommittedChanges": {
+      "description": "What a run committed between the group's start and its current HEAD.",
+      "oneOf": [
+        {
+          "properties": {
+            "base_commit": {
+              "type": "string"
+            },
+            "commits": {
+              "description": "Commits reachable from HEAD and not from the base.",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "files": {
+              "items": {
+                "$ref": "#/$defs/CommittedFile"
+              },
+              "type": "array"
+            },
+            "state": {
+              "const": "known",
+              "type": "string"
+            },
+            "truncated": {
+              "description": "More files changed than the reply carries (2 000).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "state",
+            "base_commit",
+            "commits",
+            "files",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "ADE cannot prove what was committed, for example without a base commit.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CommittedFile": {
+      "description": "A file a run committed since the group started.",
+      "properties": {
+        "code": {
+          "description": "The `git diff --name-status` letter, such as A, M, D or T.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The literal repository-relative path.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "code"
+      ],
+      "type": "object"
+    },
     "Config": {
       "additionalProperties": false,
       "description": "A repository's stored lifecycle configuration.",
@@ -4651,6 +4726,352 @@
         }
       ]
     },
+    "GroupCompareRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.group.compare`: each run's outcome and Git changes.",
+      "properties": {
+        "group_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.group.compare"
+        }
+      },
+      "required": [
+        "op",
+        "group_id"
+      ],
+      "type": "object"
+    },
+    "GroupComparison": {
+      "description": "The `orchestration.group.compare` reply. It reads Git and changes nothing.",
+      "properties": {
+        "compared_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "overlaps": {
+          "description": "Paths changed in more than one workspace, sorted by path.",
+          "items": {
+            "$ref": "#/$defs/PathOverlap"
+          },
+          "type": "array"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/RunComparison"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "$ref": "#/$defs/GroupSummary"
+        },
+        "type": {
+          "description": "The `group_comparison` type tag.",
+          "enum": [
+            "group_comparison"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "group_id",
+        "summary",
+        "runs",
+        "overlaps",
+        "compared_at"
+      ],
+      "type": "object"
+    },
+    "GroupGetRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.group.get`: one group and its runs' status.",
+      "properties": {
+        "group_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.group.get"
+        }
+      },
+      "required": [
+        "op",
+        "group_id"
+      ],
+      "type": "object"
+    },
+    "GroupList": {
+      "description": "The `orchestration.groups` reply.",
+      "properties": {
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/GroupRecord"
+          },
+          "type": "array"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `group_list` type tag.",
+          "enum": [
+            "group_list"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "parent_conversation_id",
+        "groups"
+      ],
+      "type": "object"
+    },
+    "GroupRecord": {
+      "description": "A group and its runs.",
+      "properties": {
+        "attribution": {
+          "description": "`user`, or `agent:` followed by the starting Conversation ID.",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "description": "The `orchestration.group.start` operation that created the group.",
+          "type": "string"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/RunRecord"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "$ref": "#/$defs/GroupSummary"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "parent_conversation_id",
+        "operation_id",
+        "attribution",
+        "title",
+        "created_at",
+        "summary",
+        "runs"
+      ],
+      "type": "object"
+    },
+    "GroupReply": {
+      "description": "The `orchestration.group.get` reply.",
+      "properties": {
+        "group": {
+          "$ref": "#/$defs/GroupRecord"
+        },
+        "type": {
+          "description": "The `group` type tag.",
+          "enum": [
+            "group"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "group"
+      ],
+      "type": "object"
+    },
+    "GroupStartRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.group.start`: start one task as sibling children of a parent.",
+      "properties": {
+        "caller": {
+          "$ref": "#/$defs/Caller"
+        },
+        "op": {
+          "const": "orchestration.group.start"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; a retry with the same payload returns the same group.",
+          "type": "string"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "runs": {
+          "description": "From 2 to 8 runs, in the order the group reports them.",
+          "items": {
+            "$ref": "#/$defs/RunSpec"
+          },
+          "type": "array"
+        },
+        "task": {
+          "description": "The first prompt of every run; at most 64 KiB.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Every run's title. Defaults to the task's first line, cut to 45 characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "parent_conversation_id",
+        "caller",
+        "task",
+        "runs"
+      ],
+      "type": "object"
+    },
+    "GroupStarted": {
+      "description": "The `orchestration.group.start` reply: every run is admitted and its task\nis queued. It says nothing about completion.",
+      "properties": {
+        "group": {
+          "$ref": "#/$defs/GroupRecord"
+        },
+        "type": {
+          "description": "The `group_started` type tag.",
+          "enum": [
+            "group_started"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "group"
+      ],
+      "type": "object"
+    },
+    "GroupState": {
+      "description": "Where a group stands as a whole.",
+      "oneOf": [
+        {
+          "const": "needs_attention",
+          "description": "A run asks a question, needs approval or is blocked.",
+          "type": "string"
+        },
+        {
+          "const": "running",
+          "description": "No run needs attention and at least one is still pending.",
+          "type": "string"
+        },
+        {
+          "const": "completed",
+          "description": "Every run completed.",
+          "type": "string"
+        },
+        {
+          "const": "ended",
+          "description": "Every run ended, and at least one did not provably complete.",
+          "type": "string"
+        }
+      ]
+    },
+    "GroupSummary": {
+      "description": "Counts of the group's runs by their newest message's state. A timed-out\nobservation counts as pending.",
+      "properties": {
+        "blocked": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "interrupted": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "needs_input": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pending": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/GroupState"
+        },
+        "unavailable": {
+          "description": "The run's Conversation no longer exists.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown": {
+          "description": "Ended without evidence of how.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state",
+        "runs",
+        "pending",
+        "needs_input",
+        "blocked",
+        "completed",
+        "failed",
+        "interrupted",
+        "unknown",
+        "unavailable"
+      ],
+      "type": "object"
+    },
+    "GroupsRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.groups`: the parallel groups a Conversation started, oldest first.",
+      "properties": {
+        "op": {
+          "const": "orchestration.groups"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "parent_conversation_id"
+      ],
+      "type": "object"
+    },
     "HealthCheckRequest": {
       "additionalProperties": false,
       "description": "The HTTP probe `service.inspect` accepts.",
@@ -6270,6 +6691,28 @@
         "oci"
       ],
       "type": "string"
+    },
+    "PathOverlap": {
+      "description": "A path that runs in different workspaces both changed. ADE merges nothing;\nthe person chooses.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "runs": {
+          "description": "Every run whose workspace changed the path.",
+          "items": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "runs"
+      ],
+      "type": "object"
     },
     "PeerEndpoint": {
       "additionalProperties": false,
@@ -8990,6 +9433,183 @@
         "operation_id",
         "path",
         "revision"
+      ],
+      "type": "object"
+    },
+    "RunChanges": {
+      "description": "A run's Git changes, or why they could not be read.",
+      "oneOf": [
+        {
+          "properties": {
+            "branch": {
+              "description": "The branch name, or `(detached)`.",
+              "type": "string"
+            },
+            "committed": {
+              "$ref": "#/$defs/CommittedChanges"
+            },
+            "conflicts": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "head": {
+              "description": "The HEAD commit, or `(initial)` before the first commit.",
+              "type": "string"
+            },
+            "revision": {
+              "description": "The workspace's `review.status` revision at the time of the read.",
+              "type": "string"
+            },
+            "state": {
+              "const": "available",
+              "type": "string"
+            },
+            "uncommitted": {
+              "description": "Staged, unstaged and untracked changes, as `review.status` reports them.",
+              "items": {
+                "$ref": "#/$defs/ReviewFile"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "state",
+            "branch",
+            "head",
+            "revision",
+            "conflicts",
+            "uncommitted",
+            "committed"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RunComparison": {
+      "description": "One run's outcome and changes.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changes": {
+          "$ref": "#/$defs/RunChanges"
+        },
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "index": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "progress": {
+          "$ref": "#/$defs/WaitState"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "shared_workspace": {
+          "description": "The workspace is the parent's or another run's, so its changes are\nnot this run's alone.",
+          "type": "boolean"
+        },
+        "workspace_id": {
+          "type": "string"
+        },
+        "workspace_mode": {
+          "$ref": "#/$defs/WorkspaceMode"
+        }
+      },
+      "required": [
+        "index",
+        "child_conversation_id",
+        "provider",
+        "account_id",
+        "workspace_id",
+        "workspace_mode",
+        "progress",
+        "shared_workspace",
+        "changes"
+      ],
+      "type": "object"
+    },
+    "RunRecord": {
+      "description": "One run of a group and where its newest message stands.",
+      "properties": {
+        "base_commit": {
+          "description": "The workspace HEAD when the group started; null when it had none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "child": {
+          "$ref": "#/$defs/ChildRecord",
+          "description": "The run's child link. Its `operation_id` is `<group ID>/<index>`."
+        },
+        "index": {
+          "description": "The run's position in the start request, from 0.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "message_id": {
+          "description": "The child's newest task or message.",
+          "type": "string"
+        },
+        "progress": {
+          "$ref": "#/$defs/WaitState"
+        }
+      },
+      "required": [
+        "index",
+        "child",
+        "message_id",
+        "progress",
+        "base_commit"
+      ],
+      "type": "object"
+    },
+    "RunSpec": {
+      "description": "One run of a parallel group: a provider, its account and its workspace,\neach stated explicitly.",
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/AccountChoice"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "provider_config": {
+          "description": "Provider settings; the daemon validates them for the provider."
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceChoice",
+          "description": "Each `new_worktree` run needs its own workspace. Runs in the same\nworkspace share its files, and their changes cannot be told apart."
+        }
+      },
+      "required": [
+        "provider",
+        "account",
+        "workspace"
       ],
       "type": "object"
     },
@@ -11976,6 +12596,121 @@
       ],
       "type": "object"
     },
+    "WaitState": {
+      "description": "What a wait observed. Only `pending` means the caller should ask again.",
+      "oneOf": [
+        {
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "outcome": {
+              "$ref": "#/$defs/Outcome"
+            },
+            "state": {
+              "const": "settled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "outcome",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "$ref": "#/$defs/PendingPhase"
+            },
+            "state": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The child asked a question or needs approval. Answer each request once\nwith `agent.answer` on the child Conversation.",
+          "properties": {
+            "request_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state": {
+              "const": "needs_input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "request_ids"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The message will not progress without intervention.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "blocked",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The deadline passed while the turn was still pending.",
+          "properties": {
+            "phase": {
+              "$ref": "#/$defs/PendingPhase"
+            },
+            "state": {
+              "const": "timed_out",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The child Conversation no longer exists.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "WindowCloseRequest": {
       "additionalProperties": false,
       "description": "`window.close`: forget a window's record, unless it is the last one.",
@@ -13913,6 +14648,34 @@
       "name": "orchestration.child.wait",
       "request": "ChildWaitRequest",
       "response": "ChildWait",
+      "tier": "query"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.group.start",
+      "request": "GroupStartRequest",
+      "response": "GroupStarted",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.groups",
+      "request": "GroupsRequest",
+      "response": "GroupList",
+      "tier": "query"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.group.get",
+      "request": "GroupGetRequest",
+      "response": "GroupReply",
+      "tier": "query"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.group.compare",
+      "request": "GroupCompareRequest",
+      "response": "GroupComparison",
       "tier": "query"
     },
     {

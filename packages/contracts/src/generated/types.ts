@@ -86,6 +86,8 @@ export type ContractDefinition =
   | ClaimState
   | ClaudeIdentity
   | CodexIdentity
+  | CommittedChanges
+  | CommittedFile
   | Config
   | Conversation
   | ConversationChanged
@@ -145,6 +147,17 @@ export type ContractDefinition =
   | FileSearchRequest
   | GitOperation
   | GitOperationStatus
+  | GroupCompareRequest
+  | GroupComparison
+  | GroupGetRequest
+  | GroupList
+  | GroupRecord
+  | GroupReply
+  | GroupStartRequest
+  | GroupStarted
+  | GroupState
+  | GroupSummary
+  | GroupsRequest
   | HealthCheckRequest
   | HealthPolicy
   | HelloRequest
@@ -192,6 +205,7 @@ export type ContractDefinition =
   | OutputCoverageReason
   | OutputCoverageStatus
   | PackageRegistry
+  | PathOverlap
   | PeerEndpoint
   | PendingPhase
   | PendingRequest
@@ -289,6 +303,10 @@ export type ContractDefinition =
   | ReviewStatus
   | ReviewStatusRequest
   | ReviewUnstageRequest
+  | RunChanges
+  | RunComparison
+  | RunRecord
+  | RunSpec
   | RuntimePrepareRestartRequest
   | RuntimeStatus
   | RuntimeStatusRequest
@@ -377,6 +395,7 @@ export type ContractDefinition =
   | TerminalRestartRequest
   | TerminalRetireRequest
   | TerminalStopRequest
+  | WaitState
   | WindowCloseRequest
   | WindowSaveRequest
   | WorkspaceAck
@@ -536,6 +555,29 @@ export type ClaimPhase = 'reserved' | 'dispatched' | 'bound' | 'active'
 export type ClaimPurpose = 'use' | 'create' | 'remove'
 export type ClaimState = 'active' | 'quarantined'
 /**
+ * What a run committed between the group's start and its current HEAD.
+ */
+export type CommittedChanges =
+  | {
+      base_commit: string
+      /**
+       * Commits reachable from HEAD and not from the base.
+       */
+      commits: number
+      files: CommittedFile[]
+      state: 'known'
+      /**
+       * More files changed than the reply carries (2 000).
+       */
+      truncated: boolean
+      [k: string]: unknown
+    }
+  | {
+      reason: string
+      state: 'unknown'
+      [k: string]: unknown
+    }
+/**
  * Where the child works, stated explicitly. Parallel children in the same
  * workspace share its files; ADE never merges their edits.
  */
@@ -603,6 +645,76 @@ export type PreviewKind = 'text' | 'image' | 'unsupported'
  * Where a Git mutation stands.
  */
 export type GitOperationStatus = ('running' | 'succeeded' | 'failed') | 'interrupted'
+/**
+ * A run's Git changes, or why they could not be read.
+ */
+export type RunChanges =
+  | {
+      /**
+       * The branch name, or `(detached)`.
+       */
+      branch: string
+      committed: CommittedChanges
+      conflicts: number
+      /**
+       * The HEAD commit, or `(initial)` before the first commit.
+       */
+      head: string
+      /**
+       * The workspace's `review.status` revision at the time of the read.
+       */
+      revision: string
+      state: 'available'
+      /**
+       * Staged, unstaged and untracked changes, as `review.status` reports them.
+       */
+      uncommitted: ReviewFile[]
+      [k: string]: unknown
+    }
+  | {
+      reason: string
+      state: 'unavailable'
+      [k: string]: unknown
+    }
+/**
+ * What a wait observed. Only `pending` means the caller should ask again.
+ */
+export type WaitState =
+  | {
+      error: string | null
+      outcome: Outcome
+      state: 'settled'
+      [k: string]: unknown
+    }
+  | {
+      phase: PendingPhase
+      state: 'pending'
+      [k: string]: unknown
+    }
+  | {
+      request_ids: string[]
+      state: 'needs_input'
+      [k: string]: unknown
+    }
+  | {
+      reason: string
+      state: 'blocked'
+      [k: string]: unknown
+    }
+  | {
+      phase: PendingPhase
+      state: 'timed_out'
+      [k: string]: unknown
+    }
+  | {
+      reason: string
+      state: 'unavailable'
+      [k: string]: unknown
+    }
+/**
+ * Where a group stands as a whole.
+ */
+export type GroupState = 'needs_attention' | 'running' | 'completed' | 'ended'
 export type RegistryState = 'ready' | 'blocked'
 /**
  * How the server's code reached this host. ADE records it; it installs nothing.
@@ -1836,6 +1948,20 @@ export interface ChildrenRequest {
   parent_conversation_id: string
 }
 /**
+ * A file a run committed since the group started.
+ */
+export interface CommittedFile {
+  /**
+   * The `git diff --name-status` letter, such as A, M, D or T.
+   */
+  code: string
+  /**
+   * The literal repository-relative path.
+   */
+  path: string
+  [k: string]: unknown
+}
+/**
  * A repository's stored lifecycle configuration.
  */
 export interface Config {
@@ -2690,6 +2816,281 @@ export interface GitOperation {
   started_at: number
   status: GitOperationStatus
   [k: string]: unknown
+}
+/**
+ * `orchestration.group.compare`: each run's outcome and Git changes.
+ */
+export interface GroupCompareRequest {
+  group_id: string
+  op: 'orchestration.group.compare'
+}
+/**
+ * The `orchestration.group.compare` reply. It reads Git and changes nothing.
+ */
+export interface GroupComparison {
+  compared_at: number
+  group_id: string
+  /**
+   * Paths changed in more than one workspace, sorted by path.
+   */
+  overlaps: PathOverlap[]
+  runs: RunComparison[]
+  summary: GroupSummary
+  /**
+   * The `group_comparison` type tag.
+   */
+  type: 'group_comparison'
+  [k: string]: unknown
+}
+/**
+ * A path that runs in different workspaces both changed. ADE merges nothing;
+ * the person chooses.
+ */
+export interface PathOverlap {
+  path: string
+  /**
+   * Every run whose workspace changed the path.
+   */
+  runs: number[]
+  [k: string]: unknown
+}
+/**
+ * One run's outcome and changes.
+ */
+export interface RunComparison {
+  account_id: string | null
+  changes: RunChanges
+  child_conversation_id: string
+  index: number
+  progress: WaitState
+  provider: string
+  /**
+   * The workspace is the parent's or another run's, so its changes are
+   * not this run's alone.
+   */
+  shared_workspace: boolean
+  workspace_id: string
+  workspace_mode: WorkspaceMode
+  [k: string]: unknown
+}
+/**
+ * One changed file in `review.status`.
+ */
+export interface ReviewFile {
+  /**
+   * The two-letter porcelain v2 status code.
+   */
+  code: string
+  conflict: boolean
+  /**
+   * The literal repository-relative path.
+   */
+  path: string
+  staged: boolean
+  submodule: boolean
+  unstaged: boolean
+  untracked: boolean
+  [k: string]: unknown
+}
+/**
+ * Counts of the group's runs by their newest message's state. A timed-out
+ * observation counts as pending.
+ */
+export interface GroupSummary {
+  blocked: number
+  completed: number
+  failed: number
+  interrupted: number
+  needs_input: number
+  pending: number
+  runs: number
+  state: GroupState
+  /**
+   * The run's Conversation no longer exists.
+   */
+  unavailable: number
+  /**
+   * Ended without evidence of how.
+   */
+  unknown: number
+  [k: string]: unknown
+}
+/**
+ * `orchestration.group.get`: one group and its runs' status.
+ */
+export interface GroupGetRequest {
+  group_id: string
+  op: 'orchestration.group.get'
+}
+/**
+ * The `orchestration.groups` reply.
+ */
+export interface GroupList {
+  groups: GroupRecord[]
+  parent_conversation_id: string
+  /**
+   * The `group_list` type tag.
+   */
+  type: 'group_list'
+  [k: string]: unknown
+}
+/**
+ * A group and its runs.
+ */
+export interface GroupRecord {
+  /**
+   * `user`, or `agent:` followed by the starting Conversation ID.
+   */
+  attribution: string
+  created_at: number
+  group_id: string
+  /**
+   * The `orchestration.group.start` operation that created the group.
+   */
+  operation_id: string
+  parent_conversation_id: string
+  runs: RunRecord[]
+  summary: GroupSummary
+  title: string
+  [k: string]: unknown
+}
+/**
+ * One run of a group and where its newest message stands.
+ */
+export interface RunRecord {
+  /**
+   * The workspace HEAD when the group started; null when it had none.
+   */
+  base_commit: string | null
+  child: ChildRecord1
+  /**
+   * The run's position in the start request, from 0.
+   */
+  index: number
+  /**
+   * The child's newest task or message.
+   */
+  message_id: string
+  progress: WaitState
+  [k: string]: unknown
+}
+/**
+ * A durable parent and child link with the child's current Conversation state.
+ */
+export interface ChildRecord1 {
+  account_id: string | null
+  /**
+   * `user`, or `agent:` followed by the delegating Conversation ID.
+   */
+  attribution: string
+  child_conversation_id: string
+  created_at: number
+  /**
+   * 1 for a child of a top-level Conversation.
+   */
+  depth: number
+  error: string | null
+  /**
+   * The `orchestration.delegate` operation that created the child.
+   */
+  operation_id: string
+  parent_conversation_id: string
+  provider: string
+  /**
+   * The child Conversation's status, or `unavailable` when it is gone.
+   */
+  status: string
+  /**
+   * The queued prompt that carries the task.
+   */
+  task_message_id: string
+  workspace_id: string
+  workspace_mode: WorkspaceMode
+  worktree_operation_id: string | null
+  [k: string]: unknown
+}
+/**
+ * The `orchestration.group.get` reply.
+ */
+export interface GroupReply {
+  group: GroupRecord
+  /**
+   * The `group` type tag.
+   */
+  type: 'group'
+  [k: string]: unknown
+}
+/**
+ * `orchestration.group.start`: start one task as sibling children of a parent.
+ */
+export interface GroupStartRequest {
+  caller: Caller
+  op: 'orchestration.group.start'
+  /**
+   * Caller-owned operation ID; a retry with the same payload returns the same group.
+   */
+  operation_id: string
+  parent_conversation_id: string
+  /**
+   * From 2 to 8 runs, in the order the group reports them.
+   */
+  runs: RunSpec[]
+  /**
+   * The first prompt of every run; at most 64 KiB.
+   */
+  task: string
+  /**
+   * Every run's title. Defaults to the task's first line, cut to 45 characters.
+   */
+  title?: string
+}
+/**
+ * One run of a parallel group: a provider, its account and its workspace,
+ * each stated explicitly.
+ */
+export interface RunSpec {
+  account: AccountChoice
+  provider: string
+  /**
+   * Provider settings; the daemon validates them for the provider.
+   */
+  provider_config?: unknown
+  /**
+   * Where the child works, stated explicitly. Parallel children in the same
+   * workspace share its files; ADE never merges their edits.
+   */
+  workspace:
+    | {
+        mode: 'same'
+        [k: string]: unknown
+      }
+    | {
+        mode: 'new_worktree'
+        repository_id: string
+        workspace_id: string
+        worktree_operation_id: string
+        [k: string]: unknown
+      }
+  [k: string]: unknown
+}
+/**
+ * The `orchestration.group.start` reply: every run is admitted and its task
+ * is queued. It says nothing about completion.
+ */
+export interface GroupStarted {
+  group: GroupRecord
+  /**
+   * The `group_started` type tag.
+   */
+  type: 'group_started'
+  [k: string]: unknown
+}
+/**
+ * `orchestration.groups`: the parallel groups a Conversation started, oldest first.
+ */
+export interface GroupsRequest {
+  op: 'orchestration.groups'
+  parent_conversation_id: string
 }
 /**
  * The HTTP probe `service.inspect` accepts.
@@ -4297,25 +4698,6 @@ export interface ReviewFeedbackSearchRequest {
   path?: string
   query?: string
   workspace_id: string
-}
-/**
- * One changed file in `review.status`.
- */
-export interface ReviewFile {
-  /**
-   * The two-letter porcelain v2 status code.
-   */
-  code: string
-  conflict: boolean
-  /**
-   * The literal repository-relative path.
-   */
-  path: string
-  staged: boolean
-  submodule: boolean
-  unstaged: boolean
-  untracked: boolean
-  [k: string]: unknown
 }
 /**
  * `review.hunk`: stage, or with `staged` unstage, one hunk of a reviewed diff.
@@ -5929,7 +6311,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -6074,6 +6456,10 @@ export interface RequestByOperation {
   "orchestration.child.get": ChildGetRequest
   "orchestration.child.send": ChildSendRequest
   "orchestration.child.wait": ChildWaitRequest
+  "orchestration.group.start": GroupStartRequest
+  "orchestration.groups": GroupsRequest
+  "orchestration.group.get": GroupGetRequest
+  "orchestration.group.compare": GroupCompareRequest
   "history.search": HistorySearchRequest
   "history.list": HistoryListRequest
   "history.index.status": HistoryIndexStatusRequest
@@ -6226,6 +6612,10 @@ export interface ResponseByOperation {
   "orchestration.child.get": ChildReply
   "orchestration.child.send": ChildMessageQueued
   "orchestration.child.wait": ChildWait
+  "orchestration.group.start": GroupStarted
+  "orchestration.groups": GroupList
+  "orchestration.group.get": GroupReply
+  "orchestration.group.compare": GroupComparison
   "history.search": HistorySearch
   "history.list": HistoryList
   "history.index.status": HistoryIndexReply

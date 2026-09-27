@@ -11,6 +11,7 @@ import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
+import { runRunsCommand, runsUsage } from './commands/runs.js'
 import { historyUsage, runHistoryCommand } from './commands/history.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
@@ -76,6 +77,7 @@ const usage = [
   skillUsage,
   pluginUsage,
   orchestrationUsage,
+  runsUsage,
   diagnosticsUsage,
   requestUsage,
   usageFooter,
@@ -205,6 +207,7 @@ const commandAreas = [
   runSkillCommand,
   runPluginCommand,
   runOrchestrationCommand,
+  runRunsCommand,
   runDiagnosticsCommand,
 ] as const
 
