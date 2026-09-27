@@ -185,6 +185,10 @@ export const operations = {
   "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
   "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
   "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
+  "adapter.list": { tier: "query", domain: "providers", request: "AdapterListRequest", response: "AdapterList" },
+  "adapter.put": { tier: "idempotent_command", domain: "providers", request: "AdapterPutRequest", response: "AdapterPut" },
+  "adapter.remove": { tier: "idempotent_command", domain: "providers", request: "AdapterRemoveRequest", response: "AdapterRemoved" },
+  "adapter.probe": { tier: "idempotent_command", domain: "providers", request: "AdapterProbeRequest", response: "AdapterProbed" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

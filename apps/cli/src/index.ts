@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { DaemonRequestError, requestDaemon } from '@ade/client'
 import { accountUsage, runAccountCommand } from './commands/accounts.js'
+import { adapterUsage, runAdapterCommand } from './commands/adapters.js'
 import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
@@ -78,6 +79,7 @@ const usage = [
   importUsage,
   usageAnalyticsUsage,
   accountUsage,
+  adapterUsage,
   terminalUsage,
   browserUsage,
   serviceUsage,
@@ -215,6 +217,7 @@ const commandAreas = [
   runImportCommand,
   runUsageCommand,
   runAccountCommand,
+  runAdapterCommand,
   runTerminalCommand,
   runBrowserCommand,
   runServiceCommand,

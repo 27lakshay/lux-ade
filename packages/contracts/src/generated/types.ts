@@ -13,6 +13,7 @@ export type ContractDefinition =
   | AccountVerifyRequest
   | AccountsReply
   | Ack
+  | AcpHandshake
   | Activity
   | ActivityChanged
   | ActivityKind
@@ -23,6 +24,19 @@ export type ContractDefinition =
   | ActivityMarked
   | ActivityState
   | ActivityTarget
+  | AdapterDefinition
+  | AdapterKind
+  | AdapterList
+  | AdapterListRequest
+  | AdapterProbe
+  | AdapterProbeRequest
+  | AdapterProbed
+  | AdapterPut
+  | AdapterPutRequest
+  | AdapterReadiness
+  | AdapterRecord
+  | AdapterRemoveRequest
+  | AdapterRemoved
   | AgentAccountInspectRequest
   | AgentAccountInspection
   | AgentAnswerRequest
@@ -175,6 +189,8 @@ export type ContractDefinition =
   | DraftSendPrepareRequest
   | Excluded
   | Exclusion
+  | ExecutableIdentity
+  | ExecutableSettings
   | ExecutionState
   | FileEntry
   | FileKind
@@ -301,7 +317,9 @@ export type ContractDefinition =
   | PortAssignment
   | PortObservation
   | PreviewKind
+  | ProbeOutcome
   | Projected
+  | PromptInput
   | ProviderListRequest
   | ProviderSelection
   | ProviderSupport
@@ -567,6 +585,42 @@ export type ActivityState = 'unread' | 'read' | 'dismissed'
  * The mark an `activity.mark` request applies.
  */
 export type ActivityMark = 'read' | 'dismissed'
+/**
+ * How a custom executable receives the prompt.
+ */
+export type PromptInput = 'stdin' | 'argument'
+/**
+ * The protocol an adapter speaks on its standard streams.
+ */
+export type AdapterKind = 'acp' | 'executable'
+/**
+ * The result of one probe.
+ */
+export type ProbeOutcome =
+  | {
+      /**
+       * Present for ACP adapters.
+       */
+      acp?: AcpHandshake | null
+      /**
+       * ADE capability names, in the vocabulary of provider descriptors.
+       */
+      capabilities: string[]
+      status: 'ready'
+      [k: string]: unknown
+    }
+  | {
+      /**
+       * A bounded, secret-free reason. Agent output is never included.
+       */
+      error: string
+      status: 'failed'
+      [k: string]: unknown
+    }
+/**
+ * Whether an adapter may be trusted to have the probed capabilities now.
+ */
+export type AdapterReadiness = 'unprobed' | 'ready' | 'failed' | 'stale'
 /**
  * What `worktree.remove` does with the removed tree's branch.
  */
@@ -1296,6 +1350,28 @@ export interface Ack {
   [k: string]: unknown
 }
 /**
+ * What an ACP agent declared in its `initialize` response.
+ */
+export interface AcpHandshake {
+  agent_name?: string | null
+  agent_version?: string | null
+  /**
+   * IDs of the authentication methods the agent offers. ADE runs none of
+   * them; sign in with the agent's own CLI.
+   */
+  auth_methods: string[]
+  list_sessions: boolean
+  load_session: boolean
+  mcp_http: boolean
+  mcp_sse: boolean
+  prompt_audio: boolean
+  prompt_embedded_context: boolean
+  prompt_image: boolean
+  protocol_version: number
+  resume_session: boolean
+  [k: string]: unknown
+}
+/**
  * One durable activity record.
  */
 export interface Activity {
@@ -1416,6 +1492,177 @@ export interface ActivityMarked {
    * The `activity_marked` type tag.
    */
   type: 'activity_marked'
+  [k: string]: unknown
+}
+/**
+ * One adapter as the profile stores it.
+ */
+export interface AdapterDefinition {
+  args?: string[]
+  /**
+   * Absolute path of the executable. ADE does not search `PATH`.
+   */
+  command: string
+  /**
+   * Extra environment on top of the daemon's. Names that look like
+   * credentials are refused: sign in with the agent's own login instead.
+   */
+  env?: {
+    [k: string]: string
+  }
+  /**
+   * Required for `executable`, refused for `acp`.
+   */
+  executable?: ExecutableSettings | null
+  /**
+   * Lowercase letters, digits and `-`, starting with a letter; at most 40
+   * characters. Conversations name it as `adapter:<id>`.
+   */
+  id: string
+  kind: AdapterKind
+  /**
+   * Display name, 1 to 80 characters.
+   */
+  name: string
+}
+/**
+ * Settings only a custom executable has.
+ */
+export interface ExecutableSettings {
+  prompt_input: PromptInput
+  /**
+   * A turn still running after this many seconds is stopped and reported
+   * failed. From 1 to 3600.
+   */
+  timeout_seconds: number
+}
+export interface AdapterList {
+  adapters: AdapterRecord[]
+  /**
+   * The `adapters` type tag.
+   */
+  type: 'adapters'
+  [k: string]: unknown
+}
+/**
+ * One adapter with its revision and probe.
+ */
+export interface AdapterRecord {
+  created_at: number
+  definition: AdapterDefinition
+  probe?: AdapterProbe | null
+  /**
+   * `adapter:<id>`, the provider ID conversations use.
+   */
+  provider_id: string
+  readiness: AdapterReadiness
+  /**
+   * Starts at 1 and grows each time the stored definition changes.
+   */
+  revision: number
+  updated_at: number
+  [k: string]: unknown
+}
+/**
+ * The stored probe of one adapter.
+ */
+export interface AdapterProbe {
+  /**
+   * Absent when the executable could not be inspected.
+   */
+  executable?: ExecutableIdentity | null
+  outcome: ProbeOutcome
+  probed_at: number
+  /**
+   * The definition revision that was probed.
+   */
+  revision: number
+  [k: string]: unknown
+}
+/**
+ * File identity of the executable a probe checked. Device and inode are
+ * decimal strings because they can exceed a JSON-safe integer.
+ */
+export interface ExecutableIdentity {
+  device: string
+  inode: string
+  /**
+   * Modification time in milliseconds since the Unix epoch.
+   */
+  modified_ms: number
+  size: number
+  [k: string]: unknown
+}
+/**
+ * `adapter.list`: every adapter this profile defines, by ID.
+ */
+export interface AdapterListRequest {
+  op: 'adapter.list'
+}
+/**
+ * `adapter.probe`: check the executable and record its capabilities.
+ */
+export interface AdapterProbeRequest {
+  /**
+   * When present, the probe is refused unless the stored revision equals it.
+   */
+  expected_revision?: number | null
+  id: string
+  op: 'adapter.probe'
+}
+/**
+ * A probe that ran. A failed probe is still a completed operation; its
+ * outcome says why the adapter is not ready.
+ */
+export interface AdapterProbed {
+  adapter: AdapterRecord
+  /**
+   * The `adapter_probed` type tag.
+   */
+  type: 'adapter_probed'
+  [k: string]: unknown
+}
+export interface AdapterPut {
+  adapter: AdapterRecord
+  /**
+   * False when the stored definition was already identical.
+   */
+  changed: boolean
+  /**
+   * The `adapter_put` type tag.
+   */
+  type: 'adapter_put'
+  [k: string]: unknown
+}
+/**
+ * `adapter.put`: create or replace one adapter definition.
+ */
+export interface AdapterPutRequest {
+  definition: AdapterDefinition
+  /**
+   * When present, the put is refused unless the stored revision equals it;
+   * 0 means the adapter must not exist yet.
+   */
+  expected_revision?: number | null
+  op: 'adapter.put'
+}
+/**
+ * `adapter.remove`: delete one adapter definition and its probe.
+ */
+export interface AdapterRemoveRequest {
+  id: string
+  op: 'adapter.remove'
+}
+export interface AdapterRemoved {
+  id: string
+  /**
+   * False when no adapter had this ID.
+   */
+  removed: boolean
+  /**
+   * The `adapter_removed` type tag.
+   */
+  type: 'adapter_removed'
   [k: string]: unknown
 }
 /**
@@ -8053,7 +8300,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8239,6 +8486,10 @@ export interface RequestByOperation {
   "browser.recording.start": BrowserRecordingStartRequest
   "browser.recording.stop": BrowserRecordingStopRequest
   "browser.recording.get": BrowserRecordingGetRequest
+  "adapter.list": AdapterListRequest
+  "adapter.put": AdapterPutRequest
+  "adapter.remove": AdapterRemoveRequest
+  "adapter.probe": AdapterProbeRequest
 }
 
 export interface ResponseByOperation {
@@ -8425,6 +8676,10 @@ export interface ResponseByOperation {
   "browser.recording.start": BrowserRecording
   "browser.recording.stop": BrowserRecording
   "browser.recording.get": BrowserRecording
+  "adapter.list": AdapterList
+  "adapter.put": AdapterPut
+  "adapter.remove": AdapterRemoved
+  "adapter.probe": AdapterProbed
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

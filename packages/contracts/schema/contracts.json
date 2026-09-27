@@ -322,6 +322,72 @@
       ],
       "type": "object"
     },
+    "AcpHandshake": {
+      "description": "What an ACP agent declared in its `initialize` response.",
+      "properties": {
+        "agent_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "auth_methods": {
+          "description": "IDs of the authentication methods the agent offers. ADE runs none of\nthem; sign in with the agent's own CLI.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "list_sessions": {
+          "type": "boolean"
+        },
+        "load_session": {
+          "type": "boolean"
+        },
+        "mcp_http": {
+          "type": "boolean"
+        },
+        "mcp_sse": {
+          "type": "boolean"
+        },
+        "prompt_audio": {
+          "type": "boolean"
+        },
+        "prompt_embedded_context": {
+          "type": "boolean"
+        },
+        "prompt_image": {
+          "type": "boolean"
+        },
+        "protocol_version": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resume_session": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "auth_methods",
+        "load_session",
+        "resume_session",
+        "list_sessions",
+        "prompt_image",
+        "prompt_audio",
+        "prompt_embedded_context",
+        "mcp_http",
+        "mcp_sse"
+      ],
+      "type": "object"
+    },
     "Activity": {
       "description": "One durable activity record.",
       "properties": {
@@ -643,6 +709,356 @@
         "conversation_id",
         "request_id",
         "turn_id"
+      ],
+      "type": "object"
+    },
+    "AdapterDefinition": {
+      "additionalProperties": false,
+      "description": "One adapter as the profile stores it.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "description": "Absolute path of the executable. ADE does not search `PATH`.",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra environment on top of the daemon's. Names that look like\ncredentials are refused: sign in with the agent's own login instead.",
+          "type": "object"
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutableSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required for `executable`, refused for `acp`."
+        },
+        "id": {
+          "description": "Lowercase letters, digits and `-`, starting with a letter; at most 40\ncharacters. Conversations name it as `adapter:<id>`.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AdapterKind"
+        },
+        "name": {
+          "description": "Display name, 1 to 80 characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "command"
+      ],
+      "type": "object"
+    },
+    "AdapterKind": {
+      "description": "The protocol an adapter speaks on its standard streams.",
+      "oneOf": [
+        {
+          "const": "acp",
+          "description": "Agent Client Protocol v1: JSON-RPC 2.0, one message per line.",
+          "type": "string"
+        },
+        {
+          "const": "executable",
+          "description": "A plain CLI agent: one process per prompt, standard output is the reply.",
+          "type": "string"
+        }
+      ]
+    },
+    "AdapterList": {
+      "properties": {
+        "adapters": {
+          "items": {
+            "$ref": "#/$defs/AdapterRecord"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `adapters` type tag.",
+          "enum": [
+            "adapters"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "adapters"
+      ],
+      "type": "object"
+    },
+    "AdapterListRequest": {
+      "additionalProperties": false,
+      "description": "`adapter.list`: every adapter this profile defines, by ID.",
+      "properties": {
+        "op": {
+          "const": "adapter.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "AdapterProbe": {
+      "description": "The stored probe of one adapter.",
+      "properties": {
+        "executable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutableIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent when the executable could not be inspected."
+        },
+        "outcome": {
+          "$ref": "#/$defs/ProbeOutcome"
+        },
+        "probed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "revision": {
+          "description": "The definition revision that was probed.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "probed_at",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "AdapterProbeRequest": {
+      "additionalProperties": false,
+      "description": "`adapter.probe`: check the executable and record its capabilities.",
+      "properties": {
+        "expected_revision": {
+          "description": "When present, the probe is refused unless the stored revision equals it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "adapter.probe"
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ],
+      "type": "object"
+    },
+    "AdapterProbed": {
+      "description": "A probe that ran. A failed probe is still a completed operation; its\noutcome says why the adapter is not ready.",
+      "properties": {
+        "adapter": {
+          "$ref": "#/$defs/AdapterRecord"
+        },
+        "type": {
+          "description": "The `adapter_probed` type tag.",
+          "enum": [
+            "adapter_probed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "adapter"
+      ],
+      "type": "object"
+    },
+    "AdapterPut": {
+      "properties": {
+        "adapter": {
+          "$ref": "#/$defs/AdapterRecord"
+        },
+        "changed": {
+          "description": "False when the stored definition was already identical.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `adapter_put` type tag.",
+          "enum": [
+            "adapter_put"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "changed",
+        "adapter"
+      ],
+      "type": "object"
+    },
+    "AdapterPutRequest": {
+      "additionalProperties": false,
+      "description": "`adapter.put`: create or replace one adapter definition.",
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/AdapterDefinition"
+        },
+        "expected_revision": {
+          "description": "When present, the put is refused unless the stored revision equals it;\n0 means the adapter must not exist yet.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "adapter.put"
+        }
+      },
+      "required": [
+        "op",
+        "definition"
+      ],
+      "type": "object"
+    },
+    "AdapterReadiness": {
+      "description": "Whether an adapter may be trusted to have the probed capabilities now.",
+      "oneOf": [
+        {
+          "const": "unprobed",
+          "description": "Never probed at this revision.",
+          "type": "string"
+        },
+        {
+          "const": "ready",
+          "description": "The last probe succeeded and nothing has changed since.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The last probe failed.",
+          "type": "string"
+        },
+        {
+          "const": "stale",
+          "description": "The definition or the executable changed after the last probe.",
+          "type": "string"
+        }
+      ]
+    },
+    "AdapterRecord": {
+      "description": "One adapter with its revision and probe.",
+      "properties": {
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "definition": {
+          "$ref": "#/$defs/AdapterDefinition"
+        },
+        "probe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdapterProbe"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider_id": {
+          "description": "`adapter:<id>`, the provider ID conversations use.",
+          "type": "string"
+        },
+        "readiness": {
+          "$ref": "#/$defs/AdapterReadiness"
+        },
+        "revision": {
+          "description": "Starts at 1 and grows each time the stored definition changes.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider_id",
+        "definition",
+        "revision",
+        "created_at",
+        "updated_at",
+        "readiness"
+      ],
+      "type": "object"
+    },
+    "AdapterRemoveRequest": {
+      "additionalProperties": false,
+      "description": "`adapter.remove`: delete one adapter definition and its probe.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "adapter.remove"
+        }
+      },
+      "required": [
+        "op",
+        "id"
+      ],
+      "type": "object"
+    },
+    "AdapterRemoved": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "removed": {
+          "description": "False when no adapter had this ID.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `adapter_removed` type tag.",
+          "enum": [
+            "adapter_removed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "removed"
       ],
       "type": "object"
     },
@@ -5810,6 +6226,55 @@
         }
       ]
     },
+    "ExecutableIdentity": {
+      "description": "File identity of the executable a probe checked. Device and inode are\ndecimal strings because they can exceed a JSON-safe integer.",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "inode": {
+          "type": "string"
+        },
+        "modified_ms": {
+          "description": "Modification time in milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "device",
+        "inode",
+        "size",
+        "modified_ms"
+      ],
+      "type": "object"
+    },
+    "ExecutableSettings": {
+      "additionalProperties": false,
+      "description": "Settings only a custom executable has.",
+      "properties": {
+        "prompt_input": {
+          "$ref": "#/$defs/PromptInput"
+        },
+        "timeout_seconds": {
+          "description": "A turn still running after this many seconds is stopped and reported\nfailed. From 1 to 3600.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_input",
+        "timeout_seconds"
+      ],
+      "type": "object"
+    },
     "ExecutionState": {
       "description": "Whether a service's recorded run is live in the current runtime.",
       "enum": [
@@ -9785,6 +10250,59 @@
       ],
       "type": "string"
     },
+    "ProbeOutcome": {
+      "description": "The result of one probe.",
+      "oneOf": [
+        {
+          "properties": {
+            "acp": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AcpHandshake"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present for ACP adapters."
+            },
+            "capabilities": {
+              "description": "ADE capability names, in the vocabulary of provider descriptors.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "status": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "capabilities"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "description": "A bounded, secret-free reason. Agent output is never included.",
+              "type": "string"
+            },
+            "status": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Projected": {
       "description": "One entry in a provider's native shape.",
       "properties": {
@@ -9806,6 +10324,21 @@
         "native"
       ],
       "type": "object"
+    },
+    "PromptInput": {
+      "description": "How a custom executable receives the prompt.",
+      "oneOf": [
+        {
+          "const": "stdin",
+          "description": "Written to standard input, which is then closed.",
+          "type": "string"
+        },
+        {
+          "const": "argument",
+          "description": "Appended as the final argument.",
+          "type": "string"
+        }
+      ]
     },
     "ProviderListRequest": {
       "additionalProperties": false,
@@ -18793,6 +19326,34 @@
       "request": "BrowserRecordingGetRequest",
       "response": "BrowserRecording",
       "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "adapter.list",
+      "request": "AdapterListRequest",
+      "response": "AdapterList",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "adapter.put",
+      "request": "AdapterPutRequest",
+      "response": "AdapterPut",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "providers",
+      "name": "adapter.remove",
+      "request": "AdapterRemoveRequest",
+      "response": "AdapterRemoved",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "providers",
+      "name": "adapter.probe",
+      "request": "AdapterProbeRequest",
+      "response": "AdapterProbed",
+      "tier": "idempotent_command"
     }
   ]
 }

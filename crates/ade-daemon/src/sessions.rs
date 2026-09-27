@@ -106,6 +106,7 @@ pub struct Sessions {
     pub review: Arc<crate::review::Review>,
     history: Arc<crate::history::History>,
     usage: Arc<crate::usage::Usage>,
+    adapters: crate::adapters::Adapters,
     pub worktrees: Arc<crate::worktrees::Worktrees>,
     /// The plugin registry, or why it could not open. Its failure never blocks the core.
     plugins: std::result::Result<crate::plugins::Plugins, String>,
@@ -145,6 +146,7 @@ impl Sessions {
         let history = crate::history::History::open(path)?;
         let usage = crate::usage::Usage::open(path)?;
         let sessions = Arc::new(Self {
+            adapters: crate::adapters::Adapters::open(path)?,
             history,
             usage,
             runtime,
@@ -609,6 +611,9 @@ impl Sessions {
         }
         if op.starts_with("usage.") {
             return self.usage.command(request);
+        }
+        if op.starts_with("adapter.") {
+            return self.adapters.command(request);
         }
         if op == "review.feedback.search" {
             let data = self.data.lock().unwrap();
