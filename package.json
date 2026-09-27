@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "packageManager": "pnpm@12.1.0",
   "scripts": {
+    "prepare": "husky",
     "dev": "pnpm build:sdk && pnpm --filter @ade/cli build && node scripts/dev-desktop.mjs",
     "build": "pnpm build:sdk && pnpm --filter @ade/cli build && pnpm --filter @ade/desktop build",
     "build:sdk": "pnpm --filter @ade/contracts build && pnpm --filter @ade/client build",
@@ -34,7 +35,9 @@
     "ajv": "8.20.0",
     "electron-builder": "26.15.3",
     "fallow": "3.28.0",
+    "husky": "9.1.7",
     "json-schema-to-typescript": "16.0.0",
+    "lint-staged": "17.6.0",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
     "oxlint-tsgolint": "7.0.2003",
