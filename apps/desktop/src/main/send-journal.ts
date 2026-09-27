@@ -1,6 +1,12 @@
+// The send journal keeps only prompts the profile daemon has not admitted, plus
+// the restore-held records the transfer bundle reconciles. Once `draft.send.prepare`
+// (or `draft.send.get`) proves the daemon holds an intent, the daemon owns it and
+// the record leaves the journal. Storage is the client outbox over a file.
 import { createHash, randomUUID } from 'node:crypto'
-import { open, mkdir, readFile, rename, lstat, unlink, link } from 'node:fs/promises'
+import { open, readFile, lstat, unlink, link } from 'node:fs/promises'
 import { dirname, isAbsolute, join, basename } from 'node:path'
+import { Outbox, type OutboxCodec } from '@ade/client/outbox'
+import { fileOutboxStorage } from './outbox-file'
 
 const version = 1
 const maxFileBytes = 16 * 1024 * 1024
@@ -128,22 +134,21 @@ function copyRecord(record: SendJournalRecord): SendJournalRecord {
   return structuredClone(record)
 }
 
-function decodeJournal(contents: string): Map<string, SendJournalRecord> {
-  let parsed: unknown
-  try { parsed = JSON.parse(contents) }
-  catch { throw new Error('Send recovery journal is invalid; preserve the file for recovery') }
-  if (!plainObject(parsed) || !hasFields(parsed, ['records', 'version']) || parsed.version !== version ||
-    !Array.isArray(parsed.records) || parsed.records.length > maxRecords) {
-    throw new Error('Send recovery journal has an invalid or unsupported format; preserve the file for recovery')
-  }
-  const records = new Map<string, SendJournalRecord>()
-  for (const value of parsed.records) {
-    if (!validRecord(value)) throw new Error('Send recovery journal contains an invalid record; preserve the file for recovery')
-    const key = recordKey(value)
-    if (records.has(key)) throw new Error('Send recovery journal contains duplicate owners; preserve the file for recovery')
-    records.set(key, copyRecord(value))
-  }
-  return records
+const codec: OutboxCodec<SendJournalRecord> = {
+  version,
+  name: 'Send recovery journal',
+  maxRecords,
+  key: recordKey,
+  decode(parsed: unknown): SendJournalRecord[] {
+    if (!plainObject(parsed) || !hasFields(parsed, ['records', 'version']) || parsed.version !== version ||
+      !Array.isArray(parsed.records) || parsed.records.length > maxRecords) {
+      throw new Error('Send recovery journal has an invalid or unsupported format; preserve the file for recovery')
+    }
+    for (const value of parsed.records) {
+      if (!validRecord(value)) throw new Error('Send recovery journal contains an invalid record; preserve the file for recovery')
+    }
+    return parsed.records as SendJournalRecord[]
+  },
 }
 function decodeTransfer(contents: string): TransferBundle {
   let value: unknown
@@ -198,27 +203,10 @@ function matchingIntent(record: SendJournalRecord, response: unknown): boolean {
 }
 
 export class SendJournal {
-  private records: Map<string, SendJournalRecord>
-  private tail: Promise<void> = Promise.resolve()
-  private unsafe = false
-
-  private constructor(private readonly filePath: string, records: Map<string, SendJournalRecord>) {
-    this.records = records
-  }
+  private constructor(private readonly outbox: Outbox<SendJournalRecord>) {}
 
   static async open(filePath: string): Promise<SendJournal> {
-    if (!isAbsolute(filePath) || filePath.includes('\0')) throw new Error('Send recovery journal path must be absolute')
-    let contents: string
-    try {
-      const info = await lstat(filePath)
-      if (!info.isFile() || info.size > maxFileBytes) throw new Error('Send recovery journal is invalid or too large; preserve the file for recovery')
-      contents = await readFile(filePath, 'utf8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new SendJournal(filePath, new Map())
-      throw error
-    }
-    if (Buffer.byteLength(contents) > maxFileBytes) throw new Error('Send recovery journal is too large; preserve the file for recovery')
-    return new SendJournal(filePath, decodeJournal(contents))
+    return new SendJournal(await Outbox.open(fileOutboxStorage(filePath, codec.name), codec))
   }
 
   static async inspectTransfer(source: string, expectedSourceProfileId: string): Promise<{ recordCount: number }> {
@@ -241,10 +229,8 @@ export class SendJournal {
     return bundle
   }
 
-  async list(): Promise<SendJournalRecord[]> {
-    await this.tail
-    if (this.unsafe) throw new Error('Send recovery journal persistence is uncertain; preserve the file for recovery')
-    return [...this.records.values()].map(copyRecord)
+  list(): Promise<SendJournalRecord[]> {
+    return this.outbox.list()
   }
 
   /** A bounded file snapshot only. The profile backup coordinator must still stop source-side sends. */
@@ -290,7 +276,7 @@ export class SendJournal {
     const mapped = bundle.records.value.map((record): SendJournalRecord => ({ ...copyRecord(record),
       profileId: targetProfileId, endpoint: targetEndpoint, restoreHold: true }))
     let reconciled = 0
-    await this.mutate(async (records) => {
+    await this.outbox.mutate(async (records) => {
       const target = [...records.values()].filter((record) => record.profileId === targetProfileId)
       const incoming = new Map(mapped.map((record) => [recordKey(record), record]))
       if (target.some((record) => {
@@ -322,77 +308,21 @@ export class SendJournal {
 
   async upsert(record: SendJournalRecord): Promise<void> {
     if (!validRecord(record)) throw new Error('Invalid send recovery record')
-    const next = copyRecord(record)
-    return this.mutate(async (records) => {
-      const key = recordKey(next)
-      const previous = records.get(key)
-      if (previous && (previous.requestId !== next.requestId || previous.endpoint !== next.endpoint ||
-        previous.text !== next.text || previous.draftText !== next.draftText ||
-        previous.draftRevision !== next.draftRevision ||
-        JSON.stringify(previous.attachments) !== JSON.stringify(next.attachments) ||
-        (previous.dispatchStarted && !next.dispatchStarted) || (previous.restoreHold && !next.restoreHold))) {
-        throw new Error('Another prompt or payload owns this send recovery record')
-      }
-      records.set(key, next)
-    })
+    await this.outbox.put(record, (previous, next) => previous.requestId === next.requestId &&
+      previous.endpoint === next.endpoint && previous.text === next.text &&
+      previous.draftText === next.draftText && previous.draftRevision === next.draftRevision &&
+      JSON.stringify(previous.attachments) === JSON.stringify(next.attachments) &&
+      !(previous.dispatchStarted && !next.dispatchStarted) && !(previous.restoreHold && !next.restoreHold),
+    'Another prompt or payload owns this send recovery record')
   }
 
-  async markDispatched(identity: SendJournalIdentity): Promise<void> {
+  /**
+   * Drops the record for this exact request, once the daemon holds its intent or
+   * the prompt is resolved. A missing record, or one for another request, stays as
+   * it is. Returns whether a record was removed.
+   */
+  remove(identity: SendJournalIdentity): Promise<boolean> {
     if (!validIdentity(identity)) throw new Error('Invalid send recovery identity')
-    return this.mutate(async (records) => {
-      const key = recordKey(identity)
-      const record = records.get(key)
-      if (!record || record.requestId !== identity.requestId) throw new Error('Send recovery record changed before dispatch')
-      if (record.restoreHold) throw new Error('Restored prompt is held until its source outcome is reconciled')
-      records.set(key, { ...record, dispatchStarted: true })
-    })
-  }
-
-  async remove(identity: SendJournalIdentity): Promise<void> {
-    if (!validIdentity(identity)) throw new Error('Invalid send recovery identity')
-    return this.mutate(async (records) => {
-      const key = recordKey(identity)
-      const record = records.get(key)
-      if (!record || record.requestId !== identity.requestId) throw new Error('Send recovery record changed before removal')
-      records.delete(key)
-    })
-  }
-
-  private mutate(change: (records: Map<string, SendJournalRecord>) => Promise<void>): Promise<void> {
-    const operation = this.tail.then(async () => {
-      if (this.unsafe) throw new Error('Send recovery journal persistence is uncertain; preserve the file for recovery')
-      const next = new Map(this.records)
-      await change(next)
-      if (next.size > maxRecords) throw new Error('Send recovery journal is full')
-      await this.persist(next)
-      this.records = next
-    })
-    this.tail = operation.catch(() => undefined)
-    return operation
-  }
-
-  private async persist(records: Map<string, SendJournalRecord>): Promise<void> {
-    const directory = dirname(this.filePath)
-    const data = JSON.stringify({ version, records: [...records.values()] } satisfies JournalFile)
-    if (Buffer.byteLength(data) > maxFileBytes) throw new Error('Send recovery journal is full')
-    await mkdir(directory, { recursive: true, mode: 0o700 })
-    const temporary = `${this.filePath}.${randomUUID()}.tmp`
-    let renamed = false
-    try {
-      const file = await open(temporary, 'wx', 0o600)
-      try {
-        await file.writeFile(data)
-        await file.sync()
-      } finally { await file.close() }
-      await rename(temporary, this.filePath)
-      renamed = true
-      const parent = await open(directory, 'r')
-      try { await parent.sync() }
-      finally { await parent.close() }
-    } catch (error) {
-      if (renamed) this.unsafe = true
-      else await unlink(temporary).catch(() => undefined)
-      throw error
-    }
+    return this.outbox.remove(recordKey(identity), (record) => record.requestId === identity.requestId)
   }
 }

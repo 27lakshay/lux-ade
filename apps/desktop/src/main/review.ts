@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { dailyUseCommand, formatReviewFeedback, type DailyUseRequest, type DailyUseResponse,
   type ReviewAnchor, type ReviewFeedback } from '@ade/client'
+import { decideGitAdmission, gitAdmitted, pendingGitOperation } from '@ade/client/outbox'
 import type { GitIntent, GitJournal } from './git-journal'
 import { getClient, getClientGeneration, getSocket, journalProfileId } from './profile-connection'
 import { validId } from './validation'
@@ -11,6 +12,14 @@ export const setGitJournal = (value: GitJournal): void => { gitJournal = value }
 function gitRecovery(): GitJournal {
   if (!gitJournal) throw new Error('Git recovery journal is unavailable')
   return gitJournal
+}
+type ReviewOperationEntry = DailyUseResponse<'review.operation.list'>['operations'][number]
+/** The workspace's daemon-owned Git operations that still need the person. */
+async function listGitOperations(endpoint: string, workspaceId: string,
+  includeAcknowledged = false): Promise<ReviewOperationEntry[]> {
+  const response = await dailyUseCommand<'review.operation.list'>(endpoint, { op: 'review.operation.list',
+    workspace_id: workspaceId, ...(includeAcknowledged ? { include_acknowledged: true } : {}) })
+  return response.operations
 }
 type ReviewStatus = DailyUseResponse<'review.status'>
 type ReviewDiff = DailyUseResponse<'review.diff_page'>
@@ -213,7 +222,16 @@ export function registerReviewIpc(): void {
         request = { op, ...target }
       }
       if (intent) {
+        // One operation per workspace may need the person at a time: a local
+        // unadmitted record, or a daemon operation still running or interrupted
+        // and unacknowledged. The record is durable before the request is sent.
         assertReviewContext(context, workspaceId)
+        const [local, listed] = await Promise.all([gitRecovery().pending(intent.profile_id, workspaceId),
+          listGitOperations(context.endpoint, workspaceId)])
+        assertReviewContext(context, workspaceId)
+        const admission = decideGitAdmission(requestId,
+          local !== null && JSON.stringify(local) === JSON.stringify(intent), local, listed)
+        if (admission.kind === 'refuse') throw new Error(admission.reason)
         await gitRecovery().prepare(intent)
         assertReviewContext(context, workspaceId)
       }
@@ -221,9 +239,12 @@ export function registerReviewIpc(): void {
       assertReviewContext(context, workspaceId)
       const receipt = response.operation
       if (response.type !== 'review_operation' || !receipt || typeof receipt !== 'object' ||
-        receipt.id !== args.request_id || !['running', 'succeeded', 'failed', 'interrupted'].includes(String(receipt.status))) {
+        receipt.id !== args.request_id || !['running', 'succeeded', 'failed', 'interrupted'].includes(String(receipt.status)) ||
+        (intent !== null && receipt.op !== intent.op)) {
         throw new Error('Invalid Git operation receipt')
       }
+      // The receipt proves admission, so the daemon owns the operation from here.
+      if (intent) await gitRecovery().release(intent.profile_id, workspaceId, requestId)
       return response
     }
     const status = await reviewStatus(context, workspaceId)
@@ -253,32 +274,58 @@ export function registerReviewIpc(): void {
     assertReviewContext(context, workspaceId)
     return response
   })
+  // The renderer's Git recovery view keeps its shape: `pending` is one operation
+  // that still needs the person, and `archived` lists acknowledged interrupted
+  // ones. The local outbox supplies only unadmitted records; the daemon supplies
+  // everything it admitted.
   ipcMain.handle('ade:git-journal-read', async (event, workspaceId: unknown) => {
     const context = activeReviewContext(event.sender.id, workspaceId)
-    const result = await gitRecovery().list(journalProfileId(context.endpoint), workspaceId as string)
-    assertReviewContext(context, workspaceId as string)
-    return result
+    const workspace = workspaceId as string
+    const profileId = journalProfileId(context.endpoint)
+    const [local, listed] = await Promise.all([gitRecovery().pending(profileId, workspace),
+      listGitOperations(context.endpoint, workspace, true)])
+    assertReviewContext(context, workspace)
+    let record = local
+    if (local && gitAdmitted(local.request_id, listed)) {
+      await gitRecovery().release(profileId, workspace, local.request_id)
+      record = null
+    }
+    const pending = pendingGitOperation(record, listed)
+    const daemonIntent = (entry: ReviewOperationEntry): Record<string, unknown> =>
+      ({ profile_id: profileId, workspace_id: workspace, op: entry.operation.op, request_id: entry.operation.id })
+    return {
+      pending: pending === null ? null : pending.source === 'local' ? pending.record : daemonIntent(pending.entry),
+      archived: listed.filter((entry) => entry.acknowledged_at !== null)
+        .map((entry) => ({ intent: daemonIntent(entry), acknowledged_at: entry.acknowledged_at })),
+    }
   })
   ipcMain.handle('ade:git-journal-ack', async (event, workspaceId: unknown, requestId: unknown, kind: unknown) => {
     const context = activeReviewContext(event.sender.id, workspaceId)
     if (typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId) ||
       (kind !== 'settle' && kind !== 'interrupted')) throw new Error('Invalid Git acknowledgment')
+    const workspace = workspaceId as string
     const profileId = journalProfileId(context.endpoint)
-    const pending = (await gitRecovery().list(profileId, workspaceId as string)).pending
-    if (!pending || pending.request_id !== requestId) throw new Error('Git operation changed before acknowledgment')
+    const local = await gitRecovery().pending(profileId, workspace)
+    if (local && local.request_id !== requestId) throw new Error('Git operation changed before acknowledgment')
     const response = await dailyUseCommand<'review.operation'>(context.endpoint, {
-      op: 'review.operation', workspace_id: workspaceId as string, operation_id: requestId,
+      op: 'review.operation', workspace_id: workspace, operation_id: requestId,
     })
-    assertReviewContext(context, workspaceId as string)
+    assertReviewContext(context, workspace)
     const operation = response.operation
     if (operation.id !== requestId ||
       (kind === 'settle' && operation.status !== 'succeeded' && operation.status !== 'failed') ||
       (kind === 'interrupted' && operation.status !== 'interrupted')) {
       throw new Error('Git operation is not ready for acknowledgment')
     }
-    if (kind === 'settle') await gitRecovery().settle(profileId, workspaceId as string, requestId)
-    else await gitRecovery().acknowledgeInterrupted(profileId, workspaceId as string, requestId)
-    assertReviewContext(context, workspaceId as string)
+    if (kind === 'interrupted') {
+      const acknowledged = await dailyUseCommand<'review.operation.acknowledge'>(context.endpoint, {
+        op: 'review.operation.acknowledge', workspace_id: workspace, operation_id: requestId,
+      })
+      if (acknowledged.operation.id !== requestId) throw new Error('Git acknowledgment did not match the operation')
+    }
+    // A local record left by a lost admission reply is settled with its operation.
+    await gitRecovery().release(profileId, workspace, requestId)
+    assertReviewContext(context, workspace)
     return { type: 'git_journal_acknowledged', request_id: requestId, status: operation.status }
   })
 }
