@@ -194,3 +194,107 @@ impl Content {
         }
     }
 }
+
+/// The most provider text ADE stores for one message, or for one tool's output.
+pub const MESSAGE_TEXT_LIMIT: usize = 1024 * 1024;
+
+/// Ends a message ADE cut at [`MESSAGE_TEXT_LIMIT`]. The marker is part of the
+/// stored text, so every client shows it and a copy carries it.
+pub const TRUNCATION_MARKER: &str =
+    "\n\n[ADE truncated this message at 1 MiB. The rest of the provider's output was not stored.]";
+
+/// Whether ADE already cut `text` at the limit.
+pub fn is_truncated(text: &str) -> bool {
+    text.len() <= MESSAGE_TEXT_LIMIT && text.ends_with(TRUNCATION_MARKER)
+}
+
+/// Bounds provider text to [`MESSAGE_TEXT_LIMIT`]: a longer text is cut on a
+/// character boundary and ends with [`TRUNCATION_MARKER`]. Bounding the same
+/// output again, whole or streamed, yields the same text. Returns whether it cut.
+pub fn bound_text(text: &mut String) -> bool {
+    if text.len() <= MESSAGE_TEXT_LIMIT {
+        return false;
+    }
+    let mut cut = MESSAGE_TEXT_LIMIT - TRUNCATION_MARKER.len();
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
+    text.push_str(TRUNCATION_MARKER);
+    true
+}
+
+/// Appends one streamed delta. Once the text was cut, later deltas are dropped.
+pub fn append_bounded(text: &mut String, delta: &str) {
+    if is_truncated(text) {
+        return;
+    }
+    text.push_str(delta);
+    bound_text(text);
+}
+
+/// Bounds a provider message's text and its tool output. Returns whether either was cut.
+pub fn bound_message(text: &mut String, content: &mut Option<Content>) -> bool {
+    let mut cut = bound_text(text);
+    if let Some(Content::Tool {
+        output: Some(output),
+        ..
+    }) = content
+    {
+        cut |= bound_text(output);
+    }
+    cut
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streamed_and_whole_output_bound_to_the_same_marked_text() {
+        let whole = "ab".repeat(MESSAGE_TEXT_LIMIT);
+        let mut once = whole.clone();
+        assert!(bound_text(&mut once));
+        assert!(once.len() <= MESSAGE_TEXT_LIMIT && is_truncated(&once));
+        let mut streamed = String::new();
+        for chunk in whole.as_bytes().chunks(65536) {
+            append_bounded(&mut streamed, std::str::from_utf8(chunk).unwrap());
+        }
+        assert_eq!(streamed, once);
+        let mut again = once.clone();
+        assert!(!bound_text(&mut again));
+        append_bounded(&mut again, "late");
+        assert_eq!(again, once);
+    }
+
+    #[test]
+    fn a_cut_never_splits_a_character() {
+        let cut = MESSAGE_TEXT_LIMIT - TRUNCATION_MARKER.len();
+        let mut text = format!("{}é{}", "a".repeat(cut - 1), "b".repeat(4096));
+        assert!(bound_text(&mut text));
+        assert_eq!(text, format!("{}{TRUNCATION_MARKER}", "a".repeat(cut - 1)));
+    }
+
+    #[test]
+    fn short_text_and_tool_output_are_kept_whole() {
+        let mut text = "short".to_owned();
+        let mut content = Some(Content::Tool {
+            call_id: "c".into(),
+            name: "tool".into(),
+            input: None,
+            output: Some("x".repeat(MESSAGE_TEXT_LIMIT + 1)),
+            is_error: false,
+        });
+        assert!(bound_message(&mut text, &mut content));
+        assert_eq!(text, "short");
+        let Some(Content::Tool {
+            output: Some(output),
+            ..
+        }) = &content
+        else {
+            panic!("tool content");
+        };
+        assert!(is_truncated(output));
+        assert!(content.as_ref().unwrap().validate().is_ok());
+    }
+}

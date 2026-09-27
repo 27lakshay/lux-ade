@@ -68,15 +68,13 @@ test('messages a child, attributes the parent Agent, and waits on each message w
     .toMatchObject({ state: 'pending', phase: 'queued', done: false })
 
   // Cancelling the held turn settles it as interrupted and pauses the child's queue. The queued
-  // message is reported blocked, not pending, until the queue is resumed and the child resumed.
+  // message is reported blocked, not pending, until the queue is resumed. The child's Agent
+  // is still connected, so resuming the queue dispatches it, as for an idle child.
   await profile.call('agent.cancel', { conversation_id: childId })
   const interrupted = await waitForChild(profile, childId, 'settled', { messageId: held.message_id, outcome: 'interrupted' })
   expect(interrupted.done).toBe(true)
   expect(await waitForChild(profile, childId, 'blocked', { messageId: queued.message_id })).toMatchObject({ done: true })
   await profile.call('queue.pause', { conversation_id: childId, paused: false })
-  expect(await waitOnce(profile, childId, { messageId: queued.message_id, timeoutMs: 60_000 }))
-    .toMatchObject({ state: 'blocked', done: true, reason: expect.stringContaining('interrupted') })
-  await profile.call('agent.resume', { conversation_id: childId })
   await waitForChild(profile, childId, 'settled', { messageId: queued.message_id, outcome: 'completed' })
   // The newest message is the default target of a wait.
   expect((await waitOnce(profile, childId)).message_id).toBe(queued.message_id)
