@@ -36,6 +36,23 @@ pub trait Provider: Send + Sync {
         prompt: &crate::prompt::Prompt,
     ) -> Result<String>;
     fn cancel(&self, session: &str, turn: &str) -> Result<()>;
+    /// Adds input to the running `turn` through the provider's native steer
+    /// method and returns the turn that accepted it. An adapter without one
+    /// refuses; it never queues the input as a new prompt (F035).
+    fn steer(
+        &self,
+        _session: &str,
+        _turn: &str,
+        _message_id: &str,
+        _prompt: &crate::prompt::Prompt,
+    ) -> Result<String> {
+        bail!("This provider adapter does not support steering a running turn")
+    }
+    /// Starts the provider's native context compaction (F040). `operation`
+    /// identifies the request so a retry is not delivered twice.
+    fn compact(&self, _session: &str, _operation: &str) -> Result<()> {
+        bail!("This provider adapter does not support context compaction")
+    }
     fn prepare_submission(&self) -> Option<String> {
         None
     }

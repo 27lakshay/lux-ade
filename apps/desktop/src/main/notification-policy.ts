@@ -4,7 +4,7 @@
 // asking twice from one process.
 
 export type ActivityKind = 'turn_completed' | 'turn_failed' | 'turn_interrupted' |
-  'approval_requested' | 'question_requested' | 'operation_unknown'
+  'approval_requested' | 'question_requested' | 'operation_unknown' | 'snooze_ended'
 
 export type NotifiableActivity = {
   id: string
@@ -32,6 +32,7 @@ const headline: Record<ActivityKind, string> = {
   approval_requested: 'Approval needed',
   question_requested: 'Question waiting',
   operation_unknown: 'Outcome unknown; check the conversation',
+  snooze_ended: 'Snooze ended',
 }
 
 export function decideNotification(activity: NotifiableActivity,

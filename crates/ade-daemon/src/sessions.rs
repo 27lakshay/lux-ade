@@ -32,6 +32,7 @@ mod accounts;
 mod activity;
 mod agents;
 mod checkpoints;
+mod controls;
 mod conversations;
 mod imports;
 mod inspection;
@@ -211,6 +212,7 @@ impl Sessions {
             }
         });
         sessions.start_retention_schedule();
+        sessions.start_snooze_wake();
         sessions.wake_queue();
         Ok(sessions)
     }
@@ -727,6 +729,7 @@ impl Sessions {
             op if op.starts_with("mcp.") => self.mcp_command(request),
             op if op.starts_with("checkpoint.") => self.checkpoint_command(request),
             op if op.starts_with("remote.") => self.remote_command(request),
+            op if controls::handles(op) => self.control_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"

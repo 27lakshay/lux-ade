@@ -127,12 +127,29 @@ export type ContractDefinition =
   | CommittedChanges
   | CommittedFile
   | Config
+  | ControlAvailability
+  | ControlOutcome
   | Conversation
   | ConversationChanged
+  | ConversationCompactRequest
+  | ConversationControl
+  | ConversationControlReply
+  | ConversationControls
+  | ConversationControlsRequest
   | ConversationCreateRequest
   | ConversationCreated
   | ConversationGetRequest
+  | ConversationRewindPreview
+  | ConversationRewindPreviewRequest
+  | ConversationRewindRequest
   | ConversationSnapshot
+  | ConversationSnooze
+  | ConversationSnoozeList
+  | ConversationSnoozeListRequest
+  | ConversationSnoozeReply
+  | ConversationSnoozeRequest
+  | ConversationSteerRequest
+  | ConversationUnsnoozeRequest
   | CostBasis
   | DaemonHello
   | DelegateRequest
@@ -382,6 +399,7 @@ export type ContractDefinition =
   | ReviewStatus
   | ReviewStatusRequest
   | ReviewUnstageRequest
+  | RewindScope
   | RunChanges
   | RunComparison
   | RunRecord
@@ -559,6 +577,7 @@ export type ActivityKind =
   | 'approval_requested'
   | 'question_requested'
   | 'operation_unknown'
+  | 'snooze_ended'
 /**
  * The read state of an activity. It only moves forward.
  */
@@ -738,6 +757,18 @@ export type CommittedChanges =
       state: 'unknown'
       [k: string]: unknown
     }
+/**
+ * A control whose support depends on the provider or on ADE's checkpoints.
+ */
+export type ConversationControl = 'steer' | 'compact' | 'rewind_conversation' | 'rewind_files'
+/**
+ * How a control request ended.
+ */
+export type ControlOutcome = 'unavailable' | 'acknowledged' | 'restored' | 'unchanged' | 'partial' | 'unknown'
+/**
+ * What a rewind returns to an earlier point.
+ */
+export type RewindScope = 'conversation' | 'files'
 /**
  * Where a cost figure came from.
  */
@@ -2727,6 +2758,23 @@ export interface Hook {
   timeout_seconds?: number
 }
 /**
+ * Whether one control may run on a Conversation now.
+ */
+export interface ControlAvailability {
+  available: boolean
+  control: ConversationControl
+  /**
+   * What performs the control: a native provider method such as
+   * `turn/steer`, or `ade.checkpoints` for file rewind. Absent when nothing does.
+   */
+  mechanism: string | null
+  /**
+   * Why the control is unavailable; absent when it is available.
+   */
+  reason: string | null
+  [k: string]: unknown
+}
+/**
  * The `conversation_changed` feed frame.
  */
 export interface ConversationChanged {
@@ -2779,6 +2827,71 @@ export interface PendingRequest {
   [k: string]: unknown
 }
 /**
+ * `conversation.compact`: ask the provider to compact its context now.
+ */
+export interface ConversationCompactRequest {
+  conversation_id: string
+  op: 'conversation.compact'
+  operation_id: string
+}
+/**
+ * The reply to `conversation.steer`, `conversation.compact` and `conversation.rewind`.
+ */
+export interface ConversationControlReply {
+  control: ConversationControl
+  conversation_id: string
+  /**
+   * The checkpoint restore result of a file rewind.
+   */
+  files: CheckpointRestored | null
+  operation_id: string
+  outcome: ControlOutcome
+  reason: string | null
+  /**
+   * The turn the provider accepted steered input into.
+   */
+  turn_id: string | null
+  /**
+   * The `conversation_control` type tag.
+   */
+  type: 'conversation_control'
+  [k: string]: unknown
+}
+export interface ConversationControls {
+  controls: ControlAvailability[]
+  conversation_id: string
+  provider: string
+  /**
+   * The active snooze, if any.
+   */
+  snooze: ConversationSnooze | null
+  /**
+   * The `conversation_controls` type tag.
+   */
+  type: 'conversation_controls'
+  [k: string]: unknown
+}
+/**
+ * A durable snooze: attention to the Conversation is deferred until `until`.
+ * It never stops or starts agent work.
+ */
+export interface ConversationSnooze {
+  conversation_id: string
+  snoozed_at: number
+  /**
+   * Wake time, milliseconds since the Unix epoch.
+   */
+  until: number
+  [k: string]: unknown
+}
+/**
+ * `conversation.controls`: which controls the Conversation supports now.
+ */
+export interface ConversationControlsRequest {
+  conversation_id: string
+  op: 'conversation.controls'
+}
+/**
  * `conversation.create`: make a Conversation in a workspace.
  */
 export interface ConversationCreateRequest {
@@ -2827,6 +2940,54 @@ export interface ConversationGetRequest {
   limit?: number
   op: 'conversation.get'
 }
+export interface ConversationRewindPreview {
+  availability: ControlAvailability
+  conversation_id: string
+  /**
+   * The checkpoint restore preview; present for an available file rewind.
+   */
+  files: CheckpointRestorePreview | null
+  scope: RewindScope
+  /**
+   * The `conversation_rewind_preview` type tag.
+   */
+  type: 'conversation_rewind_preview'
+  [k: string]: unknown
+}
+/**
+ * `conversation.rewind.preview`: whether a rewind may run, and what a file
+ * rewind would change.
+ */
+export interface ConversationRewindPreviewRequest {
+  /**
+   * The checkpoint a file rewind restores; required for `files`.
+   */
+  checkpoint_id?: string | null
+  conversation_id: string
+  op: 'conversation.rewind.preview'
+  scope: RewindScope
+}
+/**
+ * `conversation.rewind`: perform a previewed rewind.
+ */
+export interface ConversationRewindRequest {
+  /**
+   * Required for `files`.
+   */
+  checkpoint_id?: string | null
+  /**
+   * Required when the preview listed uncommitted work it would overwrite.
+   */
+  confirm_overwrite?: boolean
+  conversation_id: string
+  /**
+   * The preview's `state_token`; required for `files`.
+   */
+  expected_state?: string | null
+  op: 'conversation.rewind'
+  operation_id: string
+  scope: RewindScope
+}
 /**
  * The `conversation.get` reply.
  */
@@ -2842,6 +3003,74 @@ export interface ConversationSnapshot {
    */
   type: 'conversation_snapshot'
   [k: string]: unknown
+}
+export interface ConversationSnoozeList {
+  snoozes: ConversationSnooze[]
+  /**
+   * The `conversation_snooze_list` type tag.
+   */
+  type: 'conversation_snooze_list'
+  [k: string]: unknown
+}
+/**
+ * `conversation.snooze.list`: active snoozes, soonest wake first.
+ */
+export interface ConversationSnoozeListRequest {
+  /**
+   * Page size, at most 500; the daemon uses 100 when it is absent.
+   */
+  limit?: number | null
+  op: 'conversation.snooze.list'
+}
+export interface ConversationSnoozeReply {
+  conversation_id: string
+  /**
+   * The snooze after the command; absent when none is active.
+   */
+  snooze: ConversationSnooze | null
+  /**
+   * The `conversation_snooze` type tag.
+   */
+  type: 'conversation_snooze'
+  [k: string]: unknown
+}
+/**
+ * `conversation.snooze`: defer attention until a future time, at most 366 days ahead.
+ */
+export interface ConversationSnoozeRequest {
+  conversation_id: string
+  op: 'conversation.snooze'
+  /**
+   * Wake time, milliseconds since the Unix epoch.
+   */
+  until: number
+}
+/**
+ * `conversation.steer`: add input to the running turn. The provider must
+ * accept it into `turn_id`; it is never queued as a new prompt.
+ */
+export interface ConversationSteerRequest {
+  conversation_id: string
+  op: 'conversation.steer'
+  /**
+   * Caller-owned operation ID; it also becomes the steered message's ID.
+   */
+  operation_id: string
+  /**
+   * At most 1 MiB.
+   */
+  text: string
+  /**
+   * The turn the caller saw running. Steering refuses when another turn is active.
+   */
+  turn_id: string
+}
+/**
+ * `conversation.unsnooze`: end a snooze now without recording a wake.
+ */
+export interface ConversationUnsnoozeRequest {
+  conversation_id: string
+  op: 'conversation.unsnooze'
 }
 /**
  * The `hello` reply: build identity and every protocol version.
@@ -8053,7 +8282,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8084,6 +8313,14 @@ export interface RequestByOperation {
   "attachment.inspect": AttachmentInspectRequest
   "attachment.reclaim.preview": AttachmentReclaimPreviewRequest
   "attachment.reclaim.apply": AttachmentReclaimApplyRequest
+  "conversation.controls": ConversationControlsRequest
+  "conversation.steer": ConversationSteerRequest
+  "conversation.compact": ConversationCompactRequest
+  "conversation.rewind.preview": ConversationRewindPreviewRequest
+  "conversation.rewind": ConversationRewindRequest
+  "conversation.snooze": ConversationSnoozeRequest
+  "conversation.unsnooze": ConversationUnsnoozeRequest
+  "conversation.snooze.list": ConversationSnoozeListRequest
   "agent.cancel": AgentCancelRequest
   "agent.resume": AgentResumeRequest
   "agent.disconnect": AgentDisconnectRequest
@@ -8270,6 +8507,14 @@ export interface ResponseByOperation {
   "attachment.inspect": AttachmentInspection
   "attachment.reclaim.preview": AttachmentReclaimPreviewReply
   "attachment.reclaim.apply": AttachmentReclaim
+  "conversation.controls": ConversationControls
+  "conversation.steer": ConversationControlReply
+  "conversation.compact": ConversationControlReply
+  "conversation.rewind.preview": ConversationRewindPreview
+  "conversation.rewind": ConversationControlReply
+  "conversation.snooze": ConversationSnoozeReply
+  "conversation.unsnooze": ConversationSnoozeReply
+  "conversation.snooze.list": ConversationSnoozeList
   "agent.cancel": Ack
   "agent.resume": Ack
   "agent.disconnect": Ack

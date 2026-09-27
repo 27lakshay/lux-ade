@@ -261,14 +261,7 @@ impl Provider for Adapter {
                 "Codex account identity changed before starting a turn"
             );
         }
-        let mut input = vec![json!({"type":"text","text":prompt.text})];
-        for content in &prompt.attachments {
-            if content.attachment.media_type.starts_with("image/") {
-                input.push(json!({"type":"image","url":format!("data:{};base64,{}",content.attachment.media_type,content.data)}));
-            } else {
-                input.push(json!({"type":"text","text":content.text_block()?}));
-            }
-        }
+        let input = user_input(prompt)?;
         let r = self.rpc.request(
             "turn/start",
             json!({"threadId":session,"clientUserMessageId":submission,"input":input}),
@@ -281,6 +274,31 @@ impl Provider for Adapter {
     fn cancel(&self, session: &str, turn: &str) -> Result<()> {
         self.rpc
             .request("turn/interrupt", json!({"threadId":session,"turnId":turn}))?;
+        Ok(())
+    }
+    /// Codex 0.157.0 `turn/steer`: the request fails unless `expectedTurnId`
+    /// is the active turn, and the reply names the turn that took the input.
+    fn steer(
+        &self,
+        session: &str,
+        turn: &str,
+        message_id: &str,
+        prompt: &crate::prompt::Prompt,
+    ) -> Result<String> {
+        let r = self.rpc.request(
+            "turn/steer",
+            json!({"threadId":session,"expectedTurnId":turn,"clientUserMessageId":message_id,"input":user_input(prompt)?}),
+        )?;
+        r["turnId"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow!("Codex omitted the steered turn ID"))
+    }
+    /// Codex 0.157.0 `thread/compact/start`: an empty reply acknowledges the
+    /// start; a `contextCompaction` item reports the result.
+    fn compact(&self, session: &str, _operation: &str) -> Result<()> {
+        self.rpc
+            .request("thread/compact/start", json!({"threadId":session}))?;
         Ok(())
     }
     fn validate_answer(
@@ -488,6 +506,18 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
     };
     Ok(Some(crate::provider::sanitize_event(event)))
 }
+/// A prompt as Codex `UserInput` items; images travel as data URLs.
+fn user_input(prompt: &crate::prompt::Prompt) -> Result<Vec<Value>> {
+    let mut input = vec![json!({"type":"text","text":prompt.text})];
+    for content in &prompt.attachments {
+        if content.attachment.media_type.starts_with("image/") {
+            input.push(json!({"type":"image","url":format!("data:{};base64,{}",content.attachment.media_type,content.data)}));
+        } else {
+            input.push(json!({"type":"text","text":content.text_block()?}));
+        }
+    }
+    Ok(input)
+}
 fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
     let id = value["id"].as_str()?;
     let kind = value["type"].as_str()?;
@@ -526,6 +556,17 @@ fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
         ),
         // Native reasoning is private and must never enter the shared history.
         "reasoning" => return None,
+        // The provider's own record that it compacted context (F040). Codex
+        // does not expose the retained summary, so none is claimed.
+        "contextCompaction" => (
+            "tool",
+            if completed {
+                "Codex compacted the conversation context."
+            } else {
+                "Codex is compacting the conversation context."
+            }
+            .into(),
+        ),
         _ => (
             "tool",
             format!(
