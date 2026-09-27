@@ -1,6 +1,7 @@
 //! Pure carry decisions: reading Git status, selecting the changes to carry,
 //! verifying the target and deciding whether the source may be cleaned.
 //! Nothing here touches Git, the filesystem or the database.
+use ade_core::contract::resources::ClaimMode;
 use ade_core::contract::worktrees::{
     CarryBlocker, CarryChange, CarryKeepReason, CarrySourceOutcome, WorktreeCarryEntry,
     WorktreeOperationStatus, WorktreePhase,
@@ -352,6 +353,23 @@ pub fn may_receive(phase: Option<WorktreePhase>) -> Result<()> {
     }
 }
 
+/// How a carry claims its source. A carry that cleans the source rewrites
+/// and deletes files there, so it needs the source to itself: a terminal,
+/// Agent or restore still writing there could have an edit overwritten that
+/// neither the saved commit nor the target holds. `source_leased` is whether
+/// this profile holds a lease inside the source; the exclusive claim then
+/// refuses new leases and every other profile's use until it settles.
+pub fn source_claim(clean: bool, source_leased: bool) -> Result<ClaimMode> {
+    if !clean {
+        return Ok(ClaimMode::Shared);
+    }
+    ensure!(
+        !source_leased,
+        "The source has an active terminal or Agent. Close them before carrying with clean_source, or carry without cleaning."
+    );
+    Ok(ClaimMode::Exclusive)
+}
+
 /// A fetch source must name a configured remote and a full ref. URLs,
 /// refspecs and option-like values are refused before Git sees them.
 pub fn validate_fetch(remote: &str, reference: &str, remotes: &[String]) -> Result<()> {
@@ -574,6 +592,18 @@ mod tests {
         ] {
             assert!(may_receive(Some(phase)).is_err());
         }
+    }
+
+    #[test]
+    fn cleaning_the_source_needs_it_exclusively_and_unleased() {
+        // Without cleaning, the source is only read and may stay in use.
+        assert_eq!(source_claim(false, false).unwrap(), ClaimMode::Shared);
+        assert_eq!(source_claim(false, true).unwrap(), ClaimMode::Shared);
+        // An Agent or shell still writing in the source could lose an edit to
+        // the cleaning checkout, so the carry is refused before it starts.
+        assert!(source_claim(true, true).is_err());
+        // Otherwise the exclusive claim keeps new writers out until cleaned.
+        assert_eq!(source_claim(true, false).unwrap(), ClaimMode::Exclusive);
     }
 
     #[test]

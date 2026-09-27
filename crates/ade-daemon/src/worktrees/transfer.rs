@@ -262,9 +262,11 @@ impl Worktrees {
         })
     }
 
-    /// Admits a carry: checks paths and authority, then claims the source
-    /// for shared use and the target exclusively, so no terminal, Agent or
-    /// other profile works in the target while it changes.
+    /// Admits a carry: checks paths and authority, then claims the target
+    /// exclusively, so no terminal, Agent or other profile works in the
+    /// target while it changes. The source is claimed for shared use, or
+    /// exclusively when it will be cleaned, with the same lease check as the
+    /// target (see [`carry::source_claim`]).
     pub(super) fn admit_carry(
         &self,
         d: &Data,
@@ -316,6 +318,11 @@ impl Worktrees {
             !d.leases.keys().any(|lease| lease.starts_with(&target)),
             "The target has an active terminal or Agent. Close them before carrying changes into it."
         );
+        let clean = request.clean_source == Some(true);
+        let source_mode = carry::source_claim(
+            clean,
+            d.leases.keys().any(|lease| lease.starts_with(&source)),
+        )?;
         let target_claim = self.resources.acquire(
             Target::Existing(&target),
             ClaimMode::Exclusive,
@@ -324,7 +331,7 @@ impl Worktrees {
         )?;
         let source_claim = match self.resources.acquire(
             Target::Existing(&source),
-            ClaimMode::Shared,
+            source_mode,
             ClaimPurpose::Use,
             Some(operation_id),
         ) {
@@ -339,7 +346,7 @@ impl Worktrees {
             target,
             paths: request.paths.clone(),
             expect_head: request.expect_head.clone(),
-            clean: request.clean_source == Some(true),
+            clean,
             source_claim,
             target_claim,
         })
