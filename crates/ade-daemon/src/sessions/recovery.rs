@@ -43,13 +43,17 @@ pub(super) fn attributed(ownership: &Ownership) -> bool {
 }
 
 /// A process identity recorded while the old runtime incarnation was alive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ProcessRecord {
     pub pid: u32,
     /// The platform start stamp; a reused PID has another one.
     pub started: u64,
     /// Whether the process led its own process group when it was recorded.
     pub leader: bool,
+    /// Descendants seen under the process, as (PID, start stamp), including
+    /// those that left its group. A process that escapes its group is still
+    /// part of the tree; its own start stamp tells it apart from a reuse.
+    pub descendants: Vec<(u32, u64)>,
 }
 
 /// What an observation says about one recorded process and its group.
@@ -68,21 +72,29 @@ pub(super) enum Tree {
 /// A PID is not reused while a process group with that ID exists (POSIX
 /// "Process ID Reuse"). So when the PID now belongs to a process with another
 /// start stamp, the group the recorded process led has no members left, and
-/// the rows naming that group belong to the new process.
+/// the rows naming that group belong to the new process. A recorded
+/// descendant counts only with its own recorded start stamp, so it stays part
+/// of the tree after it left the group or lost its parent.
 pub(super) fn tree(record: &ProcessRecord, rows: Result<&[Row], &str>) -> Tree {
     let rows = match rows {
         Ok(rows) => rows,
         Err(reason) => return Tree::Unreadable(reason.to_owned()),
     };
     let pid = record.pid as i32;
-    let root = rows.iter().find(|row| row.identity.pid == pid);
-    if root.is_some_and(|row| row.identity.started != record.started) {
-        return Tree::Gone;
-    }
+    let reused = rows
+        .iter()
+        .any(|row| row.identity.pid == pid && row.identity.started != record.started);
     let mut running: Vec<u32> = rows
         .iter()
         .filter(|row| !row.zombie)
-        .filter(|row| row.identity.pid == pid || (record.leader && row.pgid == pid))
+        .filter(|row| {
+            (!reused && (row.identity.pid == pid || (record.leader && row.pgid == pid)))
+                || record.descendants.iter().any(|&(descendant, started)| {
+                    descendant as i32 == row.identity.pid
+                        && descendant != record.pid
+                        && started == row.identity.started
+                })
+        })
         .map(|row| row.identity.pid as u32)
         .collect();
     running.sort_unstable();
@@ -348,6 +360,7 @@ mod tests {
         pid: 40,
         started: 7,
         leader: true,
+        descendants: Vec::new(),
     };
 
     #[test]
@@ -403,6 +416,23 @@ mod tests {
     fn a_reused_pid_proves_the_old_group_is_empty() {
         let rows = [row(40, 99, 40, false), row(41, 100, 40, false)];
         assert_eq!(tree(&LEADER, Ok(&rows)), Tree::Gone);
+    }
+
+    #[test]
+    fn a_recorded_descendant_that_left_the_group_keeps_the_tree_running() {
+        let record = ProcessRecord {
+            descendants: vec![(60, 12)],
+            ..LEADER
+        };
+        // The leader is gone; the escaped descendant runs in its own group.
+        let escaped = [row(60, 12, 60, false)];
+        assert_eq!(tree(&record, Ok(&escaped)), Tree::Running(vec![60]));
+        // Even when the leader's PID was reused, the descendant is still proven by its own stamp.
+        let reused = [row(40, 99, 40, false), row(60, 12, 60, false)];
+        assert_eq!(tree(&record, Ok(&reused)), Tree::Running(vec![60]));
+        // A reused descendant PID, or an exited one, proves nothing.
+        assert_eq!(tree(&record, Ok(&[row(60, 13, 60, false)])), Tree::Gone);
+        assert_eq!(tree(&record, Ok(&[row(60, 12, 60, true)])), Tree::Gone);
     }
 
     #[test]

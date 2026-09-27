@@ -898,6 +898,7 @@ fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
     for table in [
         "runtime_incarnations",
         "runtime_attempt_records",
+        "runtime_attempt_descendants",
         "runtime_recovery_reports",
     ] {
         if present.iter().any(|name| name == table) {

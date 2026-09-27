@@ -196,6 +196,20 @@ impl Tracker {
         }
     }
 
+    /// Forget tracked processes that `rows` shows exited or reused. `rows`
+    /// must hold every tracked PID's own row when it runs, as a read with
+    /// [`Tracker::parents`] does. The root is kept, so the tree can still
+    /// be extended from it. Long-lived trees stay bounded by what runs.
+    pub fn forget_exited(&mut self, rows: &[Row]) {
+        let root = self.root;
+        self.tracked.retain(|&pid, &mut started| {
+            pid == root
+                || rows.iter().any(|row| {
+                    row.identity.pid == pid && row.identity.started == started && !row.zombie
+                })
+        });
+    }
+
     /// Rows from `rows` that are still running members of this tree.
     pub fn live<'a>(&self, rows: &'a [Row]) -> Vec<&'a Row> {
         let unique = unique_rows(rows);
@@ -697,6 +711,34 @@ mod tests {
                 group: true,
                 pids: vec![102]
             }
+        );
+    }
+
+    #[test]
+    fn exited_and_reused_descendants_are_forgotten_and_escaped_ones_kept() {
+        let mut tracker = Tracker::new(100, 100);
+        tracker.observe(&[
+            row(100, 10, 1, 100),
+            row(101, 11, 100, 100),
+            row(102, 12, 100, 102),
+            row(103, 13, 100, 100),
+        ]);
+        // 101 exited, 103's PID now names another process, 102 escaped and runs.
+        let later = [
+            row(100, 10, 1, 100),
+            row(102, 12, 1, 102),
+            row(103, 99, 1, 103),
+        ];
+        tracker.forget_exited(&later);
+        assert_eq!(
+            tracker.tracked().iter().map(|i| i.pid).collect::<Vec<_>>(),
+            vec![100, 102]
+        );
+        // The root is kept even once it is gone, so the tree can still grow from it.
+        tracker.forget_exited(&[]);
+        assert_eq!(
+            tracker.tracked().iter().map(|i| i.pid).collect::<Vec<_>>(),
+            vec![100]
         );
     }
 
