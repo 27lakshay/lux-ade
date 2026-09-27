@@ -936,7 +936,7 @@ impl Sessions {
         };
         if native_resolved {
             let agents: ade_core::contract::agents::AgentList =
-                serde_json::from_value(self.runtime.agent(json!({"op":"agent.list"}))?)?;
+                serde_json::from_value(self.runtime.agent(AgentOp::List)?)?;
             let key = native.answer_command_key();
             let present = agents
                 .agents

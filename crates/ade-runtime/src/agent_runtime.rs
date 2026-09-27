@@ -7,6 +7,7 @@ use crate::{
     provider::{self, Config, Connected, Event, Provider},
     runtime,
 };
+use ade_core::runtime_protocol::{AgentEvents, AgentOp, EventsTag};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -200,9 +201,12 @@ impl Run {
             })
             .map(|(e, _)| e.clone())
             .collect();
-        Ok(
-            json!({"type":"events","events":events,"closed":journal.closed,"output_failure":journal.output_failure}),
-        )
+        Ok(serde_json::to_value(AgentEvents {
+            tag: EventsTag::Tag,
+            events,
+            closed: journal.closed,
+            output_failure: journal.output_failure.clone(),
+        })?)
     }
     pub fn acknowledge(&self, cursor: u64) -> Result<Value> {
         let mut journal = self.journal.lock().unwrap();
@@ -442,29 +446,36 @@ impl Remote {
     fn call(&self, method: &str, key: String, mut args: Value) -> Result<Value> {
         args["method"] = json!(method);
         args["key"] = json!(key);
-        self.runtime
-            .agent(json!({"op":"agent.command","run":self.spec.run,"command":args}))
+        self.runtime.agent(AgentOp::Command {
+            run: self.spec.run.clone(),
+            command: args,
+        })
     }
     pub fn events(&self, after: u64) -> Result<Vec<Envelope>> {
-        let result = self
-            .runtime
-            .agent(json!({"op":"agent.events","run":self.spec.run,"after":after}))?;
-        Ok(serde_json::from_value(result["events"].clone())?)
+        let result = self.runtime.agent(AgentOp::Events {
+            run: self.spec.run.clone(),
+            after,
+        })?;
+        let reply: AgentEvents<Envelope> = serde_json::from_value(result)?;
+        Ok(reply.events)
     }
     pub fn acknowledge(&self, cursor: u64) -> Result<()> {
-        self.runtime
-            .agent(json!({"op":"agent.ack","run":self.spec.run,"cursor":cursor}))?;
+        self.runtime.agent(AgentOp::Ack {
+            run: self.spec.run.clone(),
+            cursor,
+        })?;
         Ok(())
     }
     pub fn connected(&self) -> Result<Connected> {
-        let result = self
-            .runtime
-            .agent(json!({"op":"agent.connected","run":self.spec.run}))?;
+        let result = self.runtime.agent(AgentOp::Connected {
+            run: self.spec.run.clone(),
+        })?;
         Ok(serde_json::from_value(result["connected"].clone())?)
     }
     pub fn create(&self) -> Result<()> {
-        self.runtime
-            .agent(json!({"op":"agent.create","spec":self.spec}))?;
+        self.runtime.agent(AgentOp::Create {
+            spec: serde_json::to_value(&self.spec)?,
+        })?;
         Ok(())
     }
 }
@@ -558,8 +569,9 @@ impl Provider for Remote {
         let _ = self.stop_confirmed();
     }
     fn stop_confirmed(&self) -> Result<()> {
-        self.runtime
-            .agent(json!({"op":"agent.stop","run":self.spec.run}))?;
+        self.runtime.agent(AgentOp::Stop {
+            run: self.spec.run.clone(),
+        })?;
         Ok(())
     }
 }

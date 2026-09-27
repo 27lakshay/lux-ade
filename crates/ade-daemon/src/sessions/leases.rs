@@ -322,10 +322,10 @@ impl Sessions {
         };
         let observed = Observation {
             runtime_instance: self.runtime.instance.clone(),
-            terminals: observe_terminals(&self.runtime.command(json!({"op":"terminal.list"}))?)?,
+            terminals: observe_terminals(&self.runtime.command(TerminalCommand::List)?)?,
             agents: if needs_agents {
                 Some(
-                    observe_agents(&self.runtime.agent(json!({"op":"agent.list"}))?)?
+                    observe_agents(&self.runtime.agent(AgentOp::List)?)?
                         .into_iter()
                         .map(|(agent, _, _)| agent)
                         .collect(),

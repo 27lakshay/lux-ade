@@ -137,8 +137,11 @@ pub mod runtime {
         #[serde(rename = "terminal.launch")]
         Launch {
             workspace: WorkspaceRecord,
-            terminal_key: String,
+            /// The runtime key; absent means the workspace ID.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            terminal_key: Option<String>,
             launch: Launch,
+            #[serde(default)]
             session_subscribers: usize,
         },
     }
@@ -148,8 +151,12 @@ pub mod runtime {
     #[derive(Serialize, Deserialize, Clone, Debug)]
     pub struct Ensure {
         pub workspace: WorkspaceRecord,
-        pub terminal_key: String,
+        /// The runtime key; absent means the workspace ID.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub terminal_key: Option<String>,
+        #[serde(default)]
         pub existing_only: bool,
+        #[serde(default)]
         pub session_subscribers: usize,
     }
 
@@ -357,7 +364,7 @@ mod tests {
         );
         let ensure = runtime::Command::Restart(runtime::Ensure {
             workspace: workspace.clone(),
-            terminal_key: "w".into(),
+            terminal_key: Some("w".into()),
             existing_only: false,
             session_subscribers: 2,
         })

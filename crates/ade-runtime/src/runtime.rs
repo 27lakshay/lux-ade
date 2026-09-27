@@ -1,7 +1,11 @@
 //! Control plane for the persistent terminal supervisor. Terminal bytes use a raw
 //! socket relay; only control messages are decoded by the application daemon.
+use ade_core::runtime_protocol::{
+    AgentOp, AgentRequest, Connect, Control, Handoff, Hello, OWNER_FENCED, Owner, OwnerClaim,
+    TerminalConnect,
+};
 use anyhow::{Context, Result, bail, ensure};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     fs::{File, OpenOptions},
     hash::{Hash, Hasher},
@@ -24,8 +28,8 @@ use std::{
 };
 
 // v7 adds explicit, identity-checked terminal process launches.
-pub const PROTOCOL: &str = "ade-runtime-v8";
-pub const APPLICATION_PROTOCOL: &str = "ade-application-v1";
+pub const PROTOCOL: &str = ade_core::runtime_protocol::VERSION;
+pub const APPLICATION_PROTOCOL: &str = ade_core::protocol::APPLICATION_PROTOCOL;
 pub const MAX_CONTROL: u64 = 128 * 1024;
 
 pub fn read_frame(reader: &mut BufReader<UnixStream>) -> Result<Value> {
@@ -124,11 +128,11 @@ impl Drop for SocketGuard {
     }
 }
 
-pub fn request(socket: &Path, value: &Value) -> Result<Value> {
+pub fn request(socket: &Path, request: &Connect) -> Result<Value> {
     let mut stream = UnixStream::connect(socket)?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    write_frame(&mut stream, value)?;
+    write_frame(&mut stream, &serde_json::to_value(request)?)?;
     response(&mut BufReader::new(stream))
 }
 fn response(reader: &mut BufReader<UnixStream>) -> Result<Value> {
@@ -188,7 +192,7 @@ impl Supervisor {
     pub fn connect(directory: &Path) -> Result<Self> {
         let socket = socket_path(directory);
         let hello = match UnixStream::connect(&socket) {
-            Ok(_) => request(&socket, &json!({"op":"hello"}))?,
+            Ok(_) => request(&socket, &Connect::Hello)?,
             Err(error)
                 if matches!(
                     error.kind(),
@@ -221,7 +225,7 @@ impl Supervisor {
                     .context("Could not start ade-runtime; build all binaries")?;
                 let deadline = Instant::now() + Duration::from_secs(8);
                 loop {
-                    if let Ok(value) = request(&socket, &json!({"op":"hello"})) {
+                    if let Ok(value) = request(&socket, &Connect::Hello) {
                         break value;
                     }
                     if let Some(exit) = child.try_wait()? {
@@ -239,44 +243,29 @@ impl Supervisor {
             }
             Err(error) => return Err(error.into()),
         };
-        ensure!(
-            hello["runtime_protocol"] == PROTOCOL,
-            "Incompatible runtime; existing terminals were preserved"
-        );
-        ensure!(
-            hello["data_directory"].as_str() == directory.to_str(),
-            "Runtime belongs to another data directory"
-        );
-        let instance = hello["instance_id"]
-            .as_str()
-            .context("Runtime omitted identity")?
-            .to_owned();
+        let hello = Hello::accept(&hello, directory.to_str())?;
+        let instance = hello.instance_id;
         let handoff_path = directory.join("runtime-handoff.json");
         let ticket = match std::fs::read(&handoff_path) {
             Ok(bytes) => {
                 let value: Value = serde_json::from_slice(&bytes)
                     .context("Invalid runtime handoff record; preserve it for recovery")?;
-                if value["instance_id"] == instance
-                    && value["expires_at"]
-                        .as_i64()
-                        .is_some_and(|t| t > crate::model::now_ms())
-                {
-                    value["ticket"].clone()
-                } else {
-                    Value::Null
-                }
+                Handoff::ticket_for(&value, &instance, crate::model::now_ms())
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Value::Null,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(e.into()),
         };
         let token = uuid::Uuid::new_v4().to_string();
         let mut stream = UnixStream::connect(&socket)?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        write_frame(
-            &mut stream,
-            &json!({"op":"owner.claim","token":token,"ticket":ticket,"instance_id":instance,"runtime_protocol":PROTOCOL}),
-        )?;
+        let claim = Connect::Claim(OwnerClaim {
+            token: token.clone(),
+            ticket,
+            instance_id: instance.clone(),
+            runtime_protocol: PROTOCOL.into(),
+        });
+        write_frame(&mut stream, &serde_json::to_value(claim)?)?;
         let mut reader = BufReader::new(stream);
         response(&mut reader)?;
         // A successful claim consumes the ticket. A later startup never replays it.
@@ -286,21 +275,23 @@ impl Supervisor {
         Ok(Self {
             socket,
             instance,
-            pid: hello["pid"].as_u64().context("Runtime omitted PID")? as u32,
+            pid: hello.pid,
             token,
             draining: AtomicBool::new(false),
             owner: Mutex::new(reader),
             handoff_path,
         })
     }
-    pub fn command(&self, value: Value) -> Result<Value> {
+    /// Sends one command on the owner's control socket and returns its reply.
+    pub fn command(&self, command: impl Into<Control>) -> Result<Value> {
+        let value = command.into().to_value();
         let mut reader = self.owner.lock().unwrap();
         write_frame(reader.get_mut(), &value)?;
         response(&mut reader)
     }
     pub fn prepare_handoff(&self) -> Result<Value> {
         self.draining.store(true, Ordering::Release);
-        let ticket = match self.command(json!({"op":"owner.prepare"})) {
+        let ticket = match self.command(Owner::Prepare) {
             Ok(ticket) => ticket,
             Err(error) => {
                 self.draining.store(false, Ordering::Release);
@@ -311,6 +302,9 @@ impl Supervisor {
             .handoff_path
             .with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
         let result = (|| -> Result<()> {
+            // Persist only a well-formed ticket; anything else aborts the handoff.
+            let _: Handoff = serde_json::from_value(ticket.clone())
+                .context("Runtime returned an invalid handoff ticket")?;
             let mut file = OpenOptions::new()
                 .create_new(true)
                 .write(true)
@@ -324,7 +318,7 @@ impl Supervisor {
         })();
         if result.is_err() {
             let _ = std::fs::remove_file(temporary);
-            let _ = self.command(json!({"op":"owner.abort"}));
+            let _ = self.command(Owner::Abort);
             self.draining.store(false, Ordering::Release);
         }
         result?;
@@ -334,7 +328,7 @@ impl Supervisor {
         self.draining.load(Ordering::Acquire)
     }
     pub fn gone(&self) -> bool {
-        if let Ok(hello) = request(&self.socket, &json!({"op":"hello"})) {
+        if let Ok(hello) = request(&self.socket, &Connect::Hello) {
             return hello["instance_id"] != self.instance;
         }
         // Reap our own child if it exited; a supervisor inherited from an earlier
@@ -348,8 +342,12 @@ impl Supervisor {
                 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
         }
     }
-    pub fn agent(&self, mut request: Value) -> Result<Value> {
-        request["token"] = json!(self.token);
+    /// Sends one `agent.*` request on its own connection with the owner token.
+    pub fn agent(&self, op: AgentOp) -> Result<Value> {
+        let request = serde_json::to_value(AgentRequest {
+            token: self.token.clone(),
+            op,
+        })?;
         loop {
             while self.draining() {
                 std::thread::sleep(Duration::from_millis(25));
@@ -361,13 +359,13 @@ impl Supervisor {
             let value = crate::agent_runtime::read(&mut BufReader::new(stream)).context(
                 "Agent runtime connection failed. Restart lux-ade, then resume; no prompt was resent",
             )?;
-            if value["code"] == "owner_fenced" {
+            if value["code"] == OWNER_FENCED {
                 // No receipt or external effect was admitted. Only a successful
                 // check on our original control socket permits retry after abort.
                 while self.draining() {
                     std::thread::sleep(Duration::from_millis(25));
                 }
-                self.command(json!({"op":"owner.check"}))?;
+                self.command(Owner::Check)?;
                 continue;
             }
             if value["type"] == "error" {
@@ -380,10 +378,11 @@ impl Supervisor {
         let mut stream = UnixStream::connect(&self.socket)?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        write_frame(
-            &mut stream,
-            &json!({"op":"terminal.connect","token":self.token,"workspace_id":workspace_id}),
-        )?;
+        let connect = Connect::TerminalConnect(TerminalConnect {
+            token: self.token.clone(),
+            workspace_id: workspace_id.into(),
+        });
+        write_frame(&mut stream, &serde_json::to_value(connect)?)?;
         // No terminal data is sent until the caller sends its first command.
         response(&mut BufReader::new(stream.try_clone()?))?;
         stream.set_read_timeout(None)?;
@@ -405,6 +404,7 @@ impl Drop for Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     #[test]
     fn draining_rejection_retries_same_command_only_after_owner_check() {
         for still_owner in [true, false] {
@@ -453,9 +453,10 @@ mod tests {
                 owner: Mutex::new(BufReader::new(owner)),
                 handoff_path: PathBuf::new(),
             };
-            let result = supervisor.agent(
-                json!({"op":"agent.command","command":{"method":"send","key":"same-submission"}}),
-            );
+            let result = supervisor.agent(AgentOp::Command {
+                run: "fixture".into(),
+                command: json!({"method":"send","key":"same-submission"}),
+            });
             assert_eq!(result.is_ok(), still_owner);
             control_thread.join().unwrap();
             command_thread.join().unwrap();

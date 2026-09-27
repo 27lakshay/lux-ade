@@ -10,6 +10,7 @@ use crate::{
     runtime::Supervisor,
     store::{Store, probe_catalog_bindings},
 };
+use ade_core::runtime_protocol::{AgentOp, terminal::Command as TerminalCommand};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -180,7 +181,7 @@ impl Sessions {
         Ok(sessions)
     }
     fn release_exited_script_leases(&self) -> Result<()> {
-        let catalogue = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let catalogue = self.runtime.command(TerminalCommand::List)?;
         let exited = catalogue["terminals"]
             .as_array()
             .context("Invalid terminal catalogue")?
@@ -229,10 +230,8 @@ impl Sessions {
         // Reconcile every persisted lease against the runtime before any
         // admission: script runs (durable workspace terminal membership),
         // service reservations and Agent runs. See `leases::decide`.
-        let terminals =
-            leases::observe_terminals(&self.runtime.command(json!({"op":"terminal.list"}))?)?;
-        let agent_records =
-            leases::observe_agents(&self.runtime.agent(json!({"op":"agent.list"}))?)?;
+        let terminals = leases::observe_terminals(&self.runtime.command(TerminalCommand::List)?)?;
+        let agent_records = leases::observe_agents(&self.runtime.agent(AgentOp::List)?)?;
         let mut live = HashSet::new();
         let mut runs = Vec::new();
         {

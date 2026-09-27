@@ -243,7 +243,7 @@ impl Sessions {
                 let list: ServiceListRequest = decode(request)?;
                 let workspace = non_empty("workspace_id", &list.workspace_id)?;
                 let services = self.data.lock().unwrap().store.services(workspace)?;
-                let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
+                let terminals = self.runtime.command(TerminalCommand::List)?;
                 let terminals = terminals["terminals"]
                     .as_array()
                     .context("Invalid terminal catalogue")?;
@@ -327,7 +327,10 @@ impl Sessions {
                         "Service changed; reload before removing"
                     );
                     if let Some(terminal) = service.terminal_id {
-                        self.runtime.command(json!({"op":"terminal.retire","workspace_id":workspace,"terminal_id":terminal}))?;
+                        self.runtime.command(TerminalCommand::Retire {
+                            workspace_id: workspace.to_string(),
+                            terminal_id: terminal.to_string(),
+                        })?;
                     }
                 }
                 d.store.remove_service(workspace, name, revision)?;
@@ -659,11 +662,11 @@ impl Sessions {
             result
         });
         let logs = if let Some(terminal_id) = &service.terminal_id {
-            match self
-                .runtime
-                .command(json!({"op":"terminal.tail","workspace_id":workspace,
-                "terminal_id":terminal_id,"limit_bytes":limit}))
-            {
+            match self.runtime.command(TerminalCommand::Tail {
+                workspace_id: workspace.to_string(),
+                terminal_id: terminal_id.to_string(),
+                limit_bytes: limit,
+            }) {
                 Ok(tail)
                     if service
                         .terminal_owner
@@ -817,9 +820,9 @@ impl Sessions {
             }
             services
         };
-        let before = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let before = self.runtime.command(TerminalCommand::List)?;
         let observed = listeners::observe()?;
-        let after = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let after = self.runtime.command(TerminalCommand::List)?;
         let terminal_metrics = |snapshot: &Value, terminal_id: &str| -> Option<Value> {
             snapshot["terminals"]
                 .as_array()?
@@ -971,7 +974,7 @@ impl Sessions {
         if targets.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
+        let terminals = self.runtime.command(TerminalCommand::List)?;
         let terminals = terminals["terminals"]
             .as_array()
             .context("Peer terminal catalogue is unavailable")?;
@@ -1057,7 +1060,7 @@ impl Sessions {
                 owner.runtime_instance == self.runtime.instance,
                 "Service supervisor was replaced; stop the service before starting a new run"
             );
-            let state = self.runtime.command(json!({"op":"terminal.list"}))?;
+            let state = self.runtime.command(TerminalCommand::List)?;
             let terminal = state["terminals"]
                 .as_array()
                 .and_then(|items| {
@@ -1088,9 +1091,10 @@ impl Sessions {
             before.config.directory(&w.root)?;
             before.check_ports()?;
             if let Some(terminal) = &before.terminal_id {
-                self.runtime.command(
-                    json!({"op":"terminal.retire","workspace_id":workspace,"terminal_id":terminal}),
-                )?;
+                self.runtime.command(TerminalCommand::Retire {
+                    workspace_id: workspace.to_string(),
+                    terminal_id: terminal.to_string(),
+                })?;
             }
         }
         let service =
@@ -1109,7 +1113,12 @@ impl Sessions {
         self.catalog_changed(&mut d)?;
         let launch = service.launch(&w.root, &peer_endpoints)?;
         w.terminal_id = owner.terminal_id.clone();
-        let result = self.runtime.command(json!({"op":"terminal.launch","workspace":w,"terminal_key":owner.terminal_id,"launch":launch,"session_subscribers":self.subscribers.load(Ordering::Relaxed)}))?;
+        let result = self.runtime.command(TerminalCommand::Launch {
+            workspace: w,
+            terminal_key: Some(owner.terminal_id.clone()),
+            launch,
+            session_subscribers: self.subscribers.load(Ordering::Relaxed),
+        })?;
         ensure!(
             result["metrics"]["transfer_id"] == owner.transfer_id,
             "Service launch returned another transfer identity"
@@ -1147,7 +1156,7 @@ impl Sessions {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut sent = false;
         loop {
-            let state = self.runtime.command(json!({"op":"terminal.list"}))?;
+            let state = self.runtime.command(TerminalCommand::List)?;
             let terminal = state["terminals"]
                 .as_array()
                 .context("Invalid terminal catalogue")?
@@ -1165,7 +1174,10 @@ impl Sessions {
                 break;
             }
             if !sent {
-                self.runtime.command(json!({"op":"terminal.stop","workspace_id":workspace,"terminal_id":owner.terminal_id}))?;
+                self.runtime.command(TerminalCommand::Stop {
+                    workspace_id: workspace.to_string(),
+                    terminal_id: owner.terminal_id.clone(),
+                })?;
                 sent = true;
             }
             ensure!(

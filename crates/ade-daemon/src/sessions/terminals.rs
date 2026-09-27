@@ -74,10 +74,9 @@ impl Sessions {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             let mut stopped = false;
             loop {
-                let state: runtime::Terminals = serde_json::from_value(
-                    self.runtime.command(runtime::Command::List.to_value())?,
-                )
-                .context("Invalid terminal catalogue")?;
+                let state: runtime::Terminals =
+                    serde_json::from_value(self.runtime.command(runtime::Command::List)?)
+                        .context("Invalid terminal catalogue")?;
                 let terminal = state
                     .terminals
                     .iter()
@@ -88,23 +87,17 @@ impl Sessions {
                     "Terminal view ownership changed"
                 );
                 if terminal.metrics["shell_running"] == false {
-                    self.runtime.command(
-                        runtime::Command::Retire {
-                            workspace_id: c.workspace_id.clone(),
-                            terminal_id: owner.terminal_id.clone(),
-                        }
-                        .to_value(),
-                    )?;
+                    self.runtime.command(runtime::Command::Retire {
+                        workspace_id: c.workspace_id.clone(),
+                        terminal_id: owner.terminal_id.clone(),
+                    })?;
                     break;
                 }
                 if !stopped {
-                    self.runtime.command(
-                        runtime::Command::Stop {
-                            workspace_id: c.workspace_id.clone(),
-                            terminal_id: owner.terminal_id.clone(),
-                        }
-                        .to_value(),
-                    )?;
+                    self.runtime.command(runtime::Command::Stop {
+                        workspace_id: c.workspace_id.clone(),
+                        terminal_id: owner.terminal_id.clone(),
+                    })?;
                     stopped = true;
                 }
                 ensure!(
