@@ -1,8 +1,19 @@
+use ade_core::contract::daemon::{
+    BrowserCloseRequest, BrowserInspectRequest, BrowserListRequest, BrowserMutation,
+    BrowserNavigateRequest, BrowserOpenRequest, BrowserOperation, BrowserOperationRequest,
+    BrowserOperationState, BrowserOwnerGetRequest, BrowserOwnerRegisterRequest,
+    BrowserOwnerReleased, BrowserOwnerReply, BrowserOwnerUnregisterRequest, BrowserTabReply,
+    BrowserTabs, DaemonHello, HelloRequest, RestartPrepared, RuntimePrepareRestartRequest,
+    RuntimeStatus, RuntimeStatusRequest, SessionSubscribeRequest,
+};
 use ade_daemon::{
+    receipts::{self, Admission, Status},
     runtime::{self, Supervisor},
     sessions::Sessions,
     worktrees::Lease,
 };
+use rusqlite::{Connection, OptionalExtension};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -17,7 +28,7 @@ use std::{
         Arc, Condvar, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 fn error_response(error: impl Into<anyhow::Error>) -> Value {
     ade_core::error::error_envelope(error.into())
@@ -25,7 +36,7 @@ fn error_response(error: impl Into<anyhow::Error>) -> Value {
 const MAX_REQUEST: u64 = 12 * 1024 * 1024;
 const MAX_BROWSER_REPLY: u64 = 1024 * 1024;
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(2);
-const MAX_BROWSER_RECEIPTS: usize = 4096;
+const MAX_BROWSER_RECEIPTS: i64 = 4096;
 
 #[derive(Clone)]
 struct BrowserOwner {
@@ -36,20 +47,123 @@ struct BrowserOwner {
     inode: u64,
 }
 
-enum BrowserReceiptState {
-    Accepted,
-    Unknown,
-    Completed(Value),
-}
-
-struct BrowserReceipt {
-    owner_id: String,
-    fingerprint: String,
-    state: BrowserReceiptState,
+impl BrowserOwner {
+    fn same_endpoint(&self, other: &Self) -> bool {
+        self.profile_id == other.profile_id
+            && self.owner_id == other.owner_id
+            && self.device == other.device
+            && self.inode == other.inode
+    }
 }
 
 fn browser_error(code: &str, message: &str) -> Value {
     json!({"type":"error","code":code,"message":message})
+}
+
+/// Decodes a request into its typed contract in `ade_core::contract::daemon`.
+fn decode<T: DeserializeOwned>(request: &Value) -> anyhow::Result<T> {
+    T::deserialize(request).map_err(|error| anyhow::anyhow!("Invalid request: {error}"))
+}
+
+/// Decodes a browser request after its fields passed the legacy checks, which
+/// keep the existing error wording.
+fn browser_decode<T: DeserializeOwned>(request: &Value) -> Result<T, Value> {
+    decode(request).map_err(|error| browser_error("invalid_request", &error.to_string()))
+}
+
+/// Serializes a typed contract reply.
+fn reply<T: Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).expect("contract replies serialize")
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+        })
+}
+
+/// The payload a browser mutation's receipt fingerprints. The owner recomputes
+/// this fingerprint from the same array, so its order and shape are fixed.
+fn browser_payload(
+    op: &str,
+    profile_id: &str,
+    owner_id: &str,
+    tab_id: Option<&str>,
+    url: Option<&str>,
+) -> Value {
+    json!([op, profile_id, owner_id, tab_id, url])
+}
+
+/// A browser mutation receipt as the journal holds it. `result` carries
+/// `{"owner_id"}` while the mutation is dispatched or unknown, and the owner's
+/// reply once it settles; both name the owner.
+struct BrowserReceipt {
+    fingerprint: String,
+    status: Status,
+    result: Option<Value>,
+}
+
+impl BrowserReceipt {
+    fn owner_id(&self) -> String {
+        self.result
+            .as_ref()
+            .and_then(|result| result["owner_id"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    }
+}
+
+fn browser_receipt(connection: &Connection, operation_id: &str) -> Option<BrowserReceipt> {
+    let (fingerprint, status, result) = connection
+        .query_row(
+            "SELECT fingerprint,status,result FROM operations WHERE id=?1",
+            [operation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .ok()??;
+    Some(BrowserReceipt {
+        fingerprint,
+        status: Status::parse(&status).ok()?,
+        result: result
+            .map(|text| serde_json::from_str(&text))
+            .transpose()
+            .ok()?,
+    })
+}
+
+/// The reply to a mutation whose operation ID the journal already holds, or
+/// `None` for a new one.
+fn browser_replay(admission: anyhow::Result<Admission>) -> Option<Value> {
+    Some(match admission {
+        Ok(Admission::New) => return None,
+        Ok(Admission::Conflict) => browser_error(
+            "conflict",
+            "Browser request ID has another target or payload",
+        ),
+        Ok(Admission::Expired) => {
+            browser_error("conflict", "Browser request ID has expired; use a new one")
+        }
+        Ok(Admission::Replay(receipt)) => match receipt.status {
+            Status::Settled => receipt.result.unwrap_or(Value::Null),
+            Status::Unknown => browser_error(
+                "outcome_unknown",
+                "Browser operation outcome is unknown; inspect before another action",
+            ),
+            Status::Accepted | Status::Dispatched | Status::Acknowledged => {
+                browser_error("in_progress", "Browser operation is still in progress")
+            }
+        },
+        Err(_) => browser_error("unavailable", "Browser operation journal is unavailable"),
+    })
 }
 
 fn browser_id(value: &Value, field: &str) -> anyhow::Result<String> {
@@ -67,9 +181,12 @@ fn browser_id(value: &Value, field: &str) -> anyhow::Result<String> {
     Ok(id.to_owned())
 }
 
+/// Reads the operation ID from `operation_id`, or from its legacy name `request_id`.
 fn browser_request_id(value: &Value) -> anyhow::Result<String> {
-    let id = value["request_id"]
-        .as_str()
+    let id = value
+        .get("operation_id")
+        .or_else(|| value.get("request_id"))
+        .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("Missing request_id"))?;
     anyhow::ensure!(
         !id.is_empty()
@@ -185,41 +302,63 @@ struct Host {
     default_workspace: String,
     leases: Mutex<HashMap<String, Lease>>,
     browser_owner: Mutex<Option<BrowserOwner>>,
-    browser_receipts: Mutex<HashMap<(String, String), BrowserReceipt>>,
+    /// In-memory receipts for browser mutations, on the shared receipt table.
+    browser_receipts: Mutex<Connection>,
     browser_budget: ProbeBudget,
     proxy_probe: ProbeBudget,
     admission: RwLock<()>,
     stopping: AtomicBool,
 }
 impl Host {
-    fn browser_operation(&self, request: &Value, profile_id: &str) -> Value {
-        let request_id = match browser_request_id(request) {
-            Ok(id) => id,
-            Err(error) => return browser_error("invalid_request", &error.to_string()),
-        };
-        let local = self
-            .browser_receipts
+    fn owner_is_current(&self, owner: &BrowserOwner) -> bool {
+        self.browser_owner
             .lock()
             .unwrap()
-            .get(&(profile_id.to_owned(), request_id.clone()))
-            .map(|receipt| {
-            let (state, result) = match &receipt.state {
-                BrowserReceiptState::Accepted => ("accepted", None),
-                BrowserReceiptState::Unknown => ("unknown", None),
-                BrowserReceiptState::Completed(value) => ("completed", Some(value.clone())),
+            .as_ref()
+            .is_some_and(|current| current.same_endpoint(owner))
+    }
+
+    fn browser_operation(&self, request: &Value, profile_id: &str) -> Value {
+        if let Err(error) = browser_request_id(request) {
+            return browser_error("invalid_request", &error.to_string());
+        }
+        let lookup: BrowserOperationRequest = match browser_decode(request) {
+            Ok(lookup) => lookup,
+            Err(error) => return error,
+        };
+        let request_id = lookup.operation_id;
+        let receipt = browser_receipt(&self.browser_receipts.lock().unwrap(), &request_id);
+        let local = receipt.map(|receipt| {
+            let (state, result) = match receipt.status {
+                Status::Settled => (
+                    BrowserOperationState::Completed,
+                    receipt.result.clone().unwrap_or(Value::Null),
+                ),
+                Status::Unknown => (BrowserOperationState::Unknown, Value::Null),
+                Status::Accepted | Status::Dispatched | Status::Acknowledged => {
+                    (BrowserOperationState::Accepted, Value::Null)
+                }
             };
-            json!({"type":"browser_operation","profile_id":profile_id,"owner_id":receipt.owner_id,
-                "request_id":request_id,"payload_fingerprint":receipt.fingerprint,"state":state,
-                "result":result})
+            BrowserOperation {
+                tag: Default::default(),
+                profile_id: profile_id.to_owned(),
+                owner_id: receipt.owner_id(),
+                request_id: request_id.clone(),
+                payload_fingerprint: receipt.fingerprint,
+                state,
+                op: None,
+                result: Some(result),
+            }
         });
         if let Some(value) = &local
-            && value["state"] != "unknown"
+            && value.state != BrowserOperationState::Unknown
         {
-            return value.clone();
+            return reply(value);
         }
         let unavailable = || {
             local
-                .clone()
+                .as_ref()
+                .map(reply)
                 .unwrap_or_else(|| browser_error("unavailable", "Browser operation is unavailable"))
         };
         let owner = self.browser_owner.lock().unwrap().clone();
@@ -248,95 +387,93 @@ impl Host {
         {
             return unavailable();
         }
-        let reply: Value = match serde_json::from_slice(&bytes) {
+        let owner_reply: Value = match serde_json::from_slice(&bytes) {
             Ok(value) => value,
             Err(_) => return unavailable(),
         };
-        if !reply.is_object()
-            || !reply["type"].is_string()
-            || reply["profile_id"] != profile_id
-            || reply["owner_id"] != owner.owner_id
-            || reply["request_id"] != request_id
-            || !self
-                .browser_owner
-                .lock()
-                .unwrap()
-                .as_ref()
-                .is_some_and(|current| {
-                    current.profile_id == owner.profile_id
-                        && current.owner_id == owner.owner_id
-                        && current.device == owner.device
-                        && current.inode == owner.inode
-                })
+        if !owner_reply.is_object()
+            || !owner_reply["type"].is_string()
+            || owner_reply["profile_id"] != profile_id
+            || owner_reply["owner_id"] != owner.owner_id
+            || owner_reply["request_id"] != request_id
+            || !self.owner_is_current(&owner)
         {
             return unavailable();
         }
-        if let Some(local) = local {
-            let fingerprint = local["payload_fingerprint"].as_str().unwrap_or_default();
-            let result = &reply["result"];
-            if reply["type"] != "browser_operation"
-                || reply["state"] != "completed"
-                || reply["payload_fingerprint"] != fingerprint
-                || !result.is_object()
-                || result["profile_id"] != profile_id
-                || result["owner_id"] != local["owner_id"]
-                || result["request_id"] != request_id
-                || result["payload_fingerprint"] != fingerprint
-            {
-                return local;
+        let Some(local) = local else {
+            if owner_reply["type"] == "error" {
+                return owner_reply;
             }
-            let mut receipts = self.browser_receipts.lock().unwrap();
-            if let Some(record) = receipts.get_mut(&(profile_id.to_owned(), request_id.clone()))
-                && record.fingerprint == fingerprint
-                && matches!(record.state, BrowserReceiptState::Unknown)
-            {
-                record.state = BrowserReceiptState::Completed(result.clone());
-                return json!({"type":"browser_operation","profile_id":profile_id,
-                    "owner_id":record.owner_id,"request_id":request_id,
-                    "payload_fingerprint":fingerprint,"state":"completed","result":result});
-            }
-            return local;
+            return match serde_json::from_value::<BrowserOperation>(owner_reply) {
+                Ok(typed) => reply(&typed),
+                Err(_) => browser_error("unavailable", "Browser operation is unavailable"),
+            };
+        };
+        let fingerprint = local.payload_fingerprint.as_str();
+        let result = &owner_reply["result"];
+        if owner_reply["type"] != "browser_operation"
+            || owner_reply["state"] != "completed"
+            || owner_reply["payload_fingerprint"] != fingerprint
+            || !result.is_object()
+            || result["profile_id"] != profile_id
+            || result["owner_id"] != local.owner_id.as_str()
+            || result["request_id"] != request_id
+            || result["payload_fingerprint"] != fingerprint
+        {
+            return reply(&local);
         }
-        reply
+        // Only an unknown receipt may settle here; a concurrent settle wins.
+        let connection = self.browser_receipts.lock().unwrap();
+        let unknown = browser_receipt(&connection, &request_id).is_some_and(|receipt| {
+            receipt.fingerprint == fingerprint && receipt.status == Status::Unknown
+        });
+        if !unknown
+            || receipts::settle(
+                &connection,
+                &request_id,
+                Status::Settled,
+                Some(result),
+                now_ms(),
+            )
+            .is_err()
+        {
+            return reply(&local);
+        }
+        reply(&BrowserOperation {
+            state: BrowserOperationState::Completed,
+            result: Some(result.clone()),
+            ..local
+        })
     }
 
     fn browser_mutation(&self, request: &Value, profile_id: &str, op: &str) -> Value {
-        let owner_id = match browser_id(request, "owner_id") {
-            Ok(id) => id,
-            Err(error) => return browser_error("invalid_request", &error.to_string()),
-        };
-        let request_id = match browser_request_id(request) {
-            Ok(id) => id,
-            Err(error) => return browser_error("invalid_request", &error.to_string()),
-        };
+        // These checks keep the existing error wording and order; the typed
+        // decode below then cannot fail on a missing field.
+        if let Err(error) = browser_id(request, "owner_id") {
+            return browser_error("invalid_request", &error.to_string());
+        }
+        if let Err(error) = browser_request_id(request) {
+            return browser_error("invalid_request", &error.to_string());
+        }
         let needs_tab = op != "browser.open";
         let needs_url = op != "browser.close";
-        let tab_id = if needs_tab {
-            match browser_id(request, "tab_id") {
-                Ok(id) => Some(id),
-                Err(error) => return browser_error("invalid_request", &error.to_string()),
-            }
-        } else {
-            None
-        };
-        let url = if needs_url {
-            match request["url"].as_str() {
-                Some(url)
-                    if !url.is_empty()
-                        && url.len() <= 8192
-                        && (url.starts_with("http://") || url.starts_with("https://")) =>
-                {
-                    Some(url)
-                }
-                _ => return browser_error("invalid_request", "Invalid browser URL"),
-            }
-        } else {
-            None
-        };
+        if needs_tab && let Err(error) = browser_id(request, "tab_id") {
+            return browser_error("invalid_request", &error.to_string());
+        }
+        if needs_url
+            && !request["url"].as_str().is_some_and(|url| {
+                !url.is_empty()
+                    && url.len() <= 8192
+                    && (url.starts_with("http://") || url.starts_with("https://"))
+            })
+        {
+            return browser_error("invalid_request", "Invalid browser URL");
+        }
         let allowed = [
             "op",
             "profile_id",
             "owner_id",
+            "operation_id",
             "request_id",
             "diagnostic_id",
             if needs_tab { "tab_id" } else { "" },
@@ -348,28 +485,36 @@ impl Host {
         {
             return browser_error("invalid_request", "Unknown browser mutation field");
         }
-        let canonical = json!([op, profile_id, owner_id, tab_id, url]);
-        let fingerprint = format!("{:x}", Sha256::digest(canonical.to_string().as_bytes()));
-        let key = (profile_id.to_owned(), request_id.to_owned());
+        let decoded = match op {
+            "browser.open" => browser_decode::<BrowserOpenRequest>(request)
+                .map(|open| (open.owner_id, open.operation_id, None, Some(open.url))),
+            "browser.navigate" => browser_decode::<BrowserNavigateRequest>(request).map(|nav| {
+                (
+                    nav.owner_id,
+                    nav.operation_id,
+                    Some(nav.tab_id),
+                    Some(nav.url),
+                )
+            }),
+            _ => browser_decode::<BrowserCloseRequest>(request)
+                .map(|close| (close.owner_id, close.operation_id, Some(close.tab_id), None)),
+        };
+        let (owner_id, request_id, tab_id, url) = match decoded {
+            Ok(fields) => fields,
+            Err(error) => return error,
+        };
+        let payload = browser_payload(op, profile_id, &owner_id, tab_id.as_deref(), url.as_deref());
+        let fingerprint = receipts::fingerprint(&payload);
         {
-            let receipts = self.browser_receipts.lock().unwrap();
-            if let Some(prior) = receipts.get(&key) {
-                if prior.fingerprint != fingerprint {
-                    return browser_error(
-                        "conflict",
-                        "Browser request ID has another target or payload",
-                    );
-                }
-                return match &prior.state {
-                    BrowserReceiptState::Accepted => {
-                        browser_error("in_progress", "Browser operation is still in progress")
-                    }
-                    BrowserReceiptState::Unknown => browser_error(
-                        "outcome_unknown",
-                        "Browser operation outcome is unknown; inspect before another action",
-                    ),
-                    BrowserReceiptState::Completed(reply) => reply.clone(),
-                };
+            // Probe the journal without admitting: dropping the transaction
+            // rolls back the receipt a new ID would create.
+            let mut connection = self.browser_receipts.lock().unwrap();
+            let probe = connection.transaction().map_err(anyhow::Error::from);
+            let admission = probe.and_then(|probe| {
+                receipts::begin(&probe, &request_id, op, &payload, None, now_ms())
+            });
+            if let Some(reply) = browser_replay(admission) {
+                return reply;
             }
         }
         let owner = self.browser_owner.lock().unwrap().clone();
@@ -379,66 +524,63 @@ impl Host {
             return browser_error("unavailable", "Browser owner changed; inspect it again");
         };
         let _permit = self.browser_budget.acquire();
-        // Take the journal lock after acquiring the bounded dispatch permit. A
-        // concurrent same-ID request can then observe the accepted receipt.
-        {
-            let mut receipts = self.browser_receipts.lock().unwrap();
-            if let Some(prior) = receipts.get(&key) {
-                if prior.fingerprint != fingerprint {
-                    return browser_error(
-                        "conflict",
-                        "Browser request ID has another target or payload",
-                    );
-                }
-                return match &prior.state {
-                    BrowserReceiptState::Accepted => {
-                        browser_error("in_progress", "Browser operation is still in progress")
-                    }
-                    BrowserReceiptState::Unknown => browser_error(
-                        "outcome_unknown",
-                        "Browser operation outcome is unknown; inspect before another action",
-                    ),
-                    BrowserReceiptState::Completed(reply) => reply.clone(),
-                };
+        // Admit after acquiring the bounded dispatch permit. A concurrent
+        // same-ID request then observes the dispatched receipt.
+        let mut connection = self.browser_receipts.lock().unwrap();
+        let admission = match connection.transaction() {
+            Ok(admission) => admission,
+            Err(_) => {
+                return browser_error("unavailable", "Browser operation journal is unavailable");
             }
-            if receipts.len() >= MAX_BROWSER_RECEIPTS {
-                return browser_error(
-                    "overloaded",
-                    "Browser operation journal is full; restart after inspecting outstanding work",
-                );
-            }
-            receipts.insert(
-                key.clone(),
-                BrowserReceipt {
-                    owner_id: owner_id.clone(),
-                    fingerprint: fingerprint.clone(),
-                    state: BrowserReceiptState::Accepted,
-                },
+        };
+        if let Some(reply) = browser_replay(receipts::begin(
+            &admission,
+            &request_id,
+            op,
+            &payload,
+            None,
+            now_ms(),
+        )) {
+            return reply;
+        }
+        let held: i64 = admission
+            .query_row("SELECT COUNT(*) FROM operations", [], |row| row.get(0))
+            .unwrap_or(i64::MAX);
+        if held > MAX_BROWSER_RECEIPTS {
+            return browser_error(
+                "overloaded",
+                "Browser operation journal is full; restart after inspecting outstanding work",
             );
         }
+        // Returning before the commit below rolls the admission back.
         let current_owner = self.browser_owner.lock().unwrap();
-        if !current_owner.as_ref().is_some_and(|current| {
-            current.profile_id == owner.profile_id
-                && current.owner_id == owner.owner_id
-                && current.device == owner.device
-                && current.inode == owner.inode
-        }) {
-            self.browser_receipts.lock().unwrap().remove(&key);
+        if !current_owner
+            .as_ref()
+            .is_some_and(|current| current.same_endpoint(&owner))
+        {
             return browser_error("unavailable", "Browser owner changed before dispatch");
         }
         let mut stream = match browser_connect(&owner) {
             Ok(stream) => stream,
-            Err(_) => {
-                self.browser_receipts.lock().unwrap().remove(&key);
-                return browser_error("unavailable", "Browser owner is unavailable");
-            }
+            Err(_) => return browser_error("unavailable", "Browser owner is unavailable"),
         };
+        let dispatched = receipts::settle(
+            &admission,
+            &request_id,
+            Status::Dispatched,
+            Some(&json!({"owner_id": owner_id})),
+            now_ms(),
+        );
+        if dispatched.is_err() || admission.commit().is_err() {
+            return browser_error("unavailable", "Browser operation journal is unavailable");
+        }
+        drop(connection);
         let mut command = json!({"op":op,"profile_id":profile_id,"owner_id":owner_id,
             "request_id":request_id,"payload_fingerprint":fingerprint});
         if let Some(tab_id) = &tab_id {
             command["tab_id"] = json!(tab_id);
         }
-        if let Some(url) = url {
+        if let Some(url) = &url {
             command["url"] = json!(url);
         }
         let uncertain = || {
@@ -449,7 +591,7 @@ impl Host {
         };
         let written = writeln!(stream, "{command}");
         drop(current_owner);
-        let mut reply = if written.is_err() {
+        let mut outcome = if written.is_err() {
             uncertain()
         } else {
             let mut reader = BufReader::new(stream);
@@ -479,35 +621,34 @@ impl Host {
                                     },
                                 )) =>
                     {
-                        value
+                        if value["type"] == "error" {
+                            value
+                        } else {
+                            // A reply outside the contract leaves the outcome unknown.
+                            serde_json::from_value::<BrowserMutation>(value)
+                                .map_or_else(|_| uncertain(), |typed| reply(&typed))
+                        }
                     }
                     _ => uncertain(),
                 }
             }
         };
-        if !self
-            .browser_owner
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|current| {
-                current.profile_id == owner.profile_id
-                    && current.owner_id == owner.owner_id
-                    && current.device == owner.device
-                    && current.inode == owner.inode
-            })
-        {
-            reply = uncertain();
+        if !self.owner_is_current(&owner) {
+            outcome = uncertain();
         }
-        let mut receipts = self.browser_receipts.lock().unwrap();
-        if let Some(record) = receipts.get_mut(&key) {
-            record.state = if reply["code"] == "outcome_unknown" {
-                BrowserReceiptState::Unknown
-            } else {
-                BrowserReceiptState::Completed(reply.clone())
-            };
-        }
-        reply
+        let (status, result) = if outcome["code"] == "outcome_unknown" {
+            (Status::Unknown, None)
+        } else {
+            (Status::Settled, Some(&outcome))
+        };
+        let _ = receipts::settle(
+            &self.browser_receipts.lock().unwrap(),
+            &request_id,
+            status,
+            result,
+            now_ms(),
+        );
+        outcome
     }
 
     fn browser_command(&self, request: &Value) -> Value {
@@ -535,14 +676,17 @@ impl Host {
             return self.browser_mutation(request, &profile_id, op);
         }
         if op == "browser.owner.register" {
-            let owner_id = match browser_id(request, "owner_id") {
-                Ok(id) => id,
-                Err(error) => return browser_error("invalid_request", &error.to_string()),
-            };
-            let Some(path) = request["socket_path"].as_str() else {
+            if let Err(error) = browser_id(request, "owner_id") {
+                return browser_error("invalid_request", &error.to_string());
+            }
+            if !request["socket_path"].is_string() {
                 return browser_error("invalid_request", "Missing socket_path");
+            }
+            let register: BrowserOwnerRegisterRequest = match browser_decode(request) {
+                Ok(register) => register,
+                Err(error) => return error,
             };
-            let socket = PathBuf::from(path);
+            let socket = PathBuf::from(register.socket_path);
             let (device, inode) = match browser_socket(&socket) {
                 Ok(identity) => identity,
                 Err(_) => {
@@ -554,37 +698,43 @@ impl Host {
             };
             let candidate = BrowserOwner {
                 profile_id,
-                owner_id,
+                owner_id: register.owner_id,
                 socket,
                 device,
                 inode,
             };
             let mut current = self.browser_owner.lock().unwrap();
-            if let Some(previous) = current.as_ref() {
-                let same_endpoint = previous.profile_id == candidate.profile_id
-                    && previous.owner_id == candidate.owner_id
-                    && previous.device == candidate.device
-                    && previous.inode == candidate.inode;
-                if !same_endpoint && browser_connect(previous).is_ok() {
-                    return browser_error("conflict", "Another live browser owner is registered");
-                }
+            if let Some(previous) = current.as_ref()
+                && !previous.same_endpoint(&candidate)
+                && browser_connect(previous).is_ok()
+            {
+                return browser_error("conflict", "Another live browser owner is registered");
             }
             *current = Some(candidate.clone());
-            return json!({"type":"browser_owner","profile_id":candidate.profile_id,
-                "owner_id":candidate.owner_id});
+            return reply(&BrowserOwnerReply {
+                tag: Default::default(),
+                profile_id: candidate.profile_id,
+                owner_id: candidate.owner_id,
+            });
         }
         if op == "browser.owner.unregister" {
-            let owner_id = match browser_id(request, "owner_id") {
-                Ok(id) => id,
-                Err(error) => return browser_error("invalid_request", &error.to_string()),
+            if let Err(error) = browser_id(request, "owner_id") {
+                return browser_error("invalid_request", &error.to_string());
+            }
+            let unregister: BrowserOwnerUnregisterRequest = match browser_decode(request) {
+                Ok(unregister) => unregister,
+                Err(error) => return error,
             };
             let mut current = self.browser_owner.lock().unwrap();
-            if current
-                .as_ref()
-                .is_some_and(|owner| owner.profile_id == profile_id && owner.owner_id == owner_id)
-            {
+            if current.as_ref().is_some_and(|owner| {
+                owner.profile_id == profile_id && owner.owner_id == unregister.owner_id
+            }) {
                 *current = None;
-                return json!({"type":"ack","profile_id":profile_id,"owner_id":owner_id});
+                return reply(&BrowserOwnerReleased {
+                    tag: Default::default(),
+                    profile_id,
+                    owner_id: unregister.owner_id,
+                });
             }
             return browser_error("unavailable", "Browser owner is unavailable");
         }
@@ -606,38 +756,52 @@ impl Host {
         {
             return browser_error("invalid_request", &error.to_string());
         }
+        let tab_id = match op {
+            "browser.owner.get" => browser_decode::<BrowserOwnerGetRequest>(request).map(|_| None),
+            "browser.list" => browser_decode::<BrowserListRequest>(request).map(|_| None),
+            _ => {
+                browser_decode::<BrowserInspectRequest>(request).map(|inspect| Some(inspect.tab_id))
+            }
+        };
+        let tab_id = match tab_id {
+            Ok(tab_id) => tab_id,
+            Err(error) => return error,
+        };
         let _permit = self.browser_budget.acquire();
         let mut stream = match browser_connect(&owner) {
             Ok(stream) => stream,
             Err(_) => return browser_error("unavailable", "Browser owner is unavailable"),
         };
         if op == "browser.owner.get" {
-            return json!({"type":"browser_owner","profile_id":owner.profile_id,
-                "owner_id":owner.owner_id});
+            return reply(&BrowserOwnerReply {
+                tag: Default::default(),
+                profile_id: owner.profile_id,
+                owner_id: owner.owner_id,
+            });
         }
         let mut command = json!({"op":op,"profile_id":owner.profile_id,"owner_id":owner.owner_id});
-        if let Some(tab_id) = request["tab_id"].as_str() {
+        if let Some(tab_id) = &tab_id {
             command["tab_id"] = json!(tab_id);
         }
         if writeln!(stream, "{command}").is_err() {
             return browser_error("unavailable", "Browser owner did not accept the request");
         }
         let mut reader = BufReader::new(stream);
-        let mut reply = Vec::new();
+        let mut bytes = Vec::new();
         if reader
             .by_ref()
             .take(MAX_BROWSER_REPLY + 1)
-            .read_until(b'\n', &mut reply)
+            .read_until(b'\n', &mut bytes)
             .is_err()
-            || reply.len() as u64 > MAX_BROWSER_REPLY
-            || reply.last() != Some(&b'\n')
+            || bytes.len() as u64 > MAX_BROWSER_REPLY
+            || bytes.last() != Some(&b'\n')
         {
             return browser_error(
                 "unavailable",
                 "Browser owner response is unavailable or too large",
             );
         }
-        let response: Value = match serde_json::from_slice(&reply) {
+        let response: Value = match serde_json::from_slice(&bytes) {
             Ok(value) => value,
             Err(_) => return browser_error("protocol", "Browser owner returned invalid JSON"),
         };
@@ -656,21 +820,20 @@ impl Host {
         }
         // An unregistered or replaced owner may finish an in-flight read. Never
         // present its response as current browser state.
-        if !self
-            .browser_owner
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|current| {
-                current.profile_id == owner.profile_id
-                    && current.owner_id == owner.owner_id
-                    && current.device == owner.device
-                    && current.inode == owner.inode
-            })
-        {
+        if !self.owner_is_current(&owner) {
             return browser_error("unavailable", "Browser owner changed during the request");
         }
-        response
+        if response["type"] == "error" {
+            return response;
+        }
+        let typed = if op == "browser.list" {
+            serde_json::from_value::<BrowserTabs>(response).map(|tabs| reply(&tabs))
+        } else {
+            serde_json::from_value::<BrowserTabReply>(response).map(|tab| reply(&tab))
+        };
+        typed.unwrap_or_else(|_| {
+            browser_error("protocol", "Browser owner reply failed its contract")
+        })
     }
 
     fn proxy_service(&self, request: &Value) -> anyhow::Result<(String, String, String, Value)> {
@@ -999,7 +1162,8 @@ impl Host {
         } // refresh_leases retires a lease only after every shell in the workspace exits.
         Ok(())
     }
-    fn status(&self) -> anyhow::Result<Value> {
+    fn status(&self, request: &Value) -> anyhow::Result<Value> {
+        let RuntimeStatusRequest {} = decode(request)?;
         let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
         let mut agents = self.runtime.agent(json!({"op":"agent.list"}))?;
         if let Some(runs) = agents["agents"].as_array_mut() {
@@ -1007,12 +1171,43 @@ impl Host {
                 run.as_object_mut().unwrap().remove("commands");
             }
         }
-        Ok(
-            json!({"type":"runtime_status","application_protocol":runtime::APPLICATION_PROTOCOL,"runtime_protocol":runtime::PROTOCOL,
-            "boot_id":self.sessions.boot_id,"pid":std::process::id(),"runtime_pid":self.runtime.pid,"runtime_instance":self.runtime.instance,
-            "runtime_socket":self.runtime.socket,"connected_agents":self.sessions.connected_agents(),"active_git_operations":self.sessions.worktrees.active_operations(),
-            "stopping":self.stopping.load(Ordering::Acquire),"terminals":terminals["terminals"],"agents":agents["agents"]}),
-        )
+        Ok(reply(&RuntimeStatus {
+            tag: Default::default(),
+            application_protocol: runtime::APPLICATION_PROTOCOL.into(),
+            runtime_protocol: runtime::PROTOCOL.into(),
+            boot_id: self.sessions.boot_id.clone(),
+            pid: std::process::id(),
+            runtime_pid: self.runtime.pid,
+            runtime_instance: self.runtime.instance.clone(),
+            runtime_socket: self.runtime.socket.to_string_lossy().into_owned(),
+            connected_agents: self.sessions.connected_agents() as u64,
+            active_git_operations: self.sessions.worktrees.active_operations() as u64,
+            stopping: self.stopping.load(Ordering::Acquire),
+            terminals: terminals["terminals"].clone(),
+            agents: agents["agents"].clone(),
+        }))
+    }
+    fn hello(&self) -> Value {
+        reply(&DaemonHello {
+            tag: Default::default(),
+            build_id: std::env::var("ADE_BUILD_ID").ok(),
+            application_protocol: runtime::APPLICATION_PROTOCOL.into(),
+            runtime_protocol: runtime::PROTOCOL.into(),
+            runtime_instance: self.runtime.instance.clone(),
+            runtime_pid: self.runtime.pid,
+            runtime_socket: self.runtime.socket.to_string_lossy().into_owned(),
+            pid: std::process::id(),
+            session_protocol: "ade-sessions-v1".into(),
+            worktree_protocol: "ade-worktrees-v1".into(),
+            review_protocol: "ade-review-v1".into(),
+            response_owner: "daemon-v1".into(),
+            terminal_snapshot_format: "ghostty-snapshot-v1-herdr-9c96f7d".into(),
+            terminal_snapshot_formats: vec![
+                "ghostty-snapshot-v1-herdr-9c96f7d".into(),
+                "xterm-replay-v1".into(),
+            ],
+            boot_id: self.sessions.boot_id.clone(),
+        })
     }
     fn terminal_lifecycle(&self, request: &Value) -> anyhow::Result<Value> {
         let _leases = self.leases.lock().unwrap();
@@ -1059,7 +1254,8 @@ impl Host {
             .try_write()
             .map_err(|_| anyhow::anyhow!("A command is still being admitted; retry shortly"))?;
         anyhow::ensure!(
-            request["boot_id"] == self.sessions.boot_id,
+            decode::<RuntimePrepareRestartRequest>(request)
+                .is_ok_and(|restart| restart.boot_id == self.sessions.boot_id),
             "Application daemon changed; inspect runtime.status again"
         );
         anyhow::ensure!(
@@ -1076,9 +1272,11 @@ impl Host {
             return Err(error);
         }
         self.stopping.store(true, Ordering::Release);
-        Ok(
-            json!({"type":"ack","boot_id":self.sessions.boot_id,"runtime_instance":self.runtime.instance}),
-        )
+        Ok(reply(&RestartPrepared {
+            tag: Default::default(),
+            boot_id: self.sessions.boot_id.clone(),
+            runtime_instance: self.runtime.instance.clone(),
+        }))
     }
 }
 fn read_request(reader: &mut BufReader<UnixStream>) -> io::Result<Option<String>> {
@@ -1160,7 +1358,7 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
             return Ok(());
         }
         if op == "runtime.status" {
-            let event = host.status()?;
+            let event = host.status(&request)?;
             writeln!(stream, "{event}")?;
             if let Some(diagnostic_id) = diagnostic_id {
                 tracing::info!(target: "ade", event = "rpc_succeeded", diagnostic_id, operation_family, elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64);
@@ -1173,6 +1371,7 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
             "Application daemon is restarting; reconnect"
         );
         if op == "session.subscribe" {
+            let SessionSubscribeRequest {} = decode(&request)?;
             let (id, rx) = host.sessions.subscribe()?;
             let sessions = host.sessions.clone();
             let reader_id = id.clone();
@@ -1195,7 +1394,7 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
         }
         if op == "hello" || op.contains('.') {
             let event = if op == "hello" {
-                json!({"type":"hello","build_id":std::env::var("ADE_BUILD_ID").ok(),"application_protocol":runtime::APPLICATION_PROTOCOL,"runtime_protocol":runtime::PROTOCOL,"runtime_instance":host.runtime.instance,"runtime_pid":host.runtime.pid,"runtime_socket":host.runtime.socket,"pid":std::process::id(),"session_protocol":"ade-sessions-v1","worktree_protocol":"ade-worktrees-v1","review_protocol":"ade-review-v1","response_owner":"daemon-v1","terminal_snapshot_format":"ghostty-snapshot-v1-herdr-9c96f7d","terminal_snapshot_formats":["ghostty-snapshot-v1-herdr-9c96f7d","xterm-replay-v1"],"boot_id":host.sessions.boot_id})
+                decode::<HelloRequest>(&request).map_or_else(error_response, |_| host.hello())
             } else {
                 if op == "worktree.remove" {
                     host.refresh_leases()?;
@@ -1298,6 +1497,13 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
         return Ok(());
     }
 }
+/// Browser mutation receipts live for one daemon process, as they did before
+/// they moved onto the shared receipt table.
+fn browser_journal() -> anyhow::Result<Connection> {
+    let connection = Connection::open_in_memory()?;
+    receipts::ensure(&connection)?;
+    Ok(connection)
+}
 pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     // Lock the original directory before recovery or supervisor ownership changes.
     let _writer = runtime::lock(&directory, "writer.lock")?;
@@ -1371,7 +1577,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         default_workspace,
         leases: Mutex::new(HashMap::new()),
         browser_owner: Mutex::new(None),
-        browser_receipts: Mutex::new(HashMap::new()),
+        browser_receipts: Mutex::new(browser_journal()?),
         browser_budget: ProbeBudget {
             active: Mutex::new(0),
             available: Condvar::new(),
@@ -1441,6 +1647,64 @@ mod error_envelope_tests {
         let response = error_response(ade_core::error::TransportError::OutcomeUnknown);
         assert_eq!(response["code"], "outcome_unknown");
         assert_eq!(response["recovery"], "reconnect_and_reconcile");
+    }
+    #[test]
+    fn browser_fingerprint_matches_the_owner_recomputation() {
+        // The desktop owner recomputes sha256(JSON.stringify([op, profile,
+        // owner, tab ?? null, url ?? null])) and refuses a mismatch.
+        for payload in [
+            browser_payload(
+                "browser.open",
+                "fixed",
+                "owner-1",
+                None,
+                Some("https://example.com/a?b=\"c\""),
+            ),
+            browser_payload("browser.close", "fixed", "owner-1", Some("tab_1"), None),
+        ] {
+            let legacy = format!("{:x}", Sha256::digest(payload.to_string().as_bytes()));
+            assert_eq!(receipts::fingerprint(&payload), legacy);
+        }
+    }
+    #[test]
+    fn browser_replays_keep_their_error_codes() {
+        let replay = |status| {
+            browser_replay(Ok(Admission::Replay(receipts::Receipt {
+                status,
+                result: Some(json!({"type": "browser_mutation"})),
+            })))
+            .unwrap()
+        };
+        assert_eq!(replay(Status::Dispatched)["code"], "in_progress");
+        assert_eq!(replay(Status::Unknown)["code"], "outcome_unknown");
+        assert_eq!(replay(Status::Settled)["type"], "browser_mutation");
+        assert_eq!(
+            browser_replay(Ok(Admission::Conflict)).unwrap()["code"],
+            "conflict"
+        );
+        assert!(browser_replay(Ok(Admission::New)).is_none());
+    }
+    #[test]
+    fn browser_receipt_names_its_owner_from_dispatch_to_settlement() {
+        let mut connection = browser_journal().unwrap();
+        let payload = browser_payload("browser.close", "fixed", "owner-1", Some("tab_1"), None);
+        let admission = connection.transaction().unwrap();
+        assert_eq!(
+            receipts::begin(&admission, "op-1", "browser.close", &payload, None, 1).unwrap(),
+            Admission::New
+        );
+        let owner = json!({"owner_id": "owner-1"});
+        receipts::settle(&admission, "op-1", Status::Dispatched, Some(&owner), 1).unwrap();
+        admission.commit().unwrap();
+        receipts::settle(&connection, "op-1", Status::Unknown, None, 2).unwrap();
+        let receipt = browser_receipt(&connection, "op-1").unwrap();
+        assert_eq!(receipt.status, Status::Unknown);
+        assert_eq!(receipt.owner_id(), "owner-1");
+        assert_eq!(receipt.fingerprint, receipts::fingerprint(&payload));
+        let probe = connection.transaction().unwrap();
+        assert!(receipts::begin(&probe, "op-2", "browser.close", &payload, None, 3).is_ok());
+        drop(probe);
+        assert!(browser_receipt(&connection, "op-2").is_none());
     }
     #[test]
     fn unclassified_validation_errors_preserve_compatible_shape() {

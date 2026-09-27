@@ -313,6 +313,8 @@ export class AdeClient {
       socket.destroy()
       return 'invalid'
     }
+    try { decodeDailyUseResponse('hello', frame) }
+    catch { return 'invalid' }
     socket.write('{"op":"session.subscribe"}\n')
     return 'catalog'
   }

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, mkdir, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand } from '@ade/client'
 import { mutateBrowserOwner, readBrowserOperation, readBrowserOwner } from './browser'
 
 const maxRequestBytes = 64 * 1024
@@ -105,7 +105,7 @@ export class BrowserOwner {
 
   async register(endpoint: string, bootId: string | null = null): Promise<void> {
     if (this.registeredBootId && bootId === this.registeredBootId && endpoint === this.endpoint) return
-    await requestDaemon(endpoint, 'browser.owner.register', {
+    await dailyUseCommand(endpoint, { op: 'browser.owner.register',
       profile_id: this.profileId, owner_id: this.ownerId, socket_path: this.socketPath,
     })
     this.endpoint = endpoint
@@ -119,7 +119,7 @@ export class BrowserOwner {
     for (const peer of this.peers) peer.destroy()
     await new Promise<void>((done) => this.server.close(() => done()))
     await unlink(this.socketPath).catch(() => undefined)
-    if (endpoint) await requestDaemon(endpoint, 'browser.owner.unregister', {
+    if (endpoint) await dailyUseCommand(endpoint, { op: 'browser.owner.unregister',
       profile_id: this.profileId, owner_id: this.ownerId,
     }).catch(() => undefined)
   }
