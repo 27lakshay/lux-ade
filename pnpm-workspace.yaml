@@ -8,3 +8,5 @@ allowBuilds:
   esbuild: false
   onnxruntime-node: false
   protobufjs: false
+minimumReleaseAgeExclude:
+  - electron-vite@6.0.0-beta.3

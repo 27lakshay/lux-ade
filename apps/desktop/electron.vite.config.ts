@@ -1,5 +1,6 @@
 import { defineConfig } from 'electron-vite'
-import react from '@vitejs/plugin-react'
+import react, { reactCompilerPreset } from '@vitejs/plugin-react'
+import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
@@ -10,12 +11,13 @@ export default defineConfig({
   },
   preload: {
     build: {
-      rollupOptions: {
+      rolldownOptions: {
         output: { format: 'cjs' },
       },
     },
   },
   renderer: {
-    plugins: [react(), tailwindcss()],
+    // React Compiler through Babel: the stable compiler. plugin-react's Rust port is experimental.
+    plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
   },
 })
