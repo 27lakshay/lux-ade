@@ -1682,6 +1682,90 @@
       ],
       "type": "string"
     },
+    "GitOperation": {
+      "description": "A Git mutation's receipt.",
+      "properties": {
+        "backup_path": {
+          "description": "Where a discard kept the displaced file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "description": "The failure code; present and null on a failure without one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The caller's operation ID.",
+          "type": "string"
+        },
+        "op": {
+          "description": "The operation name, such as `review.stage`.",
+          "type": "string"
+        },
+        "recovery": {
+          "description": "The recovery hint; present and null on a failure without one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result": {
+          "description": "The success result: `{head, output}` for a commit, otherwise\n`{changed, action, receipt}`."
+        },
+        "started_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/GitOperationStatus"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "started_at",
+        "op"
+      ],
+      "type": "object"
+    },
+    "GitOperationStatus": {
+      "description": "Where a Git mutation stands.",
+      "oneOf": [
+        {
+          "enum": [
+            "running",
+            "succeeded",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "The daemon stopped during the Git step; it will not run again.",
+          "type": "string"
+        }
+      ]
+    },
     "HealthCheckRequest": {
       "additionalProperties": false,
       "description": "The HTTP probe `service.inspect` accepts.",
@@ -2427,6 +2511,651 @@
         "root",
         "needs_rebind",
         "worktree_lifecycle_needs_rebind"
+      ],
+      "type": "object"
+    },
+    "ReviewCommitRequest": {
+      "additionalProperties": false,
+      "description": "`review.commit`: commit the reviewed staged index.",
+      "properties": {
+        "index_token": {
+          "description": "The status `index_token` the user reviewed.",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "op": {
+          "const": "review.commit"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "message",
+        "index_token"
+      ],
+      "type": "object"
+    },
+    "ReviewDiff": {
+      "description": "The `review.diff` reply.",
+      "properties": {
+        "binary": {
+          "type": "boolean"
+        },
+        "bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "conflict": {
+          "type": "boolean"
+        },
+        "header": {
+          "type": "string"
+        },
+        "hunk_actions": {
+          "description": "Whether single hunks can be staged; binary, mode, link and\nconflicted changes move only as whole files.",
+          "type": "boolean"
+        },
+        "hunks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "staged": {
+          "type": "boolean"
+        },
+        "token": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `review_diff` type tag.",
+          "enum": [
+            "review_diff"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "staged",
+        "token",
+        "header",
+        "hunks",
+        "hunk_actions",
+        "conflict",
+        "binary",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "ReviewDiffPage": {
+      "description": "The `review.diff_page` reply.",
+      "properties": {
+        "binary": {
+          "type": "boolean"
+        },
+        "bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "conflict": {
+          "type": "boolean"
+        },
+        "header": {
+          "type": "string"
+        },
+        "next_cursor": {
+          "description": "The cursor for the next page; null on the last page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/ReviewDiffRow"
+          },
+          "type": "array"
+        },
+        "staged": {
+          "type": "boolean"
+        },
+        "token": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `review_diff_page` type tag.",
+          "enum": [
+            "review_diff_page"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "staged",
+        "revision",
+        "token",
+        "header",
+        "rows",
+        "next_cursor",
+        "complete",
+        "binary",
+        "conflict",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "ReviewDiffPageRequest": {
+      "additionalProperties": false,
+      "description": "`review.diff_page`: read one bounded page of a file's diff. A first page\nomits `cursor`; a continued page sends the previous `next_cursor`.",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "expected_token": {
+          "description": "The token of the first page; a changed diff fails as stale.",
+          "type": "string"
+        },
+        "op": {
+          "const": "review.diff_page"
+        },
+        "path": {
+          "type": "string"
+        },
+        "staged": {
+          "type": "boolean"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "path",
+        "staged"
+      ],
+      "type": "object"
+    },
+    "ReviewDiffRequest": {
+      "additionalProperties": false,
+      "description": "`review.diff`: read one file's whole diff, split into hunks.",
+      "properties": {
+        "op": {
+          "const": "review.diff"
+        },
+        "path": {
+          "type": "string"
+        },
+        "staged": {
+          "default": false,
+          "description": "The staged side; the unstaged side when false or absent.",
+          "type": "boolean"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ReviewDiffRow": {
+      "description": "One line of a paged diff.",
+      "properties": {
+        "hunk": {
+          "description": "The header of the hunk the line belongs to.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReviewDiffRowKind"
+        },
+        "new_line": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "old_line": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "The line, cut to 8 KiB.",
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "old_line",
+        "new_line",
+        "text",
+        "hunk",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "ReviewDiffRowKind": {
+      "description": "What one diff line is.",
+      "enum": [
+        "hunk",
+        "context",
+        "added",
+        "removed",
+        "meta"
+      ],
+      "type": "string"
+    },
+    "ReviewDiscardRequest": {
+      "additionalProperties": false,
+      "description": "`review.discard`: discard one previewed, tracked, unstaged file change.",
+      "properties": {
+        "diff_token": {
+          "description": "The unstaged diff token the user previewed.",
+          "type": "string"
+        },
+        "op": {
+          "const": "review.discard"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "path",
+        "revision",
+        "diff_token"
+      ],
+      "type": "object"
+    },
+    "ReviewFeedbackMatch": {
+      "description": "One message whose review notes match a search.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "review_feedback": {
+          "description": "The matching notes as `ade-review-feedback-v1`."
+        }
+      },
+      "required": [
+        "message_id",
+        "conversation_id",
+        "review_feedback"
+      ],
+      "type": "object"
+    },
+    "ReviewFeedbackSearch": {
+      "description": "The `review.feedback.search` reply.",
+      "properties": {
+        "next_cursor": {
+          "description": "The cursor for the next page; null on the last page.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/ReviewFeedbackMatch"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `review_feedback_search` type tag.",
+          "enum": [
+            "review_feedback_search"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "results",
+        "next_cursor"
+      ],
+      "type": "object"
+    },
+    "ReviewFeedbackSearchRequest": {
+      "additionalProperties": false,
+      "description": "`review.feedback.search`: find saved review notes by file, note text or both.",
+      "properties": {
+        "before": {
+          "description": "The `next_cursor` of the previous page.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "limit": {
+          "description": "Page size from 1 to 50; the daemon uses 20 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "review.feedback.search"
+        },
+        "path": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "ReviewFile": {
+      "description": "One changed file in `review.status`.",
+      "properties": {
+        "code": {
+          "description": "The two-letter porcelain v2 status code.",
+          "type": "string"
+        },
+        "conflict": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "The literal repository-relative path.",
+          "type": "string"
+        },
+        "staged": {
+          "type": "boolean"
+        },
+        "submodule": {
+          "type": "boolean"
+        },
+        "unstaged": {
+          "type": "boolean"
+        },
+        "untracked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "code",
+        "staged",
+        "unstaged",
+        "conflict",
+        "untracked",
+        "submodule"
+      ],
+      "type": "object"
+    },
+    "ReviewHunkRequest": {
+      "additionalProperties": false,
+      "description": "`review.hunk`: stage, or with `staged` unstage, one hunk of a reviewed diff.",
+      "properties": {
+        "hunk": {
+          "description": "The hunk's index in that diff.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "review.hunk"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "staged": {
+          "default": false,
+          "type": "boolean"
+        },
+        "token": {
+          "description": "The `review.diff` token the hunk was chosen from.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "path",
+        "token",
+        "hunk"
+      ],
+      "type": "object"
+    },
+    "ReviewOperationReply": {
+      "description": "The reply to every Git mutation and to `review.operation`.",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/GitOperation"
+        },
+        "type": {
+          "description": "The `review_operation` type tag.",
+          "enum": [
+            "review_operation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation"
+      ],
+      "type": "object"
+    },
+    "ReviewOperationRequest": {
+      "additionalProperties": false,
+      "description": "`review.operation`: read a Git mutation's receipt by its operation ID.",
+      "properties": {
+        "op": {
+          "const": "review.operation"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "ReviewStageRequest": {
+      "additionalProperties": false,
+      "description": "`review.stage`: stage one reviewed file at a status revision.",
+      "properties": {
+        "op": {
+          "const": "review.stage"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "path",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ReviewStatus": {
+      "description": "The `review.status` reply.",
+      "properties": {
+        "branch": {
+          "description": "The branch name, or `(detached)`.",
+          "type": "string"
+        },
+        "conflicts": {
+          "description": "How many files are in conflict.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/ReviewFile"
+          },
+          "type": "array"
+        },
+        "head": {
+          "description": "The HEAD commit, or `(initial)` before the first commit.",
+          "type": "string"
+        },
+        "index_token": {
+          "description": "Identifies HEAD and the index; `review.commit` must send it back.",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Identifies the whole status; file mutations must send it back.",
+          "type": "string"
+        },
+        "root": {
+          "description": "The canonical Git worktree root.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The `review_status` type tag.",
+          "enum": [
+            "review_status"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "root",
+        "branch",
+        "head",
+        "files",
+        "conflicts",
+        "index_token",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ReviewStatusRequest": {
+      "additionalProperties": false,
+      "description": "`review.status`: read Git status for a workspace. Replies within 750 ms of\nthe last read come from a shared cache unless `force` is true.",
+      "properties": {
+        "force": {
+          "type": "boolean"
+        },
+        "op": {
+          "const": "review.status"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "ReviewUnstageRequest": {
+      "additionalProperties": false,
+      "description": "`review.unstage`: unstage one reviewed file at a status revision.",
+      "properties": {
+        "op": {
+          "const": "review.unstage"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "path",
+        "revision"
       ],
       "type": "object"
     },
@@ -4500,6 +5229,76 @@
       "name": "listener.list",
       "request": "ListenerListRequest",
       "response": "ListenerInventory",
+      "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.status",
+      "request": "ReviewStatusRequest",
+      "response": "ReviewStatus",
+      "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.diff",
+      "request": "ReviewDiffRequest",
+      "response": "ReviewDiff",
+      "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.diff_page",
+      "request": "ReviewDiffPageRequest",
+      "response": "ReviewDiffPage",
+      "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.hunk",
+      "request": "ReviewHunkRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.stage",
+      "request": "ReviewStageRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.unstage",
+      "request": "ReviewUnstageRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.discard",
+      "request": "ReviewDiscardRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.commit",
+      "request": "ReviewCommitRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.operation",
+      "request": "ReviewOperationRequest",
+      "response": "ReviewOperationReply",
+      "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.feedback.search",
+      "request": "ReviewFeedbackSearchRequest",
+      "response": "ReviewFeedbackSearch",
       "tier": "query"
     }
   ]

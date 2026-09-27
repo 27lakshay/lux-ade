@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
-import { formatReviewFeedback, requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
+import { dailyUseCommand, formatReviewFeedback, type DailyUseRequest, type DailyUseResponse,
+  type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import type { GitIntent, GitJournal } from './git-journal'
 import { getClient, getClientGeneration, getSocket, journalProfileId } from './profile-connection'
 import { validId } from './validation'
@@ -11,9 +12,10 @@ function gitRecovery(): GitJournal {
   if (!gitJournal) throw new Error('Git recovery journal is unavailable')
   return gitJournal
 }
-type ReviewFile = { path: string; staged: boolean; unstaged: boolean }
-type ReviewStatus = { revision: string; index_token: string; files: ReviewFile[] }
-type ReviewDiff = { token: string }
+type ReviewStatus = DailyUseResponse<'review.status'>
+type ReviewDiff = DailyUseResponse<'review.diff_page'>
+type GitOperationName = 'review.operation' | 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
+type GitRequest = DailyUseRequest<GitOperationName>
 export function sameReviewFeedback(left: unknown, right: unknown): boolean {
   const canonical = (value: unknown): string => JSON.stringify(value ?? null, (_key, item: unknown) =>
     item && typeof item === 'object' && !Array.isArray(item)
@@ -68,19 +70,16 @@ export function assertReviewContext(context: ReviewContext, workspaceId: string,
 }
 
 async function reviewStatus(context: ReviewContext, workspaceId: string): Promise<ReviewStatus> {
-  const response = await requestDaemon(context.endpoint, 'review.status', { workspace_id: workspaceId, force: true })
+  const response = await dailyUseCommand<'review.status'>(context.endpoint, { op: 'review.status', workspace_id: workspaceId, force: true })
   assertReviewContext(context, workspaceId)
-  if (typeof response.revision !== 'string' || typeof response.index_token !== 'string' ||
-    !Array.isArray(response.files)) throw new Error('Invalid review status')
-  return response as unknown as ReviewStatus
+  return response
 }
 
 async function reviewDiff(context: ReviewContext, workspaceId: string,
   path: string, staged: boolean): Promise<ReviewDiff> {
-  const response = await requestDaemon(context.endpoint, 'review.diff_page', { workspace_id: workspaceId, path, staged })
+  const response = await dailyUseCommand<'review.diff_page'>(context.endpoint, { op: 'review.diff_page', workspace_id: workspaceId, path, staged })
   assertReviewContext(context, workspaceId)
-  if (typeof response.token !== 'string') throw new Error('Invalid review diff')
-  return response as unknown as ReviewDiff
+  return response
 }
 
 export async function reviewPrompt(context: ReviewContext, conversationId: string,
@@ -169,11 +168,11 @@ export function registerReviewIpc(): void {
         (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 50))) {
         throw new Error('Invalid review feedback search')
       }
-      const response = await requestDaemon(context.endpoint, op, { workspace_id: workspaceId,
-        ...(args.path !== undefined ? { path: args.path } : {}),
-        ...(args.query !== undefined ? { query: args.query } : {}),
-        ...(args.before !== undefined ? { before: args.before } : {}),
-        ...(args.limit !== undefined ? { limit: args.limit } : {}) })
+      const response = await dailyUseCommand<'review.feedback.search'>(context.endpoint, { op, workspace_id: workspaceId,
+        ...(args.path !== undefined ? { path: args.path as string } : {}),
+        ...(args.query !== undefined ? { query: args.query as string } : {}),
+        ...(args.before !== undefined ? { before: args.before as number } : {}),
+        ...(args.limit !== undefined ? { limit: args.limit as number } : {}) })
       assertReviewContext(context, workspaceId)
       return response
     }
@@ -181,40 +180,46 @@ export function registerReviewIpc(): void {
       if (typeof args.request_id !== 'string' || !/^[0-9a-f-]{36}$/.test(args.request_id)) {
         throw new Error('Invalid Git operation ID')
       }
-      const request: Record<string, unknown> = { workspace_id: workspaceId, request_id: args.request_id }
+      const requestId = args.request_id
+      const target = { workspace_id: workspaceId, operation_id: requestId }
+      let request: GitRequest
+      let intent: GitIntent | null = null
+      const profileId = (): string => journalProfileId(context.endpoint)
       if (op === 'review.stage' || op === 'review.unstage' || op === 'review.discard') {
         if (!reviewPath(args.path) || typeof args.revision !== 'string' || !/^[0-9a-f]{16}$/.test(args.revision)) {
           throw new Error('Invalid Git file revision')
         }
-        request.path = args.path
-        request.revision = args.revision
+        const file = { path: args.path, revision: args.revision }
         if (op === 'review.discard') {
           if (typeof args.diff_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.diff_token)) {
             throw new Error('Invalid Git discard preview token')
           }
-          request.diff_token = args.diff_token
+          request = { op, ...target, ...file, diff_token: args.diff_token }
+          intent = { profile_id: profileId(), workspace_id: workspaceId, op, request_id: requestId,
+            ...file, diff_token: args.diff_token }
+        } else {
+          request = op === 'review.stage' ? { op, ...target, ...file } : { op, ...target, ...file }
+          intent = { profile_id: profileId(), workspace_id: workspaceId, op, request_id: requestId, ...file }
         }
       } else if (op === 'review.commit') {
         if (typeof args.message !== 'string' || !args.message.trim() || Buffer.byteLength(args.message) > 64 * 1024 ||
           typeof args.index_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.index_token)) {
           throw new Error('Invalid Git commit request')
         }
-        request.message = args.message
-        request.index_token = args.index_token
+        const commit = { message: args.message, index_token: args.index_token }
+        request = { op, ...target, ...commit }
+        intent = { profile_id: profileId(), workspace_id: workspaceId, op, request_id: requestId, ...commit }
+      } else {
+        request = { op, ...target }
       }
-      if (op !== 'review.operation') {
-        const intent: GitIntent = { profile_id: journalProfileId(context.endpoint), workspace_id: workspaceId,
-          op, request_id: args.request_id as string,
-          ...(op === 'review.commit' ? { message: request.message as string, index_token: request.index_token as string }
-            : { path: request.path as string, revision: request.revision as string,
-                ...(op === 'review.discard' ? { diff_token: request.diff_token as string } : {}) }) }
+      if (intent) {
         assertReviewContext(context, workspaceId)
         await gitRecovery().prepare(intent)
         assertReviewContext(context, workspaceId)
       }
-      const response = await requestDaemon(context.endpoint, op, request)
+      const response = await dailyUseCommand<GitOperationName>(context.endpoint, request)
       assertReviewContext(context, workspaceId)
-      const receipt = response.operation as Record<string, unknown> | undefined
+      const receipt = response.operation
       if (response.type !== 'review_operation' || !receipt || typeof receipt !== 'object' ||
         receipt.id !== args.request_id || !['running', 'succeeded', 'failed', 'interrupted'].includes(String(receipt.status))) {
         throw new Error('Invalid Git operation receipt')
@@ -227,20 +232,24 @@ export function registerReviewIpc(): void {
       !status.files.some((file) => file.path === args.path && (args.staged ? file.staged : file.unstaged))) {
       throw new Error('File or side is unavailable in this workspace; refresh Changes')
     }
-    const request: Record<string, unknown> = { workspace_id: workspaceId, path: args.path, staged: args.staged }
+    const side = { workspace_id: workspaceId, path: args.path, staged: args.staged }
     if (op === 'review.diff_page') {
+      const page: DailyUseRequest<'review.diff_page'> = { op, ...side }
       if (args.cursor !== undefined) {
         if (!validId(args.cursor)) throw new Error('Invalid diff cursor')
-        request.cursor = args.cursor
+        page.cursor = args.cursor as string
       }
       if (args.expected_token !== undefined) {
         if (typeof args.expected_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.expected_token)) {
           throw new Error('Invalid expected diff token')
         }
-        request.expected_token = args.expected_token
+        page.expected_token = args.expected_token
       }
+      const response = await dailyUseCommand<'review.diff_page'>(context.endpoint, page)
+      assertReviewContext(context, workspaceId)
+      return response
     }
-    const response = await requestDaemon(context.endpoint, op, request)
+    const response = await dailyUseCommand<'review.diff'>(context.endpoint, { op: 'review.diff', ...side })
     assertReviewContext(context, workspaceId)
     return response
   })
@@ -257,12 +266,12 @@ export function registerReviewIpc(): void {
     const profileId = journalProfileId(context.endpoint)
     const pending = (await gitRecovery().list(profileId, workspaceId as string)).pending
     if (!pending || pending.request_id !== requestId) throw new Error('Git operation changed before acknowledgment')
-    const response = await requestDaemon(context.endpoint, 'review.operation', {
-      workspace_id: workspaceId, request_id: requestId,
+    const response = await dailyUseCommand<'review.operation'>(context.endpoint, {
+      op: 'review.operation', workspace_id: workspaceId as string, operation_id: requestId,
     })
     assertReviewContext(context, workspaceId as string)
-    const operation = response.operation as Record<string, unknown> | undefined
-    if (!operation || operation.id !== requestId ||
+    const operation = response.operation
+    if (operation.id !== requestId ||
       (kind === 'settle' && operation.status !== 'succeeded' && operation.status !== 'failed') ||
       (kind === 'interrupted' && operation.status !== 'interrupted')) {
       throw new Error('Git operation is not ready for acknowledgment')

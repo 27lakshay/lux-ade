@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { formatReviewFeedback, requestDaemon, type ReviewFeedback } from '@ade/client'
-import { CliError, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
+import { dailyUseCommand, formatReviewFeedback, requestDaemon, type DailyUseRequest,
+  type ReviewFeedback } from '@ade/client'
+import { CliError, jsonObject, namedOptions, object, required, type CommandResult } from '../shared.js'
 import { decodeReply, type Fields } from './conversations.js'
 
 export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git status and revision tokens
@@ -100,6 +101,8 @@ async function sendReviewFeedback(socketPath: string, conversationId: string,
   return { ...response, request_id: requestId }
 }
 
+type GitMutation = 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
+
 function gitMutationArgs(rest: string[], action: 'stage' | 'unstage' | 'commit' | 'discard'): {
   workspaceId: string; value: string; token: string; requestId: string; diffToken?: string
 } {
@@ -123,20 +126,21 @@ export async function runGitCommand(socketPath: string, area: string | undefined
   rest: string[]): Promise<CommandResult | undefined> {
   if (area === 'git' && action === 'status') {
     if (rest.length !== 1) throw new CliError('usage', 'git status requires WORKSPACE_ID.')
-    return requestDaemon(socketPath, 'review.status', { workspace_id: required(rest[0], 'WORKSPACE_ID'), force: true })
+    return dailyUseCommand<'review.status'>(socketPath, { op: 'review.status', workspace_id: required(rest[0], 'WORKSPACE_ID'), force: true })
   }
   if (area === 'git' && action === 'operation') {
     if (rest.length !== 2) throw new CliError('usage', 'git operation requires WORKSPACE_ID REQUEST_ID.')
-    return requestDaemon(socketPath, 'review.operation', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), request_id: required(rest[1], 'REQUEST_ID'),
+    return dailyUseCommand<'review.operation'>(socketPath, {
+      op: 'review.operation', workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      operation_id: required(rest[1], 'REQUEST_ID'),
     })
   }
   if (area === 'git' && action === 'diff') {
     if (rest.length < 2 || rest.length > 3 || (rest.length === 3 && rest[2] !== '--staged')) {
       throw new CliError('usage', 'git diff requires WORKSPACE_ID PATH [--staged].')
     }
-    return requestDaemon(socketPath, 'review.diff', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
+    return dailyUseCommand<'review.diff'>(socketPath, {
+      op: 'review.diff', workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
       staged: rest[2] === '--staged',
     })
   }
@@ -148,8 +152,8 @@ export async function runGitCommand(socketPath: string, area: string | undefined
     if ((options['--cursor'] === undefined) !== (options['--expected-token'] === undefined)) {
       throw new CliError('usage', 'A continued diff page requires both --cursor and --expected-token.')
     }
-    return requestDaemon(socketPath, 'review.diff_page', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
+    return dailyUseCommand<'review.diff_page'>(socketPath, {
+      op: 'review.diff_page', workspace_id: required(rest[0], 'WORKSPACE_ID'), path: required(rest[1], 'PATH'),
       staged: rest[2] === 'staged',
       ...(options['--cursor'] === undefined ? {} : {
         cursor: options['--cursor'], expected_token: options['--expected-token'],
@@ -165,8 +169,8 @@ export async function runGitCommand(socketPath: string, area: string | undefined
     if (options['--query'] !== undefined && !options['--query'].trim()) {
       throw new CliError('usage', 'QUERY cannot be blank.')
     }
-    return requestDaemon(socketPath, 'review.feedback.search', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+    return dailyUseCommand<'review.feedback.search'>(socketPath, {
+      op: 'review.feedback.search', workspace_id: required(rest[0], 'WORKSPACE_ID'),
       ...(options['--path'] === undefined ? {} : { path: options['--path'] }),
       ...(options['--query'] === undefined ? {} : { query: options['--query'] }),
       ...(options['--limit'] === undefined ? {} : { limit: reviewSearchLimit(options['--limit']) }),
@@ -183,12 +187,14 @@ export async function runGitCommand(socketPath: string, area: string | undefined
   }
   if (area === 'git' && (action === 'stage' || action === 'unstage' || action === 'commit' || action === 'discard')) {
     const { workspaceId, value, token, requestId, diffToken } = gitMutationArgs(rest, action)
-    const fields = action === 'commit'
-      ? { message: value, index_token: token }
-      : { path: value, revision: token, ...(action === 'discard' ? { diff_token: diffToken } : {}) }
-    const response = await requestDaemon(socketPath, `review.${action}`, {
-      workspace_id: workspaceId, request_id: requestId, ...fields,
-    })
+    const target = { workspace_id: workspaceId, operation_id: requestId }
+    const request: DailyUseRequest<GitMutation> =
+      action === 'commit' ? { op: 'review.commit', ...target, message: value, index_token: token }
+        : action === 'discard' ? { op: 'review.discard', ...target, path: value, revision: token,
+          diff_token: required(diffToken, 'DIFF_TOKEN') }
+          : action === 'stage' ? { op: 'review.stage', ...target, path: value, revision: token }
+            : { op: 'review.unstage', ...target, path: value, revision: token }
+    const response = await dailyUseCommand<GitMutation>(socketPath, request)
     return { ...response, workspace_id: workspaceId, request_id: requestId }
   }
   return undefined
