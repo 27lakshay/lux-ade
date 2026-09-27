@@ -4522,6 +4522,1079 @@
       ],
       "type": "object"
     },
+    "PluginActivation": {
+      "description": "The live activation of an enabled plugin.",
+      "properties": {
+        "activated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "generation": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "registrations": {
+          "items": {
+            "$ref": "#/$defs/PluginRegistration"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "generation",
+        "activated_at",
+        "registrations"
+      ],
+      "type": "object"
+    },
+    "PluginCommandContribution": {
+      "additionalProperties": false,
+      "description": "A command. Its ID starts with the plugin ID and a dot.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
+    },
+    "PluginContributions": {
+      "additionalProperties": false,
+      "description": "Static contributions the registry records for each activation.",
+      "properties": {
+        "commands": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PluginCommandContribution"
+          },
+          "type": "array"
+        },
+        "panels": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PluginPanelContribution"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PluginSettingContribution"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "commands",
+        "panels",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "PluginDataRecord": {
+      "description": "One namespaced durable record.",
+      "properties": {
+        "data_schema": {
+          "description": "The plugin data schema in force when the record was written.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "key": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "Starts at 1 and rises by one on every write.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "value": true
+      },
+      "required": [
+        "namespace",
+        "key",
+        "value",
+        "revision",
+        "data_schema",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "PluginDetail": {
+      "description": "An installed plugin with its manifest and artifact.",
+      "properties": {
+        "activation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginActivation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The live activation; null while disabled or when activation failed."
+        },
+        "activation_error": {
+          "description": "Why an enabled plugin has no activation after a daemon restart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activation_generation": {
+          "description": "The highest activation generation issued so far; 0 before the first.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "artifact_digest": {
+          "description": "`sha256:<hex>` over the installed artifact's files.",
+          "type": "string"
+        },
+        "artifact_path": {
+          "type": "string"
+        },
+        "data_schema": {
+          "description": "The data schema the installed code declares.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "installed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "manifest": {
+          "$ref": "#/$defs/PluginManifest"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/PluginSourcePin"
+        },
+        "status": {
+          "$ref": "#/$defs/PluginStatus"
+        },
+        "stored_data_schema": {
+          "description": "The highest data schema any installed code has declared. Records may\ncarry any schema up to this one.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The artifact version from the manifest.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "version",
+        "status",
+        "source",
+        "activation_generation",
+        "data_schema",
+        "stored_data_schema",
+        "activation",
+        "activation_error",
+        "installed_at",
+        "updated_at",
+        "artifact_digest",
+        "artifact_path",
+        "manifest"
+      ],
+      "type": "object"
+    },
+    "PluginDisableRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.disable`: end the current activation and dispose only its registrations.",
+      "properties": {
+        "op": {
+          "const": "plugin.disable"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginEnableRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.enable`: start a new activation. Enabling an enabled plugin\nreturns its current state and starts nothing.",
+      "properties": {
+        "op": {
+          "const": "plugin.enable"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginEntryPoints": {
+      "additionalProperties": false,
+      "description": "Where each host loads the plugin from. Paths are relative to the artifact root.",
+      "properties": {
+        "backend": {
+          "description": "Loaded by a separate restartable backend host.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "description": "Loaded by a runtime-supervised provider worker.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ui": {
+          "description": "Loaded into the trusted application renderer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PluginInspectRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.inspect`: one plugin with its manifest and live registrations.",
+      "properties": {
+        "op": {
+          "const": "plugin.inspect"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginInstallRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.install`: copy a pinned artifact into the profile and record it.\nReplacing an installed plugin requires it to be disabled first.",
+      "properties": {
+        "expected_version": {
+          "description": "Refuse the artifact unless its manifest declares exactly this version.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "plugin.install"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/PluginSource"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "source"
+      ],
+      "type": "object"
+    },
+    "PluginList": {
+      "description": "The `plugin.list` reply.",
+      "properties": {
+        "plugins": {
+          "items": {
+            "$ref": "#/$defs/PluginSummary"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `plugins` type tag.",
+          "enum": [
+            "plugins"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugins"
+      ],
+      "type": "object"
+    },
+    "PluginListRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.list`: every installed plugin.",
+      "properties": {
+        "op": {
+          "const": "plugin.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "PluginManifest": {
+      "additionalProperties": false,
+      "description": "`ade-plugin.json`, format version 1. Unknown fields are rejected so a\nnewer manifest never activates with parts silently ignored.",
+      "properties": {
+        "api_version": {
+          "description": "The plugin API version the code targets.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "contributes": {
+          "$ref": "#/$defs/PluginContributions",
+          "default": {
+            "commands": [],
+            "panels": [],
+            "settings": []
+          }
+        },
+        "data_schema": {
+          "description": "The version of the plugin's durable data layout, from 1. It is separate\nfrom the artifact version: code rollback never rolls data back.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entry_points": {
+          "$ref": "#/$defs/PluginEntryPoints",
+          "description": "At least one entry point, each a relative path inside the artifact."
+        },
+        "id": {
+          "description": "`publisher.name`: lowercase letters, digits and single hyphens in each\ndot-separated part, at least two parts, at most 64 bytes.",
+          "type": "string"
+        },
+        "manifest_version": {
+          "description": "Always 1.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Display name, 1 to 128 characters.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The artifact version, in strict semantic versioning.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "manifest_version",
+        "id",
+        "name",
+        "version",
+        "api_version",
+        "data_schema",
+        "entry_points",
+        "contributes"
+      ],
+      "type": "object"
+    },
+    "PluginPanelContribution": {
+      "additionalProperties": false,
+      "description": "A panel for the UI host. Its ID starts with the plugin ID and a dot.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
+    },
+    "PluginRecordDeleteRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.record.delete`: delete a record; deleting a missing record succeeds.",
+      "properties": {
+        "expected_revision": {
+          "description": "Delete only if the record is at this revision.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "op": {
+          "const": "plugin.record.delete"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id",
+        "namespace",
+        "key"
+      ],
+      "type": "object"
+    },
+    "PluginRecordDeleted": {
+      "description": "The `plugin.record.delete` reply.",
+      "properties": {
+        "deleted": {
+          "description": "False when there was no record to delete.",
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `plugin_record_deleted` type tag.",
+          "enum": [
+            "plugin_record_deleted"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin_id",
+        "namespace",
+        "key",
+        "deleted"
+      ],
+      "type": "object"
+    },
+    "PluginRecordGetRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.record.get`: one namespaced record, or null.",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "op": {
+          "const": "plugin.record.get"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id",
+        "namespace",
+        "key"
+      ],
+      "type": "object"
+    },
+    "PluginRecordList": {
+      "description": "The `plugin.record.list` reply.",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/PluginDataRecord"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `plugin_records` type tag.",
+          "enum": [
+            "plugin_records"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin_id",
+        "namespace",
+        "records"
+      ],
+      "type": "object"
+    },
+    "PluginRecordListRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.record.list`: the records in one namespace, by key.",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "op": {
+          "const": "plugin.record.list"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id",
+        "namespace"
+      ],
+      "type": "object"
+    },
+    "PluginRecordPutRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.record.put`: write a record of at most 64 KiB of JSON.",
+      "properties": {
+        "expected_revision": {
+          "description": "Write only if the record is at this revision; 0 means it must not exist.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "op": {
+          "const": "plugin.record.put"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "op",
+        "plugin_id",
+        "namespace",
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "PluginRecordReply": {
+      "description": "The `plugin.record.get` and `plugin.record.put` reply.",
+      "properties": {
+        "plugin_id": {
+          "type": "string"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginDataRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "description": "The `plugin_record` type tag.",
+          "enum": [
+            "plugin_record"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin_id",
+        "record"
+      ],
+      "type": "object"
+    },
+    "PluginRegistration": {
+      "description": "One registration owned by an activation.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PluginRegistrationKind"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "type": "object"
+    },
+    "PluginRegistrationKind": {
+      "description": "A registration kind in the activation registry.",
+      "enum": [
+        "command",
+        "panel"
+      ],
+      "type": "string"
+    },
+    "PluginReply": {
+      "description": "The `plugin.inspect`, `plugin.install`, `plugin.enable` and `plugin.disable` reply.",
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/PluginDetail"
+        },
+        "type": {
+          "description": "The `plugin` type tag.",
+          "enum": [
+            "plugin"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin"
+      ],
+      "type": "object"
+    },
+    "PluginSettingContribution": {
+      "additionalProperties": false,
+      "description": "A declared setting. Only declared keys may be set.",
+      "properties": {
+        "default": {
+          "description": "Must match `kind`. A `credential_ref` setting has no default."
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PluginSettingKind"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PluginSettingKind": {
+      "description": "A setting's value type. `credential_ref` holds a reference to a credential\nkept elsewhere (an account ID or keychain item), never the secret itself.",
+      "enum": [
+        "string",
+        "boolean",
+        "number",
+        "credential_ref"
+      ],
+      "type": "string"
+    },
+    "PluginSettingListRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.setting.list`: every declared setting with its effective value.",
+      "properties": {
+        "op": {
+          "const": "plugin.setting.list"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginSettingSetRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.setting.set`: set a declared setting; null restores its default.",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "op": {
+          "const": "plugin.setting.set"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "op",
+        "plugin_id",
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "PluginSettingValue": {
+      "description": "One declared setting and its effective value.",
+      "properties": {
+        "is_default": {
+          "description": "Whether `value` is the declared default.",
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PluginSettingKind"
+        },
+        "value": {
+          "description": "The stored value, or the default when none is stored; null if neither."
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "value",
+        "is_default"
+      ],
+      "type": "object"
+    },
+    "PluginSettings": {
+      "description": "The `plugin.setting.list` and `plugin.setting.set` reply.",
+      "properties": {
+        "plugin_id": {
+          "type": "string"
+        },
+        "settings": {
+          "items": {
+            "$ref": "#/$defs/PluginSettingValue"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `plugin_settings` type tag.",
+          "enum": [
+            "plugin_settings"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin_id",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "PluginSource": {
+      "description": "Where to install from. Every source ends pinned: a local directory by its\ncontent digest, a package by its archive digest, Git by its commit.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "An absolute path to an unpacked plugin directory.",
+          "properties": {
+            "kind": {
+              "const": "local",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An absolute path to a `.tgz` package archive, as `pnpm pack` writes it.",
+          "properties": {
+            "kind": {
+              "const": "package",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "description": "The expected lowercase hex SHA-256 of the archive.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A Git repository. Give `commit`, `ref` or both; with both, the ref must\nresolve to that commit.",
+          "properties": {
+            "commit": {
+              "description": "A full 40-character commit ID.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "git",
+              "type": "string"
+            },
+            "ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "url"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PluginSourceKind": {
+      "description": "The kind of source a plugin was installed from.",
+      "enum": [
+        "local",
+        "package",
+        "git"
+      ],
+      "type": "string"
+    },
+    "PluginSourcePin": {
+      "description": "The resolved, pinned source of an installed artifact.",
+      "properties": {
+        "git_ref": {
+          "description": "The requested Git ref, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/PluginSourceKind"
+        },
+        "locator": {
+          "description": "The local path, package path or Git URL the artifact came from.",
+          "type": "string"
+        },
+        "pin": {
+          "description": "`sha256:<hex>` for local and package sources; the commit ID for Git.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "locator",
+        "git_ref",
+        "pin"
+      ],
+      "type": "object"
+    },
+    "PluginStatus": {
+      "description": "Whether the plugin should be active.",
+      "enum": [
+        "enabled",
+        "disabled"
+      ],
+      "type": "string"
+    },
+    "PluginSummary": {
+      "description": "An installed plugin as `plugin.list` shows it.",
+      "properties": {
+        "activation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginActivation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The live activation; null while disabled or when activation failed."
+        },
+        "activation_error": {
+          "description": "Why an enabled plugin has no activation after a daemon restart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activation_generation": {
+          "description": "The highest activation generation issued so far; 0 before the first.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "data_schema": {
+          "description": "The data schema the installed code declares.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "installed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/PluginSourcePin"
+        },
+        "status": {
+          "$ref": "#/$defs/PluginStatus"
+        },
+        "stored_data_schema": {
+          "description": "The highest data schema any installed code has declared. Records may\ncarry any schema up to this one.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The artifact version from the manifest.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "version",
+        "status",
+        "source",
+        "activation_generation",
+        "data_schema",
+        "stored_data_schema",
+        "activation",
+        "activation_error",
+        "installed_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "PluginUninstallRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.uninstall`: remove a disabled plugin and its artifacts.",
+      "properties": {
+        "op": {
+          "const": "plugin.uninstall"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "purge_data": {
+          "description": "Also delete the plugin's records and settings. Without it they stay\nand a reinstall of the same ID finds them.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginUninstalled": {
+      "description": "The `plugin.uninstall` reply.",
+      "properties": {
+        "data_purged": {
+          "type": "boolean"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `plugin_uninstalled` type tag.",
+          "enum": [
+            "plugin_uninstalled"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin_id",
+        "data_purged"
+      ],
+      "type": "object"
+    },
     "PortAssignment": {
       "description": "One service port assignment and who was seen listening on it.",
       "properties": {
@@ -10772,6 +11845,90 @@
       "name": "skill.discover",
       "request": "SkillDiscoverRequest",
       "response": "SkillDiscovery",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.list",
+      "request": "PluginListRequest",
+      "response": "PluginList",
+      "tier": "query"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.inspect",
+      "request": "PluginInspectRequest",
+      "response": "PluginReply",
+      "tier": "query"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.install",
+      "request": "PluginInstallRequest",
+      "response": "PluginReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.uninstall",
+      "request": "PluginUninstallRequest",
+      "response": "PluginUninstalled",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.enable",
+      "request": "PluginEnableRequest",
+      "response": "PluginReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.disable",
+      "request": "PluginDisableRequest",
+      "response": "PluginReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.record.get",
+      "request": "PluginRecordGetRequest",
+      "response": "PluginRecordReply",
+      "tier": "query"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.record.list",
+      "request": "PluginRecordListRequest",
+      "response": "PluginRecordList",
+      "tier": "query"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.record.put",
+      "request": "PluginRecordPutRequest",
+      "response": "PluginRecordReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.record.delete",
+      "request": "PluginRecordDeleteRequest",
+      "response": "PluginRecordDeleted",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.setting.list",
+      "request": "PluginSettingListRequest",
+      "response": "PluginSettings",
+      "tier": "query"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.setting.set",
+      "request": "PluginSettingSetRequest",
+      "response": "PluginSettings",
       "tier": "idempotent_command"
     },
     {

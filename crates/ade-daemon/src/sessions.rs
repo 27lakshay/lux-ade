@@ -98,6 +98,8 @@ struct Data {
 pub struct Sessions {
     pub review: Arc<crate::review::Review>,
     pub worktrees: Arc<crate::worktrees::Worktrees>,
+    /// The plugin registry, or why it could not open. Its failure never blocks the core.
+    plugins: std::result::Result<crate::plugins::Plugins, String>,
     files: crate::files::Files,
     data: Mutex<Data>,
     pub subscribers: Arc<AtomicUsize>,
@@ -125,11 +127,17 @@ impl Sessions {
         }
         let review =
             crate::review::Review::open(&path.with_extension("review.sqlite3"), worktrees.clone())?;
+        let plugins = crate::plugins::Plugins::open(
+            &path.with_extension("plugins.sqlite3"),
+            &path.with_extension("plugins"),
+        )
+        .map_err(|error| format!("{error:#}"));
         let sessions = Arc::new(Self {
             runtime,
             queue_wake,
             worktrees,
             review,
+            plugins,
             files: crate::files::Files::new(),
             data: Mutex::new(Data {
                 draining: false,
@@ -515,6 +523,12 @@ impl Sessions {
     pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let string = required_str(request);
         let op = request["op"].as_str().unwrap_or("");
+        if op.starts_with("plugin.") {
+            return match &self.plugins {
+                Ok(plugins) => plugins.command(request),
+                Err(error) => Err(anyhow!("Plugin registry is unavailable: {error}")),
+            };
+        }
         if op.starts_with("worktree.")
             && op != "worktree.operation"
             && op != "worktree.rebind"
