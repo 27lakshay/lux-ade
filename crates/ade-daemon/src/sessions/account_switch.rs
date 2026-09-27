@@ -160,44 +160,76 @@ impl Sessions {
         ensure!(operation_id.len() <= 512, "Invalid operation_id");
         let id = non_empty("conversation_id", &switch_request.conversation_id)?;
         let account_id = non_empty("account_id", &switch_request.account_id)?;
-        let now = now_ms();
-        let mut d = self.data.lock().unwrap();
-        if let Some(stored) =
-            persistence_result(d.store.account_switch_admission(operation_id, request, now))?
-        {
-            return Ok(stored);
-        }
-        let gathered = Gathered::read(&d, id, account_id)?;
         let expectation = Expectation {
             current_account: switch_request.expected_account_id.as_deref(),
             target_generation: switch_request.expected_generation,
             continuity: switch_request.continuity,
         };
-        let continuity = match switch::decide(&gathered.facts(), Some(&expectation)) {
-            Decision::Eligible(continuity) => continuity,
-            Decision::Refused(reason) => bail!(reason),
+        // Replays a settled switch, or decides whether this one may run.
+        let plan = |d: &Data| -> Result<std::result::Result<Value, (Gathered, SwitchContinuity)>> {
+            if let Some(stored) = persistence_result(d.store.account_switch_admission(
+                operation_id,
+                request,
+                now_ms(),
+            ))? {
+                return Ok(Ok(stored));
+            }
+            let gathered = Gathered::read(d, id, account_id)?;
+            match switch::decide(&gathered.facts(), Some(&expectation)) {
+                Decision::Eligible(continuity) => Ok(Err((gathered, continuity))),
+                Decision::Refused(reason) => bail!(reason),
+            }
         };
-        let excerpt = transfer(&d, id, continuity)?;
+        let mut d = self.data.lock().unwrap();
+        if let Ok(stored) = plan(&d)? {
+            return Ok(stored);
+        }
+        // An idle Agent still runs under the earlier account. Stop it before
+        // the switch commits; a failed stop leaves the switch unapplied. The
+        // stop can take a full shutdown escalation, so it runs without the
+        // session lock, and the switch is decided again afterwards.
+        let mut agent_stopped = false;
+        if let Some(agent) = d.agents.get(id) {
+            ensure!(
+                agent.rpc.is_some(),
+                "The Agent is still connecting; retry the switch"
+            );
+            if let Some((run, rpc)) = Self::begin_stop(&mut d, id)? {
+                drop(d);
+                self.finish_stop(id, &run, rpc)?;
+                d = self.data.lock().unwrap();
+                if Self::owns(&d, id, &run) {
+                    d.agents.remove(id);
+                }
+                agent_stopped = true;
+            }
+        }
+        let now = now_ms();
+        let (gathered, continuity) = match plan(&d) {
+            Ok(Ok(stored)) => return Ok(stored),
+            Ok(Err(eligible)) => eligible,
+            Err(error) => {
+                if agent_stopped {
+                    self.record_stopped_agent(&mut d, id, now);
+                }
+                return Err(error);
+            }
+        };
+        let excerpt = match transfer(&d, id, continuity) {
+            Ok(excerpt) => excerpt,
+            Err(error) => {
+                if agent_stopped {
+                    self.record_stopped_agent(&mut d, id, now);
+                }
+                return Err(error);
+            }
+        };
         let prior = gathered.conversation;
         let from_generation = prior
             .account_id
             .as_deref()
             .and_then(|from| d.store.account(from).ok())
             .map(|account| account.generation);
-        // An idle Agent still runs under the earlier account. Stop it before
-        // the switch commits; a failed stop leaves the switch unapplied.
-        let agent_stopped = match d.agents.get(id) {
-            Some(agent) => {
-                let rpc = agent
-                    .rpc
-                    .as_ref()
-                    .context("The Agent is still connecting; retry the switch")?;
-                rpc.stop_confirmed()?;
-                d.agents.remove(id);
-                true
-            }
-            None => false,
-        };
         let mut next = prior.clone();
         next.account_id = Some(gathered.target.id.clone());
         next.account_context = "managed".into();
@@ -235,10 +267,18 @@ impl Sessions {
             ),
             created_at: now,
         };
-        let response = reply(&AccountSwitched {
+        let response = match reply(&AccountSwitched {
             tag: Default::default(),
             switch: record.clone(),
-        })?;
+        }) {
+            Ok(response) => response,
+            Err(error) => {
+                if agent_stopped {
+                    self.record_stopped_agent(&mut d, id, now);
+                }
+                return Err(error);
+            }
+        };
         let committed = d.store.commit_account_switch(
             crate::store::SwitchCommit {
                 operation_id,
@@ -253,19 +293,25 @@ impl Sessions {
             &response,
         );
         if let Err(error) = committed {
-            // The Agent is gone even though the switch did not commit; record
-            // that honestly under the unchanged account.
             if agent_stopped {
-                let mut current = prior.clone();
-                current.status = "disconnected".into();
-                current.updated_at = now;
-                if d.store.commit_conversation(&current, &[], &[]).is_ok() {
-                    let _ = self.changed(&mut d, &current, &[]);
-                }
+                self.record_stopped_agent(&mut d, id, now);
             }
             return persistence_result(Err(error));
         }
         self.changed(&mut d, &next, &[])?;
         Ok(response)
+    }
+
+    /// The Agent is gone even though the switch did not commit; record that
+    /// honestly under the unchanged account.
+    fn record_stopped_agent(&self, d: &mut Data, id: &str, now: i64) {
+        let Ok(mut current) = d.store.conversation(id) else {
+            return;
+        };
+        current.status = "disconnected".into();
+        current.updated_at = now;
+        if d.store.commit_conversation(&current, &[], &[]).is_ok() {
+            let _ = self.changed(d, &current, &[]);
+        }
     }
 }

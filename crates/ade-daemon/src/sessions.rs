@@ -431,6 +431,7 @@ impl Sessions {
                                     .account
                                     .as_ref()
                                     .map(|account| account.generation),
+                                stopping: false,
                                 _lease: lease,
                             },
                         );

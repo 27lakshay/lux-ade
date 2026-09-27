@@ -1183,7 +1183,8 @@ export type ConversationControl = 'steer' | 'compact' | 'rewind_conversation' | 
 /**
  * How a control request ended.
  */
-export type ControlOutcome = 'unavailable' | 'acknowledged' | 'restored' | 'unchanged' | 'partial' | 'unknown'
+export type ControlOutcome =
+  'unavailable' | 'acknowledged' | 'restored' | 'unchanged' | 'partial' | 'refused' | 'unknown'
 /**
  * What a rewind returns to an earlier point.
  */

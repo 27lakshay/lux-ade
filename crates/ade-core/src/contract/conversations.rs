@@ -734,6 +734,10 @@ pub enum ControlOutcome {
     Unchanged,
     /// Some files were written but the result does not match the checkpoint.
     Partial,
+    /// The provider definitely refused the request, so it took no effect;
+    /// `reason` carries the refusal. The receipt is settled, and a new
+    /// request needs a new operation ID.
+    Refused,
     /// ADE cannot prove whether the effect happened. It is never retried
     /// automatically; inspect the Conversation or workspace.
     Unknown,
