@@ -108,6 +108,12 @@ export const operations = {
   "browser.navigate": { tier: "effect_command", domain: "daemon", request: "BrowserNavigateRequest", response: "BrowserMutation" },
   "browser.close": { tier: "effect_command", domain: "daemon", request: "BrowserCloseRequest", response: "BrowserMutation" },
   "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
+  "skill.install": { tier: "effect_command", domain: "skills", request: "SkillInstallRequest", response: "SkillInstalled" },
+  "skill.adopt": { tier: "effect_command", domain: "skills", request: "SkillAdoptRequest", response: "SkillInstalled" },
+  "skill.remove": { tier: "effect_command", domain: "skills", request: "SkillRemoveRequest", response: "SkillRemoved" },
+  "skill.list": { tier: "query", domain: "skills", request: "SkillListRequest", response: "SkillList" },
+  "skill.inspect": { tier: "query", domain: "skills", request: "SkillInspectRequest", response: "SkillInspection" },
+  "skill.discover": { tier: "idempotent_command", domain: "skills", request: "SkillDiscoverRequest", response: "SkillDiscovery" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

@@ -10,6 +10,7 @@ pub mod review;
 pub mod scripts;
 pub mod services;
 pub mod sessions;
+pub mod skills;
 pub mod store;
 mod toolchain;
 pub mod worktrees;

@@ -6246,6 +6246,737 @@
       ],
       "type": "string"
     },
+    "SkillAdoptRequest": {
+      "additionalProperties": false,
+      "description": "`skill.adopt`: take ownership of a skill directory a provider already reads.\nThe directory is copied into the catalog unchanged and its provider path is\nrecorded as catalog-owned. Only adoption lets a later placement replace it.",
+      "properties": {
+        "expected_content_hash": {
+          "description": "The content hash `skill.discover` reported; adoption fails when it changed.",
+          "type": "string"
+        },
+        "op": {
+          "const": "skill.adopt"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "path": {
+          "description": "A path that `skill.discover` reported, directly inside a provider skill root.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "description": "The workspace whose provider roots contain `path`, for workspace-scoped skills.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "path",
+        "expected_content_hash"
+      ],
+      "type": "object"
+    },
+    "SkillDiscoverRequest": {
+      "additionalProperties": false,
+      "description": "`skill.discover`: scan provider skill roots and replace the stored\nreferences for the scanned scopes. Reads only; never writes provider paths.",
+      "properties": {
+        "op": {
+          "const": "skill.discover"
+        },
+        "workspace_id": {
+          "description": "Also scans this workspace's provider roots.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "SkillDiscovery": {
+      "description": "The `skill.discover` reply.",
+      "properties": {
+        "references": {
+          "items": {
+            "$ref": "#/$defs/SkillReference"
+          },
+          "type": "array"
+        },
+        "roots": {
+          "items": {
+            "$ref": "#/$defs/SkillRoot"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `skill_discovery` type tag.",
+          "enum": [
+            "skill_discovery"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "roots",
+        "references"
+      ],
+      "type": "object"
+    },
+    "SkillFile": {
+      "description": "One file in a bundle. Paths are relative, `/`-separated and normalized.",
+      "properties": {
+        "executable": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the file bytes.",
+          "type": "string"
+        },
+        "size": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "size",
+        "sha256",
+        "executable"
+      ],
+      "type": "object"
+    },
+    "SkillInspectRequest": {
+      "additionalProperties": false,
+      "description": "`skill.inspect`: one bundle's manifest, provenance and provider projection.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "skill.inspect"
+        },
+        "workspace_id": {
+          "description": "Adds workspace-scoped provider paths to the projection.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "name"
+      ],
+      "type": "object"
+    },
+    "SkillInspection": {
+      "description": "The `skill.inspect` reply.",
+      "properties": {
+        "manifest": {
+          "$ref": "#/$defs/SkillManifest"
+        },
+        "projection": {
+          "items": {
+            "$ref": "#/$defs/SkillProjection"
+          },
+          "type": "array"
+        },
+        "skill": {
+          "$ref": "#/$defs/SkillSummary"
+        },
+        "type": {
+          "description": "The `skill` type tag.",
+          "enum": [
+            "skill"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "skill",
+        "manifest",
+        "projection"
+      ],
+      "type": "object"
+    },
+    "SkillInstallRequest": {
+      "additionalProperties": false,
+      "description": "`skill.install`: copy a local skill directory into the catalog as a pinned bundle.",
+      "properties": {
+        "expected_content_hash": {
+          "description": "The bundle content hash the caller expects. The install fails closed\nwhen the directory no longer hashes to it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "skill.install"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "replace_content_hash": {
+          "description": "Required to replace an installed bundle of the same name: that bundle's\ncurrent content hash.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_path": {
+          "description": "Absolute path of the skill directory; it must hold `SKILL.md`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "source_path"
+      ],
+      "type": "object"
+    },
+    "SkillInstalled": {
+      "description": "The `skill.install` and `skill.adopt` reply.",
+      "properties": {
+        "changed": {
+          "description": "False when the same bundle was already installed with this content.",
+          "type": "boolean"
+        },
+        "replaced_content_hash": {
+          "description": "The content hash this install replaced, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skill": {
+          "$ref": "#/$defs/SkillSummary"
+        },
+        "type": {
+          "description": "The `skill_installed` type tag.",
+          "enum": [
+            "skill_installed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "skill",
+        "changed",
+        "replaced_content_hash"
+      ],
+      "type": "object"
+    },
+    "SkillList": {
+      "description": "The `skill.list` reply.",
+      "properties": {
+        "references": {
+          "description": "References from the most recent discovery of each scope.",
+          "items": {
+            "$ref": "#/$defs/SkillReference"
+          },
+          "type": "array"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/SkillSummary"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `skills` type tag.",
+          "enum": [
+            "skills"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "skills",
+        "references"
+      ],
+      "type": "object"
+    },
+    "SkillListRequest": {
+      "additionalProperties": false,
+      "description": "`skill.list`: installed bundles and the stored external references.",
+      "properties": {
+        "op": {
+          "const": "skill.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "SkillManifest": {
+      "description": "The validated contents of a bundle.",
+      "properties": {
+        "compatibility": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_hash": {
+          "description": "Lowercase hex SHA-256 over the sorted file list (path, mode and file hash).",
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "files": {
+          "description": "Sorted by path.",
+          "items": {
+            "$ref": "#/$defs/SkillFile"
+          },
+          "type": "array"
+        },
+        "license": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "total_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "files",
+        "total_bytes",
+        "content_hash"
+      ],
+      "type": "object"
+    },
+    "SkillObservedPlacement": {
+      "description": "The state observed at the path a provider would read a bundle from.",
+      "oneOf": [
+        {
+          "enum": [
+            "absent",
+            "external_different",
+            "unreadable"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "external_identical",
+          "description": "An external directory with the same content hash as the bundle.",
+          "type": "string"
+        },
+        {
+          "const": "external_other",
+          "description": "An external symbolic link, file or other non-directory entry.",
+          "type": "string"
+        },
+        {
+          "const": "adopted_unchanged",
+          "description": "Adopted and unchanged since adoption.",
+          "type": "string"
+        },
+        {
+          "const": "adopted_drifted",
+          "description": "Adopted, but changed on disk since adoption.",
+          "type": "string"
+        }
+      ]
+    },
+    "SkillPlacementDecision": {
+      "description": "What a placement of the bundle at that path would need.",
+      "oneOf": [
+        {
+          "const": "create",
+          "description": "Nothing is there; a placement may create the directory.",
+          "type": "string"
+        },
+        {
+          "const": "up_to_date",
+          "description": "The path already holds this bundle's content.",
+          "type": "string"
+        },
+        {
+          "const": "replace",
+          "description": "The catalog owns the path and it is unchanged; a placement may replace it.",
+          "type": "string"
+        },
+        {
+          "const": "requires_adoption",
+          "description": "An external owner holds the path; only explicit adoption may change it.",
+          "type": "string"
+        },
+        {
+          "const": "refuse",
+          "description": "The path cannot be changed safely; `reason` says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "SkillProjection": {
+      "description": "Where one provider would read the bundle and what placing it there needs.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/SkillPlacementDecision"
+        },
+        "observed": {
+          "$ref": "#/$defs/SkillObservedPlacement"
+        },
+        "path": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillScope"
+        }
+      },
+      "required": [
+        "provider",
+        "scope",
+        "root",
+        "path",
+        "observed",
+        "decision",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "SkillProvenance": {
+      "description": "Where a bundle came from and what it is pinned to.",
+      "properties": {
+        "excluded": {
+          "description": "Entries skipped while reading the directory, such as `.git`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "installed_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/SkillSourceKind"
+        },
+        "pinned_content_hash": {
+          "description": "The content hash the bundle is pinned to; equal to the manifest's.",
+          "type": "string"
+        },
+        "resolved_path": {
+          "description": "The same path with symlinks resolved when it was read.",
+          "type": "string"
+        },
+        "source_path": {
+          "description": "The path the caller named.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "source_path",
+        "resolved_path",
+        "pinned_content_hash",
+        "excluded",
+        "installed_at"
+      ],
+      "type": "object"
+    },
+    "SkillReference": {
+      "description": "A skill directory that a provider reads and ADE does not own.",
+      "properties": {
+        "adopted_by": {
+          "description": "The catalog bundle that owns this path through adoption.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "discovered_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "entry": {
+          "description": "The entry's directory name.",
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "problem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillScope"
+        },
+        "status": {
+          "$ref": "#/$defs/SkillReferenceStatus"
+        },
+        "symlink_target": {
+          "description": "The link target when the entry is a symbolic link.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "description": "Set for workspace-scoped references.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "scope",
+        "workspace_id",
+        "root",
+        "path",
+        "entry",
+        "status",
+        "problem",
+        "name",
+        "description",
+        "content_hash",
+        "symlink_target",
+        "adopted_by",
+        "discovered_at"
+      ],
+      "type": "object"
+    },
+    "SkillReferenceStatus": {
+      "description": "What discovery found at one entry of a provider skill root.",
+      "oneOf": [
+        {
+          "const": "valid",
+          "description": "A complete bundle that passes validation.",
+          "type": "string"
+        },
+        {
+          "const": "invalid",
+          "description": "Readable, but not a valid bundle; `problem` says why.",
+          "type": "string"
+        },
+        {
+          "const": "unreadable",
+          "description": "Could not be read; `problem` says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "SkillRemoveRequest": {
+      "additionalProperties": false,
+      "description": "`skill.remove`: drop a bundle from the catalog. Provider files are never\ndeleted; adopted paths are released back to external ownership.",
+      "properties": {
+        "expected_content_hash": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "skill.remove"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "name",
+        "expected_content_hash"
+      ],
+      "type": "object"
+    },
+    "SkillRemoved": {
+      "description": "The `skill.remove` reply.",
+      "properties": {
+        "content_hash": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "released_paths": {
+          "description": "Adopted provider paths returned to external ownership, left in place.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `skill_removed` type tag.",
+          "enum": [
+            "skill_removed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "content_hash",
+        "released_paths"
+      ],
+      "type": "object"
+    },
+    "SkillRoot": {
+      "description": "One provider skill root that discovery scanned.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillScope"
+        },
+        "status": {
+          "$ref": "#/$defs/SkillRootStatus"
+        }
+      },
+      "required": [
+        "provider",
+        "scope",
+        "path",
+        "status"
+      ],
+      "type": "object"
+    },
+    "SkillRootStatus": {
+      "description": "What a provider skill root looked like during discovery.",
+      "enum": [
+        "present",
+        "missing",
+        "not_directory",
+        "unreadable"
+      ],
+      "type": "string"
+    },
+    "SkillScope": {
+      "description": "Whether a provider root belongs to the user or to one workspace.",
+      "enum": [
+        "global",
+        "workspace"
+      ],
+      "type": "string"
+    },
+    "SkillSourceKind": {
+      "description": "How a bundle entered the catalog.",
+      "enum": [
+        "local_directory",
+        "adopted"
+      ],
+      "type": "string"
+    },
+    "SkillSummary": {
+      "description": "One installed bundle as `skill.list` shows it.",
+      "properties": {
+        "adopted_paths": {
+          "description": "Provider paths this catalog owns through adoption.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "content_hash": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "file_count": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/SkillProvenance"
+        },
+        "total_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "content_hash",
+        "file_count",
+        "total_bytes",
+        "provenance",
+        "adopted_paths"
+      ],
+      "type": "object"
+    },
     "TerminalCreateRequest": {
       "additionalProperties": false,
       "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID; `request_id` is accepted as\nits older name. Without one, every call creates a new terminal.",
@@ -8052,6 +8783,48 @@
       "request": "BrowserOperationRequest",
       "response": "BrowserOperation",
       "tier": "query"
+    },
+    {
+      "domain": "skills",
+      "name": "skill.install",
+      "request": "SkillInstallRequest",
+      "response": "SkillInstalled",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "skills",
+      "name": "skill.adopt",
+      "request": "SkillAdoptRequest",
+      "response": "SkillInstalled",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "skills",
+      "name": "skill.remove",
+      "request": "SkillRemoveRequest",
+      "response": "SkillRemoved",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "skills",
+      "name": "skill.list",
+      "request": "SkillListRequest",
+      "response": "SkillList",
+      "tier": "query"
+    },
+    {
+      "domain": "skills",
+      "name": "skill.inspect",
+      "request": "SkillInspectRequest",
+      "response": "SkillInspection",
+      "tier": "query"
+    },
+    {
+      "domain": "skills",
+      "name": "skill.discover",
+      "request": "SkillDiscoverRequest",
+      "response": "SkillDiscovery",
+      "tier": "idempotent_command"
     }
   ]
 }

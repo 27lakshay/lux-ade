@@ -206,6 +206,30 @@ export type ContractDefinition =
   | ServiceStopRequest
   | SessionSubscribeRequest
   | SetupState
+  | SkillAdoptRequest
+  | SkillDiscoverRequest
+  | SkillDiscovery
+  | SkillFile
+  | SkillInspectRequest
+  | SkillInspection
+  | SkillInstallRequest
+  | SkillInstalled
+  | SkillList
+  | SkillListRequest
+  | SkillManifest
+  | SkillObservedPlacement
+  | SkillPlacementDecision
+  | SkillProjection
+  | SkillProvenance
+  | SkillReference
+  | SkillReferenceStatus
+  | SkillRemoveRequest
+  | SkillRemoved
+  | SkillRoot
+  | SkillRootStatus
+  | SkillScope
+  | SkillSourceKind
+  | SkillSummary
   | TerminalCreateRequest
   | TerminalCreated
   | TerminalOperation
@@ -342,6 +366,35 @@ export type SendResolution = 'completed' | 'aborted'
  * Whether a tree is ready for an Agent, from its latest `worktree.switch`.
  */
 export type SetupState = 'ready' | 'preparing' | 'interrupted' | 'failed'
+/**
+ * Whether a provider root belongs to the user or to one workspace.
+ */
+export type SkillScope = 'global' | 'workspace'
+/**
+ * What discovery found at one entry of a provider skill root.
+ */
+export type SkillReferenceStatus = 'valid' | 'invalid' | 'unreadable'
+/**
+ * What a provider skill root looked like during discovery.
+ */
+export type SkillRootStatus = 'present' | 'missing' | 'not_directory' | 'unreadable'
+/**
+ * What a placement of the bundle at that path would need.
+ */
+export type SkillPlacementDecision = 'create' | 'up_to_date' | 'replace' | 'requires_adoption' | 'refuse'
+/**
+ * The state observed at the path a provider would read a bundle from.
+ */
+export type SkillObservedPlacement =
+  | ('absent' | 'external_different' | 'unreadable')
+  | 'external_identical'
+  | 'external_other'
+  | 'adopted_unchanged'
+  | 'adopted_drifted'
+/**
+ * How a bundle entered the catalog.
+ */
+export type SkillSourceKind = 'local_directory' | 'adopted'
 /**
  * A lifecycle operation's status in its ledger.
  */
@@ -2918,6 +2971,288 @@ export interface SessionSubscribeRequest {
   op: 'session.subscribe'
 }
 /**
+ * `skill.adopt`: take ownership of a skill directory a provider already reads.
+ * The directory is copied into the catalog unchanged and its provider path is
+ * recorded as catalog-owned. Only adoption lets a later placement replace it.
+ */
+export interface SkillAdoptRequest {
+  /**
+   * The content hash `skill.discover` reported; adoption fails when it changed.
+   */
+  expected_content_hash: string
+  op: 'skill.adopt'
+  operation_id: string
+  /**
+   * A path that `skill.discover` reported, directly inside a provider skill root.
+   */
+  path: string
+  /**
+   * The workspace whose provider roots contain `path`, for workspace-scoped skills.
+   */
+  workspace_id?: string | null
+}
+/**
+ * `skill.discover`: scan provider skill roots and replace the stored
+ * references for the scanned scopes. Reads only; never writes provider paths.
+ */
+export interface SkillDiscoverRequest {
+  op: 'skill.discover'
+  /**
+   * Also scans this workspace's provider roots.
+   */
+  workspace_id?: string | null
+}
+/**
+ * The `skill.discover` reply.
+ */
+export interface SkillDiscovery {
+  references: SkillReference[]
+  roots: SkillRoot[]
+  /**
+   * The `skill_discovery` type tag.
+   */
+  type: 'skill_discovery'
+  [k: string]: unknown
+}
+/**
+ * A skill directory that a provider reads and ADE does not own.
+ */
+export interface SkillReference {
+  /**
+   * The catalog bundle that owns this path through adoption.
+   */
+  adopted_by: string | null
+  content_hash: string | null
+  description: string | null
+  discovered_at: number
+  /**
+   * The entry's directory name.
+   */
+  entry: string
+  name: string | null
+  path: string
+  problem: string | null
+  provider: string
+  root: string
+  scope: SkillScope
+  status: SkillReferenceStatus
+  /**
+   * The link target when the entry is a symbolic link.
+   */
+  symlink_target: string | null
+  /**
+   * Set for workspace-scoped references.
+   */
+  workspace_id: string | null
+  [k: string]: unknown
+}
+/**
+ * One provider skill root that discovery scanned.
+ */
+export interface SkillRoot {
+  path: string
+  provider: string
+  scope: SkillScope
+  status: SkillRootStatus
+  [k: string]: unknown
+}
+/**
+ * One file in a bundle. Paths are relative, `/`-separated and normalized.
+ */
+export interface SkillFile {
+  executable: boolean
+  path: string
+  /**
+   * Lowercase hex SHA-256 of the file bytes.
+   */
+  sha256: string
+  size: number
+  [k: string]: unknown
+}
+/**
+ * `skill.inspect`: one bundle's manifest, provenance and provider projection.
+ */
+export interface SkillInspectRequest {
+  name: string
+  op: 'skill.inspect'
+  /**
+   * Adds workspace-scoped provider paths to the projection.
+   */
+  workspace_id?: string | null
+}
+/**
+ * The `skill.inspect` reply.
+ */
+export interface SkillInspection {
+  manifest: SkillManifest
+  projection: SkillProjection[]
+  skill: SkillSummary
+  /**
+   * The `skill` type tag.
+   */
+  type: 'skill'
+  [k: string]: unknown
+}
+/**
+ * The validated contents of a bundle.
+ */
+export interface SkillManifest {
+  compatibility?: string | null
+  /**
+   * Lowercase hex SHA-256 over the sorted file list (path, mode and file hash).
+   */
+  content_hash: string
+  description: string
+  /**
+   * Sorted by path.
+   */
+  files: SkillFile[]
+  license?: string | null
+  name: string
+  total_bytes: number
+  [k: string]: unknown
+}
+/**
+ * Where one provider would read the bundle and what placing it there needs.
+ */
+export interface SkillProjection {
+  decision: SkillPlacementDecision
+  observed: SkillObservedPlacement
+  path: string
+  provider: string
+  reason: string | null
+  root: string
+  scope: SkillScope
+  [k: string]: unknown
+}
+/**
+ * One installed bundle as `skill.list` shows it.
+ */
+export interface SkillSummary {
+  /**
+   * Provider paths this catalog owns through adoption.
+   */
+  adopted_paths: string[]
+  content_hash: string
+  description: string
+  file_count: number
+  name: string
+  provenance: SkillProvenance
+  total_bytes: number
+  [k: string]: unknown
+}
+/**
+ * Where a bundle came from and what it is pinned to.
+ */
+export interface SkillProvenance {
+  /**
+   * Entries skipped while reading the directory, such as `.git`.
+   */
+  excluded: string[]
+  installed_at: number
+  kind: SkillSourceKind
+  /**
+   * The content hash the bundle is pinned to; equal to the manifest's.
+   */
+  pinned_content_hash: string
+  /**
+   * The same path with symlinks resolved when it was read.
+   */
+  resolved_path: string
+  /**
+   * The path the caller named.
+   */
+  source_path: string
+  [k: string]: unknown
+}
+/**
+ * `skill.install`: copy a local skill directory into the catalog as a pinned bundle.
+ */
+export interface SkillInstallRequest {
+  /**
+   * The bundle content hash the caller expects. The install fails closed
+   * when the directory no longer hashes to it.
+   */
+  expected_content_hash?: string | null
+  op: 'skill.install'
+  operation_id: string
+  /**
+   * Required to replace an installed bundle of the same name: that bundle's
+   * current content hash.
+   */
+  replace_content_hash?: string | null
+  /**
+   * Absolute path of the skill directory; it must hold `SKILL.md`.
+   */
+  source_path: string
+}
+/**
+ * The `skill.install` and `skill.adopt` reply.
+ */
+export interface SkillInstalled {
+  /**
+   * False when the same bundle was already installed with this content.
+   */
+  changed: boolean
+  /**
+   * The content hash this install replaced, if any.
+   */
+  replaced_content_hash: string | null
+  skill: SkillSummary
+  /**
+   * The `skill_installed` type tag.
+   */
+  type: 'skill_installed'
+  [k: string]: unknown
+}
+/**
+ * The `skill.list` reply.
+ */
+export interface SkillList {
+  /**
+   * References from the most recent discovery of each scope.
+   */
+  references: SkillReference[]
+  skills: SkillSummary[]
+  /**
+   * The `skills` type tag.
+   */
+  type: 'skills'
+  [k: string]: unknown
+}
+/**
+ * `skill.list`: installed bundles and the stored external references.
+ */
+export interface SkillListRequest {
+  op: 'skill.list'
+}
+/**
+ * `skill.remove`: drop a bundle from the catalog. Provider files are never
+ * deleted; adopted paths are released back to external ownership.
+ */
+export interface SkillRemoveRequest {
+  expected_content_hash: string
+  name: string
+  op: 'skill.remove'
+  operation_id: string
+}
+/**
+ * The `skill.remove` reply.
+ */
+export interface SkillRemoved {
+  content_hash: string
+  name: string
+  /**
+   * Adopted provider paths returned to external ownership, left in place.
+   */
+  released_paths: string[]
+  /**
+   * The `skill_removed` type tag.
+   */
+  type: 'skill_removed'
+  [k: string]: unknown
+}
+/**
  * `terminal.create`: add another terminal to a workspace.
  *
  * `operation_id` is the caller-owned receipt ID; `request_id` is accepted as
@@ -3334,7 +3669,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -3443,6 +3778,12 @@ export interface RequestByOperation {
   "browser.navigate": BrowserNavigateRequest
   "browser.close": BrowserCloseRequest
   "browser.operation": BrowserOperationRequest
+  "skill.install": SkillInstallRequest
+  "skill.adopt": SkillAdoptRequest
+  "skill.remove": SkillRemoveRequest
+  "skill.list": SkillListRequest
+  "skill.inspect": SkillInspectRequest
+  "skill.discover": SkillDiscoverRequest
 }
 
 export interface ResponseByOperation {
@@ -3552,6 +3893,12 @@ export interface ResponseByOperation {
   "browser.navigate": BrowserMutation
   "browser.close": BrowserMutation
   "browser.operation": BrowserOperation
+  "skill.install": SkillInstalled
+  "skill.adopt": SkillInstalled
+  "skill.remove": SkillRemoved
+  "skill.list": SkillList
+  "skill.inspect": SkillInspection
+  "skill.discover": SkillDiscovery
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged
