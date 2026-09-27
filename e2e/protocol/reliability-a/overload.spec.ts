@@ -39,7 +39,7 @@ async function refusal(action: Promise<unknown>): Promise<string> {
   return action.then((reply) => `accepted: ${JSON.stringify(reply)}`, (error: unknown) => String(error))
 }
 
-test('with the data volume full, new work is refused and a running turn is still stopped', async ({ ade, volume }) => {
+test('with the data volume full, new work is refused and a running turn is still stopped', async ({ ade, volume }, testInfo) => {
   test.setTimeout(120_000)
   // The first profile's data directory is `p1/data` under the test root; the volume is mounted there first.
   const disk = await volume(join(ade.root, 'p1', 'data'), 48)
@@ -71,10 +71,21 @@ test('with the data volume full, new work is refused and a running turn is still
   expect(cli.stderr).toMatch(STORAGE_FULL)
   expect((await profile.mockCalls('codex')).filter((call) => call.method === 'turn/start')).toHaveLength(starts)
 
-  // Cancellation still stops the running turn and reports that it could not be recorded.
+  // Cancellation still stops the running turn, and its reply tells the truth
+  // about recording it. The database runs in WAL mode with synchronous=FULL:
+  // a refused insert can leave allocated WAL space, and a checkpoint lets the
+  // WAL restart in place, so the cancellation's small in-place update may
+  // commit durably where a new Conversation could not. Which one happens
+  // depends on page layout, not on the product. An ack must therefore mean
+  // the cancellation is recorded; a refusal must name the storage failure.
   const cancelled = await refusal(profile.call('agent.cancel', { conversation_id: running.conversationId, turn_id: turn }))
-  expect(cancelled).toMatch(/asked the provider to stop this turn but could not record the cancellation/)
-  expect(cancelled).toMatch(STORAGE_FULL)
+  testInfo.annotations.push({ type: 'cancel-while-full', description: cancelled })
+  if (cancelled.startsWith('accepted')) {
+    expect(['cancelling', 'interrupted']).toContain((await conversation(profile, running.conversationId)).status)
+  } else {
+    expect(cancelled).toMatch(/asked the provider to stop this turn but could not record the cancellation/)
+    expect(cancelled).toMatch(STORAGE_FULL)
+  }
   await expect.poll(() => interrupts(profile)).toEqual([turn])
   expect(await isRunning(profile.hello.pid)).toBe(true)
 

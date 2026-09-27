@@ -26,6 +26,28 @@ pub(super) struct Agent {
     pub(super) _lease: crate::worktrees::Lease,
 }
 
+/// Storage refused to record a batch of provider events because the volume
+/// or the database is full. The batch is retried; the Agent is not failed.
+#[derive(Debug)]
+pub(super) struct StorageFull;
+impl std::fmt::Display for StorageFull {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("database or disk is full")
+    }
+}
+impl std::error::Error for StorageFull {}
+
+/// Whether SQLite refused a write because the volume or database is full.
+fn storage_full(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(failure, _))
+                if failure.code == rusqlite::ErrorCode::DiskFull
+        )
+    })
+}
+
 /// A stopping Agent's run and its provider handle, if one was attached.
 pub(super) type Stopping = (String, Option<Arc<dyn Provider>>);
 
@@ -655,6 +677,7 @@ impl Sessions {
         std::thread::spawn(move || {
             let mut cursor = c.runtime_cursor;
             let mut acknowledge = None;
+            let mut waiting_for_storage = false;
             loop {
                 let Some(hub) = hub.upgrade() else { break };
                 if !Self::owns(&hub.data.lock().unwrap(), &event_id, &event_run) {
@@ -695,9 +718,22 @@ impl Sessions {
                 }
                 let next = batch.last().unwrap().sequence;
                 if let Err(error) = hub.events(&event_id, &event_run, batch) {
+                    if error.is::<StorageFull>() {
+                        // Keep the Agent, so its turn can still be stopped
+                        // (R004). The batch was not acknowledged: the
+                        // runtime serves it again, and it is ingested once
+                        // storage accepts writes.
+                        if !waiting_for_storage {
+                            eprintln!("Agent events wait for storage: {error}");
+                            waiting_for_storage = true;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        continue;
+                    }
                     hub.fail(&event_id, &event_run, error.to_string());
                     break;
                 }
+                waiting_for_storage = false;
                 cursor = next;
                 // Retrying an acknowledgement is safe; a failed socket never advances
                 // the cursor without committing the corresponding projection first.
@@ -1082,7 +1118,11 @@ impl Sessions {
                 .filter_map(|id| messages.remove(&id))
                 .collect();
             let requests: Vec<_> = requests.into_values().collect();
-            persistence_result(d.store.commit_conversation(&c, &messages, &requests))?;
+            let committed = d.store.commit_conversation(&c, &messages, &requests);
+            if committed.as_ref().is_err_and(storage_full) {
+                return Err(StorageFull.into());
+            }
+            persistence_result(committed)?;
             let saved: Vec<_> = messages
                 .iter()
                 .filter_map(|m| d.store.message(&m.id).ok().flatten())
