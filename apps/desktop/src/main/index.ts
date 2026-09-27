@@ -38,6 +38,7 @@ import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
 import { closeAll as closeAllTerminals, closeSenderTerminals, registerTerminalIpc } from './terminals'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
+import { installAppMenu } from './app-menu'
 import { appUrl, registerAppScheme, serveAppScheme } from './app-protocol'
 import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
 import { enableRemoteDebugging, startDevStateServer } from './dev'
@@ -183,6 +184,7 @@ function openMainWindow(): void {
 app
   .whenReady()
   .then(async () => {
+    installAppMenu()
     serveAppScheme(session.defaultSession)
     lockDownAppSession(session.defaultSession)
     if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.platform === 'darwin') {

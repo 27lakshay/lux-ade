@@ -1,4 +1,5 @@
 import type { TerminalBridge } from '@ade/terminal'
+import type { AppCommand } from '../../shared/app-commands'
 import type { BrowserBridge } from './host/browser'
 import type { ConversationsBridge } from './host/conversations'
 import type { FilesBridge } from './host/files'
@@ -11,6 +12,8 @@ import type { WorkspacesBridge } from './host/workspaces'
 interface AdeHost {
   getAppVersion(): Promise<string>
   setTheme(theme: 'dark' | 'light'): void
+  /** Commands from the native menu; returns the unsubscribe function. */
+  onCommand(listener: (command: AppCommand) => void): () => void
   profiles: ProfilesBridge
   conversations: ConversationsBridge
   workspaces: WorkspacesBridge

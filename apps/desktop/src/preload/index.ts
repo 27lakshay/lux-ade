@@ -7,6 +7,8 @@ import { review } from './review'
 import { services } from './services'
 import { terminal } from './terminal'
 import { workspaces } from './workspaces'
+import { subscribe } from './subscribe'
+import { isAppCommand, type AppCommand } from '../shared/app-commands'
 
 // Flat names the existing E2E specs still call through `window.evaluate`. The
 // renderer and its `Window.adeHost` type use only the domain namespaces. Remove
@@ -32,6 +34,11 @@ contextBridge.exposeInMainWorld('adeHost', {
   // The window's vibrancy material follows the native appearance, so the renderer's theme has to
   // reach the main process.
   setTheme: (theme: 'dark' | 'light'): void => ipcRenderer.send('ade:theme', theme),
+  // Commands from the native menu (src/shared/app-commands.ts).
+  onCommand: (listener: (command: AppCommand) => void): (() => void) =>
+    subscribe<unknown>('ade:command', (command) => {
+      if (isAppCommand(command)) listener(command)
+    }),
   profiles,
   conversations,
   workspaces,

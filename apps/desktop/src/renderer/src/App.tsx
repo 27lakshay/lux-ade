@@ -1,4 +1,3 @@
-// oxlint-disable react/immutability -- prototype shell, not yet approved; fix when rebuilt against the Pen design
 import {
   useCallback,
   useEffect,
@@ -147,39 +146,10 @@ export function App() {
         endPeek('left')
         endPeek('right')
       }
-      if (e.metaKey && e.code === 'KeyB') {
-        e.preventDefault()
-        // A held shortcut auto-repeats; only the first press toggles.
-        if (e.repeat) return
-        if (e.altKey) toggleRight()
-        else toggleLeft()
-      }
-      if (e.metaKey && e.code === 'Period') {
-        e.preventDefault()
-        setDevOpen((v) => !v)
-      }
-      if (e.metaKey && e.shiftKey && e.code === 'KeyP') {
-        e.preventDefault()
-        if (!e.repeat) setPaletteOpen((v) => !v)
-      }
-      // Pane shortcuts the palette also lists. (⌘W is left alone: Electron's default menu
-      // binds it to closing the window.)
-      if (e.metaKey && !e.shiftKey && !e.altKey && !e.repeat) {
-        if (e.code === 'KeyT') {
-          e.preventDefault()
-          panes.current?.newTab()
-        } else if (e.code === 'Backslash') {
-          e.preventDefault()
-          panes.current?.splitRight()
-        } else if (e.code === 'KeyN') {
-          e.preventDefault()
-          newConversation()
-        }
-      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [toggleLeft, toggleRight, endPeek])
+  }, [endPeek])
 
   const swapSides = () => {
     setSides((s) => ({ left: s.right, right: s.left }))
@@ -192,6 +162,22 @@ export function App() {
   const panes = useRef<PanesHandle>(null)
   const chatCount = useRef(0)
   const newConversation = () => panes.current?.openChat(`New chat ${++chatCount.current}`)
+
+  // Shortcuts belong to the native menu (src/main/app-menu.ts), which sends them here as commands.
+  useEffect(
+    () =>
+      window.adeHost?.onCommand((command) => {
+        if (command === 'toggle-left-sidebar') toggleLeft()
+        else if (command === 'toggle-right-sidebar') toggleRight()
+        else if (command === 'toggle-dev-panel') setDevOpen((v) => !v)
+        else if (command === 'command-palette') setPaletteOpen((v) => !v)
+        else if (command === 'new-tab') panes.current?.newTab()
+        else if (command === 'close-tab') panes.current?.closeTab()
+        else if (command === 'split-right') panes.current?.splitRight()
+        else if (command === 'new-conversation') newConversation()
+      }),
+    [toggleLeft, toggleRight],
+  )
 
   const layout = panelTransition(settings)
 
