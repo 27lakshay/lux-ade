@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
-import { dailyUseCommand } from '@ade/client'
+import { call, dailyUseCommand } from '@ade/client'
 import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { remoteDeadlineMs } from './remote-deadline.js'
 
 export const remoteUsage = `  remote list                           List registered remote hosts and their pairings
   remote add HOST_ID SSH_TARGET FINGERPRINT [--label TEXT] [--host-key LINE|@FILE]
@@ -47,20 +48,23 @@ export async function runRemoteCommand(socketPath: string, area: string | undefi
     case 'add': {
       const { args, options } = split(rest, 3,
         ['--label', '--host-key', '--backend-path', '--remote-profile'], 'add')
-      return dailyUseCommand(socketPath, { op: 'remote.host.add',
+      return call(socketPath, 'remote.host.add', {
         host_id: required(args[0], 'HOST_ID'), ssh_target: required(args[1], 'SSH_TARGET'),
         expected_fingerprint: required(args[2], 'FINGERPRINT'),
         ...(options['--label'] ? { label: options['--label'] } : {}),
         ...(options['--host-key'] ? { host_public_key: hostKey(options['--host-key']) } : {}),
         ...(options['--backend-path'] ? { backend_path: options['--backend-path'] } : {}),
-        ...(options['--remote-profile'] ? { remote_profile_id: options['--remote-profile'] } : {}) })
+        ...(options['--remote-profile'] ? { remote_profile_id: options['--remote-profile'] } : {}) },
+      { timeoutMs: remoteDeadlineMs('remote.host.add') })
     }
     case 'remove':
     case 'probe': {
       const { args } = split(rest, 1, [], action)
       if (rest.length !== 1) throw new CliError('usage', `remote ${action} takes HOST_ID only.`)
-      return dailyUseCommand(socketPath, { op: action === 'remove' ? 'remote.host.remove' : 'remote.host.probe',
-        host_id: required(args[0], 'HOST_ID') })
+      const hostId = required(args[0], 'HOST_ID')
+      return action === 'remove'
+        ? dailyUseCommand(socketPath, { op: 'remote.host.remove', host_id: hostId })
+        : call(socketPath, 'remote.host.probe', { host_id: hostId }, { timeoutMs: remoteDeadlineMs('remote.host.probe') })
     }
     case 'pair': {
       const { args, options } = split(rest, 1, ['--token-env', '--token-keychain', '--token-account'], 'pair')
@@ -74,8 +78,9 @@ export async function runRemoteCommand(socketPath: string, area: string | undefi
     }
     case 'start': {
       const { args, options } = split(rest, 1, ['--request-id'], 'start')
-      const reply = await dailyUseCommand(socketPath, { op: 'remote.host.start',
-        host_id: required(args[0], 'HOST_ID'), operation_id: required(options['--request-id'], '--request-id') })
+      const reply = await call(socketPath, 'remote.host.start', {
+        host_id: required(args[0], 'HOST_ID'), operation_id: required(options['--request-id'], '--request-id') },
+      { timeoutMs: remoteDeadlineMs('remote.host.start') })
       const detail = typeof reply.detail === 'string' ? reply.detail : undefined
       if (reply.outcome === 'unknown') throw new CliError('outcome_unknown', detail ?? 'Remote start outcome is unknown.')
       if (reply.outcome === 'failed') throw new CliError('not_applied', detail ?? 'Remote start failed.')

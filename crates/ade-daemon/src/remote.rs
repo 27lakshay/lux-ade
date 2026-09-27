@@ -564,6 +564,19 @@ const REFUSED_BEFORE_LAUNCH: &[&str] = &[
     "Existing daemon cannot hand off this runtime",
 ];
 
+/// The worst case one `remote.host.start` request runs: the probe's and the
+/// start script's deadlines together.
+pub const START_BUDGET_SECS: u64 = 45 + 60;
+
+/// What a retry of a start is told when its earlier attempt has no recorded
+/// outcome. The attempt may still be running, so the caller keeps the same
+/// operation ID; a new ID could start the host a second time concurrently.
+pub fn unsettled_start_detail(status: &str) -> String {
+    format!(
+        "An earlier attempt with this operation ID is {status} and has no recorded outcome; it may still be running, so it was not run again. Retry this same operation ID after {START_BUDGET_SECS} seconds to read its outcome. If it still has none, the daemon stopped during it: probe the host before starting it under a new operation ID"
+    )
+}
+
 /// The start decision. Success needs a compatible daemon identity; anything
 /// that might have launched a process without proving it is unknown.
 pub fn classify_start(
@@ -674,6 +687,14 @@ mod tests {
             key_type: key_type.to_owned(),
             blob,
         }
+    }
+
+    #[test]
+    fn unsettled_start_retry_keeps_the_same_operation_id() {
+        let detail = unsettled_start_detail("dispatched");
+        assert!(detail.contains("may still be running"));
+        assert!(detail.contains("Retry this same operation ID"));
+        assert!(!detail.contains("then use a new operation ID"));
     }
 
     #[test]

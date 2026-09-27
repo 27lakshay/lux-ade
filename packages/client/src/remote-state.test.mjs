@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   admitRemoteRequest, classifySshExit, connectionKey, initialRemoteState, reduceRemote, remoteStatus,
-  pinnedKnownHosts, retryDelay, sshForwardArgs, validateLocalSocket, validateTarget,
+  pinnedKnownHosts, requestLostLink, retryDelay, sshForwardArgs, validateLocalSocket, validateTarget,
 } from '../dist/remote-state.js'
 
 const target = { hostId: 'build-box', profileId: 'p-1', destination: 'me@build.lan',
@@ -180,4 +180,13 @@ test('connection keys separate hosts and profiles', () => {
   assert.notEqual(connectionKey(target), connectionKey({ ...target, hostId: 'other' }))
   assert.notEqual(connectionKey(target), connectionKey({ ...target, profileId: 'p-2' }))
   assert.notEqual(connectionKey({ hostId: 'a:b', profileId: 'c' }), connectionKey({ hostId: 'a', profileId: 'b:c' }))
+})
+
+test('a daemon-coded unavailable reply does not count as link loss', () => {
+  // browser.context.capture on a host with no browser owner replies
+  // {type:error, code:'unavailable'} over a healthy forward.
+  assert.equal(requestLostLink({ code: 'unavailable', replied: true }), false)
+  assert.equal(requestLostLink({ code: 'unavailable', replied: false }), true)
+  assert.equal(requestLostLink({ code: 'timeout', replied: false }), false)
+  assert.equal(requestLostLink({ code: 'conflict', replied: true }), false)
 })

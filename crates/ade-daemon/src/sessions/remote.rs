@@ -26,17 +26,68 @@ const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS remote_hosts(host_id TEXT PRIMA
 CREATE TABLE IF NOT EXISTS remote_pairings(pairing_id TEXT PRIMARY KEY, host_id TEXT NOT NULL, token_reference TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','revoked')), paired_at INTEGER NOT NULL, revoked_at INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS remote_pairings_one_active ON remote_pairings(host_id) WHERE state='active';";
 
+/// Each host's last settled start. Receipt retention empties old receipts, so
+/// current readiness lives here and never in receipt history.
+const START_SCHEMA: &str = "CREATE TABLE remote_host_starts(host_id TEXT PRIMARY KEY, result TEXT NOT NULL, settled_at INTEGER NOT NULL);
+INSERT INTO remote_host_starts(host_id,result,settled_at) SELECT host_id,result,updated_at FROM (SELECT json_extract(result,'$.host_id') AS host_id,result,updated_at,row_number() OVER (PARTITION BY json_extract(result,'$.host_id') ORDER BY updated_at DESC, rowid DESC) AS n FROM operations WHERE op='remote.host.start' AND result IS NOT NULL) WHERE n=1 AND host_id IS NOT NULL;";
+
 /// Revocation is enforced where this profile starts or attaches the host.
 const ENFORCEMENT: &str = "local_profile";
 const OUTPUT_LIMIT: u64 = 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(45);
 const START_TIMEOUT: Duration = Duration::from_secs(60);
+const _: () =
+    assert!(PROBE_TIMEOUT.as_secs() + START_TIMEOUT.as_secs() == decide::START_BUDGET_SECS);
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(10);
 const KEYSCAN_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) fn ensure_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(SCHEMA)?;
-    receipts::ensure(connection)
+    receipts::ensure(connection)?;
+    let has_starts: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_host_starts')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_starts {
+        // Created once, seeded from receipts that retention has not emptied yet.
+        let tx = transaction(connection)?;
+        tx.execute_batch(START_SCHEMA)?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
+/// Settles a start's receipt and records it as the host's last start, in one
+/// transaction.
+fn settle_start(
+    connection: &Connection,
+    operation_id: &str,
+    status: Status,
+    result: &Value,
+    now: i64,
+) -> Result<()> {
+    let tx = transaction(connection)?;
+    receipts::settle(&tx, operation_id, status, Some(result), now)?;
+    if let Some(host_id) = result["host_id"].as_str() {
+        tx.execute(
+            "INSERT INTO remote_host_starts(host_id,result,settled_at) VALUES(?1,?2,?3) ON CONFLICT(host_id) DO UPDATE SET result=excluded.result,settled_at=excluded.settled_at",
+            params![host_id, result.to_string(), now],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// The last settled start for a host, as its stored reply and settle time.
+pub(super) fn last_start(connection: &Connection, host_id: &str) -> Result<Option<(String, i64)>> {
+    Ok(connection
+        .query_row(
+            "SELECT result,settled_at FROM remote_host_starts WHERE host_id=?1",
+            [host_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
 }
 
 fn now_ms() -> i64 {
@@ -442,6 +493,10 @@ impl Sessions {
                         "DELETE FROM remote_pairings WHERE host_id=?1",
                         [&remove.host_id],
                     )?;
+                    tx.execute(
+                        "DELETE FROM remote_host_starts WHERE host_id=?1",
+                        [&remove.host_id],
+                    )?;
                     let removed = tx.execute(
                         "DELETE FROM remote_hosts WHERE host_id=?1",
                         [&remove.host_id],
@@ -558,7 +613,14 @@ impl Sessions {
         );
         let admitted = self.remote_store(|connection| {
             let tx = transaction(connection)?;
-            match receipts::begin(&tx, operation_id, "remote.host.start", request, None, now_ms())? {
+            match receipts::begin(
+                &tx,
+                operation_id,
+                "remote.host.start",
+                request,
+                None,
+                now_ms(),
+            )? {
                 Admission::New => {}
                 // A stored result is replayed; an attempt that never recorded
                 // one is not run again.
@@ -569,10 +631,7 @@ impl Sessions {
                             operation_id,
                             &start.host_id,
                             StartOutcome::Unknown,
-                            Some(format!(
-                                "An earlier attempt with this operation ID is {}; it was not run again. Probe the host, then use a new operation ID",
-                                receipt.status.as_str()
-                            )),
+                            Some(decide::unsettled_start_detail(receipt.status.as_str())),
                             None,
                         ))?,
                     }));
@@ -581,7 +640,9 @@ impl Sessions {
                     bail!("Operation ID was already used for different parameters")
                 }
                 Admission::Expired => {
-                    bail!("Operation ID is past its 30-day receipt retention; use a new operation ID")
+                    bail!(
+                        "Operation ID is past its 30-day receipt retention; use a new operation ID"
+                    )
                 }
             }
             let stored = required_host(&tx, &start.host_id)?;
@@ -592,7 +653,10 @@ impl Sessions {
                     pairing.pairing_id,
                     start.host_id
                 ),
-                None => bail!("{} is not paired; pair it before starting it", start.host_id),
+                None => bail!(
+                    "{} is not paired; pair it before starting it",
+                    start.host_id
+                ),
             }
             receipts::settle(&tx, operation_id, Status::Dispatched, None, now_ms())?;
             tx.commit()?;
@@ -609,7 +673,7 @@ impl Sessions {
             Status::Settled
         };
         self.remote_store(|connection| {
-            receipts::settle(connection, operation_id, status, Some(&result), now_ms())
+            settle_start(connection, operation_id, status, &result, now_ms())
         })?;
         Ok(result)
     }
@@ -684,4 +748,58 @@ fn pairing_reply(host_id: &str, pairing: RemotePairing) -> Result<Value> {
         pairing,
         enforcement: ENFORCEMENT.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+    #[test]
+    fn last_start_outlives_receipt_retention() {
+        let connection = Connection::open_in_memory().unwrap();
+        ensure_schema(&connection).unwrap();
+        let started = 1_000_000;
+        let request = json!({"op": "remote.host.start", "operation_id": "op-1", "host_id": "box"});
+        receipts::begin(
+            &connection,
+            "op-1",
+            "remote.host.start",
+            &request,
+            None,
+            started,
+        )
+        .unwrap();
+        receipts::settle(&connection, "op-1", Status::Dispatched, None, started).unwrap();
+        let result = json!({"type": "remote_host_start", "host_id": "box", "outcome": "running"});
+        settle_start(&connection, "op-1", Status::Settled, &result, started).unwrap();
+        // 31 days later, retention empties the receipt.
+        assert_eq!(
+            receipts::prune(&connection, started + 31 * DAY_MS).unwrap(),
+            1
+        );
+        let (stored, at) = last_start(&connection, "box").unwrap().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), result);
+        assert_eq!(at, started);
+    }
+
+    #[test]
+    fn start_table_is_seeded_from_unexpired_receipts() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        receipts::ensure(&connection).unwrap();
+        for (id, at, outcome) in [("a", 10, "failed"), ("b", 20, "running")] {
+            let request = json!({"op": "remote.host.start", "operation_id": id, "host_id": "box"});
+            receipts::begin(&connection, id, "remote.host.start", &request, None, at).unwrap();
+            let result = json!({"host_id": "box", "outcome": outcome});
+            receipts::settle(&connection, id, Status::Settled, Some(&result), at).unwrap();
+        }
+        ensure_schema(&connection).unwrap();
+        ensure_schema(&connection).unwrap();
+        let (stored, at) = last_start(&connection, "box").unwrap().unwrap();
+        assert_eq!(at, 20);
+        assert!(stored.contains("running"));
+    }
 }

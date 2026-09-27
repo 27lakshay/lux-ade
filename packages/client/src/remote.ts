@@ -13,7 +13,7 @@ import {
 } from '@ade/contracts'
 import { DaemonRequestError, requestDaemon, type DaemonResponse, type RequestOptions } from './request.js'
 import {
-  admitRemoteRequest, connectionKey, initialRemoteState, pinnedKnownHosts, reduceRemote, sshForwardArgs,
+  admitRemoteRequest, connectionKey, requestLostLink, initialRemoteState, pinnedKnownHosts, reduceRemote, sshForwardArgs,
   validateLocalSocket,
   type RemoteEffect, type RemoteEvent, type RemoteState, type RemoteTarget,
 } from './remote-state.js'
@@ -138,7 +138,7 @@ export class RemoteDaemonTransport {
     try {
       return await requestDaemon(this.localSocket, op, fields, options)
     } catch (error) {
-      if (error instanceof DaemonRequestError && error.code === 'unavailable' && error.delivery !== 'rejected') {
+      if (error instanceof DaemonRequestError && requestLostLink(error)) {
         this.dispatch({ type: 'link_lost', detail: 'The forwarded remote socket closed.' })
       }
       throw error
