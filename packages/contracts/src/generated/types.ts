@@ -84,6 +84,8 @@ export type ContractDefinition =
   | BrowserTabReply
   | BrowserTabs
   | Caller
+  | CarryBlocker
+  | CarryChange
   | CatalogFrame
   | CatalogGetRequest
   | Catalogue
@@ -342,6 +344,8 @@ export type ContractDefinition =
   | RepositoryRebindRequest
   | RepositoryRecord
   | ResourceClaim
+  | ResourceMode
+  | ResourceRule
   | ResourcesClaimResolveRequest
   | ResourcesInspectRequest
   | ResourcesRegistryAcceptRequest
@@ -507,6 +511,10 @@ export type ContractDefinition =
   | WorktreeArchive
   | WorktreeArchiveEntry
   | WorktreeArchivedRequest
+  | WorktreeCarryEntry
+  | WorktreeCarryPreview
+  | WorktreeCarryPreviewRequest
+  | WorktreeCarryRequest
   | WorktreeCleanupCandidate
   | WorktreeCleanupPlan
   | WorktreeCleanupPlanRequest
@@ -514,6 +522,7 @@ export type ContractDefinition =
   | WorktreeConfigInput
   | WorktreeConfigureRequest
   | WorktreeCreateRequest
+  | WorktreeFetchSource
   | WorktreeGetRequest
   | WorktreeItem
   | WorktreeOperation
@@ -529,6 +538,7 @@ export type ContractDefinition =
   | WorktreeRemoveRequest
   | WorktreeRepository
   | WorktreeRepositoryRequest
+  | WorktreeResourcesApplyRequest
   | WorktreeSetupRequest
   | WorktreeState
   | WorktreeSwitchRequest
@@ -605,6 +615,22 @@ export type Caller =
       kind: 'agent'
       [k: string]: unknown
     }
+/**
+ * Why a carry cannot run as asked.
+ */
+export type CarryBlocker =
+  | 'unmerged'
+  | 'submodule'
+  | 'not_changed'
+  | 'invalid_path'
+  | 'no_changes'
+  | 'too_many_changes'
+  | 'unborn_head'
+  | 'head_changed'
+/**
+ * How a path differs from `HEAD` in the source tree.
+ */
+export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | 'untracked') | 'unmerged'
 /**
  * Which snapshot a change belongs to.
  */
@@ -738,6 +764,10 @@ export type CommittedChanges =
       state: 'unknown'
       [k: string]: unknown
     }
+/**
+ * How an ignored resource of the primary checkout reaches a tree.
+ */
+export type ResourceMode = 'copy' | 'link' | 'skip'
 /**
  * Where a cost figure came from.
  */
@@ -2697,6 +2727,12 @@ export interface Config {
    */
   directory: string | null
   /**
+   * Ignored local resources, such as `.env` files or `node_modules`, and
+   * how each reaches a tree ADE creates. Nothing ignored is copied or
+   * linked unless a rule names it.
+   */
+  resources?: ResourceRule[]
+  /**
    * Hooks run in order inside a new tree after Git creates it. The tree is
    * ready for an Agent only after every hook exits 0.
    */
@@ -2710,6 +2746,14 @@ export interface Config {
    * Git command timeout in seconds.
    */
   timeout_seconds: number
+}
+/**
+ * One ignored-resource rule. `path` is a literal path relative to the
+ * repository root: no globs, no `..`, not inside `.git`.
+ */
+export interface ResourceRule {
+  mode: ResourceMode
+  path: string
 }
 /**
  * One setup or teardown hook. `command` is an argument vector run without a
@@ -7680,6 +7724,94 @@ export interface WorktreeArchivedRequest {
   repository_id: string
 }
 /**
+ * One changed path in the source.
+ */
+export interface WorktreeCarryEntry {
+  blocker?: CarryBlocker | null
+  change: CarryChange
+  path: string
+  selected: boolean
+  /**
+   * The index differs from `HEAD`. Carried changes arrive staged.
+   */
+  staged: boolean
+  /**
+   * The working tree differs from the index.
+   */
+  unstaged: boolean
+  [k: string]: unknown
+}
+/**
+ * The `worktree.carry.preview` reply. Ignored files are never listed or
+ * carried; ignored-resource rules handle them.
+ */
+export interface WorktreeCarryPreview {
+  blockers: CarryBlocker[]
+  /**
+   * True only when `blockers` is empty.
+   */
+  carriable: boolean
+  entries: WorktreeCarryEntry[]
+  /**
+   * The source commit; pass it as `expect_head`. `null` when unborn.
+   */
+  head: string | null
+  repository_id: string
+  source: string
+  /**
+   * The `worktree_carry_preview` type tag.
+   */
+  type: 'worktree_carry_preview'
+  [k: string]: unknown
+}
+/**
+ * `worktree.carry.preview`: list a tree's uncommitted changes and whether
+ * each can be carried. Changes nothing.
+ */
+export interface WorktreeCarryPreviewRequest {
+  op: 'worktree.carry.preview'
+  /**
+   * Paths relative to the tree root to select; every change when absent.
+   * A directory selects the changes beneath it.
+   */
+  paths?: string[] | null
+  repository_id: string
+  /**
+   * The tree whose changes would move: the primary checkout or a linked tree.
+   */
+  source: string
+}
+/**
+ * `worktree.carry`: move uncommitted changes from `source` into the clean,
+ * ADE-owned tree `target`. The changes are first saved as a commit under
+ * `refs/ade/carry/…`, which ADE never deletes, then applied to the target
+ * and verified. The source is cleaned only when `clean_source` is true, the
+ * target verified exactly, and the source is unchanged since the snapshot.
+ * A failure never discards anything.
+ */
+export interface WorktreeCarryRequest {
+  /**
+   * Remove the carried changes from the source after verification.
+   */
+  clean_source?: boolean | null
+  /**
+   * The source `HEAD` the caller previewed; a different `HEAD` refuses.
+   */
+  expect_head?: string | null
+  op: 'worktree.carry'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  /**
+   * As in `worktree.carry.preview`; every change when absent.
+   */
+  paths?: string[] | null
+  repository_id: string
+  source: string
+  target: string
+}
+/**
  * One linked tree's cleanup classification.
  */
 export interface WorktreeCleanupCandidate {
@@ -7753,6 +7885,11 @@ export interface WorktreeConfigInput {
    */
   directory?: string | null
   /**
+   * Ignored-resource rules, at most 64, applied in each tree ADE creates
+   * before its setup hooks.
+   */
+  resources?: ResourceRule[]
+  /**
    * Setup hooks, at most 8, run in order inside each tree ADE creates.
    */
   setup?: Hook[]
@@ -7788,6 +7925,12 @@ export interface WorktreeCreateRequest {
    */
   branch?: string | null
   /**
+   * Start from a ref fetched from a configured remote, such as a pull
+   * request head. Conflicts with `base`. Only the fetch is performed; ADE
+   * adds no pull-request workflow.
+   */
+  fetch?: WorktreeFetchSource | null
+  /**
    * A workspace name; the branch is the configured prefix plus its slug.
    */
   name?: string | null
@@ -7801,6 +7944,21 @@ export interface WorktreeCreateRequest {
    */
   path?: string | null
   repository_id: string
+}
+/**
+ * A ref to fetch from a configured remote into `refs/ade/fetched/…`. The
+ * new branch starts at the fetched commit.
+ */
+export interface WorktreeFetchSource {
+  /**
+   * A full ref on the remote, such as `refs/pull/12/head` or
+   * `refs/merge-requests/12/head`.
+   */
+  ref: string
+  /**
+   * A remote name from `git remote`; URLs are refused.
+   */
+  remote: string
 }
 /**
  * `worktree.get`: read a registered repository's lifecycle state.
@@ -7991,6 +8149,20 @@ export interface WorktreeRepositoryRequest {
   path: string
 }
 /**
+ * `worktree.resources.apply`: apply the repository's ignored-resource rules
+ * to an ADE-owned tree, such as an adopted one. Existing files are never
+ * replaced.
+ */
+export interface WorktreeResourcesApplyRequest {
+  op: 'worktree.resources.apply'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  path: string
+  repository_id: string
+}
+/**
  * `worktree.setup`: run the setup hooks again in an ADE-owned tree, such as
  * one whose setup failed or was interrupted. Only a full success makes it ready.
  */
@@ -8053,7 +8225,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8145,6 +8317,9 @@ export interface RequestByOperation {
   "worktree.cleanup.plan": WorktreeCleanupPlanRequest
   "worktree.cleanup": WorktreeCleanupRequest
   "worktree.archived": WorktreeArchivedRequest
+  "worktree.carry.preview": WorktreeCarryPreviewRequest
+  "worktree.carry": WorktreeCarryRequest
+  "worktree.resources.apply": WorktreeResourcesApplyRequest
   "script.list": ScriptListRequest
   "script.inspect": ScriptInspectRequest
   "script.start": ScriptStartRequest
@@ -8331,6 +8506,9 @@ export interface ResponseByOperation {
   "worktree.cleanup.plan": WorktreeCleanupPlan
   "worktree.cleanup": WorktreeState
   "worktree.archived": WorktreeArchive
+  "worktree.carry.preview": WorktreeCarryPreview
+  "worktree.carry": WorktreeState
+  "worktree.resources.apply": WorktreeState
   "script.list": ScriptList
   "script.inspect": ScriptInspection
   "script.start": ScriptRun

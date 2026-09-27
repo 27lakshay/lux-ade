@@ -19,6 +19,9 @@ use ade_core::contract::worktrees::{
     WorktreeRefreshRequest, WorktreeRemoveRequest, WorktreeRepository, WorktreeRepositoryRequest,
     WorktreeSetupRequest, WorktreeState, WorktreeSwitchRequest,
 };
+use ade_core::contract::worktrees::{
+    WorktreeCarryPreviewRequest, WorktreeCarryRequest, WorktreeResourcesApplyRequest,
+};
 use ade_core::error::{HostResourcesUnavailable, LifecycleFailure};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -43,8 +46,11 @@ use std::{
 
 pub use ade_core::worktrees::Config;
 
+mod carry;
 mod hooks;
 mod policy;
+mod resources;
+mod transfer;
 use hooks::{HookContext, last_verdict, run_hooks};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -152,6 +158,8 @@ enum Effect {
     Create(WorktreeCreateRequest),
     Setup(WorktreeSetupRequest),
     Cleanup(WorktreeCleanupRequest),
+    Carry(WorktreeCarryRequest),
+    Resources(WorktreeResourcesApplyRequest),
 }
 
 impl Effect {
@@ -163,6 +171,8 @@ impl Effect {
             "worktree.create" => Self::Create(decode(request)?),
             "worktree.setup" => Self::Setup(decode(request)?),
             "worktree.cleanup" => Self::Cleanup(decode(request)?),
+            "worktree.carry" => Self::Carry(decode(request)?),
+            "worktree.resources.apply" => Self::Resources(decode(request)?),
             _ => bail!("Unknown worktree operation"),
         })
     }
@@ -174,6 +184,8 @@ impl Effect {
             Self::Create(request) => &request.repository_id,
             Self::Setup(request) => &request.repository_id,
             Self::Cleanup(request) => &request.repository_id,
+            Self::Carry(request) => &request.repository_id,
+            Self::Resources(request) => &request.repository_id,
         }
     }
     fn operation_id(&self) -> &str {
@@ -184,6 +196,8 @@ impl Effect {
             Self::Create(request) => &request.operation_id,
             Self::Setup(request) => &request.operation_id,
             Self::Cleanup(request) => &request.operation_id,
+            Self::Carry(request) => &request.operation_id,
+            Self::Resources(request) => &request.operation_id,
         }
     }
     /// The canonical payload the receipt fingerprints. `request_id` and
@@ -196,6 +210,8 @@ impl Effect {
             Self::Create(request) => serde_json::to_value(request)?,
             Self::Setup(request) => serde_json::to_value(request)?,
             Self::Cleanup(request) => serde_json::to_value(request)?,
+            Self::Carry(request) => serde_json::to_value(request)?,
+            Self::Resources(request) => serde_json::to_value(request)?,
         })
     }
 }
@@ -208,6 +224,8 @@ struct Admitted {
     setup_path: Option<PathBuf>,
     use_claim: Option<String>,
     cleanup: Vec<PathBuf>,
+    carry: Option<transfer::CarryAdmitted>,
+    resources_path: Option<PathBuf>,
 }
 
 /// A tree's lifecycle phase, keyed by its canonical path in the `trees`
@@ -265,8 +283,16 @@ fn authority(db: &Connection, repository: &str, path: &str) -> Result<policy::Au
         return Ok(policy::Authority::None);
     };
     let owner: Value = serde_json::from_str(&owner)?;
+    // Records written before identities were kept have none to compare.
+    let same_tree = match (owner["device"].as_str(), owner["inode"].as_str()) {
+        (Some(device), Some(inode)) => {
+            identity(path).is_ok_and(|found| found.0 == device && found.1 == inode)
+        }
+        _ => true,
+    };
     Ok(
         if owner["repository_id"] == repository
+            && same_tree
             && std::fs::read_to_string(owner["marker"].as_str().unwrap_or(""))
                 .ok()
                 .as_deref()
@@ -349,6 +375,12 @@ impl std::error::Error for HookFailure {}
 
 /// Records an operation failure; a hook failure gets its own code.
 fn record_outcome(job: &mut Operation, error: anyhow::Error) {
+    if let Some(refusal) = error.downcast_ref::<transfer::Refusal>() {
+        job.error = Some(refusal.message.clone());
+        job.code = Some(refusal.code.into());
+        job.recovery = Some(refusal.recovery.into());
+        return;
+    }
     let hook = error.downcast_ref::<HookFailure>().map(|failure| {
         let code = match (failure.phase, failure.uncertain) {
             (_, true) => "hook_outcome_unknown",
@@ -908,6 +940,8 @@ fn claim_worktree(db: &Connection, repository_id: &str, path: &str, adopted: boo
     let admin = git(path, &["rev-parse", "--absolute-git-dir"])?;
     let marker = Path::new(&admin).join("ade-owner");
     let token = new_id("ownership");
+    // The tree's physical identity: authority stops if the path is replaced.
+    let (device, inode) = identity(path)?;
     OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -919,7 +953,8 @@ fn claim_worktree(db: &Connection, repository_id: &str, path: &str, adopted: boo
         "owned",
         path,
         &json!({"repository_id":repository_id,
-        "marker":marker,"token":token,"adopted":adopted}),
+        "marker":marker,"token":token,"adopted":adopted,
+        "device":device,"inode":inode}),
     )?;
     Ok(())
 }
@@ -1799,6 +1834,10 @@ impl Worktrees {
                     configure.config.into(),
                 )
             }
+            "worktree.carry.preview" => {
+                let preview: WorktreeCarryPreviewRequest = decode(request)?;
+                self.carry_preview(&preview)
+            }
             "worktree.cleanup.plan" => {
                 let plan: WorktreeCleanupPlanRequest = decode(request)?;
                 self.cleanup_plan(valid("repository_id", &plan.repository_id)?)
@@ -1882,6 +1921,7 @@ impl Worktrees {
     }
     fn configure(&self, id: &str, config: Config) -> Result<Value> {
         policy::validate_config(&config)?;
+        resources::validate_rules(&config.resources)?;
         if let Some(directory) = &config.directory {
             ensure!(
                 Path::new(directory).is_absolute() && Path::new(directory).is_dir(),
@@ -1950,13 +1990,34 @@ impl Worktrees {
             "Worktree has active ADE work"
         );
         ensure!(
+            !d.removing.iter().any(|removing| path.starts_with(removing)),
+            "Worktree removal is in progress"
+        );
+        ensure!(
             d.db.query_row("SELECT 1 FROM owned WHERE id=?1", [text], |_| Ok(()))
                 .optional()?
                 .is_none(),
             "Worktree already has ADE removal authority"
         );
-        ensure!(identity(text)? == physical, ade_core::error::NeedsRebind);
-        claim_worktree(&d.db, id, text, true)?;
+        // A shared-use claim held for the adoption refuses it while any
+        // profile creates or removes this path, and a blocked registry
+        // refuses it outright: authority is granted only when the host
+        // registry confirms no conflicting lifecycle work.
+        let claim = self.resources.acquire(
+            Target::Existing(&path),
+            ClaimMode::Shared,
+            ClaimPurpose::Use,
+            None,
+        )?;
+        let granted = (|| -> Result<()> {
+            ensure!(
+                std::fs::canonicalize(text)? == path && identity(text)? == physical,
+                ade_core::error::NeedsRebind
+            );
+            claim_worktree(&d.db, id, text, true)
+        })();
+        self.resources.settle(&claim, Settlement::Release);
+        granted?;
         drop(d);
         self.snapshot(id)
     }
@@ -1992,7 +2053,18 @@ impl Worktrees {
         let mut remove_identity = None;
         let mut setup_path = None;
         let mut cleanup = Vec::new();
+        let mut carry = None;
+        let mut resources_path = None;
+        let mut resources_claim = None;
         match &effect {
+            Effect::Carry(request) => {
+                carry = Some(self.admit_carry(&d, &repo, request, operation_id)?);
+            }
+            Effect::Resources(request) => {
+                let (path, claim) = self.admit_resources(&d, &repo, request, operation_id)?;
+                resources_path = Some(path);
+                resources_claim = Some(claim);
+            }
             Effect::Create(create) => {
                 for (key, value) in [
                     ("name", &create.name),
@@ -2011,6 +2083,14 @@ impl Worktrees {
                     create.name.is_none() || create.branch.is_none(),
                     "Name a workspace or a branch, not both"
                 );
+                if let Some(fetch) = &create.fetch {
+                    ensure!(
+                        create.base.is_none(),
+                        "A fetched source replaces base; send one or the other"
+                    );
+                    valid("fetch.remote", &fetch.remote)?;
+                    valid("fetch.ref", &fetch.reference)?;
+                }
             }
             Effect::Setup(setup) => {
                 let path = std::fs::canonicalize(valid("path", &setup.path)?)?;
@@ -2109,10 +2189,15 @@ impl Worktrees {
                 ClaimPurpose::Use,
                 Some(operation_id),
             )?),
-            None => None,
+            None => resources_claim,
         };
         let release_claim = || {
-            for claim in [&remove_claim, &use_claim].into_iter().flatten() {
+            let carried = carry.iter().flat_map(|carry| carry.claims());
+            for claim in [&remove_claim, &use_claim]
+                .into_iter()
+                .flatten()
+                .chain(carried)
+            {
                 self.resources.settle(claim, Settlement::Release);
             }
         };
@@ -2140,6 +2225,9 @@ impl Worktrees {
             worktree_path: remove_path
                 .as_ref()
                 .or(setup_path.as_ref())
+                .or(resources_path.as_ref())
+                .map(PathBuf::as_path)
+                .or(carry.as_ref().map(|carry| carry.target()))
                 .map(|path| path.to_string_lossy().into_owned()),
             status: JobStatus::Running,
             result: Value::Null,
@@ -2183,6 +2271,8 @@ impl Worktrees {
             setup_path,
             use_claim,
             cleanup,
+            carry,
+            resources_path,
         };
         std::thread::spawn(move || {
             hub.execute(repo, job, lock, admitted);
@@ -2197,7 +2287,15 @@ impl Worktrees {
             setup_path,
             use_claim,
             cleanup,
+            carry,
+            resources_path,
         } = admitted;
+        if let Some(carry) = carry {
+            return self.execute_carry(repo, job, lock, carry);
+        }
+        if let (Some(path), Some(claim)) = (resources_path, &use_claim) {
+            return self.execute_resources(repo, job, lock, path, claim.clone());
+        }
         if let Some(path) = setup_path {
             return self.execute_setup(repo, job, lock, path, use_claim);
         }
@@ -2355,6 +2453,20 @@ impl Worktrees {
                     "path": spec["path"]}));
                 job.result = json!({"resolved": resolved});
                 put(&self.data.lock().unwrap().db, LEDGER, &job.id, &job)?;
+                let create: WorktreeCreateRequest = decode(&job.request)?;
+                if let Some(fetch) = &create.fetch {
+                    // The fetch target is durable before the network effect.
+                    let fetched = resolved.as_mut().context("Missing resolved names")?;
+                    fetched["fetch"] = json!({"remote": fetch.remote, "ref": fetch.reference,
+                        "local": carry::fetched_ref(&job.id)});
+                    job.result = json!({"resolved": fetched});
+                    put(&self.data.lock().unwrap().db, LEDGER, &job.id, &job)?;
+                    let (_, commit) = self.fetch_source(&repo, &lock, &job, fetch)?;
+                    spec["base"] = json!(commit);
+                    fetched["base"] = json!(commit);
+                    job.result = json!({"resolved": fetched});
+                    put(&self.data.lock().unwrap().db, LEDGER, &job.id, &job)?;
+                }
             }
             if creating
                 && job.request["op"] == "worktree.switch"
@@ -2611,6 +2723,21 @@ impl Worktrees {
             // A new tree is ready only after its setup hooks all succeed. A
             // failed hook keeps the tree, owned and visibly failed.
             if let Some(path) = &created {
+                // Ignored resources arrive before setup hooks, which may need them.
+                if !repo.config.resources.is_empty() {
+                    let results = self.apply_resources(&repo, &lock, path);
+                    job.result["resources"] = json!(results);
+                    if let Err(error) = transfer::resources_outcome(&results) {
+                        self.set_phase(
+                            &repo,
+                            &job,
+                            path.to_str().context("Path must be UTF-8")?,
+                            spec["target"].as_str(),
+                            WorktreePhase::SetupFailed,
+                        )?;
+                        return Err(error);
+                    }
+                }
                 let (runs, outcome) =
                     self.setup_tree(&repo, &job, &lock, path, spec["target"].as_str())?;
                 hooks_uncertain = runs
