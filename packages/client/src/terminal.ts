@@ -7,9 +7,27 @@ export type TerminalFrame = Record<string, unknown> & { type: string }
 export interface TerminalConnection {
   input(data: string): void
   binary(bytes: number[]): void
+  /** `claim` takes viewport ownership; without it the resize applies only for the owner. */
   resize(cols: number, rows: number, widthPx: number, heightPx: number, claim?: boolean): void
   ping(): void
+  /** The stream incarnation (`run_id`) this attachment is bound to, once its snapshot arrived. */
+  incarnation(): string | null
+  /** Releases viewport ownership and closes the attachment without stopping the terminal. */
+  detach(): void
   dispose(): void
+}
+
+export interface TerminalConnectionOptions {
+  /** Refuse to attach unless the terminal is still this incarnation. */
+  runId?: string
+}
+
+/**
+ * Decides whether a frame belongs to the incarnation an attachment is bound to.
+ * Frames without a `run_id` come from hosts that predate fencing and are kept.
+ */
+function sameIncarnation(bound: string | null, frame: TerminalFrame): boolean {
+  return bound === null || frame.run_id === undefined || frame.run_id === bound
 }
 
 export function openTerminalConnection(
@@ -18,14 +36,27 @@ export function openTerminalConnection(
   terminalId: string,
   onFrame: (frame: TerminalFrame) => void,
   onClose: (reason: string) => void,
+  options: TerminalConnectionOptions = {},
 ): TerminalConnection {
   const socket = createConnection({ path: socketPath })
   let buffered = Buffer.alloc(0)
   let closed = false
+  // Every request after the snapshot names the incarnation it was meant for,
+  // so a restarted terminal refuses input and resize from this attachment.
+  let incarnation: string | null = null
 
+  const line = (value: Record<string, unknown>): string => {
+    const runId = incarnation ?? options.runId
+    return `${JSON.stringify({
+      ...value,
+      workspace_id: workspaceId,
+      terminal_id: terminalId,
+      ...(runId === undefined ? {} : { run_id: runId }),
+    })}\n`
+  }
   const send = (value: Record<string, unknown>): void => {
     if (closed) return
-    socket.write(`${JSON.stringify({ ...value, workspace_id: workspaceId, terminal_id: terminalId })}\n`)
+    socket.write(line(value))
   }
   const finish = (reason: string): void => {
     if (closed) return
@@ -35,6 +66,7 @@ export function openTerminalConnection(
   }
   socket.on('connect', () => send({ op: 'subscribe', snapshot_format: 'xterm-replay-v1' }))
   socket.on('data', (chunk: Buffer) => {
+    if (closed) return
     buffered = Buffer.concat([buffered, chunk])
     if (buffered.length > MAX_FRAME_BYTES) return finish('Terminal frame exceeded 32 MiB.')
     for (;;) {
@@ -48,6 +80,12 @@ export function openTerminalConnection(
       if (!frame || typeof frame !== 'object' || typeof frame.type !== 'string') {
         return finish('Terminal sent an invalid frame.')
       }
+      if (frame.type === 'snapshot' && incarnation === null && typeof frame.run_id === 'string') {
+        incarnation = frame.run_id
+      } else if (!sameIncarnation(incarnation, frame)) {
+        onFrame({ type: 'error', code: 'stale_incarnation', message: 'Terminal changed incarnation; reattach to continue.' })
+        return finish('Terminal changed incarnation.')
+      }
       onFrame(frame)
     }
   })
@@ -60,7 +98,16 @@ export function openTerminalConnection(
     resize: (cols, rows, widthPx, heightPx, claim = false) =>
       send({ op: 'resize', cols, rows, width_px: widthPx, height_px: heightPx, claim }),
     ping: () => send({ op: 'ping' }),
+    incarnation: () => incarnation,
+    detach: () => {
+      if (closed) return
+      closed = true
+      // end() flushes the detach request before closing the socket.
+      socket.end(line({ op: 'detach' }))
+    },
     dispose: () => {
+      // After detach() the socket is already closing with its request flushed.
+      if (closed) return
       closed = true
       socket.destroy()
     },

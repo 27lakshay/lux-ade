@@ -1,4 +1,5 @@
 use ade_runtime::model::{WorkspaceRecord, new_id};
+use ade_runtime::terminal_ownership::{self as ownership, Decision, Intent, Viewport, Viewports};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -25,16 +26,6 @@ struct Subscriber {
     tx: SyncSender<String>,
     terminal: bool,
     disconnect: Option<UnixStream>,
-}
-
-#[derive(Clone, Copy)]
-struct Controller {
-    cols: u16,
-    rows: u16,
-    width: u16,
-    height: u16,
-    claim: u64,
-    registered: u64,
 }
 
 enum ReplayEvent {
@@ -70,9 +61,7 @@ struct State {
     next_client: u64,
     bytes: u64,
     events: u64,
-    owner: Option<u64>,
-    controllers: HashMap<u64, Controller>,
-    next_claim: u64,
+    viewports: Viewports,
     pixel_size: (u16, u16),
     reply_tx: Option<SyncSender<Vec<u8>>>,
     reply_dropped_bytes: u64,
@@ -92,7 +81,7 @@ impl State {
         let mut metrics = json!({"pid":std::process::id(),"uptime_ms":self.started.elapsed().as_millis() as u64,
             "clients":self.clients.len()+self.session_subscribers.load(Ordering::Relaxed),
             "workspace_id":self.workspace_id,"terminal_id":self.terminal_id,"run_id":self.run_id,"transfer_id":self.transfer_id,"terminal_bytes":self.bytes,"events":self.events,
-            "reply_dropped_bytes":self.reply_dropped_bytes,"pixel_size":self.pixel_size,"scrollback_bytes":self.terminal.len(),"resize_owner":self.owner,
+            "reply_dropped_bytes":self.reply_dropped_bytes,"pixel_size":self.pixel_size,"scrollback_bytes":self.terminal.len(),"resize_owner":self.viewports.owner(),
             "shell_pid":self.shell_pid,"shell_running":self.shell_running,
             "durable_log_error":self.durable_log_error});
         if let Some(outcome) = &self.exit_status {
@@ -234,7 +223,7 @@ impl State {
         }
         self.broadcast(
             json!({"type":"terminal","data":String::from_utf8_lossy(data),"bytes":data,
-                "offset":offset}),
+                "offset":offset,"run_id":self.run_id}),
         );
     }
 }
@@ -285,14 +274,13 @@ fn start_simulation(state: Shared, prompt: String) -> Result<(), &'static str> {
 fn apply_size(
     state: &mut State,
     master: &Arc<Mutex<Box<dyn MasterPty + Send>>>,
-    geometry: Controller,
+    geometry: Viewport,
 ) -> Result<(), String> {
-    let Controller {
+    let Viewport {
         cols,
         rows,
         width,
         height,
-        ..
     } = geometry;
     if state.screen.info()[..2] == [cols, rows] && state.pixel_size == (width, height) {
         return Ok(());
@@ -313,8 +301,41 @@ fn apply_size(
     // Resize-driven reports are handled by the same sole daemon response path.
     let offset = state.bytes;
     state.record_replay(ReplayEvent::Resize { offset, cols, rows }, 8);
-    state.broadcast(json!({"type":"terminal_resize","cols":cols,"rows":rows,"offset":offset}));
+    let run_id = state.run_id.clone();
+    state.broadcast(
+        json!({"type":"terminal_resize","cols":cols,"rows":rows,"offset":offset,"run_id":run_id}),
+    );
     Ok(())
+}
+
+/// Tells the previous and next viewport owners that ownership moved, then
+/// applies the decided geometry.
+fn settle(
+    state: &mut State,
+    master: &Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    decision: Decision,
+) -> Result<(), String> {
+    if let Some((previous, next)) = decision.transfer {
+        for (attachment, owner) in [(previous, false), (next, true)] {
+            if let Some(attachment) = attachment
+                && let Some(client) = state.clients.get(&attachment)
+            {
+                let frame = json!({"type":"viewport","owner":owner,"attachment":attachment,
+                    "run_id":state.run_id});
+                // A full queue evicts the client on the next broadcast.
+                let _ = client.tx.try_send(frame.to_string());
+            }
+        }
+    }
+    match decision.apply {
+        Some(viewport) => apply_size(state, master, viewport),
+        None => Ok(()),
+    }
+}
+
+fn refusal(error: ownership::Refusal, run_id: &str) -> String {
+    json!({"type":"error","code":error.code(),"message":error.message(),"run_id":run_id})
+        .to_string()
 }
 
 fn handle_client(
@@ -400,6 +421,12 @@ fn handle_client(
                 )),
                 "subscribe" => {
                     let mut s = state.lock().unwrap();
+                    if let Err(error) = ownership::fence(&s.run_id, &request) {
+                        // A caller that expects an earlier incarnation must not
+                        // mistake this one's output for its own.
+                        let _ = tx.try_send(refusal(error, &s.run_id));
+                        continue;
+                    }
                     if !subscribed {
                         // Snapshot and registration share a lock so no output falls in between.
                         let terminal = request["terminal"].as_bool().unwrap_or(true);
@@ -420,6 +447,9 @@ fn handle_client(
                             } else {
                                 s.snapshot_for(terminal, false)
                             };
+                        let mut snapshot = snapshot;
+                        snapshot["run_id"] = json!(s.run_id);
+                        snapshot["attachment"] = json!(id);
                         let _ = tx.try_send(snapshot.to_string());
                         s.clients.insert(
                             id,
@@ -444,16 +474,17 @@ fn handle_client(
                     };
                     {
                         let mut s = state.lock().unwrap();
-                        if let Some(controller) = s.controllers.get(&id).copied() {
-                            s.next_claim += 1;
-                            let rank = s.next_claim;
-                            s.controllers.get_mut(&id).unwrap().claim = rank;
-                            s.owner = Some(id);
-                            if let Err(error) = apply_size(&mut s, &master, controller) {
-                                let _ = tx
-                                    .try_send(json!({"type":"error","message":error}).to_string());
-                                continue;
-                            }
+                        if let Err(error) =
+                            ownership::fence_effect(&s.run_id, s.shell_running, &request)
+                        {
+                            let _ = tx.try_send(refusal(error, &s.run_id));
+                            continue;
+                        }
+                        let decision = s.viewports.input(id);
+                        if let Err(error) = settle(&mut s, &master, decision) {
+                            let _ =
+                                tx.try_send(json!({"type":"error","message":error}).to_string());
+                            continue;
                         }
                     }
                     let mut writer = input.lock().unwrap();
@@ -467,24 +498,13 @@ fn handle_client(
                     let cols = request["cols"].as_u64().unwrap_or(100).clamp(2, 1000) as u16;
                     let rows = request["rows"].as_u64().unwrap_or(30).clamp(2, 1000) as u16;
                     let mut s = state.lock().unwrap();
-                    let claim = request["claim"].as_bool().unwrap_or(false) || s.owner.is_none();
-                    if claim {
-                        s.next_claim += 1;
-                        s.owner = Some(id);
+                    if let Err(error) =
+                        ownership::fence_effect(&s.run_id, s.shell_running, &request)
+                    {
+                        let _ = tx.try_send(refusal(error, &s.run_id));
+                        continue;
                     }
-                    let rank = if claim {
-                        s.next_claim
-                    } else {
-                        s.controllers.get(&id).map(|c| c.claim).unwrap_or(0)
-                    };
-                    let registered = if let Some(c) = s.controllers.get(&id) {
-                        c.registered
-                    } else {
-                        s.next_claim += 1;
-                        s.next_claim
-                    };
-                    let geometry = Controller {
-                        registered,
+                    let geometry = Viewport {
                         cols,
                         rows,
                         width: request["width_px"]
@@ -495,14 +515,27 @@ fn handle_client(
                             .as_u64()
                             .unwrap_or(0)
                             .min(u16::MAX as u64) as u16,
-                        claim: rank,
                     };
-                    s.controllers.insert(id, geometry);
-                    if s.owner == Some(id) {
-                        apply_size(&mut s, &master, geometry).map(|_| None)
-                    } else {
-                        Ok(None)
+                    let decision = s
+                        .viewports
+                        .resize(id, geometry, Intent::from_request(&request));
+                    settle(&mut s, &master, decision).map(|_| None)
+                }
+                "detach" => {
+                    let mut s = state.lock().unwrap();
+                    if let Err(error) = ownership::fence(&s.run_id, &request) {
+                        let _ = tx.try_send(refusal(error, &s.run_id));
+                        continue;
                     }
+                    s.clients.remove(&id);
+                    let decision = s.viewports.detach(id);
+                    if let Err(error) = settle(&mut s, &master, decision) {
+                        s.broadcast(json!({"type":"error","message":error}));
+                    }
+                    let _ = tx.try_send(
+                        json!({"type":"detached","attachment":id,"run_id":s.run_id}).to_string(),
+                    );
+                    break;
                 }
 
                 "simulate" => start_simulation(
@@ -531,19 +564,9 @@ fn handle_client(
     {
         let mut s = state.lock().unwrap();
         s.clients.remove(&id);
-        s.controllers.remove(&id);
-        if s.owner == Some(id) {
-            s.owner = s
-                .controllers
-                .iter()
-                .max_by_key(|(_, c)| (c.claim, c.registered))
-                .map(|(id, _)| *id);
-            if let Some(owner) = s.owner {
-                let controller = s.controllers[&owner];
-                if let Err(error) = apply_size(&mut s, &master, controller) {
-                    s.broadcast(json!({"type":"error","message":error}));
-                }
-            }
+        let decision = s.viewports.detach(id);
+        if let Err(error) = settle(&mut s, &master, decision) {
+            s.broadcast(json!({"type":"error","message":error}));
         }
     }
     drop(tx);
@@ -645,9 +668,7 @@ pub fn spawn_runtime(
         next_client: 0,
         bytes: 0,
         events: 0,
-        owner: None,
-        controllers: HashMap::new(),
-        next_claim: 0,
+        viewports: Viewports::default(),
         pixel_size: (0, 0),
         reply_tx: Some(reply_tx),
         workspace_id: workspace.id.clone(),
@@ -838,9 +859,7 @@ mod tests {
             next_client: 0,
             bytes: 0,
             events: 0,
-            owner: None,
-            controllers: HashMap::new(),
-            next_claim: 0,
+            viewports: Viewports::default(),
             pixel_size: (0, 0),
             reply_tx: Some(tx),
             reply_dropped_bytes: 0,
@@ -883,9 +902,7 @@ mod tests {
             next_client: 0,
             bytes: 0,
             events: 0,
-            owner: None,
-            controllers: HashMap::new(),
-            next_claim: 0,
+            viewports: Viewports::default(),
             pixel_size: (0, 0),
             reply_tx: None,
             reply_dropped_bytes: 0,
@@ -942,9 +959,7 @@ mod tests {
             next_client: 0,
             bytes: 0,
             events: 0,
-            owner: None,
-            controllers: HashMap::new(),
-            next_claim: 0,
+            viewports: Viewports::default(),
             pixel_size: (0, 0),
             reply_tx: None,
             reply_dropped_bytes: 0,

@@ -5,7 +5,12 @@ import { decodeFeedFrame as decodeDailyUseFeedFrame, decodeRequest as decodeDail
   type Operation as DailyUseOperation, type Request as DailyUseRequest,
   type Response as DailyUseResponse } from '@ade/contracts'
 
-export { openTerminalConnection, type TerminalConnection, type TerminalFrame } from './terminal.js'
+export {
+  openTerminalConnection,
+  type TerminalConnection,
+  type TerminalConnectionOptions,
+  type TerminalFrame,
+} from './terminal.js'
 export { requestDaemon, DaemonRequestError, type DaemonErrorCode, type DaemonResponse,
   type RequestDelivery, type RequestOptions } from './request.js'
 export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'

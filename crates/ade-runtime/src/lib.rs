@@ -10,3 +10,4 @@ pub mod provider;
 pub mod rpc;
 pub mod runtime;
 pub mod service_logs;
+pub mod terminal_ownership;
