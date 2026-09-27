@@ -255,6 +255,294 @@
       ],
       "type": "object"
     },
+    "AccountSwitch": {
+      "description": "One recorded account switch: the provenance of a conversation's account.",
+      "properties": {
+        "agent_stopped": {
+          "description": "True when the switch stopped the conversation's idle Agent process.",
+          "type": "boolean"
+        },
+        "context_messages": {
+          "description": "How many ADE transcript messages the excerpt carries.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "context_transfer": {
+          "$ref": "#/$defs/ContextTransfer"
+        },
+        "context_truncated": {
+          "description": "True when older messages did not fit the excerpt.",
+          "type": "boolean"
+        },
+        "continuity": {
+          "$ref": "#/$defs/SwitchContinuity"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "disclosure": {
+          "description": "What does and does not carry over, in words a user can read.",
+          "type": "string"
+        },
+        "from_account_id": {
+          "description": "Null when the conversation used the legacy ambient account.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from_generation": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The operation ID that made the switch.",
+          "type": "string"
+        },
+        "previous_native_session": {
+          "description": "The native session the conversation used before the switch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "to_account_id": {
+          "type": "string"
+        },
+        "to_generation": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "conversation_id",
+        "provider",
+        "from_account_id",
+        "from_generation",
+        "to_account_id",
+        "to_generation",
+        "continuity",
+        "previous_native_session",
+        "context_transfer",
+        "context_messages",
+        "context_truncated",
+        "agent_stopped",
+        "disclosure",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "AccountSwitchListRequest": {
+      "additionalProperties": false,
+      "description": "`account.switch.list`: the switches recorded for a conversation.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "account.switch.list"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "AccountSwitchPreview": {
+      "description": "The `account.switch.preview` reply. Exactly one of `continuity` and\n`refusal` is set.",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/Capability",
+          "description": "The adapter's declared account-switch support and its note."
+        },
+        "continuity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SwitchContinuity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "disclosure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from_account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refusal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to_account_id": {
+          "type": "string"
+        },
+        "to_generation": {
+          "description": "Pass as `expected_generation`.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `account_switch_preview` type tag.",
+          "enum": [
+            "account_switch_preview"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "from_account_id",
+        "to_account_id",
+        "to_generation",
+        "continuity",
+        "refusal",
+        "capability",
+        "disclosure"
+      ],
+      "type": "object"
+    },
+    "AccountSwitchPreviewRequest": {
+      "additionalProperties": false,
+      "description": "`account.switch.preview`: ask how a conversation could move to an account.",
+      "properties": {
+        "account_id": {
+          "description": "The account the conversation would use for future turns.",
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "account.switch.preview"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "account_id"
+      ],
+      "type": "object"
+    },
+    "AccountSwitchRequest": {
+      "additionalProperties": false,
+      "description": "`account.switch`: rebind a conversation to another account of the same\nprovider for future turns. Refused while a turn is active.",
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "continuity": {
+          "$ref": "#/$defs/SwitchContinuity",
+          "description": "The continuity the preview offered. The daemon refuses any other."
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "expected_account_id": {
+          "default": null,
+          "description": "The conversation's current account, or null for a legacy ambient\nconversation. Any other current account refuses the switch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_generation": {
+          "description": "The target account's `generation` from the preview or `account.list`.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "account.switch"
+        },
+        "operation_id": {
+          "description": "Caller-chosen; reuse it only to retry the same switch.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id",
+        "account_id",
+        "expected_generation",
+        "continuity"
+      ],
+      "type": "object"
+    },
+    "AccountSwitched": {
+      "description": "The `account.switch` reply. A retry with the same operation ID returns it again.",
+      "properties": {
+        "switch": {
+          "$ref": "#/$defs/AccountSwitch"
+        },
+        "type": {
+          "description": "The `account_switched` type tag.",
+          "enum": [
+            "account_switched"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "switch"
+      ],
+      "type": "object"
+    },
+    "AccountSwitches": {
+      "description": "The `account.switch.list` reply, oldest first.",
+      "properties": {
+        "switches": {
+          "items": {
+            "$ref": "#/$defs/AccountSwitch"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `account_switches` type tag.",
+          "enum": [
+            "account_switches"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "switches"
+      ],
+      "type": "object"
+    },
     "AccountVerifyRequest": {
       "additionalProperties": false,
       "description": "`account.verify`: pin the identity an earlier `account.inspect` returned.",
@@ -523,6 +811,11 @@
         {
           "const": "snooze_ended",
           "description": "A snoozed Conversation reached its wake time (F046).",
+          "type": "string"
+        },
+        {
+          "const": "account_switched",
+          "description": "A conversation moved to another account for future turns (F026).",
           "type": "string"
         }
       ]
@@ -5317,6 +5610,31 @@
         "timeout_seconds"
       ],
       "type": "object"
+    },
+    "ContextTransfer": {
+      "description": "Whether ADE still owes the new native session the transferred context.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Nothing to transfer: native continuation, or an empty transcript.",
+          "type": "string"
+        },
+        {
+          "const": "pending",
+          "description": "The next turn's prompt carries the excerpt.",
+          "type": "string"
+        },
+        {
+          "const": "delivered",
+          "description": "The provider acknowledged a turn that carried the excerpt.",
+          "type": "string"
+        },
+        {
+          "const": "superseded",
+          "description": "A later switch replaced this one before its excerpt was delivered.",
+          "type": "string"
+        }
+      ]
     },
     "ControlAvailability": {
       "description": "Whether one control may run on a Conversation now.",
@@ -20393,6 +20711,21 @@
         }
       ]
     },
+    "SwitchContinuity": {
+      "description": "How a conversation keeps going after an account switch.",
+      "oneOf": [
+        {
+          "const": "native_continuation",
+          "description": "The adapter declares that its native session continues under another\naccount; the native session ID is kept.",
+          "type": "string"
+        },
+        {
+          "const": "new_native_session",
+          "description": "The next turn opens a new native session under the new account. ADE\nsends a bounded excerpt of the ADE transcript with that turn; the\nearlier native session, its tool state and hidden context do not carry over.",
+          "type": "string"
+        }
+      ]
+    },
     "TerminalCreateRequest": {
       "additionalProperties": false,
       "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID; `request_id` is accepted as\nits older name. Without one, every call creates a new terminal.",
@@ -23349,6 +23682,27 @@
       "request": "AccountDisableRequest",
       "response": "AccountDisabled",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.switch.preview",
+      "request": "AccountSwitchPreviewRequest",
+      "response": "AccountSwitchPreview",
+      "tier": "query"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.switch",
+      "request": "AccountSwitchRequest",
+      "response": "AccountSwitched",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "accounts",
+      "name": "account.switch.list",
+      "request": "AccountSwitchListRequest",
+      "response": "AccountSwitches",
+      "tier": "query"
     },
     {
       "domain": "terminals",

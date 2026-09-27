@@ -17,6 +17,7 @@ pub struct Store {
     data_directory: PathBuf,
 }
 
+mod account_switches;
 mod accounts;
 mod activity;
 mod attachments;
@@ -31,6 +32,7 @@ mod terminals;
 mod tests;
 mod windows;
 
+pub use account_switches::SwitchCommit;
 pub use attachments::*;
 pub use bindings::*;
 use conversations::*;

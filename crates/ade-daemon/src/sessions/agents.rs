@@ -140,6 +140,7 @@ impl Sessions {
                 self.worktrees.agent_lease(&workspace.root)?
             };
             let prompt = d.store.prompt(id, text, attachments)?;
+            let prompt = d.store.with_switch_context(id, key, prompt)?;
             let mut begin = d.store.begin_content_turn_with_feedback(
                 id,
                 key,
@@ -217,6 +218,9 @@ impl Sessions {
                 };
                 let turn = rpc.send(&thread, &key, message_id.as_deref(), &prompt)?;
                 let mut d = hub.data.lock().unwrap();
+                if let Err(error) = d.store.mark_switch_context_delivered(&c.id, &key) {
+                    eprintln!("Account switch context: {error:#}");
+                }
                 if !Self::owns(&d, &c.id, &run)
                     || d.agents[&c.id].submission.as_deref() != Some(&key)
                 {

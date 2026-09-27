@@ -3,6 +3,7 @@ pub use ade_core::{model, prompt, terminal_launch, transcript};
 pub use ade_platform::bench;
 pub use ade_platform::diagnostics;
 pub use ade_runtime::{agent_runtime, provider, runtime};
+pub mod account_switch;
 pub mod adapters;
 pub mod browser_library;
 pub mod capabilities;

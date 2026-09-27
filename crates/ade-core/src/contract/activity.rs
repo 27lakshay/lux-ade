@@ -57,6 +57,8 @@ pub enum ActivityKind {
     OperationUnknown,
     /// A snoozed Conversation reached its wake time (F046).
     SnoozeEnded,
+    /// A conversation moved to another account for future turns (F026).
+    AccountSwitched,
 }
 
 /// The read state of an activity. It only moves forward.

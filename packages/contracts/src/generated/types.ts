@@ -10,6 +10,13 @@ export type ContractDefinition =
   | AccountInspectRequest
   | AccountInspection
   | AccountListRequest
+  | AccountSwitch
+  | AccountSwitchListRequest
+  | AccountSwitchPreview
+  | AccountSwitchPreviewRequest
+  | AccountSwitchRequest
+  | AccountSwitched
+  | AccountSwitches
   | AccountVerifyRequest
   | AccountsReply
   | Ack
@@ -116,7 +123,7 @@ export type ContractDefinition =
   | BrowserTabReply
   | BrowserTabs
   | Caller
-  | Capability
+  | Capability1
   | CapabilityChange
   | CapabilityRecord
   | CarryBlocker
@@ -166,6 +173,7 @@ export type ContractDefinition =
   | CommittedChanges
   | CommittedFile
   | Config
+  | ContextTransfer
   | ControlAvailability
   | ControlOutcome
   | Conversation
@@ -637,6 +645,7 @@ export type ContractDefinition =
   | SkillSummary
   | StartOutcome
   | Support
+  | SwitchContinuity
   | TerminalCreateRequest
   | TerminalCreated
   | TerminalOperation
@@ -727,6 +736,18 @@ export type AccountChoice =
       [k: string]: unknown
     }
 /**
+ * Whether ADE still owes the new native session the transferred context.
+ */
+export type ContextTransfer = 'none' | 'pending' | 'delivered' | 'superseded'
+/**
+ * How a conversation keeps going after an account switch.
+ */
+export type SwitchContinuity = 'native_continuation' | 'new_native_session'
+/**
+ * How far ADE supports one provider capability.
+ */
+export type Support = 'supported' | 'native_only' | 'unsupported' | 'unknown'
+/**
  * What an activity records.
  */
 export type ActivityKind =
@@ -737,6 +758,7 @@ export type ActivityKind =
   | 'question_requested'
   | 'operation_unknown'
   | 'snooze_ended'
+  | 'account_switched'
 /**
  * The read state of an activity. It only moves forward.
  */
@@ -832,10 +854,6 @@ export type Caller =
       kind: 'agent'
       [k: string]: unknown
     }
-/**
- * How far ADE supports one provider capability.
- */
-export type Support = 'supported' | 'native_only' | 'unsupported' | 'unknown'
 /**
  * How the provider's capability record changed since a preset was saved.
  */
@@ -1694,6 +1712,147 @@ export interface Inspection {
  */
 export interface AccountListRequest {
   op: 'account.list'
+}
+/**
+ * One recorded account switch: the provenance of a conversation's account.
+ */
+export interface AccountSwitch {
+  /**
+   * True when the switch stopped the conversation's idle Agent process.
+   */
+  agent_stopped: boolean
+  /**
+   * How many ADE transcript messages the excerpt carries.
+   */
+  context_messages: number
+  context_transfer: ContextTransfer
+  /**
+   * True when older messages did not fit the excerpt.
+   */
+  context_truncated: boolean
+  continuity: SwitchContinuity
+  conversation_id: string
+  created_at: number
+  /**
+   * What does and does not carry over, in words a user can read.
+   */
+  disclosure: string
+  /**
+   * Null when the conversation used the legacy ambient account.
+   */
+  from_account_id: string | null
+  from_generation: number | null
+  /**
+   * The operation ID that made the switch.
+   */
+  id: string
+  /**
+   * The native session the conversation used before the switch.
+   */
+  previous_native_session: string | null
+  provider: string
+  to_account_id: string
+  to_generation: number
+  [k: string]: unknown
+}
+/**
+ * `account.switch.list`: the switches recorded for a conversation.
+ */
+export interface AccountSwitchListRequest {
+  conversation_id: string
+  op: 'account.switch.list'
+}
+/**
+ * The `account.switch.preview` reply. Exactly one of `continuity` and
+ * `refusal` is set.
+ */
+export interface AccountSwitchPreview {
+  capability: Capability
+  continuity: SwitchContinuity | null
+  conversation_id: string
+  disclosure: string | null
+  from_account_id: string | null
+  refusal: string | null
+  to_account_id: string
+  /**
+   * Pass as `expected_generation`.
+   */
+  to_generation: number
+  /**
+   * The `account_switch_preview` type tag.
+   */
+  type: 'account_switch_preview'
+  [k: string]: unknown
+}
+/**
+ * The adapter's declared account-switch support and its note.
+ */
+export interface Capability {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * `account.switch.preview`: ask how a conversation could move to an account.
+ */
+export interface AccountSwitchPreviewRequest {
+  /**
+   * The account the conversation would use for future turns.
+   */
+  account_id: string
+  conversation_id: string
+  op: 'account.switch.preview'
+}
+/**
+ * `account.switch`: rebind a conversation to another account of the same
+ * provider for future turns. Refused while a turn is active.
+ */
+export interface AccountSwitchRequest {
+  account_id: string
+  /**
+   * How a conversation keeps going after an account switch.
+   */
+  continuity: 'native_continuation' | 'new_native_session'
+  conversation_id: string
+  /**
+   * The conversation's current account, or null for a legacy ambient
+   * conversation. Any other current account refuses the switch.
+   */
+  expected_account_id?: string | null
+  /**
+   * The target account's `generation` from the preview or `account.list`.
+   */
+  expected_generation: number
+  op: 'account.switch'
+  /**
+   * Caller-chosen; reuse it only to retry the same switch.
+   */
+  operation_id: string
+}
+/**
+ * The `account.switch` reply. A retry with the same operation ID returns it again.
+ */
+export interface AccountSwitched {
+  switch: AccountSwitch
+  /**
+   * The `account_switched` type tag.
+   */
+  type: 'account_switched'
+  [k: string]: unknown
+}
+/**
+ * The `account.switch.list` reply, oldest first.
+ */
+export interface AccountSwitches {
+  switches: AccountSwitch[]
+  /**
+   * The `account_switches` type tag.
+   */
+  type: 'account_switches'
+  [k: string]: unknown
 }
 /**
  * `account.verify`: pin the identity an earlier `account.inspect` returned.
@@ -3146,7 +3305,7 @@ export interface BrowserTabs {
 /**
  * One capability and why it has that support.
  */
-export interface Capability {
+export interface Capability1 {
   /**
    * The native mechanism, or what is missing.
    */
@@ -3169,12 +3328,12 @@ export interface CapabilityRecord {
    */
   fingerprint: string
   grants: GrantCapabilities
-  managed_accounts: Capability11
+  managed_accounts: Capability12
   models: ModelCapabilities
   name: string
   permission_modes: PermissionModeCapability[]
   provider: string
-  quota: Capability14
+  quota: Capability15
   reasoning: ReasoningCapabilities
   /**
    * Raised by the adapter whenever the declared capabilities change.
@@ -3183,28 +3342,17 @@ export interface CapabilityRecord {
   [k: string]: unknown
 }
 export interface ConversationCapabilities {
-  account_switch: Capability1
-  compaction: Capability2
-  fork: Capability3
-  import: Capability4
-  resume: Capability5
-  rewind: Capability6
-  steering: Capability7
+  account_switch: Capability2
+  compaction: Capability3
+  fork: Capability4
+  import: Capability5
+  resume: Capability6
+  rewind: Capability7
+  steering: Capability8
   [k: string]: unknown
 }
 /**
  * Changing account inside one conversation.
- */
-export interface Capability1 {
-  /**
-   * The native mechanism, or what is missing.
-   */
-  note: string
-  support: Support
-  [k: string]: unknown
-}
-/**
- * Summarizing earlier context on request.
  */
 export interface Capability2 {
   /**
@@ -3215,7 +3363,7 @@ export interface Capability2 {
   [k: string]: unknown
 }
 /**
- * Branching a native session into a new one.
+ * Summarizing earlier context on request.
  */
 export interface Capability3 {
   /**
@@ -3226,7 +3374,7 @@ export interface Capability3 {
   [k: string]: unknown
 }
 /**
- * Importing native history that ADE did not create.
+ * Branching a native session into a new one.
  */
 export interface Capability4 {
   /**
@@ -3237,7 +3385,7 @@ export interface Capability4 {
   [k: string]: unknown
 }
 /**
- * Reopening a native session after a restart.
+ * Importing native history that ADE did not create.
  */
 export interface Capability5 {
   /**
@@ -3248,7 +3396,7 @@ export interface Capability5 {
   [k: string]: unknown
 }
 /**
- * Returning the conversation, and possibly files, to an earlier point.
+ * Reopening a native session after a restart.
  */
 export interface Capability6 {
   /**
@@ -3259,9 +3407,20 @@ export interface Capability6 {
   [k: string]: unknown
 }
 /**
- * Adding input to a running turn.
+ * Returning the conversation, and possibly files, to an earlier point.
  */
 export interface Capability7 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Adding input to a running turn.
+ */
+export interface Capability8 {
   /**
    * The native mechanism, or what is missing.
    */
@@ -3273,24 +3432,13 @@ export interface Capability7 {
  * How long an approval can last. ADE never widens a grant while mapping it.
  */
 export interface GrantCapabilities {
-  once: Capability8
-  persistent: Capability9
-  session: Capability10
+  once: Capability9
+  persistent: Capability10
+  session: Capability11
   [k: string]: unknown
 }
 /**
  * Approving one request only.
- */
-export interface Capability8 {
-  /**
-   * The native mechanism, or what is missing.
-   */
-  note: string
-  support: Support
-  [k: string]: unknown
-}
-/**
- * Approving similar requests in saved native settings.
  */
 export interface Capability9 {
   /**
@@ -3301,7 +3449,7 @@ export interface Capability9 {
   [k: string]: unknown
 }
 /**
- * Approving similar requests for the rest of the session.
+ * Approving similar requests in saved native settings.
  */
 export interface Capability10 {
   /**
@@ -3312,9 +3460,20 @@ export interface Capability10 {
   [k: string]: unknown
 }
 /**
- * Whether ADE can manage several accounts for this provider.
+ * Approving similar requests for the rest of the session.
  */
 export interface Capability11 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Whether ADE can manage several accounts for this provider.
+ */
+export interface Capability12 {
   /**
    * The native mechanism, or what is missing.
    */
@@ -3328,15 +3487,15 @@ export interface ModelCapabilities {
    * not know which model an alias means today.
    */
   aliases: string[]
-  discovery: Capability12
+  discovery: Capability13
   format: ModelFormat
-  selection: Capability13
+  selection: Capability14
   [k: string]: unknown
 }
 /**
  * Listing the models an account can use.
  */
-export interface Capability12 {
+export interface Capability13 {
   /**
    * The native mechanism, or what is missing.
    */
@@ -3347,7 +3506,7 @@ export interface Capability12 {
 /**
  * Choosing a model when a conversation starts.
  */
-export interface Capability13 {
+export interface Capability14 {
   /**
    * The native mechanism, or what is missing.
    */
@@ -3370,7 +3529,7 @@ export interface PermissionModeCapability {
 /**
  * Whether the provider reports quota or rate-limit windows.
  */
-export interface Capability14 {
+export interface Capability15 {
   /**
    * The native mechanism, or what is missing.
    */
@@ -3383,7 +3542,7 @@ export interface ReasoningCapabilities {
    * The provider's own level names, weakest first.
    */
   levels: string[]
-  selection: Capability15
+  selection: Capability16
   /**
    * True when the provider offers a different subset per model.
    */
@@ -3393,7 +3552,7 @@ export interface ReasoningCapabilities {
 /**
  * Choosing a reasoning level when a conversation starts.
  */
-export interface Capability15 {
+export interface Capability16 {
   /**
    * The native mechanism, or what is missing.
    */
@@ -10737,7 +10896,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -10789,6 +10948,9 @@ export interface RequestByOperation {
   "account.inspect": AccountInspectRequest
   "account.verify": AccountVerifyRequest
   "account.disable": AccountDisableRequest
+  "account.switch.preview": AccountSwitchPreviewRequest
+  "account.switch": AccountSwitchRequest
+  "account.switch.list": AccountSwitchListRequest
   "terminal.create": TerminalCreateRequest
   "terminal.operation": TerminalOperationRequest
   "terminal.restart": TerminalRestartRequest
@@ -11026,6 +11188,9 @@ export interface ResponseByOperation {
   "account.inspect": AccountInspection
   "account.verify": AccountAck
   "account.disable": AccountDisabled
+  "account.switch.preview": AccountSwitchPreview
+  "account.switch": AccountSwitched
+  "account.switch.list": AccountSwitches
   "terminal.create": TerminalCreated
   "terminal.operation": TerminalOperation
   "terminal.restart": Ack
