@@ -138,6 +138,9 @@ pub enum CommandInvokeOutcome {
     Unavailable,
     /// ADE cannot prove whether the invocation was queued and will not queue it again.
     Unknown,
+    /// The native text was queued, then cancelled before delivery. It will
+    /// not run, and ADE will not queue it again under this operation ID.
+    Cancelled,
 }
 
 /// The `command.invoke` reply.

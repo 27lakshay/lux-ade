@@ -527,12 +527,7 @@ impl Sessions {
             .store(d.subscribers.len(), Ordering::Relaxed);
     }
     fn changed(&self, d: &mut Data, c: &Conversation, messages: &[Message]) -> Result<()> {
-        let requests: Vec<_> = d
-            .store
-            .pending(&c.id)?
-            .into_iter()
-            .filter(|r| r.status == "pending")
-            .collect();
+        let requests = frame_requests(d.store.pending(&c.id)?);
         crate::bench::agent_messages("provider_to_durable_us", messages);
         let queued = d.store.queued(&c.id)?;
         self.publish(d,json!({"type":"conversation_changed","conversation":c,"messages":messages,"requests":requests,"queued":queued}));
@@ -827,6 +822,47 @@ fn persistence_result<T>(result: anyhow::Result<T>) -> anyhow::Result<T> {
             error
         }
     })
+}
+/// The requests a `conversation_changed` frame carries. Clients replace
+/// their request list with it, so it must match `conversation.get`: an answer
+/// whose delivery is uncertain stays `responding` and still needs its form
+/// for the same-decision retry.
+fn frame_requests(open: Vec<PendingRequest>) -> Vec<PendingRequest> {
+    open.into_iter()
+        .filter(|r| matches!(r.status.as_str(), "pending" | "responding"))
+        .collect()
+}
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    fn request(id: &str, status: &str) -> PendingRequest {
+        PendingRequest {
+            id: id.into(),
+            conversation_id: "c".into(),
+            run_id: "r".into(),
+            rpc_id: json!(1),
+            method: "item/tool/requestUserInput".into(),
+            params: json!({}),
+            status: status.into(),
+            answer_fingerprint: None,
+            answer_dispatched: false,
+            answer_attempt: 0,
+        }
+    }
+    #[test]
+    fn an_uncertain_answer_keeps_its_form_in_the_delta() {
+        // agent.answer set the request to `responding`, then the runtime reply
+        // was lost. The next delta must still carry it, as the snapshot does.
+        let ids: Vec<_> = frame_requests(vec![
+            request("a", "pending"),
+            request("b", "responding"),
+            request("c", "resolved"),
+        ])
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+        assert_eq!(ids, ["a", "b"]);
+    }
 }
 #[cfg(test)]
 mod failure_tests {

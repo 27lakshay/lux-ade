@@ -10,11 +10,13 @@
 //! `<operation_id>:command`. The queue refuses a second, different prompt under
 //! one ID and accepts the same one as already done, so a retry after a lost
 //! reply re-offers the stored text and converges instead of queueing twice.
-//! Delivery to the provider is the queue's job; the reply says `queued`, never
+//! Delivery to the provider is the queue's job; the reply says `queued` (or
+//! `cancelled` when a replay finds the user cancelled that prompt), never
 //! that the provider ran the command.
 use super::*;
 use crate::receipts::{self, Admission, Status};
 use crate::skills::{self, placement};
+use crate::store::QueueEntry;
 use ade_core::contract::commands::{
     CommandInvokeOutcome, CommandInvokeRequest, CommandInvoked, CommandKind, CommandList,
     CommandListRequest,
@@ -38,6 +40,21 @@ enum Planned {
     Queue(String, Option<String>),
     Unavailable(String),
     Missing(String),
+}
+
+/// How an invocation settles once its prompt is in, or found in, the queue.
+/// A replay after a lost reply can find the prompt the user has since
+/// cancelled; that invocation will never run, so it must not report `queued`.
+fn settled_outcome(entry: QueueEntry) -> (CommandInvokeOutcome, Option<&'static str>) {
+    match entry {
+        QueueEntry::Queued | QueueEntry::Delivered => (CommandInvokeOutcome::Queued, None),
+        QueueEntry::Cancelled => (
+            CommandInvokeOutcome::Cancelled,
+            Some(
+                "The invocation was queued, then cancelled before delivery. It will not run, and ADE will not queue it again.",
+            ),
+        ),
+    }
 }
 
 /// The derived prompt queue ID of an invocation.
@@ -352,15 +369,16 @@ impl Sessions {
         let mut d = self.data.lock().unwrap();
         let queued = d.store.conversation(&invoke.conversation_id).and_then(|c| {
             Self::ensure_not_imported(&c)?;
-            d.store.enqueue_content(&c.id, &id, &text, &[])?;
-            Ok(c)
+            let entry = d.store.enqueue_content(&c.id, &id, &text, &[])?;
+            Ok((c, entry))
         });
-        let c = queued.map_err(|error| {
+        let (c, entry) = queued.map_err(|error| {
             anyhow!(
                 "{error:#}. The invocation was not confirmed as queued; retry with the same operation_id, never with a new one"
             )
         })?;
-        let done = answer(CommandInvokeOutcome::Queued, Some(text), mechanism, None);
+        let (outcome, reason) = settled_outcome(entry);
+        let done = answer(outcome, Some(text), mechanism, reason.map(str::to_owned));
         let value = serde_json::to_value(&done)?;
         receipts::settle(
             &d.store.connection,
@@ -372,5 +390,27 @@ impl Sessions {
         // Publishes the queue change and wakes the dispatcher.
         self.changed(&mut d, &c, &[])?;
         Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replay_that_finds_its_prompt_cancelled_does_not_report_queued() {
+        // The first reply was lost, the user cancelled the queued prompt, and
+        // the client retried with the same operation_id.
+        let (outcome, reason) = settled_outcome(QueueEntry::Cancelled);
+        assert_eq!(outcome, CommandInvokeOutcome::Cancelled);
+        assert!(reason.is_some());
+        assert_eq!(
+            settled_outcome(QueueEntry::Queued).0,
+            CommandInvokeOutcome::Queued
+        );
+        assert_eq!(
+            settled_outcome(QueueEntry::Delivered).0,
+            CommandInvokeOutcome::Queued
+        );
     }
 }

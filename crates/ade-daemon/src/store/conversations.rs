@@ -1,5 +1,16 @@
 use super::*;
 
+/// Where a prompt stands after `enqueue_content` inserted or found it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueEntry {
+    /// Waiting in the queue.
+    Queued,
+    /// Already submitted to the provider.
+    Delivered,
+    /// Cancelled before delivery; it will not run.
+    Cancelled,
+}
+
 pub(super) fn message_by_id(db: &Connection, id: &str) -> Result<Option<Message>> {
     db.query_row("SELECT data FROM messages WHERE id=?1", [id], |r| {
         r.get::<_, String>(0)
@@ -220,15 +231,17 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
     pub fn enqueue(&self, conversation: &str, id: &str, text: &str) -> Result<()> {
-        self.enqueue_content(conversation, id, text, &[])
+        self.enqueue_content(conversation, id, text, &[]).map(drop)
     }
+    /// Queues a prompt under `id`, or finds the same prompt already under it
+    /// and reports where it stands.
     pub fn enqueue_content(
         &self,
         conversation: &str,
         id: &str,
         text: &str,
         attachments: &[Attachment],
-    ) -> Result<()> {
+    ) -> Result<QueueEntry> {
         check_id(id)?;
         ensure!(
             (!text.trim().is_empty() || !attachments.is_empty()) && text.len() <= 64 * 1024,
@@ -245,21 +258,32 @@ impl Store {
                     && message.attachments == attachments,
                 "Submission ID belongs to another prompt"
             );
-            return Ok(());
+            return Ok(QueueEntry::Delivered);
         }
-        let prior: Option<(String, String, Vec<Attachment>)> = tx
+        let prior: Option<(String, String, Vec<Attachment>, String)> = tx
             .query_row(
-                "SELECT conversation_id,text,attachments FROM queued_prompts WHERE id=?1",
+                "SELECT conversation_id,text,attachments,status FROM queued_prompts WHERE id=?1",
                 [id],
-                |row| Ok((row.get(0)?, row.get(1)?, attachment_row(row, 2)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        attachment_row(row, 2)?,
+                        row.get(3)?,
+                    ))
+                },
             )
             .optional()?;
-        if let Some((owner, value, previous)) = prior {
+        if let Some((owner, value, previous, state)) = prior {
             ensure!(
                 owner == conversation && value == text && previous == attachments,
                 "Queue ID belongs to another prompt"
             );
-            return Ok(());
+            return Ok(match state.as_str() {
+                "cancelled" => QueueEntry::Cancelled,
+                "submitted" => QueueEntry::Delivered,
+                _ => QueueEntry::Queued,
+            });
         }
         let count: i64 = tx.query_row(
             "SELECT count(*) FROM queued_prompts WHERE conversation_id=?1 AND status='queued'",
@@ -272,7 +296,7 @@ impl Store {
             params![id, conversation, text, encode(&attachments)?],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(QueueEntry::Queued)
     }
     pub fn cancel_queued(&self, conversation: &str, id: &str) -> Result<()> {
         self.conversation(conversation)?;

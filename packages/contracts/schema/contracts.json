@@ -5966,6 +5966,11 @@
           "const": "unknown",
           "description": "ADE cannot prove whether the invocation was queued and will not queue it again.",
           "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "The native text was queued, then cancelled before delivery. It will\nnot run, and ADE will not queue it again under this operation ID.",
+          "type": "string"
         }
       ]
     },
