@@ -1349,6 +1349,8 @@ fn resume(home: &Path, value: &mut Registry, id: &str) -> Result<Value> {
         "sessions.review.sqlite3",
         "sessions.worktrees/lifecycle.sqlite3",
         PLUGINS_DB,
+        coverage::ENVELOPE_DB,
+        coverage::BROWSER_OPERATIONS,
     ] {
         let candidate = data.join(name);
         if candidate.exists() || candidate.is_symlink() {

@@ -847,12 +847,14 @@ impl Sessions {
 }
 
 /// Preserve actionable validation errors, but never expose raw database errors
-/// (which may contain SQL values or paths) as a persistence failure.
+/// (which may contain SQL values or paths). A database error becomes the
+/// storage failure it is: only a full disk says to check disk space, and a
+/// busy database says so rather than blaming the disk.
 fn persistence_result<T>(result: anyhow::Result<T>) -> anyhow::Result<T> {
     result.map_err(|error| {
-        if error.downcast_ref::<rusqlite::Error>().is_some() {
-            tracing::error!(target: "ade", event = "persistence_failed", code = "save_failed");
-            ade_core::error::Failure::SaveFailed.into()
+        if let Some(failure) = crate::store::storage_failure(&error) {
+            tracing::error!(target: "ade", event = "persistence_failed", code = failure.code());
+            failure.into()
         } else {
             error
         }
@@ -913,14 +915,109 @@ mod failure_tests {
             .map_err(anyhow::Error::from);
         let error = persistence_result(result).unwrap_err();
         assert_eq!(
-            error.downcast_ref::<ade_core::error::Failure>(),
-            Some(&ade_core::error::Failure::SaveFailed)
+            error.downcast_ref::<StorageFailure>(),
+            Some(&StorageFailure::Unwritable)
         );
         assert!(!error.to_string().contains("secret"));
+        assert!(!error.to_string().contains("disk space"));
         let rows: i64 = database
             .query_row("SELECT count(*) FROM private_data", [], |row| row.get(0))
             .unwrap();
         assert_eq!(rows, 0);
+    }
+    use ade_core::error::StorageFailure;
+    #[test]
+    fn only_a_full_database_reports_disk_space() {
+        // `max_page_count` makes SQLite return a real SQLITE_FULL.
+        let database = rusqlite::Connection::open_in_memory().unwrap();
+        database
+            .execute_batch("CREATE TABLE t (text TEXT); PRAGMA max_page_count=2;")
+            .unwrap();
+        let result = database
+            .execute("INSERT INTO t VALUES (?1)", ["x".repeat(64 * 1024)])
+            .map_err(anyhow::Error::from);
+        let error = persistence_result(result).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<StorageFailure>(),
+            Some(&StorageFailure::Full)
+        );
+        assert!(error.to_string().contains("disk space"));
+    }
+    #[test]
+    fn a_busy_database_is_retried_then_reported_as_busy() {
+        let directory =
+            std::env::temp_dir().join(format!("ade-busy-{}-{}", std::process::id(), now_ms()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("busy.sqlite");
+        let holder = rusqlite::Connection::open(&path).unwrap();
+        holder.pragma_update(None, "journal_mode", "WAL").unwrap();
+        holder.execute_batch("CREATE TABLE t (n INTEGER)").unwrap();
+        let writer = rusqlite::Connection::open(&path).unwrap();
+        writer
+            .busy_timeout(std::time::Duration::from_millis(20))
+            .unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let error = persistence_result(crate::store::begin_write(&writer).map(|_| ())).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<StorageFailure>(),
+            Some(&StorageFailure::Busy)
+        );
+        assert!(!error.to_string().contains("disk space"));
+        holder.execute_batch("COMMIT").unwrap();
+        // With the lock released, the same write goes through.
+        let tx = crate::store::begin_write(&writer).unwrap();
+        tx.execute("INSERT INTO t VALUES (1)", []).unwrap();
+        tx.commit().unwrap();
+        drop((holder, writer));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn a_write_transaction_waits_for_the_lock_a_deferred_upgrade_cannot() {
+        let directory =
+            std::env::temp_dir().join(format!("ade-upgrade-{}-{}", std::process::id(), now_ms()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("upgrade.sqlite");
+        let holder = rusqlite::Connection::open(&path).unwrap();
+        holder.pragma_update(None, "journal_mode", "WAL").unwrap();
+        holder.execute_batch("CREATE TABLE t (n INTEGER)").unwrap();
+        let writer = rusqlite::Connection::open(&path).unwrap();
+        writer
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+
+        // The cause of the false "check disk space" under load: a deferred
+        // transaction reads, then its first write finds another writer and
+        // SQLite refuses the upgrade at once, without the busy wait.
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let started = std::time::Instant::now();
+        let deferred = writer.unchecked_transaction().unwrap();
+        let _: i64 = deferred
+            .query_row("SELECT count(*) FROM t", [], |row| row.get(0))
+            .unwrap();
+        let refused = deferred
+            .execute("INSERT INTO t VALUES (1)", [])
+            .map_err(anyhow::Error::from);
+        assert_eq!(
+            persistence_result(refused)
+                .unwrap_err()
+                .downcast_ref::<StorageFailure>(),
+            Some(&StorageFailure::Busy)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+        drop(deferred);
+
+        // `begin_write` takes the lock at BEGIN, where the busy wait applies,
+        // so it goes through once the other writer commits.
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            holder.execute_batch("COMMIT").unwrap();
+        });
+        let tx = crate::store::begin_write(&writer).unwrap();
+        tx.execute("INSERT INTO t VALUES (2)", []).unwrap();
+        tx.commit().unwrap();
+        release.join().unwrap();
+        drop(writer);
+        std::fs::remove_dir_all(directory).unwrap();
     }
     #[test]
     fn persistence_validation_errors_remain_actionable() {

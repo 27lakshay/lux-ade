@@ -303,7 +303,7 @@ fn peek(
     payload: &Value,
     what: &str,
 ) -> Result<Option<Value>> {
-    let tx = connection.unchecked_transaction()?;
+    let tx = crate::store::begin_write(connection)?;
     let admission = receipts::begin(&tx, id, op, payload, None, now_ms())?;
     drop(tx);
     replay(admission, what)
@@ -390,14 +390,19 @@ impl Sessions {
         let operation_id = delegate.operation_id.as_str();
         let parent = {
             let d = self.data.lock().unwrap();
-            ensure_schema(&d.store.connection)?;
-            if let Some(result) = peek(
-                &d.store.connection,
-                operation_id,
-                DELEGATE,
-                &payload,
-                "delegation",
-            )? {
+            // Creating the schema and probing the receipt both write, so a
+            // busy database is reported as such, never as a raw SQL error.
+            let admitted = persistence_result((|| {
+                ensure_schema(&d.store.connection)?;
+                peek(
+                    &d.store.connection,
+                    operation_id,
+                    DELEGATE,
+                    &payload,
+                    "delegation",
+                )
+            })())?;
+            if let Some(result) = admitted {
                 return Ok(result);
             }
             d.store.conversation(parent_id)?
@@ -439,7 +444,7 @@ impl Sessions {
         let now = now_ms();
         let (created, result) = persistence_result((|| -> Result<_> {
             let db = &d.store.connection;
-            let tx = db.unchecked_transaction()?;
+            let tx = crate::store::begin_write(db)?;
             let admission = receipts::begin(
                 &tx,
                 operation_id,
@@ -571,7 +576,7 @@ impl Sessions {
         let (child, result) = persistence_result((|| -> Result<_> {
             let db = &d.store.connection;
             ensure_schema(db)?;
-            let tx = db.unchecked_transaction()?;
+            let tx = crate::store::begin_write(db)?;
             let record = link(&tx, child_id)?.context("Conversation is not a delegated child")?;
             let attribution =
                 policy::authorize_message(&send.caller, &record.parent_conversation_id)?;
@@ -657,7 +662,7 @@ impl Sessions {
         let (parent, result) = persistence_result((|| -> Result<_> {
             let db = &d.store.connection;
             ensure_schema(db)?;
-            let tx = db.unchecked_transaction()?;
+            let tx = crate::store::begin_write(db)?;
             let record = link(&tx, child_id)?.context("Conversation is not a delegated child")?;
             let attribution = policy::authorize_parent_message(&send.caller, child_id)?;
             let admission = receipts::begin(

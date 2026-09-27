@@ -164,14 +164,19 @@ impl Sessions {
         let operation_id = start.operation_id.as_str();
         let parent = {
             let d = self.data.lock().unwrap();
-            ensure_group_schema(&d.store.connection)?;
-            if let Some(result) = peek(
-                &d.store.connection,
-                operation_id,
-                START,
-                &payload,
-                "parallel group",
-            )? {
+            // Creating the schema and probing the receipt both write, so a
+            // busy database is reported as such, never as a raw SQL error.
+            let admitted = persistence_result((|| {
+                ensure_group_schema(&d.store.connection)?;
+                peek(
+                    &d.store.connection,
+                    operation_id,
+                    START,
+                    &payload,
+                    "parallel group",
+                )
+            })())?;
+            if let Some(result) = admitted {
                 return Ok(result);
             }
             d.store.conversation(parent_id)?
@@ -229,7 +234,7 @@ impl Sessions {
         let now = now_ms();
         let (created, result) = persistence_result((|| -> Result<_> {
             let db = &d.store.connection;
-            let tx = db.unchecked_transaction()?;
+            let tx = crate::store::begin_write(db)?;
             let admission =
                 receipts::begin(&tx, operation_id, START, &payload, Some(&attribution), now)?;
             if let Some(result) = replay(admission, "parallel group")? {
