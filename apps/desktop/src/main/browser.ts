@@ -17,6 +17,7 @@ import {
 import type { QuitGuard } from './quit-guards'
 import { reconcileBrowserEffect, type BrowserIntent } from './browser-reconcile'
 import { automationPayloadTail, selectorProblem, textProblem } from './browser-automation-core'
+import type { BrowserProfileCaptured, BrowserProfileRestored } from '../shared/bridge/browser'
 
 // `partitionId` names the tab's browser partition (F092); absent means the
 // profile's default browser storage.
@@ -999,7 +1000,7 @@ function validatedBundle(value: unknown): BrowserBundle {
   return bundle
 }
 /** Electron-owned, intentionally partial capture of tabs and persistent cookies. */
-async function captureBrowserProfile(id: string, destination: string): Promise<Record<string, unknown>> {
+async function captureBrowserProfile(id: string, destination: string): Promise<BrowserProfileCaptured> {
   if (
     !validId(id) ||
     id === 'fixed' ||
@@ -1126,7 +1127,7 @@ async function captureBrowserProfile(id: string, destination: string): Promise<R
 }
 
 /** Restore into a never-opened managed profile without inheriting source identity. */
-async function restoreBrowserProfile(source: string, id: string, home: string): Promise<Record<string, unknown>> {
+async function restoreBrowserProfile(source: string, id: string, home: string): Promise<BrowserProfileRestored> {
   if (
     !isAbsolute(source) ||
     !isAbsolute(home) ||
@@ -1167,7 +1168,9 @@ async function restoreBrowserProfile(source: string, id: string, home: string): 
           !Array.isArray(record.tabIds) ||
           record.tabIds.length !== bundle.tabs.value.tabs.length ||
           record.tabIds.some((item) => !validId(item)) ||
-          new Set(record.tabIds).size !== record.tabIds.length
+          new Set(record.tabIds).size !== record.tabIds.length ||
+          !Number.isSafeInteger(record.cookieCount) ||
+          (record.cookieCount as number) < 0
         ) {
           throw new Error('Browser restore receipt belongs to another attempt')
         }
@@ -1186,7 +1189,7 @@ async function restoreBrowserProfile(source: string, id: string, home: string): 
           source_profile_id: bundle.sourceProfileId,
           profile_id: id,
           tab_count: saved.tabs.length,
-          cookie_count: record.cookieCount,
+          cookie_count: record.cookieCount as number,
           scope: bundle.scope,
           included: bundle.included,
           excluded: bundle.excluded,

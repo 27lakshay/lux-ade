@@ -109,3 +109,18 @@ valid('require-store-selector', 'allows useDaemon with a selector', 'useDaemon((
 valid('require-store-selector', 'ignores other calls', 'useState(0)')
 invalid('require-store-selector', 'reports useStore without a selector', 'useStore(store)', /without a selector/)
 invalid('require-store-selector', 'reports useDaemon without a selector', 'useDaemon()', /without a selector/)
+
+valid('no-loose-record', 'allows a record of a named type', 'type Counts = Record<string, number>')
+valid('no-loose-record', 'allows a contract type', "type Reply = DailyUseResponse<'file.list'>")
+invalid(
+  'no-loose-record',
+  'reports Record<string, unknown>',
+  'type Frame = Record<string, unknown>',
+  /drops the contract/,
+)
+invalid(
+  'no-loose-record',
+  'reports Record<string, any> in a method signature',
+  'interface Bridge { request(fields: Record<string, any>): Promise<void> }',
+  /drops the contract/,
+)

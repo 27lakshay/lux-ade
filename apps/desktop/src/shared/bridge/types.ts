@@ -1,4 +1,3 @@
-export type Frame = Record<string, unknown>
 export type PendingSend = { profileId: string; conversationId: string; requestId: string; text: string }
 type Profile = { id: string; name: string; selected: boolean; home: string }
 export type ProfileState = {

@@ -21,8 +21,14 @@ import { reviewNote, sameReviewAnchor, sameReviewFeedback } from '../review'
 import type { SendJournal, SendJournalIdentity, SendJournalRecord } from '../send-journal'
 import { validId } from '../validation'
 import { selectedWorkspaces } from '../workspaces'
+import type {
+  Draft,
+  PendingSendState,
+  SendPending,
+  SendReconciled,
+  SendResult,
+} from '../../shared/bridge/conversations'
 
-type Draft = { text: string; revision: number; attachments: unknown[] }
 type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
 type Attachments = Fields<'draft.save'>['attachments']
 
@@ -48,12 +54,12 @@ export type SendIntent = {
   state: 'pending' | 'rejected'
   preparing: boolean
   admitted: boolean
-  inFlight: Promise<Record<string, unknown>> | null
+  inFlight: Promise<SendResult> | null
   reviewSelection?: { senderId: number; workspaceId: string; conversationId: string; epoch: number }
   reviewAnchor?: ReviewAnchor
   reviewFeedback?: ReviewFeedback
 }
-type DraftEntry = {
+export type DraftEntry = {
   senderId: number
   endpoint: string
   profileId: string
@@ -482,7 +488,7 @@ export async function loadDraft(senderId: number, endpoint: string, conversation
   return entry
 }
 
-export function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
+export function pendingSend(entry: DraftEntry): PendingSendState | null {
   if (!entry.send) return null
   const anchor = entry.send.reviewAnchor
   return {
@@ -498,8 +504,8 @@ export function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
 async function acceptedSend(
   entry: DraftEntry,
   intent: SendIntent,
-  response: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+  response: DailyUseResponse<'agent.send' | 'agent.send_review'>,
+): Promise<DailyUseResponse<'agent.send' | 'agent.send_review'>> {
   if (localRecord(entry, await journal().list())?.restoreHold) {
     throw new Error('Restored prompt is held until its source outcome is reconciled')
   }
@@ -558,7 +564,7 @@ export async function reconcileAcceptedSend(entry: DraftEntry): Promise<void> {
  * `decideSendRecovery`: replay the pre-admission steps, deliver with the original
  * ID, acknowledge, release, or keep the ID and report the send as pending.
  */
-export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<string, unknown>> {
+export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<SendResult> {
   if (intent.inFlight) return intent.inFlight
   const generation = getClientGeneration()
   const activeProfile = (): boolean => {
@@ -572,17 +578,17 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
       selection.epoch === intent.reviewSelection.epoch
     )
   }
-  const uncertain = (): Record<string, unknown> => ({
+  const uncertain = (): SendPending => ({
     type: 'send_pending',
     request_id: intent.requestId,
     text: intent.text,
     message: 'Prompt delivery is unconfirmed. Retry will use the same request ID.',
   })
-  const reconciled = { type: 'ack', request_id: intent.requestId, reconciled: true }
+  const reconciled: SendReconciled = { type: 'ack', request_id: intent.requestId, reconciled: true }
   const rejected = new Error('The profile daemon rejected this prompt before admission. The draft keeps its text.')
 
   // Settles an admitted send. A released (rejected) send throws `rejection`.
-  const settle = async (rejection: unknown): Promise<Record<string, unknown>> => {
+  const settle = async (rejection: unknown): Promise<SendResult> => {
     if (!activeProfile()) return uncertain()
     try {
       if ((await acknowledgeSend(entry, intent)) === 'completed') return reconciled
@@ -592,21 +598,20 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
     throw rejection
   }
 
-  const deliver = async (): Promise<Record<string, unknown>> => {
+  const deliver = async (): Promise<SendResult> => {
     if (!activeProfile()) return uncertain()
     try {
-      const response = await requestDaemon(
-        entry.endpoint,
-        intent.reviewAnchor || intent.reviewFeedback ? 'agent.send_review' : 'agent.send',
-        {
-          conversation_id: entry.conversationId,
-          request_id: intent.requestId,
-          text: intent.text,
-          attachments: intent.attachments,
-          ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
-          ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
-        },
-      )
+      const op = intent.reviewAnchor || intent.reviewFeedback ? 'agent.send_review' : 'agent.send'
+      const raw = await requestDaemon(entry.endpoint, op, {
+        conversation_id: entry.conversationId,
+        request_id: intent.requestId,
+        text: intent.text,
+        attachments: intent.attachments,
+        ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
+        ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
+      })
+      // A reply that fails its contract is handled as a lost reply: the daemon is asked below.
+      const response = decodeDailyUseResponse(op, raw)
       if (!activeProfile()) return uncertain()
       try {
         return await acceptedSend(entry, intent, response)
@@ -631,7 +636,7 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
 
   // Pre-admission: the daemon holds no intent, so nothing was dispatched. Make the
   // daemon draft match the journaled one, then prepare with the original ID.
-  const prepare = async (): Promise<Record<string, unknown>> => {
+  const prepare = async (): Promise<SendResult> => {
     try {
       const response = await daemon(entry.endpoint, 'draft.get', {
         conversation_id: entry.conversationId,
@@ -724,7 +729,7 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
     }
   }
 
-  const resume = async (): Promise<Record<string, unknown>> => {
+  const resume = async (): Promise<SendResult> => {
     if (!activeProfile()) return uncertain()
     let records: SendJournalRecord[]
     let listed: PendingDaemonSend | null

@@ -2,7 +2,7 @@ import { BrowserWindow, dialog } from 'electron'
 import { handle } from './ipc'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { dailyUseCommand } from '@ade/client'
+import { dailyUseCommand, type DailyUseResponse } from '@ade/client'
 import {
   getClient,
   getClientGeneration,
@@ -21,7 +21,7 @@ export const selectedWorkspaces = new Map<
   { workspaceId: string; conversationId: string | null; generation: number; epoch: number }
 >()
 export const selectionRequests = new Map<number, number>()
-async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> {
+async function openWorkspace(folder: unknown): Promise<DailyUseResponse<'workspace.open'>> {
   if (typeof folder !== 'string' || !isAbsolute(folder) || folder.length > 4096)
     throw new Error('Choose an absolute folder path')
   if (!(await stat(folder)).isDirectory()) throw new Error('The selected path is not a folder')

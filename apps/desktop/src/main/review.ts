@@ -10,7 +10,9 @@ import {
   type ReviewFeedback,
 } from '@ade/client'
 import { decideGitAdmission, gitAdmitted, pendingGitOperation } from '@ade/client/outbox'
-import type { GitIntent, GitJournal } from './git-journal'
+import { isAllowedOperation, reviewOperations } from '../shared/bridge/operations'
+import type { DaemonGitIntent, GitIntent } from '../shared/bridge/review'
+import type { GitJournal } from './git-journal'
 import { decideRefusedGitRecord, definiteRefusal, type RequestFailure } from './git-refusal'
 import { getClient, getClientGeneration, getSocket, journalProfileId } from './profile-connection'
 import { validId } from './validation'
@@ -297,23 +299,7 @@ export async function reviewBatchPrompt(
 
 export function registerReviewIpc(): void {
   handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
-    if (
-      typeof op !== 'string' ||
-      ![
-        'review.status',
-        'review.diff',
-        'review.diff_page',
-        'review.feedback.search',
-        'review.stage',
-        'review.unstage',
-        'review.commit',
-        'review.discard',
-        'review.operation',
-      ].includes(op) ||
-      !fields ||
-      typeof fields !== 'object' ||
-      Array.isArray(fields)
-    ) {
+    if (!isAllowedOperation(reviewOperations, op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
       throw new Error('Invalid review request')
     }
     const args = fields as Record<string, unknown>
@@ -490,7 +476,7 @@ export function registerReviewIpc(): void {
       record = null
     }
     const pending = pendingGitOperation(record, listed)
-    const daemonIntent = (entry: ReviewOperationEntry): Record<string, unknown> => ({
+    const daemonIntent = (entry: ReviewOperationEntry): DaemonGitIntent => ({
       profile_id: profileId,
       workspace_id: workspace,
       op: entry.operation.op,

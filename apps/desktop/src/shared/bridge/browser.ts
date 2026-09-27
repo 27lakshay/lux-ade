@@ -25,6 +25,31 @@ export interface BrowserBridge {
   onState(listener: (state: BrowserState) => void): () => void
   onLeaseLost(listener: (profileId: string) => void): () => void
   adoptSession(profileId: string): Promise<ProfileState>
-  captureProfile(profileId: string, destination: string): Promise<Record<string, unknown>>
-  restoreProfile(bundle: string, profileId: string): Promise<Record<string, unknown>>
+  captureProfile(profileId: string, destination: string): Promise<BrowserProfileCaptured>
+  restoreProfile(bundle: string, profileId: string): Promise<BrowserProfileRestored>
+}
+
+/** What a browser profile bundle carries, and what it leaves out. */
+type BrowserBundleSummary = {
+  scope: 'tabs-and-persistent-cookies'
+  included: string[]
+  excluded: string[]
+  tab_count: number
+  cookie_count: number
+  source_profile_id: string
+}
+
+export type BrowserProfileCaptured = BrowserBundleSummary & {
+  type: 'browser_profile_captured'
+  format: 'ade-browser-bundle-v1'
+  file: string
+  /** Tabs in named partitions, which the bundle format does not carry. */
+  excluded_partition_tabs: number
+}
+
+export type BrowserProfileRestored = BrowserBundleSummary & {
+  type: 'browser_profile_restored'
+  profile_id: string
+  /** Set when an earlier attempt had already finished this restore. */
+  already_complete?: true
 }

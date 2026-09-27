@@ -1,9 +1,9 @@
-import { invoke, subscribe } from './ipc'
+import { forward, invoke, subscribe } from './ipc'
 import { onFeedFrame } from './stream'
 import type { ConversationsBridge } from '../shared/bridge/conversations'
 
 export const conversations: ConversationsBridge = {
-  request: (op, fields) => invoke('ade:conversation-request', op, fields),
+  request: forward('ade:conversation-request'),
   listPendingSends: () => invoke('ade:pending-sends'),
   exportSendJournal: (profileId, destination) => invoke('ade:send-journal-export', profileId, destination),
   importSendJournal: (bundle, sourceProfileId, targetProfileId) =>

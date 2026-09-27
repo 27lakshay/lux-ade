@@ -1,12 +1,11 @@
 import { handle } from './ipc'
 import { dailyUseCommand, type DailyUseRequest } from '@ade/client'
+import { fileOperations, isAllowedOperation, type FileOperation } from '../shared/bridge/operations'
 import { activeReviewContext, assertReviewContext, reviewPath } from './review'
 
-type FileOp = 'file.list' | 'file.search' | 'file.preview'
-const fileOps = new Set<string>(['file.list', 'file.search', 'file.preview'])
 export function registerFileIpc(): void {
   handle('ade:file-request', async (event, op: unknown, fields: unknown) => {
-    if (typeof op !== 'string' || !fileOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    if (!isAllowedOperation(fileOperations, op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
       throw new Error('Invalid file request')
     }
     const args = fields as Record<string, unknown>
@@ -40,7 +39,7 @@ export function registerFileIpc(): void {
         request.limit = args.limit
       } else request.limit = 100
     }
-    const response = await dailyUseCommand(context.endpoint, { ...request, op } as DailyUseRequest<FileOp>)
+    const response = await dailyUseCommand(context.endpoint, { ...request, op } as DailyUseRequest<FileOperation>)
     assertReviewContext(context, workspaceId)
     if (JSON.stringify(response).length > 1_000_000) throw new Error('File result exceeds the display limit')
     const expectedType = op.replace('.', '_')

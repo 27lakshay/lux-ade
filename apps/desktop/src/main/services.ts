@@ -5,54 +5,30 @@ import {
   decodeDailyUseResponse,
   requestDaemon,
   takesOperationId,
-  type DailyUseOperation,
   type DailyUseRequest,
+  type DailyUseResponse,
 } from '@ade/client'
+import {
+  isAllowedOperation,
+  scriptOperations,
+  serviceOperations,
+  type ScriptOperation,
+  type ServiceOperation,
+} from '../shared/bridge/operations'
 import { getClient, getClientGeneration, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
 
-const serviceOps = new Set<string>([
-  'service.list',
-  'service.inspect',
-  'service.configure',
-  'service.start',
-  'service.stop',
-  'service.remove',
-  'service.proxy.ensure',
-  'service.proxy.inspect',
-  'service.proxy.remap',
-  'service.proxy.retire',
-  'service.proxy.recovery.inspect',
-  'service.proxy.recovery.retry',
-  'service.proxy.recovery.reset',
-  'listener.list',
-])
 /** Checks a service or listener reply against its contract. */
-function serviceReply(op: string, response: unknown): Record<string, unknown> {
+function serviceReply<O extends ServiceOperation>(op: O, response: unknown): DailyUseResponse<O> {
   try {
-    return decodeDailyUseResponse(op as DailyUseOperation, response) as Record<string, unknown>
+    return decodeDailyUseResponse(op, response)
   } catch (error) {
     throw new Error(`Daemon ${op} reply failed its contract: ${String(error)}`)
   }
 }
-type ScriptOp = 'script.list' | 'script.runs' | 'script.start' | 'script.inspect' | 'script.stop' | 'script.retire'
-const scriptOps = new Set<string>([
-  'script.list',
-  'script.runs',
-  'script.start',
-  'script.inspect',
-  'script.stop',
-  'script.retire',
-])
 export function registerServiceIpc(): void {
   handle('ade:script-request', async (_event, op: unknown, fields: unknown) => {
-    if (
-      typeof op !== 'string' ||
-      !scriptOps.has(op) ||
-      !fields ||
-      typeof fields !== 'object' ||
-      Array.isArray(fields)
-    ) {
+    if (!isAllowedOperation(scriptOperations, op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
       throw new Error('Invalid script request')
     }
     const args = fields as Record<string, unknown>
@@ -94,7 +70,7 @@ export function registerServiceIpc(): void {
       keys.add('tail_bytes')
     }
     if (Object.keys(args).some((key) => !keys.has(key))) throw new Error('Unknown script request field')
-    const result = await dailyUseCommand(endpoint, { ...request, op } as DailyUseRequest<ScriptOp>)
+    const result = await dailyUseCommand(endpoint, { ...request, op } as DailyUseRequest<ScriptOperation>)
     if (generation !== getClientGeneration() || getSocket() !== endpoint) {
       throw new Error(
         'Profile changed while the script request completed; inspect the original profile before retrying',
@@ -103,13 +79,7 @@ export function registerServiceIpc(): void {
     return result
   })
   handle('ade:service-request', async (_event, op: unknown, fields: unknown) => {
-    if (
-      typeof op !== 'string' ||
-      !serviceOps.has(op) ||
-      !fields ||
-      typeof fields !== 'object' ||
-      Array.isArray(fields)
-    ) {
+    if (!isAllowedOperation(serviceOperations, op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
       throw new Error('Invalid service request')
     }
     const args = fields as Record<string, unknown>

@@ -1,10 +1,5 @@
-import {
-  startConversationProjection,
-  type ConversationSnapshot,
-  type ProjectionState,
-  type SyncFrame,
-  type SyncMessage,
-} from '@ade/client/sync'
+import type { DailyUseResponse } from '@ade/client'
+import { startConversationProjection, type ConversationSnapshot, type ProjectionState } from '@ade/client/sync'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 import type { AdeHost } from '../../../shared/bridge'
 import { latestPerFrame } from './frame-batch'
@@ -14,8 +9,13 @@ import { latestPerFrame } from './frame-batch'
 // as the same objects, so a component that selects one message by ID re-renders only when that
 // message changes, not on every token another message receives.
 
-export type ConversationMessage = SyncMessage & Record<string, unknown>
-export type Snapshot = ConversationSnapshot<{ id: string } & Record<string, unknown>, ConversationMessage, unknown>
+type ConversationReply = DailyUseResponse<'conversation.get'>
+export type ConversationMessage = ConversationReply['messages'][number]
+export type Snapshot = ConversationSnapshot<
+  ConversationReply['conversation'],
+  ConversationMessage,
+  ConversationReply['requests'][number]
+>
 export type ConversationState = ProjectionState<Snapshot>
 export type ConversationStore = StoreApi<ConversationState>
 
@@ -25,13 +25,14 @@ export function createConversationStore(
 ): { store: ConversationStore; stop: () => void } {
   const store = createStore<ConversationState>(() => ({ status: 'loading', snapshot: null, error: null }))
   const publish = latestPerFrame((state: ConversationState) => store.setState(state, true))
-  const stop = startConversationProjection<Snapshot['conversation'], ConversationMessage, unknown>({
-    conversationId,
-    fetchSnapshot: async (id) =>
-      (await host.conversations.request('conversation.get', { conversation_id: id })) as unknown as Snapshot,
-    subscribe: (listener) => host.conversations.onFeedFrame((frame) => listener(frame as SyncFrame)),
-    onState: publish,
-  })
+  const stop = startConversationProjection<Snapshot['conversation'], ConversationMessage, Snapshot['requests'][number]>(
+    {
+      conversationId,
+      fetchSnapshot: (id) => host.conversations.request('conversation.get', { conversation_id: id }),
+      subscribe: (listener) => host.conversations.onFeedFrame(listener),
+      onState: publish,
+    },
+  )
   return { store, stop }
 }
 

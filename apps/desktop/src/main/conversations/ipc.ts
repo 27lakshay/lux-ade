@@ -2,7 +2,14 @@ import { BrowserWindow } from 'electron'
 import { handle } from '../ipc'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
-import { dailyUseCommand, requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
+import {
+  dailyUseCommand,
+  requestDaemon,
+  type DailyUseRequest,
+  type DailyUseResponse,
+  type ReviewAnchor,
+  type ReviewFeedback,
+} from '@ade/client'
 import {
   getClient,
   getClientGeneration,
@@ -25,6 +32,8 @@ import {
   sameReviewFeedback,
 } from '../review'
 import { SendJournal } from '../send-journal'
+import type { DraftState, SendPending } from '../../shared/bridge/conversations'
+import { conversationOperations, isAllowedOperation } from '../../shared/bridge/operations'
 import { validId } from '../validation'
 import { selectedWorkspaces } from '../workspaces'
 import {
@@ -42,6 +51,7 @@ import {
   pendingSend,
   scheduleDraft,
   windowIds,
+  type DraftEntry,
   type SendIntent,
 } from './send-pipeline'
 
@@ -73,24 +83,24 @@ function sendTransferRequest(
   }
   return { profile, location }
 }
-const conversationOps = new Set([
-  'provider.list',
-  'account.list',
-  'account.create',
-  'account.inspect',
-  'account.verify',
-  'account.disable',
-  'conversation.create',
-  'conversation.get',
-  'agent.send',
-  'agent.retry_send',
-  'agent.answer',
-  'agent.cancel',
-  'agent.resume',
-  'draft.get',
-  'draft.save',
-  'draft.flush',
-])
+/** The `draft.*` reply: main's draft for this window and conversation. */
+function draftState(entry: DraftEntry): DraftState {
+  return {
+    type: 'draft',
+    draft: entry.draft,
+    error: entry.error,
+    sent_text: entry.unclearedText,
+    send_pending: pendingSend(entry),
+  }
+}
+
+/** The reply for a prompt still being delivered. Called only while the entry holds a send. */
+function sendPending(entry: DraftEntry): SendPending {
+  const pending = pendingSend(entry)
+  if (!pending) throw new Error('No prompt is awaiting confirmation')
+  return { type: 'send_pending', ...pending }
+}
+
 export function registerConversationIpc(): void {
   handle('ade:send-journal-export', async (event, id: unknown, destination: unknown) => {
     if (getStartupProfileSelection()) await getStartupProfileSelection()
@@ -161,8 +171,7 @@ export function registerConversationIpc(): void {
   })
   handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
     if (
-      typeof op !== 'string' ||
-      !conversationOps.has(op) ||
+      !isAllowedOperation(conversationOperations, op) ||
       !fields ||
       typeof fields !== 'object' ||
       Array.isArray(fields)
@@ -174,14 +183,7 @@ export function registerConversationIpc(): void {
     const args = fields as Record<string, unknown>
     if (op === 'draft.get' && endpoint && validId(args.conversation_id)) {
       const cached = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
-      if (cached)
-        return {
-          type: 'draft',
-          draft: cached.draft,
-          error: cached.error,
-          sent_text: cached.unclearedText,
-          send_pending: pendingSend(cached),
-        }
+      if (cached) return draftState(cached)
     }
     if (getClient().getState().status !== 'connected' || !endpoint) {
       throw new Error('Profile daemon is unavailable')
@@ -195,7 +197,9 @@ export function registerConversationIpc(): void {
       op === 'account.verify' ||
       op === 'account.disable'
     ) {
-      let pending: ReturnType<typeof dailyUseCommand>
+      let pending: Promise<
+        DailyUseResponse<'account.list' | 'account.create' | 'account.inspect' | 'account.verify' | 'account.disable'>
+      >
       if (op === 'account.list') {
         pending = dailyUseCommand(endpoint, { op })
       } else if (op === 'account.create') {
@@ -317,16 +321,10 @@ export function registerConversationIpc(): void {
         await flushDraft(entry)
         entry.unclearedText = ''
       }
-      return {
-        type: 'draft',
-        draft: entry.draft,
-        error: entry.error,
-        sent_text: entry.unclearedText,
-        send_pending: pendingSend(entry),
-      }
+      return draftState(entry)
     }
     if (op === 'conversation.get')
-      return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
+      return dailyUseCommand(endpoint, { op, conversation_id: args.conversation_id, limit: 200 })
     if (op === 'agent.cancel' || op === 'agent.resume') {
       // The contract check rejects a non-string ID before it reaches the daemon.
       const conversationId = args.conversation_id
@@ -392,7 +390,7 @@ export function registerConversationIpc(): void {
               epoch: context.epoch,
             }
           }
-          if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
+          if (entry.send.preparing) return sendPending(entry)
           return await dispatchSend(entry, entry.send)
         }
         if (
@@ -419,7 +417,7 @@ export function registerConversationIpc(): void {
           if (!sameReviewFeedback(entry.send.reviewFeedback, reviewFeedback)) {
             throw new Error('Review feedback changed before prompt reconciliation')
           }
-          if (entry.send.preparing) return { type: 'send_pending', ...pendingSend(entry) }
+          if (entry.send.preparing) return sendPending(entry)
           return await dispatchSend(entry, entry.send)
         }
         if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
@@ -471,7 +469,7 @@ export function registerConversationIpc(): void {
         if (op !== 'agent.send' || (args.review_anchor === undefined && args.review_feedback === undefined)) throw error
         const entry = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))
         if (entry && entry.send?.requestId === args.request_id) {
-          return { type: 'send_pending', ...pendingSend(entry) }
+          return sendPending(entry)
         }
         return { type: 'review_rejected', message: String(error) }
       }
@@ -487,11 +485,12 @@ export function registerConversationIpc(): void {
       )
         throw new Error('Invalid question answers')
     }
-    return requestDaemon(endpoint, op, {
+    return dailyUseCommand(endpoint, {
+      op: 'agent.answer',
       conversation_id: args.conversation_id,
       request_id: args.request_id,
-      decision: args.decision,
-      ...(args.decision === 'answer' ? { answers: args.answers } : {}),
+      decision: args.decision as DailyUseRequest<'agent.answer'>['decision'],
+      ...(args.decision === 'answer' ? { answers: args.answers as DailyUseRequest<'agent.answer'>['answers'] } : {}),
     })
   })
 }

@@ -106,7 +106,34 @@ const requireStoreSelector = {
   },
 }
 
+const LOOSE_VALUES = new Set(['TSUnknownKeyword', 'TSAnyKeyword'])
+
+const noLooseRecord = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'A typed boundary names its data; it never falls back to Record<string, unknown>.' },
+  },
+  create(context) {
+    return {
+      TSTypeReference(node) {
+        if (node.typeName.type !== 'Identifier' || node.typeName.name !== 'Record') return
+        const [key, value] = (node.typeArguments ?? node.typeParameters)?.params ?? []
+        if (key?.type !== 'TSStringKeyword' || !LOOSE_VALUES.has(value?.type)) return
+        context.report({
+          node,
+          message:
+            "Record<string, unknown> drops the contract's types at this boundary. Use the daemon contract's type (DailyUseRequest, DailyUseResponse, CallRequest) or a named type for what main returns.",
+        })
+      },
+    }
+  },
+}
+
 export default {
   meta: { name: 'ade' },
-  rules: { 'electron-web-preferences': electronWebPreferences, 'require-store-selector': requireStoreSelector },
+  rules: {
+    'electron-web-preferences': electronWebPreferences,
+    'require-store-selector': requireStoreSelector,
+    'no-loose-record': noLooseRecord,
+  },
 }

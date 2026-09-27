@@ -7,6 +7,7 @@ import { open, readFile, lstat, unlink, link } from 'node:fs/promises'
 import { dirname, isAbsolute, join, basename } from 'node:path'
 import { Outbox, type OutboxCodec } from '@ade/client/outbox'
 import { fileOutboxStorage } from './outbox-file'
+import type { SendJournalExport, SendJournalImport } from '../shared/bridge/conversations'
 
 const version = 1
 const maxFileBytes = 16 * 1024 * 1024
@@ -378,7 +379,7 @@ export class SendJournal {
   }
 
   /** A bounded file snapshot only. The profile backup coordinator must still stop source-side sends. */
-  async exportProfile(profileId: string, destination: string): Promise<Record<string, unknown>> {
+  async exportProfile(profileId: string, destination: string): Promise<SendJournalExport> {
     if (
       !idPattern.test(profileId) ||
       !isAbsolute(destination) ||
@@ -446,7 +447,7 @@ export class SendJournal {
     targetProfileId: string,
     targetEndpoint: string,
     verifyIntent: (record: SendJournalRecord) => Promise<unknown>,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<SendJournalImport> {
     if (
       !idPattern.test(targetProfileId) ||
       expectedSourceProfileId === targetProfileId ||

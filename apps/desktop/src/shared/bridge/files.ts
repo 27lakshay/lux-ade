@@ -1,6 +1,6 @@
-import type { Frame } from './types'
+import type { ContractRequest, FileOperation } from './operations'
 
 /** `window.adeHost.files`: the main-process `files` module. */
 export interface FilesBridge {
-  request(op: 'file.list' | 'file.search' | 'file.preview', fields: Record<string, unknown>): Promise<Frame>
+  request: ContractRequest<FileOperation>
 }

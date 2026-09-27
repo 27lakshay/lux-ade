@@ -1,17 +1,20 @@
 import type { ClientState, FeedFrame } from '@ade/client'
 import type { AdeHost } from '../../../shared/bridge'
+import type { ConversationsBridge } from '../../../shared/bridge/conversations'
+import type { ConversationOperation } from '../../../shared/bridge/operations'
 
 // A fake window.adeHost for renderer tests: tests push client states and feed frames, and answer
 // requests, without Electron or a daemon.
 
-type Request = (op: string, fields: Record<string, unknown>) => Promise<Record<string, unknown>>
+/** Answers a request. Tests may answer with partial replies, so replies are not checked here. */
+type Request = (op: ConversationOperation, fields: unknown) => Promise<unknown>
 
 export interface FakeHost {
   host: Pick<AdeHost, 'profiles' | 'conversations'>
   pushClientState(state: ClientState): void
   pushFrame(frame: FeedFrame): void
   setClientState(state: ClientState): void
-  requests: { op: string; fields: Record<string, unknown> }[]
+  requests: { op: ConversationOperation; fields: unknown }[]
 }
 
 export function clientState(overrides: Partial<ClientState> = {}): ClientState {
@@ -44,10 +47,11 @@ export function createFakeHost(respond: Request = async () => ({})): FakeHost {
         onClientState: listen(clientListeners),
       },
       conversations: {
-        request: async (op, fields) => {
+        // Like the real IPC boundary, the fake trusts the test's reply to match the operation.
+        request: (async (op: ConversationOperation, fields: unknown) => {
           requests.push({ op, fields })
           return respond(op, fields)
-        },
+        }) as ConversationsBridge['request'],
         listPendingSends: unsupported,
         exportSendJournal: unsupported,
         importSendJournal: unsupported,

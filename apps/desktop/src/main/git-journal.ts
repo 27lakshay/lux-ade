@@ -3,19 +3,9 @@
 // `review.operation.list` shows running and interrupted operations, and
 // `review.operation.acknowledge` records that the person saw an interrupted one.
 import { Outbox, type OutboxCodec } from '@ade/client/outbox'
+import type { GitIntent } from '../shared/bridge/review'
 import { fileOutboxStorage } from './outbox-file'
 
-export type GitIntent = {
-  profile_id: string
-  workspace_id: string
-  op: 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
-  request_id: string
-  path?: string
-  revision?: string
-  diff_token?: string
-  index_token?: string
-  message?: string
-}
 const id = /^[a-zA-Z0-9_-]{1,128}$/
 const uuid = /^[0-9a-f-]{36}$/
 const token = /^[0-9a-f]{16}$/

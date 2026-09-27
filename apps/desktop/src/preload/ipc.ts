@@ -18,6 +18,14 @@ export function invoke<C extends InvokeChannel>(
   return ipcRenderer.invoke(channel, ...args) as ReturnType<InvokeChannels[C]>
 }
 
+/**
+ * The bridge method a channel serves, forwarding its arguments unchanged. Unlike `invoke`, it keeps
+ * a generic method generic, so a contract request stays typed by its operation.
+ */
+export function forward<C extends InvokeChannel>(channel: C): InvokeChannels[C] {
+  return ((...args: unknown[]) => ipcRenderer.invoke(channel, ...args)) as InvokeChannels[C]
+}
+
 export function send<C extends SendChannel>(channel: C, ...args: Parameters<SendChannels[C]>): void {
   ipcRenderer.send(channel, ...args)
 }

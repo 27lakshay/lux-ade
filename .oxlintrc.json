@@ -118,6 +118,12 @@
       }
     },
     {
+      "files": ["apps/desktop/src/shared/bridge/**"],
+      "rules": {
+        "ade/no-loose-record": "error"
+      }
+    },
+    {
       "files": ["apps/desktop/src/main/ipc.ts", "apps/desktop/src/preload/ipc.ts"],
       "rules": {
         "no-restricted-imports": "off"
