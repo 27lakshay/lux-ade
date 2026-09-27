@@ -21,9 +21,10 @@ use ade_core::contract::checkpoints::{
 use ade_core::contract::conversations::{
     ControlAvailability, ControlOutcome, ConversationCompactRequest, ConversationControl,
     ConversationControlReply, ConversationControls, ConversationControlsRequest,
-    ConversationRewindPreview, ConversationRewindPreviewRequest, ConversationRewindRequest,
-    ConversationSnoozeList, ConversationSnoozeListRequest, ConversationSnoozeReply,
-    ConversationSnoozeRequest, ConversationSteerRequest, ConversationUnsnoozeRequest, RewindScope,
+    ConversationRewindHistory, ConversationRewindPreview, ConversationRewindPreviewRequest,
+    ConversationRewindRequest, ConversationSnoozeList, ConversationSnoozeListRequest,
+    ConversationSnoozeReply, ConversationSnoozeRequest, ConversationSteerRequest,
+    ConversationUnsnoozeRequest, RewindScope,
 };
 use ade_core::model::now_ms;
 use rusqlite::{Transaction, TransactionBehavior};
@@ -98,7 +99,97 @@ fn control_reply(
         reason: None,
         turn_id: None,
         files: None,
+        history: None,
     }
+}
+
+/// Names the history a Conversation rewind would remove: every removed
+/// message's identity, sequence, status and text, under the history epoch.
+/// A turn that grew, a new message or another rewind changes the name.
+fn history_state_token(conversation_id: &str, epoch: u64, removed: &[Message]) -> String {
+    use sha2::{Digest, Sha256};
+    let items: Vec<Value> = removed
+        .iter()
+        .map(|message| {
+            json!([
+                message.id,
+                message.sequence,
+                message.status,
+                format!("{:x}", Sha256::digest(message.text.as_bytes()))
+            ])
+        })
+        .collect();
+    let canonical = receipts::canonical_json(
+        &json!({"conversation": conversation_id, "epoch": epoch, "removed": items}),
+    );
+    format!("{:x}", Sha256::digest(canonical.as_bytes()))
+}
+
+/// What removing `removed` from a history of `total` messages means.
+fn history_summary(
+    conversation_id: &str,
+    epoch: u64,
+    first: &Message,
+    turn: &str,
+    removed: &[Message],
+    total: u64,
+) -> ConversationRewindHistory {
+    let turns: std::collections::BTreeSet<&str> = removed
+        .iter()
+        .filter_map(|message| message.turn_id.as_deref())
+        .collect();
+    ConversationRewindHistory {
+        before_message_id: first.id.clone(),
+        turn_id: turn.to_owned(),
+        removed_messages: removed.len() as u64,
+        removed_turns: turns.len() as u64,
+        kept_messages: total.saturating_sub(removed.len() as u64),
+        state_token: history_state_token(conversation_id, epoch, removed),
+        history_epoch: epoch,
+    }
+}
+
+/// The preview of removing `before` and every later message, and the
+/// sequence removal starts at. `before` must be the user message that
+/// started its turn, so the provider can return to the turn before it.
+fn history_preview(
+    d: &Data,
+    conversation_id: &str,
+    before: &str,
+) -> Result<(ConversationRewindHistory, i64)> {
+    let first = d
+        .store
+        .message(before)?
+        .filter(|message| message.conversation_id == conversation_id)
+        .with_context(|| format!("Message {before} is not in this Conversation"))?;
+    let turn = first
+        .turn_id
+        .clone()
+        .filter(|_| first.role == "user")
+        .context("Choose the user message that started a turn")?;
+    let all = d.store.messages_from(conversation_id, 0)?;
+    ensure!(
+        !all.iter().any(|message| message.sequence < first.sequence
+            && message.turn_id.as_deref() == Some(turn.as_str())),
+        "Choose the user message that started a turn"
+    );
+    let removed: Vec<Message> = all
+        .iter()
+        .filter(|message| message.sequence >= first.sequence)
+        .cloned()
+        .collect();
+    let epoch = d.store.history_epoch(conversation_id)?;
+    Ok((
+        history_summary(
+            conversation_id,
+            epoch,
+            &first,
+            &turn,
+            &removed,
+            all.len() as u64,
+        ),
+        first.sequence,
+    ))
 }
 
 fn unavailable(
@@ -539,12 +630,24 @@ impl Sessions {
             }
             _ => None,
         };
+        let history = match (preview.scope, decided.available) {
+            (RewindScope::Conversation, true) => {
+                let before = preview
+                    .before_message_id
+                    .as_deref()
+                    .context("Missing before_message_id")?;
+                let d = self.data.lock().unwrap();
+                Some(history_preview(&d, &preview.conversation_id, before)?.0)
+            }
+            _ => None,
+        };
         reply(&ConversationRewindPreview {
             tag: Default::default(),
             conversation_id: preview.conversation_id,
             scope: preview.scope,
             availability: decided,
             files,
+            history,
         })
     }
 
@@ -554,13 +657,15 @@ impl Sessions {
         let (conversation, decided) =
             self.rewind_availability(&rewind.conversation_id, rewind.scope)?;
         if rewind.scope == RewindScope::Conversation {
-            // No adapter rewinds history yet, so no receipt is ever recorded.
-            ensure!(!decided.available, "Conversation rewind has no handler");
-            return reply(&unavailable(
-                &rewind.operation_id,
-                &rewind.conversation_id,
-                decided,
-            ));
+            if !decided.available {
+                // Nothing is attempted, so no receipt is recorded.
+                return reply(&unavailable(
+                    &rewind.operation_id,
+                    &rewind.conversation_id,
+                    decided,
+                ));
+            }
+            return self.rewind_conversation(request, &rewind, &conversation);
         }
         let checkpoint = rewind
             .checkpoint_id
@@ -617,6 +722,119 @@ impl Sessions {
                 restore_outcome(restored.outcome),
             )
         })
+    }
+
+    /// Conversation rewind (F039). The receipt is dispatched, under the run,
+    /// before the provider is asked; the provider's acknowledgement, the
+    /// removal of ADE's messages from the rewound turn on, the new history
+    /// epoch and the settled receipt then commit together. A retry on the same
+    /// run asks the runtime, which answers from its own receipt; a retry on
+    /// another run cannot prove what the provider did and settles as unknown.
+    fn rewind_conversation(
+        self: &Arc<Self>,
+        request: &Value,
+        rewind: &ConversationRewindRequest,
+        conversation: &Conversation,
+    ) -> Result<Value> {
+        let before = rewind
+            .before_message_id
+            .as_deref()
+            .context("Missing before_message_id")?;
+        let expected = rewind
+            .expected_state
+            .as_deref()
+            .context("Missing expected_state")?;
+        self.ensure_workspace_bound(&conversation.workspace_id)?;
+        let control = ConversationControl::RewindConversation;
+        let current = {
+            let d = self.data.lock().unwrap();
+            live(&d, &rewind.conversation_id)?
+        };
+        let admitted = self.admit_control(
+            &rewind.operation_id,
+            &rewind.conversation_id,
+            control,
+            request,
+            current.run.as_deref(),
+            |d| {
+                let live = live(d, &rewind.conversation_id)?;
+                let decided = availability::decide(&live.facts(), control);
+                if !decided.available {
+                    return Ok(Err(unavailable(
+                        &rewind.operation_id,
+                        &rewind.conversation_id,
+                        decided,
+                    )));
+                }
+                let (preview, _) = history_preview(d, &rewind.conversation_id, before)?;
+                ensure!(
+                    preview.state_token == expected,
+                    "The Conversation history changed since the preview; preview the rewind again"
+                );
+                Ok(Ok(json!({"run": live.run, "turn": preview.turn_id})))
+            },
+        )?;
+        if let Admitted::Reply(done) = admitted {
+            return reply(&done);
+        }
+        let (rpc, thread, turn) = {
+            let d = self.data.lock().unwrap();
+            let live = live(&d, &rewind.conversation_id)?;
+            let (preview, _) = history_preview(&d, &rewind.conversation_id, before)?;
+            (
+                live.rpc.context("The Agent is no longer connected")?,
+                live.conversation
+                    .provider_thread_id
+                    .context("The provider session is unknown")?,
+                preview.turn_id,
+            )
+        };
+        if let Err(error) = rpc.rewind(&thread, &turn, &rewind.operation_id) {
+            let Some(reason) = definite_refusal(&error) else {
+                return Err(not_confirmed(error));
+            };
+            return self.settle_control(&refused(
+                &rewind.operation_id,
+                &rewind.conversation_id,
+                control,
+                reason,
+            ));
+        }
+        let mut d = self.data.lock().unwrap();
+        let (preview, sequence) = history_preview(&d, &rewind.conversation_id, before)?;
+        let mut done = control_reply(
+            &rewind.operation_id,
+            &rewind.conversation_id,
+            control,
+            ControlOutcome::Acknowledged,
+        );
+        let mut settled = None;
+        d.store
+            .rewind_history(&rewind.conversation_id, sequence, |tx, removed, epoch| {
+                done.history = Some(ConversationRewindHistory {
+                    removed_messages: removed,
+                    history_epoch: epoch,
+                    ..preview.clone()
+                });
+                let value = serde_json::to_value(&done)?;
+                receipts::settle(
+                    tx,
+                    &rewind.operation_id,
+                    Status::Settled,
+                    Some(&value),
+                    now_ms(),
+                )?;
+                settled = Some(value);
+                Ok(())
+            })?;
+        let mut reloaded = d.store.conversation(&rewind.conversation_id)?;
+        reloaded.updated_at = now_ms();
+        d.store.commit_conversation(&reloaded, &[], &[])?;
+        self.publish(
+            &mut d,
+            json!({"type":"conversation_reload","conversation":reloaded}),
+        );
+        settled.context("Rewind settled without a reply")
     }
 
     /// Wakes due snoozes now and then about once a second, so a snooze that

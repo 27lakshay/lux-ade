@@ -11,7 +11,7 @@
 //! was copied.
 
 use crate::receipts;
-use ade_core::contract::retention::{RetentionKind, RetentionPolicy};
+use ade_core::contract::retention::{RetentionConfigured, RetentionKind, RetentionPolicy};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -32,15 +32,84 @@ pub const CANDIDATE_LIMIT: usize = 500;
 /// Changing a rule changes every generation, so an old preview cannot apply.
 const POLICY_VERSION: &str = "retention-v1";
 
+/// Shortest and longest limit a user may configure.
+pub const CONFIGURABLE_MIN_MS: i64 = DAY_MS;
+pub const CONFIGURABLE_MAX_MS: i64 = 365 * DAY_MS;
+
+/// The policy with no configuration.
 pub fn policy() -> RetentionPolicy {
+    effective(
+        &RetentionConfigured {
+            service_log_idle_ms: None,
+            diagnostic_log_max_age_ms: None,
+        },
+        0,
+    )
+}
+
+/// The policy retention applies: configured limits where set, defaults elsewhere.
+pub fn effective(configured: &RetentionConfigured, revision: u64) -> RetentionPolicy {
     RetentionPolicy {
         receipt_retention_ms: receipts::RETENTION_MS,
         receipt_prune_interval_ms: PRUNE_INTERVAL_MS,
         attachment_grace_ms: ATTACHMENT_GRACE_MS,
-        service_log_idle_ms: SERVICE_LOG_IDLE_MS,
-        diagnostic_log_max_age_ms: DIAGNOSTIC_LOG_MAX_AGE_MS,
+        service_log_idle_ms: configured
+            .service_log_idle_ms
+            .unwrap_or(SERVICE_LOG_IDLE_MS),
+        diagnostic_log_max_age_ms: configured
+            .diagnostic_log_max_age_ms
+            .unwrap_or(DIAGNOSTIC_LOG_MAX_AGE_MS),
         candidate_limit: CANDIDATE_LIMIT as u64,
+        revision,
     }
+}
+
+/// What a `retention.policy.set` does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolicyChange {
+    /// Store the request under the next revision.
+    Apply,
+    /// The stored policy already is the request: the caller's own change,
+    /// retried after a lost reply, or a request that changes nothing.
+    Unchanged,
+}
+
+/// Decides a policy change against the stored revision and limits. A limit
+/// outside 1 to 365 days is refused; a caller who saw an older revision is
+/// refused unless the stored policy already equals its request.
+pub fn plan_policy_change(
+    stored_revision: u64,
+    stored: &RetentionConfigured,
+    expected_revision: u64,
+    requested: &RetentionConfigured,
+) -> Result<PolicyChange, String> {
+    for (field, value) in [
+        ("service_log_idle_ms", requested.service_log_idle_ms),
+        (
+            "diagnostic_log_max_age_ms",
+            requested.diagnostic_log_max_age_ms,
+        ),
+    ] {
+        if let Some(value) = value
+            && !(CONFIGURABLE_MIN_MS..=CONFIGURABLE_MAX_MS).contains(&value)
+        {
+            return Err(format!(
+                "{field} must be between 1 and 365 days ({CONFIGURABLE_MIN_MS} to {CONFIGURABLE_MAX_MS} ms)"
+            ));
+        }
+    }
+    if stored == requested
+        && (expected_revision == stored_revision
+            || expected_revision.checked_add(1) == Some(stored_revision))
+    {
+        return Ok(PolicyChange::Unchanged);
+    }
+    if expected_revision != stored_revision {
+        return Err(format!(
+            "The retention policy changed since revision {expected_revision}; it is at revision {stored_revision}"
+        ));
+    }
+    Ok(PolicyChange::Apply)
 }
 
 /// A retention verdict: remove for a reason, or keep for a reason.
@@ -101,14 +170,14 @@ pub struct ServiceLogFacts {
 
 /// The caller must only ask after it observed the runtime terminal list;
 /// without that list no service log is decided.
-pub fn service_log(facts: &ServiceLogFacts, now: i64) -> Verdict {
+pub fn service_log(facts: &ServiceLogFacts, idle_ms: i64, now: i64) -> Verdict {
     if facts.owned {
         return Verdict::Keep("owned by a terminal or service");
     }
     let Some(last) = facts.last_write_ms else {
         return Verdict::Keep("last write unknown");
     };
-    if now.saturating_sub(last) < SERVICE_LOG_IDLE_MS {
+    if now.saturating_sub(last) < idle_ms {
         return Verdict::Keep("written recently");
     }
     Verdict::Remove("no terminal or service owns it and it is idle")
@@ -122,14 +191,14 @@ pub struct DiagnosticLogFacts {
     pub modified_ms: Option<i64>,
 }
 
-pub fn diagnostic_log(facts: &DiagnosticLogFacts, now: i64) -> Verdict {
+pub fn diagnostic_log(facts: &DiagnosticLogFacts, max_age_ms: i64, now: i64) -> Verdict {
     if facts.newest_of_process {
         return Verdict::Keep("the process's current log");
     }
     let Some(modified) = facts.modified_ms else {
         return Verdict::Keep("modification time unknown");
     };
-    if now.saturating_sub(modified) < DIAGNOSTIC_LOG_MAX_AGE_MS {
+    if now.saturating_sub(modified) < max_age_ms {
         return Verdict::Keep("within the age limit");
     }
     Verdict::Remove("rotated log past the age limit")
@@ -176,16 +245,17 @@ pub struct Selected {
     pub fingerprint: String,
 }
 
-/// Names a candidate set. Sorting first makes the name independent of the
-/// order the caller discovered items in.
-pub fn generation(selected: &mut [Selected], truncated: bool) -> String {
+/// Names a candidate set under `policy`. Sorting first makes the name
+/// independent of the order the caller discovered items in; the policy is part
+/// of the name, so a preview made under another policy cannot apply.
+pub fn generation(selected: &mut [Selected], truncated: bool, policy: &RetentionPolicy) -> String {
     selected.sort_by(|a, b| (a.kind, &a.id).cmp(&(b.kind, &b.id)));
     let items: Vec<_> = selected
         .iter()
         .map(|item| json!([item.kind, item.id, item.fingerprint]))
         .collect();
     let canonical = receipts::canonical_json(
-        &json!({"policy": POLICY_VERSION, "items": items, "truncated": truncated}),
+        &json!({"policy": POLICY_VERSION, "limits": policy, "items": items, "truncated": truncated}),
     );
     Sha256::digest(canonical.as_bytes())
         .iter()
@@ -263,6 +333,7 @@ mod tests {
                     owned,
                     last_write_ms,
                 },
+                SERVICE_LOG_IDLE_MS,
                 NOW,
             )
         };
@@ -281,6 +352,7 @@ mod tests {
                     newest_of_process,
                     modified_ms,
                 },
+                DIAGNOSTIC_LOG_MAX_AGE_MS,
                 NOW,
             )
         };
@@ -334,17 +406,83 @@ mod tests {
             item(RetentionKind::Attachment, "a", "g"),
             item(RetentionKind::ServiceLog, "k", "1"),
         ];
-        assert_eq!(generation(&mut a, false), generation(&mut b, false));
+        assert_eq!(
+            generation(&mut a, false, &policy()),
+            generation(&mut b, false, &policy())
+        );
         assert_eq!(a[0].kind, RetentionKind::Attachment);
         let mut changed = vec![
             item(RetentionKind::Attachment, "a", "g2"),
             item(RetentionKind::ServiceLog, "k", "1"),
         ];
-        assert_ne!(generation(&mut a, false), generation(&mut changed, false));
-        assert_ne!(generation(&mut a, false), generation(&mut a.clone(), true));
+        assert_ne!(
+            generation(&mut a, false, &policy()),
+            generation(&mut changed, false, &policy())
+        );
+        assert_ne!(
+            generation(&mut a, false, &policy()),
+            generation(&mut a.clone(), true, &policy())
+        );
         let mut fewer = vec![item(RetentionKind::Attachment, "a", "g")];
-        assert_ne!(generation(&mut a, false), generation(&mut fewer, false));
-        assert_ne!(generation(&mut [], false), "");
+        assert_ne!(
+            generation(&mut a, false, &policy()),
+            generation(&mut fewer, false, &policy())
+        );
+        assert_ne!(generation(&mut [], false, &policy()), "");
+        // The same set under another policy is another generation.
+        let stricter = effective(
+            &RetentionConfigured {
+                service_log_idle_ms: Some(DAY_MS),
+                diagnostic_log_max_age_ms: None,
+            },
+            1,
+        );
+        assert_ne!(
+            generation(&mut a, false, &policy()),
+            generation(&mut a, false, &stricter)
+        );
+    }
+
+    #[test]
+    fn a_policy_change_needs_the_current_revision_and_bounded_limits() {
+        let none = RetentionConfigured {
+            service_log_idle_ms: None,
+            diagnostic_log_max_age_ms: None,
+        };
+        let two_days = RetentionConfigured {
+            service_log_idle_ms: Some(2 * DAY_MS),
+            diagnostic_log_max_age_ms: None,
+        };
+        assert_eq!(
+            plan_policy_change(0, &none, 0, &two_days),
+            Ok(PolicyChange::Apply)
+        );
+        // The same change retried after it applied converges.
+        assert_eq!(
+            plan_policy_change(1, &two_days, 0, &two_days),
+            Ok(PolicyChange::Unchanged)
+        );
+        assert_eq!(
+            plan_policy_change(1, &two_days, 1, &two_days),
+            Ok(PolicyChange::Unchanged)
+        );
+        // A stale caller with another request is refused.
+        assert!(plan_policy_change(2, &two_days, 0, &none).is_err());
+        assert!(plan_policy_change(1, &two_days, 0, &none).is_err());
+        // A revision no daemon issued is refused, not an overflow.
+        assert!(plan_policy_change(1, &two_days, u64::MAX, &two_days).is_err());
+        for bad in [0, DAY_MS - 1, 365 * DAY_MS + 1, -DAY_MS] {
+            let request = RetentionConfigured {
+                service_log_idle_ms: None,
+                diagnostic_log_max_age_ms: Some(bad),
+            };
+            assert!(plan_policy_change(0, &none, 0, &request).is_err(), "{bad}");
+        }
+        assert_eq!(effective(&two_days, 3).service_log_idle_ms, 2 * DAY_MS);
+        assert_eq!(
+            effective(&two_days, 3).diagnostic_log_max_age_ms,
+            DIAGNOSTIC_LOG_MAX_AGE_MS
+        );
     }
 
     #[test]

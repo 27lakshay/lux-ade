@@ -4,7 +4,7 @@ use super::*;
 use crate::skills::{self, placement};
 use ade_core::contract::skills::{
     SkillAdoptRequest, SkillDiscoverRequest, SkillInspectRequest, SkillInstallRequest,
-    SkillListRequest, SkillRemoveRequest,
+    SkillListRequest, SkillPlaceRequest, SkillRemoveRequest, SkillScope,
 };
 use std::path::PathBuf;
 
@@ -114,6 +114,79 @@ impl Sessions {
                         now,
                     )
                 })
+            }
+            "skill.place" => {
+                let place: SkillPlaceRequest = decode(request)?;
+                non_empty("name", &place.name)?;
+                non_empty("expected_content_hash", &place.expected_content_hash)?;
+                non_empty("provider", &place.provider)?;
+                let workspace_id = match place.scope {
+                    SkillScope::Workspace => Some(
+                        place
+                            .workspace_id
+                            .as_deref()
+                            .context("A workspace placement needs workspace_id")?,
+                    ),
+                    SkillScope::Global => {
+                        ensure!(
+                            place.workspace_id.is_none(),
+                            "A global placement takes no workspace_id"
+                        );
+                        None
+                    }
+                };
+                let roots = self.skill_roots(workspace_id)?;
+                let root = skills::place_root(&roots, &place.provider, place.scope)
+                    .with_context(|| {
+                        format!(
+                            "{} has no {} skill root ADE knows",
+                            place.provider,
+                            match place.scope {
+                                SkillScope::Global => "global",
+                                SkillScope::Workspace => "workspace",
+                            }
+                        )
+                    })?
+                    .clone();
+                let target = root.path.join(&place.name);
+                let seen = skills::observe(&target, &place.name);
+                let admitted = self.skill_db(true, |db| {
+                    skills::begin_place(db, request, &place, workspace_id, &target, &seen, now)
+                })?;
+                let (files, plan, reply) = match admitted {
+                    skills::PlaceAdmission::Done(value) => return Ok(value),
+                    skills::PlaceAdmission::Write { files, plan, reply } => (files, plan, reply),
+                };
+                match skills::write_placement(
+                    &root.path,
+                    &target,
+                    &place.operation_id,
+                    &files,
+                    plan,
+                ) {
+                    Ok(()) => self.skill_db(false, |db| {
+                        skills::finish_place(db, &reply, &place.operation_id, now_ms())
+                    }),
+                    Err(skills::WriteFailure::Untouched(error)) => {
+                        self.skill_db(false, |db| skills::abandon_place(db, &place.operation_id))?;
+                        Err(error.context(format!(
+                            "Skill {} was not placed; {} is unchanged",
+                            place.name,
+                            target.display()
+                        )))
+                    }
+                    Err(skills::WriteFailure::Uncertain(error)) => {
+                        self.skill_db(false, |db| {
+                            skills::unknown_place(db, &place.operation_id, now_ms())
+                        })?;
+                        Err(ade_core::error::OperationOutcomeUnknown(format!(
+                            "Placing skill {} failed part-way ({error:#}); inspect {} before placing again",
+                            place.name,
+                            target.display()
+                        ))
+                        .into())
+                    }
+                }
             }
             "skill.list" => {
                 let _: SkillListRequest = decode(request)?;

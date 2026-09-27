@@ -1,4 +1,5 @@
-//! `retention.preview` and `retention.apply` (F138), and the scheduled
+//! `retention.preview`, `retention.apply` and the configured policy
+//! (`retention.policy.get`, `retention.policy.set`) (F138), and the scheduled
 //! receipt prune.
 //!
 //! The eligibility rules live in [`crate::retention`]. This module gathers
@@ -12,9 +13,10 @@ use super::*;
 use crate::receipts;
 use crate::retention::{self as rules, Selected, Verdict};
 use ade_core::contract::retention::{
-    RetentionApply, RetentionApplyRequest, RetentionCandidate, RetentionItemResult, RetentionKind,
-    RetentionObservedLog, RetentionOutcome, RetentionPreview, RetentionPreviewRequest,
-    RetentionReceiptStore, RetentionWithheld,
+    RetentionApply, RetentionApplyRequest, RetentionCandidate, RetentionConfigured,
+    RetentionItemResult, RetentionKind, RetentionObservedLog, RetentionOutcome, RetentionPolicy,
+    RetentionPolicyGetRequest, RetentionPolicyReply, RetentionPolicySetRequest, RetentionPreview,
+    RetentionPreviewRequest, RetentionReceiptStore, RetentionWithheld,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -22,7 +24,42 @@ use rusqlite::{
 use std::path::PathBuf;
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS retention_applies(generation TEXT PRIMARY KEY, result TEXT NOT NULL, applied_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS retention_prunes(store TEXT PRIMARY KEY, ran_at INTEGER NOT NULL, expired INTEGER, error TEXT);";
+CREATE TABLE IF NOT EXISTS retention_prunes(store TEXT PRIMARY KEY, ran_at INTEGER NOT NULL, expired INTEGER, error TEXT);
+CREATE TABLE IF NOT EXISTS retention_settings(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, service_log_idle_ms INTEGER, diagnostic_log_max_age_ms INTEGER, updated_at INTEGER NOT NULL);";
+
+/// The stored configuration and its revision; defaults at revision 0.
+fn configured(connection: &Connection) -> Result<(u64, RetentionConfigured)> {
+    let stored: Option<(i64, Option<i64>, Option<i64>)> = connection
+        .query_row(
+            "SELECT revision,service_log_idle_ms,diagnostic_log_max_age_ms FROM retention_settings WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    Ok(match stored {
+        None => (
+            0,
+            RetentionConfigured {
+                service_log_idle_ms: None,
+                diagnostic_log_max_age_ms: None,
+            },
+        ),
+        Some((revision, service_log_idle_ms, diagnostic_log_max_age_ms)) => (
+            u64::try_from(revision).context("Stored retention revision is invalid")?,
+            RetentionConfigured {
+                service_log_idle_ms,
+                diagnostic_log_max_age_ms,
+            },
+        ),
+    })
+}
+
+/// The policy retention applies now.
+fn current_policy(connection: &Connection) -> Result<RetentionPolicy> {
+    connection.execute_batch(SCHEMA)?;
+    let (revision, stored) = configured(connection)?;
+    Ok(rules::effective(&stored, revision))
+}
 
 fn has_table(connection: &Connection, name: &str) -> Result<bool> {
     Ok(connection.query_row(
@@ -118,6 +155,8 @@ struct Gathered {
     truncated: bool,
     generation: String,
     withheld: Vec<RetentionWithheld>,
+    /// The policy the set was selected under.
+    policy: RetentionPolicy,
 }
 
 /// A directory the daemon may remove files from: a real directory, not a link.
@@ -242,6 +281,7 @@ fn owned_service_log_keys(store: &Store, runtime: &[(String, String)]) -> Result
 fn service_logs(
     directory: &Path,
     owned: &HashSet<String>,
+    idle_ms: i64,
     now: i64,
     entries: &mut Vec<Entry>,
 ) -> std::io::Result<()> {
@@ -274,7 +314,7 @@ fn service_logs(
             owned: owned.contains(&key),
             last_write_ms,
         };
-        if let Verdict::Remove(reason) = rules::service_log(&facts, now) {
+        if let Verdict::Remove(reason) = rules::service_log(&facts, idle_ms, now) {
             entries.push(Entry {
                 selected: Selected {
                     kind: RetentionKind::ServiceLog,
@@ -300,7 +340,12 @@ fn service_logs(
     Ok(())
 }
 
-fn diagnostic_logs(directory: &Path, now: i64, entries: &mut Vec<Entry>) -> std::io::Result<()> {
+fn diagnostic_logs(
+    directory: &Path,
+    max_age_ms: i64,
+    now: i64,
+    entries: &mut Vec<Entry>,
+) -> std::io::Result<()> {
     if plain_directory(directory)?.is_none() {
         return Ok(());
     }
@@ -332,7 +377,7 @@ fn diagnostic_logs(directory: &Path, now: i64, entries: &mut Vec<Entry>) -> std:
                 newest_of_process: index == newest,
                 modified_ms: modified_ms(&metadata),
             };
-            let Verdict::Remove(reason) = rules::diagnostic_log(&facts, now) else {
+            let Verdict::Remove(reason) = rules::diagnostic_log(&facts, max_age_ms, now) else {
                 continue;
             };
             let Some(file) = FileId::read(path)? else {
@@ -438,6 +483,58 @@ impl Sessions {
                 let apply: RetentionApplyRequest = decode(request)?;
                 reply(&self.retention_apply(non_empty("generation", &apply.generation)?)?)
             }
+            "retention.policy.get" => {
+                let RetentionPolicyGetRequest {} = decode(request)?;
+                let d = self.data.lock().unwrap();
+                let policy = current_policy(&d.store.connection)?;
+                let (_, stored) = configured(&d.store.connection)?;
+                reply(&RetentionPolicyReply {
+                    tag: Default::default(),
+                    policy,
+                    configured: stored,
+                    changed: false,
+                })
+            }
+            "retention.policy.set" => {
+                let set: RetentionPolicySetRequest = decode(request)?;
+                let requested = RetentionConfigured {
+                    service_log_idle_ms: set.service_log_idle_ms,
+                    diagnostic_log_max_age_ms: set.diagnostic_log_max_age_ms,
+                };
+                let d = self.data.lock().unwrap();
+                ensure!(!d.draining, "Application daemon is restarting");
+                let connection = &d.store.connection;
+                connection.execute_batch(SCHEMA)?;
+                let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+                let (revision, stored) = configured(&tx)?;
+                let change =
+                    rules::plan_policy_change(revision, &stored, set.expected_revision, &requested)
+                        .map_err(|error| anyhow!(error))?;
+                let revision = match change {
+                    rules::PolicyChange::Unchanged => revision,
+                    rules::PolicyChange::Apply => {
+                        let next = revision + 1;
+                        tx.execute(
+                            "INSERT INTO retention_settings(id,revision,service_log_idle_ms,diagnostic_log_max_age_ms,updated_at) VALUES(1,?1,?2,?3,?4)
+                             ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,service_log_idle_ms=excluded.service_log_idle_ms,diagnostic_log_max_age_ms=excluded.diagnostic_log_max_age_ms,updated_at=excluded.updated_at",
+                            params![
+                                i64::try_from(next)?,
+                                requested.service_log_idle_ms,
+                                requested.diagnostic_log_max_age_ms,
+                                now_ms()
+                            ],
+                        )?;
+                        next
+                    }
+                };
+                tx.commit()?;
+                reply(&RetentionPolicyReply {
+                    tag: Default::default(),
+                    policy: rules::effective(&requested, revision),
+                    configured: requested,
+                    changed: change == rules::PolicyChange::Apply,
+                })
+            }
             _ => bail!("Unknown retention operation"),
         }
     }
@@ -459,6 +556,7 @@ impl Sessions {
         runtime: std::result::Result<Vec<(String, String)>, String>,
         now: i64,
     ) -> Result<Gathered> {
+        let policy = current_policy(&store.connection)?;
         let mut entries = Vec::new();
         let mut withheld = Vec::new();
         if let Some(reason) = attachments(store, now, &mut entries)? {
@@ -472,7 +570,13 @@ impl Sessions {
             Ok(runtime) => {
                 let owned = owned_service_log_keys(store, &runtime)?;
                 let directory = self.runtime.data_directory().join("service-logs");
-                if let Err(error) = service_logs(&directory, &owned, now, &mut entries) {
+                if let Err(error) = service_logs(
+                    &directory,
+                    &owned,
+                    policy.service_log_idle_ms,
+                    now,
+                    &mut entries,
+                ) {
                     withheld.push(RetentionWithheld {
                         kind: RetentionKind::ServiceLog,
                         reason: format!("the service log directory could not be read: {error}"),
@@ -484,7 +588,12 @@ impl Sessions {
                 reason: format!("{reason}; no service log is judged unowned without it"),
             }),
         }
-        if let Err(error) = diagnostic_logs(&ade_platform::resources::logs(), now, &mut entries) {
+        if let Err(error) = diagnostic_logs(
+            &ade_platform::resources::logs(),
+            policy.diagnostic_log_max_age_ms,
+            now,
+            &mut entries,
+        ) {
             withheld.push(RetentionWithheld {
                 kind: RetentionKind::DiagnosticLog,
                 reason: format!("the diagnostic log directory could not be read: {error}"),
@@ -496,12 +605,13 @@ impl Sessions {
         let truncated = entries.len() > rules::CANDIDATE_LIMIT;
         entries.truncate(rules::CANDIDATE_LIMIT);
         let mut selected: Vec<Selected> = entries.iter().map(|e| e.selected.clone()).collect();
-        let generation = rules::generation(&mut selected, truncated);
+        let generation = rules::generation(&mut selected, truncated, &policy);
         Ok(Gathered {
             entries,
             truncated,
             generation,
             withheld,
+            policy,
         })
     }
 
@@ -567,7 +677,7 @@ impl Sessions {
             tag: Default::default(),
             generation: gathered.generation,
             generated_at: now,
-            policy: rules::policy(),
+            policy: gathered.policy,
             reclaimable_bytes: candidates.iter().map(|c| c.bytes).sum(),
             candidates,
             truncated: gathered.truncated,

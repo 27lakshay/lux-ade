@@ -97,6 +97,38 @@ impl Sessions {
     }
 }
 
+/// The provider-native server map a new Agent launches with: the same
+/// resolution `mcp.resolve` reports, for a provider whose adapter passes it.
+/// `None` when the provider is not wired or no server applies, so a launch
+/// without catalog entries is unchanged.
+pub(super) fn launch_servers(
+    store: &Store,
+    workspace: &WorkspaceRecord,
+    provider: &str,
+) -> Result<Option<Value>> {
+    if !catalog::WIRED_PROVIDERS.contains(&provider) {
+        return Ok(None);
+    }
+    ensure(&store.connection)?;
+    let servers = read_all(&store.connection)?;
+    let resolution = catalog::resolve(
+        &servers,
+        &Target {
+            workspace_id: &workspace.id,
+            repository_id: workspace.repository_id.as_deref(),
+            provider,
+        },
+    );
+    if resolution.servers.is_empty() {
+        return Ok(None);
+    }
+    Ok(resolution.document.and_then(|document| {
+        document
+            .as_object()
+            .and_then(|object| object.values().next().cloned())
+    }))
+}
+
 fn mcp_command(store: &Store, request: &Value) -> Result<Value> {
     let connection = &store.connection;
     match request["op"].as_str().unwrap_or("") {

@@ -4,17 +4,19 @@
 //!
 //! Filesystem reads happen before the database lock and never inside a
 //! transaction. Bundle blobs and the catalog row that references them commit
-//! in one transaction, with the effect receipt. Nothing here writes, moves or
-//! deletes a file outside the database.
+//! in one transaction, with the effect receipt. Only `skill.place` writes
+//! outside the database, into an absent or catalog-owned provider path, and
+//! only after its dispatched receipt is recorded.
 //!
 //! Pattern references: Orca `src/main/skills/skill-bundle-install-service.ts`
 //! and `skill-removable-placement.ts` (keep externally owned files), OpenCode
 //! v2 `config/plugin/skill.ts` (provider roots). No code was copied.
 use crate::receipts::{self, Admission, Status};
 use ade_core::contract::skills::{
-    SkillDiscovery, SkillInspection, SkillInstalled, SkillList, SkillManifest, SkillProjection,
-    SkillProvenance, SkillReference, SkillReferenceStatus, SkillRemoved, SkillRoot,
-    SkillRootStatus, SkillScope, SkillSourceKind, SkillSummary,
+    SkillDiscovery, SkillFile, SkillInspection, SkillInstalled, SkillList, SkillManifest,
+    SkillPlaceOutcome, SkillPlaceRequest, SkillPlaced, SkillProjection, SkillProvenance,
+    SkillReference, SkillReferenceStatus, SkillRemoved, SkillRoot, SkillRootStatus, SkillScope,
+    SkillSourceKind, SkillSummary,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -22,7 +24,7 @@ use serde_json::Value;
 use std::{
     fs,
     io::Read,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -30,7 +32,7 @@ pub mod bundle;
 pub mod placement;
 
 use bundle::{Bundle, Entry};
-use placement::{AdoptionPlan, InstallPlan, Root, Seen};
+use placement::{AdoptionPlan, InstallPlan, PlacePlan, Root, Seen};
 
 /// Entries read from one provider root during discovery.
 const MAX_ROOT_ENTRIES: usize = 512;
@@ -727,4 +729,291 @@ pub fn inspection(inspected: Inspected, roots: &[Root]) -> Result<Value> {
         manifest: inspected.manifest,
         projection,
     })?)
+}
+
+/// Where `provider` reads skills of `scope`: its first root of that scope.
+pub fn place_root<'a>(roots: &'a [Root], provider: &str, scope: SkillScope) -> Option<&'a Root> {
+    roots
+        .iter()
+        .find(|root| root.provider == provider && root.scope == scope)
+}
+
+/// What admission decided for a `skill.place`.
+pub enum PlaceAdmission {
+    /// Reply without writing: a replay, or a placement with nothing to write.
+    Done(Value),
+    /// Write `files` at the path; the receipt is dispatched.
+    Write {
+        files: Vec<(SkillFile, Vec<u8>)>,
+        plan: PlacePlan,
+        reply: SkillPlaced,
+    },
+}
+
+/// Records the path as catalog-owned and settles the receipt with `reply`.
+fn settle_place(
+    tx: &Transaction,
+    operation_id: &str,
+    reply: &SkillPlaced,
+    now: i64,
+) -> Result<Value> {
+    if reply.outcome != SkillPlaceOutcome::ExternalIdentical {
+        tx.execute(
+            "INSERT INTO skill_adoptions(path,name,content_hash,adopted_at) VALUES(?1,?2,?3,?4)
+             ON CONFLICT(path) DO UPDATE SET name=excluded.name,content_hash=excluded.content_hash,adopted_at=excluded.adopted_at",
+            params![reply.path, reply.name, reply.content_hash, now],
+        )?;
+    }
+    let value = serde_json::to_value(reply)?;
+    receipts::settle(tx, operation_id, Status::Settled, Some(&value), now)?;
+    Ok(value)
+}
+
+fn unknown_placement(message: String) -> anyhow::Error {
+    ade_core::error::OperationOutcomeUnknown(message).into()
+}
+
+/// `skill.place` admission, after the provider path was observed as `seen`.
+/// A new placement checks the installed hash and the path, then records a
+/// dispatched receipt before any file is written. A replay of a dispatched
+/// receipt, left by a crash, settles only when the path holds exactly the
+/// bundle; otherwise its outcome is unknown and it never runs again.
+#[allow(clippy::too_many_arguments)]
+pub fn begin_place(
+    connection: &Connection,
+    request: &Value,
+    place: &SkillPlaceRequest,
+    workspace_id: Option<&str>,
+    target: &Path,
+    seen: &Seen,
+    now: i64,
+) -> Result<PlaceAdmission> {
+    let operation_id = place.operation_id.as_str();
+    ensure!(
+        !operation_id.is_empty() && operation_id.len() <= 512,
+        "Missing operation_id"
+    );
+    let path_text = target.display().to_string();
+    let tx = transaction(connection)?;
+    match receipts::begin(&tx, operation_id, "skill.place", request, None, now)? {
+        Admission::New => {}
+        Admission::Replay(receipt) => match receipt.status {
+            Status::Settled => {
+                return Ok(PlaceAdmission::Done(
+                    receipt
+                        .result
+                        .context("Settled operation has no stored result")?,
+                ));
+            }
+            Status::Unknown => {
+                return Err(unknown_placement(format!(
+                    "Placement {operation_id} was interrupted; its outcome is unknown and it will not run again. Inspect {path_text} before placing again."
+                )));
+            }
+            _ => {
+                let reply: SkillPlaced = serde_json::from_value(
+                    receipt
+                        .result
+                        .context("Dispatched placement has no record")?,
+                )?;
+                if placement::placement_finished(seen, &reply.content_hash) {
+                    let value = settle_place(&tx, operation_id, &reply, now)?;
+                    tx.commit()?;
+                    return Ok(PlaceAdmission::Done(value));
+                }
+                receipts::settle(&tx, operation_id, Status::Unknown, None, now)?;
+                tx.commit()?;
+                return Err(unknown_placement(format!(
+                    "Placement {operation_id} was interrupted and {path_text} does not hold the bundle; its outcome is unknown and it will not run again. Inspect the path before placing again."
+                )));
+            }
+        },
+        Admission::Conflict => bail!("Operation ID was already used for different parameters"),
+        Admission::Expired => {
+            bail!("Operation ID is past its 30-day receipt retention; use a new operation ID")
+        }
+    }
+    // Any refusal below returns before commit, so it leaves no receipt.
+    placement::check_remove(
+        installed_hash(&tx, &place.name)?.as_deref(),
+        &place.expected_content_hash,
+    )
+    .map_err(|error| anyhow!(error))?;
+    let adopted: Option<String> = tx
+        .query_row(
+            "SELECT content_hash FROM skill_adoptions WHERE path=?1",
+            [&path_text],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let (observed, decision, reason) =
+        placement::decide(seen, adopted.as_deref(), &place.expected_content_hash);
+    let plan = placement::plan_place(observed, decision, reason).map_err(|error| anyhow!(error))?;
+    let reply = SkillPlaced {
+        tag: Default::default(),
+        name: place.name.clone(),
+        content_hash: place.expected_content_hash.clone(),
+        provider: place.provider.clone(),
+        scope: place.scope,
+        workspace_id: workspace_id.map(str::to_owned),
+        path: path_text,
+        outcome: match plan {
+            PlacePlan::Create => SkillPlaceOutcome::Created,
+            PlacePlan::Replace => SkillPlaceOutcome::Replaced,
+            PlacePlan::UpToDate => SkillPlaceOutcome::UpToDate,
+            PlacePlan::ExternalIdentical => SkillPlaceOutcome::ExternalIdentical,
+        },
+    };
+    if matches!(plan, PlacePlan::UpToDate | PlacePlan::ExternalIdentical) {
+        let value = settle_place(&tx, operation_id, &reply, now)?;
+        tx.commit()?;
+        return Ok(PlaceAdmission::Done(value));
+    }
+    let manifest: SkillManifest = serde_json::from_str(&tx.query_row(
+        "SELECT manifest FROM skill_bundles WHERE name=?1",
+        [&place.name],
+        |row| row.get::<_, String>(0),
+    )?)?;
+    verify_blobs(&tx, &manifest)?;
+    let mut files = Vec::with_capacity(manifest.files.len());
+    for file in &manifest.files {
+        let data: Vec<u8> = tx.query_row(
+            "SELECT data FROM skill_blobs WHERE content_hash=?1 AND path=?2",
+            params![manifest.content_hash, file.path],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            bundle::sha256_hex(&data) == file.sha256,
+            "Skill {} blob {} does not match its manifest",
+            manifest.name,
+            file.path
+        );
+        files.push((file.clone(), data));
+    }
+    receipts::settle(
+        &tx,
+        operation_id,
+        Status::Dispatched,
+        Some(&serde_json::to_value(&reply)?),
+        now,
+    )?;
+    tx.commit()?;
+    Ok(PlaceAdmission::Write { files, plan, reply })
+}
+
+/// Settles a placement whose files were written.
+pub fn finish_place(
+    connection: &Connection,
+    reply: &SkillPlaced,
+    operation_id: &str,
+    now: i64,
+) -> Result<Value> {
+    let tx = transaction(connection)?;
+    let value = settle_place(&tx, operation_id, reply, now)?;
+    tx.commit()?;
+    Ok(value)
+}
+
+/// Drops the receipt of a placement that failed before it changed the path,
+/// so the same operation ID may run again.
+pub fn abandon_place(connection: &Connection, operation_id: &str) -> Result<()> {
+    connection.execute(
+        "DELETE FROM operations WHERE id=?1 AND status=?2",
+        params![operation_id, Status::Dispatched.as_str()],
+    )?;
+    Ok(())
+}
+
+/// Marks a placement whose write may have changed the path as unknown.
+pub fn unknown_place(connection: &Connection, operation_id: &str, now: i64) -> Result<()> {
+    receipts::settle(connection, operation_id, Status::Unknown, None, now)
+}
+
+/// Why [`write_placement`] failed, and whether the provider path changed.
+pub enum WriteFailure {
+    /// The path is as it was, and no staging directory is left behind.
+    Untouched(anyhow::Error),
+    /// A rename happened; the path may hold either bundle.
+    Uncertain(anyhow::Error),
+}
+
+/// Writes the bundle into a hidden staging directory beside `target`, then
+/// renames it into place. A replacement first moves ADE's own old placement
+/// aside and deletes it only once the new one is in place. Discovery skips
+/// dot-prefixed entries, so a staging directory is never read as a skill.
+pub fn write_placement(
+    root: &Path,
+    target: &Path,
+    operation_id: &str,
+    files: &[(SkillFile, Vec<u8>)],
+    plan: PlacePlan,
+) -> std::result::Result<(), WriteFailure> {
+    use std::io::Write as _;
+    let key = &bundle::sha256_hex(operation_id.as_bytes())[..16];
+    let stage = root.join(format!(".ade-place-{key}"));
+    let aside = root.join(format!(".ade-replaced-{key}"));
+    let staged = (|| -> Result<()> {
+        fs::create_dir_all(root)?;
+        if fs::symlink_metadata(&stage).is_ok() {
+            fs::remove_dir_all(&stage)?;
+        }
+        fs::create_dir(&stage)?;
+        for (file, data) in files {
+            ensure!(
+                bundle::valid_path(&file.path),
+                "Invalid bundle path {}",
+                file.path
+            );
+            let path = stage.join(&file.path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut out = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(if file.executable { 0o755 } else { 0o644 })
+                .open(&path)?;
+            out.write_all(data)?;
+            out.sync_all()?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = staged {
+        let _ = fs::remove_dir_all(&stage);
+        return Err(WriteFailure::Untouched(error));
+    }
+    match plan {
+        PlacePlan::Create => {
+            if fs::symlink_metadata(target).is_ok() {
+                let _ = fs::remove_dir_all(&stage);
+                return Err(WriteFailure::Untouched(anyhow!(
+                    "{} appeared while the skill was staged; nothing was placed",
+                    target.display()
+                )));
+            }
+            fs::rename(&stage, target).map_err(|error| {
+                let _ = fs::remove_dir_all(&stage);
+                WriteFailure::Untouched(error.into())
+            })
+        }
+        PlacePlan::Replace => {
+            if let Err(error) = fs::rename(target, &aside) {
+                let _ = fs::remove_dir_all(&stage);
+                return Err(WriteFailure::Untouched(error.into()));
+            }
+            if let Err(error) = fs::rename(&stage, target) {
+                // Put ADE's old placement back; the path is then as it was.
+                return match fs::rename(&aside, target) {
+                    Ok(()) => {
+                        let _ = fs::remove_dir_all(&stage);
+                        Err(WriteFailure::Untouched(error.into()))
+                    }
+                    Err(_) => Err(WriteFailure::Uncertain(error.into())),
+                };
+            }
+            let _ = fs::remove_dir_all(&aside);
+            Ok(())
+        }
+        PlacePlan::UpToDate | PlacePlan::ExternalIdentical => Ok(()),
+    }
 }

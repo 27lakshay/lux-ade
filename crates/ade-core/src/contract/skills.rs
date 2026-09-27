@@ -4,8 +4,9 @@
 //! provenance, and read-only references to skills that providers already read
 //! from their own paths. Install, adopt and remove are effect commands with
 //! receipts. Discovery refreshes stored references and converges when repeated.
-//! No operation here writes into a provider path: projection only describes
-//! where each provider would read a bundle and what a placement would need.
+//! Only `skill.place` writes into a provider path, and only where projection
+//! decides `create` or `replace`: an absent path, or a path the catalog owns
+//! and that is unchanged since ADE wrote or adopted it.
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,7 @@ pub fn operations() -> Vec<OperationSpec> {
         ),
         OperationSpec::new::<SkillAdoptRequest, SkillInstalled>("skill.adopt", Tier::EffectCommand),
         OperationSpec::new::<SkillRemoveRequest, SkillRemoved>("skill.remove", Tier::EffectCommand),
+        OperationSpec::new::<SkillPlaceRequest, SkillPlaced>("skill.place", Tier::EffectCommand),
         OperationSpec::new::<SkillListRequest, SkillList>("skill.list", Tier::Query),
         OperationSpec::new::<SkillInspectRequest, SkillInspection>("skill.inspect", Tier::Query),
         OperationSpec::new::<SkillDiscoverRequest, SkillDiscovery>(
@@ -71,6 +73,24 @@ pub struct SkillRemoveRequest {
     pub expected_content_hash: String,
 }
 
+/// `skill.place`: write an installed bundle where one provider reads skills,
+/// so that provider's adapter rules invoke it. The path must be absent or
+/// catalog-owned and unchanged; an external skill is never overwritten.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct SkillPlaceRequest {
+    pub operation_id: String,
+    pub name: String,
+    /// The installed bundle's content hash the caller reviewed.
+    pub expected_content_hash: String,
+    /// `claude`, `codex`, `opencode` or `omp`: whose skill root receives it.
+    pub provider: String,
+    pub scope: SkillScope,
+    /// Required for `workspace` scope. Placement is local: a workspace on a
+    /// remote host is refused, never placed on this host instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+}
+
 /// `skill.list`: installed bundles and the stored external references.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct SkillListRequest {}
@@ -95,6 +115,7 @@ pub struct SkillDiscoverRequest {
 
 wire_tag!(SkillInstalledTag, "skill_installed");
 wire_tag!(SkillRemovedTag, "skill_removed");
+wire_tag!(SkillPlacedTag, "skill_placed");
 wire_tag!(SkillListTag, "skills");
 wire_tag!(SkillInspectionTag, "skill");
 wire_tag!(SkillDiscoveryTag, "skill_discovery");
@@ -280,6 +301,35 @@ pub struct SkillInstalled {
     pub replaced_content_hash: Option<String>,
 }
 
+/// What a placement did at its provider path.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillPlaceOutcome {
+    /// The directory was absent; ADE wrote the bundle and owns the path.
+    Created,
+    /// ADE replaced its own unchanged placement with this bundle.
+    Replaced,
+    /// The catalog-owned path already held this bundle.
+    UpToDate,
+    /// An external directory already holds identical content. ADE wrote
+    /// nothing and does not own it.
+    ExternalIdentical,
+}
+
+/// The `skill.place` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct SkillPlaced {
+    #[serde(rename = "type")]
+    pub tag: SkillPlacedTag,
+    pub name: String,
+    pub content_hash: String,
+    pub provider: String,
+    pub scope: SkillScope,
+    pub workspace_id: Option<String>,
+    pub path: String,
+    pub outcome: SkillPlaceOutcome,
+}
+
 /// The `skill.remove` reply.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct SkillRemoved {
@@ -388,6 +438,7 @@ mod tests {
         assert_eq!(names("skill.install").2, "effect_command");
         assert_eq!(names("skill.adopt").2, "effect_command");
         assert_eq!(names("skill.remove").2, "effect_command");
+        assert_eq!(names("skill.place").2, "effect_command");
         assert_eq!(names("skill.list").2, "query");
         assert_eq!(names("skill.inspect").2, "query");
         assert_eq!(names("skill.discover").2, "idempotent_command");

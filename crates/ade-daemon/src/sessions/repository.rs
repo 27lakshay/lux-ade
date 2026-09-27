@@ -584,7 +584,7 @@ fn unknown(id: &str, record: &Value) -> anyhow::Error {
         .find_map(|key| record[*key].as_str())
         .map(|path| format!(" Inspect {path} before trying again."))
         .unwrap_or_default();
-    anyhow!(
+    anyhow::Error::new(ade_core::error::OperationOutcomeUnknown(format!(
         "Operation {id} was interrupted while it was running Git; its outcome is unknown and it will not run again.{place}"
-    )
+    )))
 }

@@ -22,12 +22,15 @@ use std::collections::{BTreeMap, BTreeSet};
 /// MCP protocol revisions the modelled transports follow, newest first.
 pub const PROTOCOL_VERSIONS: &[&str] = &["2026-07-28", "2025-11-25", "2025-06-18"];
 
-/// Providers that have an MCP projection. None of their launch paths reads
-/// it yet, so every resolution reports `wired: false`.
+/// Providers that have an MCP projection.
 pub const PROJECTED_PROVIDERS: &[&str] = &["claude", "codex", "omp"];
 
-/// Providers whose adapter passes the projection to the provider at launch.
-pub const WIRED_PROVIDERS: &[&str] = &[];
+/// Providers whose adapter passes the projection to the provider at launch:
+/// Codex as one `mcp_servers.<name>` config override per server on
+/// `thread/start` and `thread/resume`, Claude as the SDK's `mcpServers` query option. Oh My Pi
+/// reads `mcp.json` from its agent directory, which ADE does not write
+/// without adoption, so it stays unwired.
+pub const WIRED_PROVIDERS: &[&str] = &["claude", "codex"];
 
 const MAX_NAME: usize = 64;
 const MAX_TEXT: usize = 4096;

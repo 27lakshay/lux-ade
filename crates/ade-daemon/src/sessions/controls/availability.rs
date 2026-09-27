@@ -33,7 +33,7 @@ pub fn native(provider: &str, control: ConversationControl) -> Result<&'static s
         ("codex", Steer) => Ok("turn/steer"),
         ("codex", Compact) => Ok("thread/compact/start"),
         ("codex", RewindConversation) => missing(
-            "Codex thread/revert rewrites only the provider's history, and ADE's adapter does not call it yet, so ADE's stored history would diverge",
+            "Codex thread/revert rewrites only paginated threads, and ADE's adapter starts legacy threads, so it does not call it",
         ),
         ("claude", Steer) => {
             missing("ADE's Claude adapter admits one turn at a time and has no native steer path")
@@ -41,9 +41,7 @@ pub fn native(provider: &str, control: ConversationControl) -> Result<&'static s
         ("claude", Compact) => {
             missing("ADE's Claude adapter does not issue Claude Code's compaction command yet")
         }
-        ("claude", RewindConversation) => {
-            missing("ADE's Claude adapter does not resume at an earlier message yet")
-        }
+        ("claude", RewindConversation) => Ok("claude.resume_session_at"),
         ("omp", Steer) => missing(
             "Oh My Pi RPC has steer, but ADE's adapter cannot yet bind a steered entry to its submission ledger",
         ),
@@ -99,7 +97,10 @@ fn state_refusal(facts: &Facts, control: ConversationControl) -> Option<&'static
         RewindFiles if busy(facts.status) => {
             Some("A turn is running; stop it before rewinding files")
         }
-        Steer | Compact if !facts.connected => {
+        RewindConversation if busy(facts.status) => {
+            Some("A turn is running; stop it before rewinding the conversation")
+        }
+        Steer | Compact | RewindConversation if !facts.connected => {
             Some("The Agent is not connected; resume the Conversation first")
         }
         _ => None,
@@ -185,6 +186,9 @@ mod tests {
         for provider in ["claude", "omp", "opencode"] {
             for status in ["running", "ready"] {
                 for control in [Steer, Compact, RewindConversation] {
+                    if provider == "claude" && control == RewindConversation {
+                        continue;
+                    }
                     let decided = decide(&facts(provider, status), control);
                     assert!(!decided.available, "{provider} {status} {control:?}");
                     assert!(decided.mechanism.is_none());
@@ -206,10 +210,31 @@ mod tests {
     }
 
     #[test]
-    fn conversation_rewind_is_unavailable_everywhere_until_history_can_follow() {
-        for provider in ["codex", "claude", "omp", "opencode"] {
+    fn conversation_rewind_runs_only_on_an_idle_connected_claude_agent() {
+        for provider in ["codex", "omp", "opencode"] {
             assert!(!decide(&facts(provider, "ready"), RewindConversation).available);
         }
+        let claude = decide(&facts("claude", "ready"), RewindConversation);
+        assert!(claude.available);
+        assert_eq!(
+            claude.mechanism.as_deref(),
+            Some("claude.resume_session_at")
+        );
+        for status in ["running", "waiting", "starting", "cancelling"] {
+            let busy = decide(&facts("claude", status), RewindConversation);
+            assert!(!busy.available, "{status}");
+            assert!(busy.reason.unwrap().contains("stop it before rewinding"));
+        }
+        let disconnected = Facts {
+            connected: false,
+            ..facts("claude", "ready")
+        };
+        assert!(
+            decide(&disconnected, RewindConversation)
+                .reason
+                .unwrap()
+                .contains("not connected")
+        );
     }
 
     #[test]

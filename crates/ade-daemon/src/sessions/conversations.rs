@@ -231,14 +231,25 @@ impl Sessions {
                 let id = non_empty("conversation_id", &get.conversation_id)?;
                 let limit = get.limit.unwrap_or(50) as usize;
                 let d = self.data.lock().unwrap();
+                let conversation = d.store.conversation(id)?;
+                let history_epoch = d.store.history_epoch(id)?;
+                // A page older than the caller's first read belongs to the
+                // history it read; after a rewind that history is gone.
+                if let (Some(_), Some(seen)) = (get.before, get.history_epoch) {
+                    ensure!(
+                        seen == history_epoch,
+                        "History changed since that page was read: a rewind replaced it (epoch {seen}, now {history_epoch}). Reload from the newest page"
+                    );
+                }
                 reply(&ConversationSnapshot {
                     tag: Default::default(),
-                    conversation: d.store.conversation(id)?,
+                    conversation,
                     messages: d.store.messages(id, get.before, limit)?,
                     requests: d.store.pending(id)?,
                     queued: d.store.queued(id)?,
                     boot_id: self.boot_id.clone(),
                     revision: d.revision,
+                    history_epoch,
                 })
             }
             "agent.child_transcript" => {
