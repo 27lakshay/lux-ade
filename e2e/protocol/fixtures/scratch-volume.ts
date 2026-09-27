@@ -77,7 +77,10 @@ export class ScratchVolume {
 
 /** `test` with a `volume(mountPoint)` fixture that attaches a scratch volume and detaches it afterwards. */
 export const volumeTest = base.extend<{ volume: (mountPoint: string, sizeMb?: number) => Promise<ScratchVolume> }>({
-  volume: async ({ ade }, use) => {
+  volume: async ({ ade }, use, testInfo) => {
+    // hdiutil talks to system disk services. System-service specs are opt-in and
+    // run serially (AGENTS.md, machine safety).
+    testInfo.skip(process.env.ADE_E2E_SYSTEM !== '1', 'system-service spec: set ADE_E2E_SYSTEM=1 and run it alone')
     const volumes: ScratchVolume[] = []
     await use(async (mountPoint, sizeMb) => {
       const volume = await ScratchVolume.attach(ade.root, mountPoint, sizeMb)

@@ -118,3 +118,14 @@ The failing test keeps its temp root and attaches:
 - `daemon.log` and `runtime.log`.
 - The mock providers' `calls.jsonl`.
 - `owned-processes.json`.
+
+## Machine safety
+
+Never call the macOS Security framework or the `security` tool, create
+keychains, or touch the login keychain from a spec or fixture. Secret storage is
+tested through the test-only file backend. Specs that use other system services
+(the `volume` fixture uses `hdiutil`) skip unless `ADE_E2E_SYSTEM=1`. Run those
+alone:
+
+    ADE_E2E_SYSTEM=1 ADE_E2E_WORKERS=1 pnpm test:e2e:protocol:only <spec>
+
