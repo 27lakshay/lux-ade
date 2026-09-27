@@ -115,4 +115,10 @@ const installedBunVersion = execFileSync(bun, ['--version'], { encoding: 'utf8' 
 if (installedBunVersion !== bunVersion) throw new Error(`Expected Bun ${bunVersion}, found ${installedBunVersion}`)
 mkdirSync(bin, { recursive: true })
 copyFileSync(bun, join(bin, 'bun'))
+// The bundle's Node for provider bridges and the plugin host: Electron run as
+// Node. ELECTRON_RUN_AS_NODE is set here, for this process only, so it never
+// reaches the daemon's environment and so never a terminal, service or tool.
+writeFileSync(join(bin, 'ade-node'), `#!/bin/sh
+ELECTRON_RUN_AS_NODE=1 exec "\${0%/*}/../../MacOS/Lux ADE" "$@"
+`, { mode: 0o755 })
 run('pnpm', ['exec', 'electron-builder', '--mac', '--dir', '--publish', 'never', '--config', 'electron-builder.yml'])

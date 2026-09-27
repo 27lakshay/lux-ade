@@ -779,7 +779,7 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
   const ompWrapper = join(directory, 'omp-cli')
   await Promise.all([
     executableWrapper(codexWrapper, bundledBun, codexServer),
-    executableWrapper(claudeWrapper, executable, claudeRunner),
+    executableWrapper(claudeWrapper, join(resources, 'bin/ade-node'), claudeRunner),
     executableWrapper(ompWrapper, bundledBun, ompMock),
   ])
 

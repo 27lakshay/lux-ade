@@ -85,7 +85,7 @@ export class ManagedProfile {
     this.logsDirectory = join(this.root, 'logs')
     this.defaultWorkspaceRoot = join(runtimeHome, '..', 'workspace')
     this.dataDirectory = join(runtimeHome, 'data')
-    this.env = { ...host.env, ...providerEnvironment(this.root), ...env }
+    this.env = { ...host.env, ...host.launcher.providers(this.root), ...env }
   }
 
   /** Run the built `ade` CLI with `--profile ID`. It cold-starts the daemon when none runs. Never throws for a non-zero exit. */
@@ -96,8 +96,8 @@ export class ManagedProfile {
   async cliWith(options: { env?: Record<string, string>; profile?: string | null }, ...args: string[]): Promise<CliResult> {
     const selection = options.profile === null ? [] : ['--profile', options.profile ?? this.id]
     const started = Date.now()
-    const result = await run(process.execPath, [binaries.cli, ...selection, ...args], { ...this.env, ...options.env },
-      this.host.cwd)
+    const result = await run(this.host.launcher.cli[0], [...this.host.launcher.cli.slice(1), ...selection, ...args],
+      { ...this.env, ...options.env }, this.host.cwd)
     await this.log({ via: 'cli', args: [...selection, ...args], code: result.code, error: result.code ? result.stderr : undefined,
       ms: Date.now() - started })
     await this.host.track()
@@ -229,6 +229,26 @@ export class ManagedProfile {
   }
 }
 
+/**
+ * What a host runs: the `ade-control` binary, the `ade` CLI command line, the
+ * environment every run starts from, and the provider settings each profile
+ * adds. The default is the source build with the deterministic mocks;
+ * `fixtures/packaged.ts` supplies the installed `.app` instead.
+ */
+export type Launcher = {
+  control: string
+  cli: string[]
+  env: (paths: { userHome: string; profilesHome: string }) => Record<string, string>
+  providers: (profileRoot: string) => Record<string, string>
+}
+
+export const sourceLauncher: Launcher = {
+  control: controlBinary,
+  cli: [process.execPath, binaries.cli],
+  env: ({ userHome, profilesHome }) => scratchEnvironment(userHome, { ADE_PROFILES_HOME: profilesHome }),
+  providers: providerEnvironment,
+}
+
 /** One scratch host: a profiles home, one user HOME, and the managed profiles registered there. */
 export class ProfileHost {
   /** The scratch ADE_PROFILES_HOME. */
@@ -239,15 +259,15 @@ export class ProfileHost {
   readonly env: Record<string, string>
   readonly profiles: ManagedProfile[] = []
 
-  private constructor(readonly ade: AdeHarness) {
+  private constructor(readonly ade: AdeHarness, readonly launcher: Launcher) {
     this.home = join(ade.root, 'profiles-home')
     this.userHome = join(ade.root, 'user-home')
     this.cwd = join(ade.root, 'cwd')
-    this.env = scratchEnvironment(this.userHome, { ADE_PROFILES_HOME: this.home })
+    this.env = launcher.env({ userHome: this.userHome, profilesHome: this.home })
   }
 
-  static async create(ade: AdeHarness): Promise<ProfileHost> {
-    const host = new ProfileHost(ade)
+  static async create(ade: AdeHarness, launcher: Launcher = sourceLauncher): Promise<ProfileHost> {
+    const host = new ProfileHost(ade, launcher)
     for (const directory of [host.userHome, host.cwd]) await mkdir(directory, { recursive: true, mode: 0o700 })
     await writeFile(join(host.userHome, '.gitconfig'), scratchGitConfig())
     return host
@@ -255,12 +275,12 @@ export class ProfileHost {
 
   /** Run `ade-control` on this host. Never throws for a non-zero exit. */
   control(args: string[], env: Record<string, string> = this.env): Promise<CliResult> {
-    return run(controlBinary, args, env, this.cwd)
+    return run(this.launcher.control, args, env, this.cwd)
   }
 
   /** The CLI with no profile selection, for `profile list` and selection errors. */
   async cli(...args: string[]): Promise<CliResult> {
-    const result = await run(process.execPath, [binaries.cli, ...args], this.env, this.cwd)
+    const result = await run(this.launcher.cli[0], [...this.launcher.cli.slice(1), ...args], this.env, this.cwd)
     await this.track()
     return result
   }

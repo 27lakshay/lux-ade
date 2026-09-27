@@ -239,6 +239,16 @@ fn packaged() -> bool {
             })
         })
 }
+/// The interpreters a packaged daemon uses: the bundle's `bin/ade-node`
+/// (its Electron run as Node) and its Bun. Each is named only when the bundle
+/// contains it.
+fn bundled_interpreters() -> Vec<(&'static str, PathBuf)> {
+    [("ADE_NODE_BIN", "bin/ade-node"), ("ADE_BUN_BIN", "bin/bun")]
+        .into_iter()
+        .map(|(name, relative)| (name, ade_platform::resources::resource(relative)))
+        .filter(|(_, path)| path.is_file())
+        .collect()
+}
 fn runtime_binding(home: &Path, data: &Path) -> Result<()> {
     let binding = home.join("runtime.json");
     if binding.exists() || binding.is_symlink() {
@@ -320,6 +330,16 @@ fn start_runtime(
                 "PATH",
                 std::env::join_paths(ade_platform::tool_paths::host_tool_dirs())?,
             );
+        // The bundle's own Node and Bun run provider bridges and plugins,
+        // whoever launched ade-control; otherwise the daemon would take the
+        // host's `node` and `bun`, or none on a clean Mac. The desktop and the
+        // bundled CLI run as Electron-as-Node, so ELECTRON_RUN_AS_NODE is in
+        // their environment; it is dropped here so terminals, services and
+        // agent tools never inherit it. Bin/ade-node sets it for Node alone.
+        command.env_remove("ELECTRON_RUN_AS_NODE");
+        for (name, path) in bundled_interpreters() {
+            command.env(name, path);
+        }
     } else {
         command.env("ADE_ROOT", private_workspace);
     }
