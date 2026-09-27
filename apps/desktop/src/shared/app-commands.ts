@@ -10,6 +10,8 @@ const APP_COMMANDS = [
   'toggle-left-sidebar',
   'toggle-right-sidebar',
   'toggle-dev-panel',
+  'open-settings',
+  'open-onboarding',
 ] as const
 
 export type AppCommand = (typeof APP_COMMANDS)[number]

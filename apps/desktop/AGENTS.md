@@ -50,6 +50,9 @@ claiming a UI change works.
 - `?safeMode=1` in the window URL means main reloaded the window after a hang or crash
   (`src/main/renderer-recovery.ts`). Load no plugins in safe mode, and keep pending approvals and
   core recovery visible.
+- Full-screen views are routes (`src/renderer/src/router.tsx`, TanStack Router, hash history):
+  `/` the workspace, `/onboarding`, `/settings`. The workspace stays mounted, hidden, under the
+  others. Panes, tabs and open conversations are layout state, never routes.
 - Global shortcuts belong to the native menu (`src/main/app-menu.ts`), which sends commands listed
   in `src/shared/app-commands.ts`. Do not bind the same keys in the renderer.
 - Other shortcuts go through the command service (`src/renderer/src/commands`): register a command,

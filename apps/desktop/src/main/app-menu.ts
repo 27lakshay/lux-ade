@@ -21,7 +21,22 @@ const item = (label: string, accelerator: string, command: AppCommand): MenuItem
 export function installAppMenu(): void {
   const development = !app.isPackaged
   const template: MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        item('Settings…', 'CmdOrCtrl+,', 'open-settings'),
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
     {
       label: 'File',
       submenu: [
@@ -52,6 +67,7 @@ export function installAppMenu(): void {
           ? ([
               { type: 'separator' },
               item('Toggle Dev Panel', 'CmdOrCtrl+.', 'toggle-dev-panel'),
+              { label: 'Show Onboarding', click: send('open-onboarding') },
               { role: 'reload' },
               { role: 'toggleDevTools' },
             ] satisfies MenuItemConstructorOptions[])
