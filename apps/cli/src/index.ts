@@ -228,7 +228,7 @@ async function main(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error)
     const exitCodes: Record<ErrorCode, number> = {
       usage: 2, invalid_request: 2, unavailable: 3, incompatible: 4, timeout: 5, protocol: 6,
-      daemon: 7, conflict: 8, outcome_unknown: 9, in_progress: 10, overloaded: 11,
+      daemon: 7, conflict: 8, outcome_unknown: 9, in_progress: 10, overloaded: 11, not_applied: 12,
     }
     process.stderr.write(`${JSON.stringify({ type: 'error', code, message,
       ...(error instanceof DaemonRequestError ? { delivery: error.delivery } : {}) })}\n`)

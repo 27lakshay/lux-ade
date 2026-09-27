@@ -315,6 +315,9 @@ pub enum BrowserOperationState {
     Accepted,
     /// The outcome was lost; inspect before another action.
     Unknown,
+    /// The outcome is known. After a crash the owner proves it from its tabs;
+    /// `result` is then the mutation, or a `not_applied` error when the tabs
+    /// show the effect never happened. A new request ID may then try again.
     Completed,
 }
 

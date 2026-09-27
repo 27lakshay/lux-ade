@@ -6,7 +6,7 @@ const MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 const MAX_REQUEST_BYTES = 128 * 1024
 
 export type DaemonErrorCode = 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' |
-  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded'
+  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded' | 'not_applied'
 export type RequestDelivery = 'not_sent' | 'unknown' | 'rejected'
 
 export class DaemonRequestError extends Error {
@@ -86,7 +86,7 @@ export function requestDaemon(
         if (typeof response.type !== 'string') return fail('protocol', 'Daemon response has no type.')
         if (response.type === 'error') {
           const knownCodes: DaemonErrorCode[] = ['unavailable', 'invalid_request', 'conflict',
-            'outcome_unknown', 'in_progress', 'overloaded']
+            'outcome_unknown', 'in_progress', 'overloaded', 'not_applied']
           const code = typeof response.code === 'string' && knownCodes.includes(response.code as DaemonErrorCode)
             ? response.code as DaemonErrorCode : 'daemon'
           return fail(code, typeof response.message === 'string' ? response.message : 'Daemon rejected the request.',

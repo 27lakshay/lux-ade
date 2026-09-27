@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, unlink } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { dailyUseCommand } from '@ade/client'
-import { mutateBrowserOwner, readBrowserOperation, readBrowserOwner } from './browser'
+import { mutateBrowserOwner, readBrowserOperation, readBrowserOwner, reconcileBrowserReceipts } from './browser'
 
 const maxRequestBytes = 64 * 1024
 
@@ -93,6 +93,7 @@ export class BrowserOwner {
       } catch (error) {
         const message = String(error)
         const code = message.includes('outcome_unknown:') ? 'outcome_unknown'
+          : message.includes('not_applied:') ? 'not_applied'
           : message.includes('conflicts with a different target') ? 'conflict'
             : message.includes('Invalid browser') || message.includes('fingerprint does not match') ? 'invalid_request'
               : 'unavailable'
@@ -105,6 +106,11 @@ export class BrowserOwner {
 
   async register(endpoint: string, bootId: string | null = null): Promise<void> {
     if (this.registeredBootId && bootId === this.registeredBootId && endpoint === this.endpoint) return
+    // A crash of this owner's predecessor or of the daemon can leave receipts
+    // pending. Settle them from the tabs before the daemon routes new work here.
+    // A failure leaves them unknown; each lookup retries the reconciliation.
+    await reconcileBrowserReceipts(this.browserProfileId, this.profileId)
+      .catch((error) => console.error('Browser receipt reconciliation failed', error))
     await dailyUseCommand(endpoint, { op: 'browser.owner.register',
       profile_id: this.profileId, owner_id: this.ownerId, socket_path: this.socketPath,
     })

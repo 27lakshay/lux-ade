@@ -1208,12 +1208,6 @@
       "description": "Where a browser mutation stands.",
       "oneOf": [
         {
-          "enum": [
-            "completed"
-          ],
-          "type": "string"
-        },
-        {
           "const": "accepted",
           "description": "The daemon admitted the mutation and has no outcome yet.",
           "type": "string"
@@ -1221,6 +1215,11 @@
         {
           "const": "unknown",
           "description": "The outcome was lost; inspect before another action.",
+          "type": "string"
+        },
+        {
+          "const": "completed",
+          "description": "The outcome is known. After a crash the owner proves it from its tabs;\n`result` is then the mutation, or a `not_applied` error when the tabs\nshow the effect never happened. A new request ID may then try again.",
           "type": "string"
         }
       ]

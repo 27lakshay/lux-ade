@@ -1,3 +1,4 @@
+use crate::browser_reconcile::{HeldReceipt, owner_settlement};
 use ade_core::contract::conversations::Ack;
 use ade_core::contract::daemon::{
     BrowserCloseRequest, BrowserInspectRequest, BrowserListRequest, BrowserMutation,
@@ -499,18 +500,17 @@ impl Host {
             };
         };
         let fingerprint = local.payload_fingerprint.as_str();
-        let result = &owner_reply["result"];
-        if owner_reply["type"] != "browser_operation"
-            || owner_reply["state"] != "completed"
-            || owner_reply["payload_fingerprint"] != fingerprint
-            || !result.is_object()
-            || result["profile_id"] != profile_id
-            || result["owner_id"] != local.owner_id.as_str()
-            || result["request_id"] != request_id
-            || result["payload_fingerprint"] != fingerprint
-        {
+        // The owner reconciles an interrupted mutation against its tabs; only
+        // an answer that proves the outcome settles the unknown receipt.
+        let held = HeldReceipt {
+            profile_id,
+            owner_id: &local.owner_id,
+            request_id: &request_id,
+            fingerprint,
+        };
+        let Some(result) = owner_settlement(&held, &owner.owner_id, &owner_reply) else {
             return reply(&local);
-        }
+        };
         // Only an unknown receipt may settle here; a concurrent settle wins.
         let connection = self.browser_receipts.lock().unwrap();
         let unknown = browser_receipt(&connection, &request_id).is_some_and(|receipt| {
