@@ -7,6 +7,14 @@
 //! once with the child's outcome or a pending state, and the caller repeats it
 //! until the returned deadline.
 //!
+//! Messages travel both ways. The parent Agent or the user queues a message
+//! for a child; the child's Agent or the user queues a message for the child's
+//! parent. Each message has its own ID and attribution, and
+//! `orchestration.child.messages` lists both directions with their delivery.
+//! A child's pending questions and approvals appear on its record, and the
+//! parent Agent or the user answers each one once through
+//! `orchestration.child.answer`.
+//!
 //! A parallel run group starts one task as several sibling children, one per
 //! provider or account, under one group identity. Comparing a group reads
 //! each run's Git state; it never merges or moves anything.
@@ -30,6 +38,21 @@ pub fn operations() -> Vec<OperationSpec> {
             Tier::EffectCommand,
         ),
         OperationSpec::new::<ChildWaitRequest, ChildWait>("orchestration.child.wait", Tier::Query),
+        // Answers one pending request of the child, as `agent.answer` does:
+        // the same answer again converges, and a different one is refused.
+        OperationSpec::new::<ChildAnswerRequest, ChildAnswered>(
+            "orchestration.child.answer",
+            Tier::EffectCommand,
+        ),
+        // Queues one prompt for the child's parent; a retry must not queue it twice.
+        OperationSpec::new::<ParentSendRequest, ParentMessageQueued>(
+            "orchestration.parent.send",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<ChildMessagesRequest, ChildMessages>(
+            "orchestration.child.messages",
+            Tier::Query,
+        ),
         // Creates every run's Conversation and queues its task; a retry must not create them again.
         OperationSpec::new::<GroupStartRequest, GroupStarted>(
             "orchestration.group.start",
@@ -106,6 +129,12 @@ pub struct DelegateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Value")]
     pub provider_config: Option<Value>,
+    /// Context for the child, stated explicitly: live attachments of the
+    /// parent Conversation, at most 8. The daemon copies them to the child
+    /// under new IDs and sends them with the task; the child's provider must
+    /// accept each. None when absent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_attachments: Vec<crate::model::Attachment>,
 }
 
 /// `orchestration.children`: the children a Conversation delegated, oldest first.
@@ -152,11 +181,71 @@ pub struct ChildWaitRequest {
     pub deadline_ms: Option<i64>,
 }
 
+/// `orchestration.child.answer`: answer a question or approval a child is
+/// waiting on, from the parent's view.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ChildAnswerRequest {
+    pub child_conversation_id: String,
+    /// One of the child's `pending_requests`.
+    pub request_id: String,
+    pub caller: Caller,
+    /// As for `agent.answer`: accept, decline, cancel or answer.
+    pub decision: String,
+    /// Structured answers; required by the `answer` decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Value")]
+    pub answers: Option<Value>,
+}
+
+/// `orchestration.parent.send`: queue a message from a delegated child to
+/// its parent Conversation.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ParentSendRequest {
+    /// Caller-owned operation ID; a retry with the same payload returns the same message.
+    pub operation_id: String,
+    /// The child that sends; its parent receives.
+    pub child_conversation_id: String,
+    /// The child's own Agent, or the user.
+    pub caller: Caller,
+    /// At most 64 KiB. The parent receives it after a line naming the child.
+    pub text: String,
+}
+
+/// `orchestration.child.messages`: every message between a child and its
+/// parent, oldest first.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ChildMessagesRequest {
+    pub child_conversation_id: String,
+}
+
 wire_tag!(ChildDelegatedTag, "child_delegated");
 wire_tag!(ChildListTag, "child_list");
 wire_tag!(ChildTag, "child");
 wire_tag!(ChildMessageQueuedTag, "child_message_queued");
 wire_tag!(ChildWaitTag, "child_wait");
+wire_tag!(ChildAnsweredTag, "child_answered");
+wire_tag!(ParentMessageQueuedTag, "parent_message_queued");
+wire_tag!(ChildMessagesTag, "child_messages");
+
+/// What a pending request asks for.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestKind {
+    Approval,
+    Question,
+}
+
+/// A question or approval the child waits on, as its parent sees it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ChildRequest {
+    pub request_id: String,
+    pub kind: RequestKind,
+    /// The provider's request method.
+    pub method: String,
+    /// The provider's request, including its questions or command.
+    #[schemars(with = "Value")]
+    pub params: Value,
+}
 
 /// How the child's workspace was chosen.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,6 +277,9 @@ pub struct ChildRecord {
     /// The child Conversation's status, or `unavailable` when it is gone.
     pub status: String,
     pub error: Option<String>,
+    /// Questions and approvals the child waits on, oldest first. Answer each
+    /// once with `orchestration.child.answer`.
+    pub pending_requests: Vec<ChildRequest>,
 }
 
 /// The `orchestration.delegate` reply: the child is admitted and its task is
@@ -224,6 +316,77 @@ pub struct ChildMessageQueued {
     pub child_conversation_id: String,
     pub message_id: String,
     pub attribution: String,
+}
+
+/// The `orchestration.child.answer` reply: the answer is on its way to the
+/// child's Agent.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ChildAnswered {
+    #[serde(rename = "type")]
+    pub tag: ChildAnsweredTag,
+    pub child_conversation_id: String,
+    pub request_id: String,
+    pub attribution: String,
+}
+
+/// The `orchestration.parent.send` reply: the message is durably queued for
+/// the parent.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ParentMessageQueued {
+    #[serde(rename = "type")]
+    pub tag: ParentMessageQueuedTag,
+    pub parent_conversation_id: String,
+    pub child_conversation_id: String,
+    pub message_id: String,
+    pub attribution: String,
+}
+
+/// Which way a message travelled.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageDirection {
+    /// The delegated task or a message for the child.
+    ToChild,
+    /// A message from the child for its parent.
+    ToParent,
+}
+
+/// Where a message stands in its receiver's prompt queue.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageDelivery {
+    /// Durably queued; not yet submitted.
+    Queued,
+    /// Submitted to the receiver's Agent as a prompt.
+    Submitted,
+    /// Removed from the queue before submission.
+    Cancelled,
+    /// Neither queued nor recorded, for example after the receiver was removed.
+    Missing,
+}
+
+/// One message between a child and its parent.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ChildMessage {
+    pub message_id: String,
+    pub direction: MessageDirection,
+    /// The Conversation that receives it.
+    pub receiver_conversation_id: String,
+    pub operation_id: String,
+    /// `user`, or `agent:` followed by the sending Conversation ID.
+    pub attribution: String,
+    pub created_at: i64,
+    pub delivery: MessageDelivery,
+}
+
+/// The `orchestration.child.messages` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ChildMessages {
+    #[serde(rename = "type")]
+    pub tag: ChildMessagesTag,
+    pub child_conversation_id: String,
+    pub parent_conversation_id: String,
+    pub messages: Vec<ChildMessage>,
 }
 
 /// How far an unsettled turn has progressed.
@@ -570,7 +733,9 @@ mod tests {
             "operation_id": "op", "attribution": "agent:c1", "depth": 1,
             "provider": "codex", "account_id": null, "workspace_id": "w",
             "workspace_mode": "same", "worktree_operation_id": null,
-            "task_message_id": "m", "created_at": 5, "status": "idle", "error": null})
+            "task_message_id": "m", "created_at": 5, "status": "waiting", "error": null,
+            "pending_requests": [{"request_id": "q", "kind": "question",
+                "method": "item/tool/requestUserInput", "params": {"questions": []}}]})
     }
 
     #[test]
@@ -589,7 +754,9 @@ mod tests {
                 "provider": "claude", "account": {"mode": "managed", "account_id": "a"},
                 "workspace": {"mode": "new_worktree", "workspace_id": "w2",
                     "repository_id": "r", "worktree_operation_id": "wop"},
-                "task": "do it", "title": "Child", "provider_config": {}}),
+                "task": "do it", "title": "Child", "provider_config": {},
+                "context_attachments": [{"id": "a1", "name": "notes.txt",
+                    "media_type": "text/plain", "size": 4}]}),
         );
         request::<ChildrenRequest>(
             "orchestration.children",
@@ -613,6 +780,22 @@ mod tests {
             "orchestration.child.wait",
             json!({"op": "orchestration.child.wait", "child_conversation_id": "c2",
                 "deadline_ms": 99}),
+        );
+        request::<ChildAnswerRequest>(
+            "orchestration.child.answer",
+            json!({"op": "orchestration.child.answer", "child_conversation_id": "c2",
+                "request_id": "q", "caller": {"kind": "agent", "conversation_id": "c1"},
+                "decision": "answer", "answers": {"first": "yes"}}),
+        );
+        request::<ParentSendRequest>(
+            "orchestration.parent.send",
+            json!({"op": "orchestration.parent.send", "operation_id": "op3",
+                "child_conversation_id": "c2", "caller": {"kind": "agent", "conversation_id": "c2"},
+                "text": "done"}),
+        );
+        request::<ChildMessagesRequest>(
+            "orchestration.child.messages",
+            json!({"op": "orchestration.child.messages", "child_conversation_id": "c2"}),
         );
         let (name, _) = names("orchestration.delegate");
         // The workspace and account are never implied.
@@ -655,6 +838,27 @@ mod tests {
             "orchestration.child.send",
             json!({"type": "child_message_queued", "child_conversation_id": "c2",
                 "message_id": "m2", "attribution": "user"}),
+        );
+        response::<ChildAnswered>(
+            "orchestration.child.answer",
+            json!({"type": "child_answered", "child_conversation_id": "c2",
+                "request_id": "q", "attribution": "agent:c1"}),
+        );
+        response::<ParentMessageQueued>(
+            "orchestration.parent.send",
+            json!({"type": "parent_message_queued", "parent_conversation_id": "c1",
+                "child_conversation_id": "c2", "message_id": "m3", "attribution": "agent:c2"}),
+        );
+        response::<ChildMessages>(
+            "orchestration.child.messages",
+            json!({"type": "child_messages", "child_conversation_id": "c2",
+                "parent_conversation_id": "c1", "messages": [
+                    {"message_id": "m", "direction": "to_child", "receiver_conversation_id": "c2",
+                        "operation_id": "op", "attribution": "user", "created_at": 5,
+                        "delivery": "submitted"},
+                    {"message_id": "m3", "direction": "to_parent", "receiver_conversation_id": "c1",
+                        "operation_id": "op3", "attribution": "agent:c2", "created_at": 6,
+                        "delivery": "queued"}]}),
         );
         for (state, done) in [
             (

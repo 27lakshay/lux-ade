@@ -5268,6 +5268,68 @@
       ],
       "type": "object"
     },
+    "ChildAnswerRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.child.answer`: answer a question or approval a child is\nwaiting on, from the parent's view.",
+      "properties": {
+        "answers": {
+          "description": "Structured answers; required by the `answer` decision."
+        },
+        "caller": {
+          "$ref": "#/$defs/Caller"
+        },
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "decision": {
+          "description": "As for `agent.answer`: accept, decline, cancel or answer.",
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.child.answer"
+        },
+        "request_id": {
+          "description": "One of the child's `pending_requests`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "child_conversation_id",
+        "request_id",
+        "caller",
+        "decision"
+      ],
+      "type": "object"
+    },
+    "ChildAnswered": {
+      "description": "The `orchestration.child.answer` reply: the answer is on its way to the\nchild's Agent.",
+      "properties": {
+        "attribution": {
+          "type": "string"
+        },
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `child_answered` type tag.",
+          "enum": [
+            "child_answered"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "child_conversation_id",
+        "request_id",
+        "attribution"
+      ],
+      "type": "object"
+    },
     "ChildDelegated": {
       "description": "The `orchestration.delegate` reply: the child is admitted and its task is\nqueued. It says nothing about completion; wait for that.",
       "properties": {
@@ -5332,6 +5394,46 @@
       ],
       "type": "object"
     },
+    "ChildMessage": {
+      "description": "One message between a child and its parent.",
+      "properties": {
+        "attribution": {
+          "description": "`user`, or `agent:` followed by the sending Conversation ID.",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "delivery": {
+          "$ref": "#/$defs/MessageDelivery"
+        },
+        "direction": {
+          "$ref": "#/$defs/MessageDirection"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "receiver_conversation_id": {
+          "description": "The Conversation that receives it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_id",
+        "direction",
+        "receiver_conversation_id",
+        "operation_id",
+        "attribution",
+        "created_at",
+        "delivery"
+      ],
+      "type": "object"
+    },
     "ChildMessageQueued": {
       "description": "The `orchestration.child.send` reply: the message is durably queued.",
       "properties": {
@@ -5357,6 +5459,54 @@
         "child_conversation_id",
         "message_id",
         "attribution"
+      ],
+      "type": "object"
+    },
+    "ChildMessages": {
+      "description": "The `orchestration.child.messages` reply.",
+      "properties": {
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/ChildMessage"
+          },
+          "type": "array"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `child_messages` type tag.",
+          "enum": [
+            "child_messages"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "child_conversation_id",
+        "parent_conversation_id",
+        "messages"
+      ],
+      "type": "object"
+    },
+    "ChildMessagesRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.child.messages`: every message between a child and its\nparent, oldest first.",
+      "properties": {
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.child.messages"
+        }
+      },
+      "required": [
+        "op",
+        "child_conversation_id"
       ],
       "type": "object"
     },
@@ -5400,6 +5550,13 @@
         "parent_conversation_id": {
           "type": "string"
         },
+        "pending_requests": {
+          "description": "Questions and approvals the child waits on, oldest first. Answer each\nonce with `orchestration.child.answer`.",
+          "items": {
+            "$ref": "#/$defs/ChildRequest"
+          },
+          "type": "array"
+        },
         "provider": {
           "type": "string"
         },
@@ -5438,7 +5595,8 @@
         "task_message_id",
         "created_at",
         "status",
-        "error"
+        "error",
+        "pending_requests"
       ],
       "type": "object"
     },
@@ -5459,6 +5617,31 @@
       "required": [
         "type",
         "child"
+      ],
+      "type": "object"
+    },
+    "ChildRequest": {
+      "description": "A question or approval the child waits on, as its parent sees it.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RequestKind"
+        },
+        "method": {
+          "description": "The provider's request method.",
+          "type": "string"
+        },
+        "params": {
+          "description": "The provider's request, including its questions or command."
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "kind",
+        "method",
+        "params"
       ],
       "type": "object"
     },
@@ -7942,6 +8125,13 @@
         },
         "caller": {
           "$ref": "#/$defs/Caller"
+        },
+        "context_attachments": {
+          "description": "Context for the child, stated explicitly: live attachments of the\nparent Conversation, at most 8. The daemon copies them to the child\nunder new IDs and sends them with the task; the child's provider must\naccept each. None when absent.",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
         },
         "op": {
           "const": "orchestration.delegate"
@@ -13788,6 +13978,46 @@
       ],
       "type": "object"
     },
+    "MessageDelivery": {
+      "description": "Where a message stands in its receiver's prompt queue.",
+      "oneOf": [
+        {
+          "const": "queued",
+          "description": "Durably queued; not yet submitted.",
+          "type": "string"
+        },
+        {
+          "const": "submitted",
+          "description": "Submitted to the receiver's Agent as a prompt.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Removed from the queue before submission.",
+          "type": "string"
+        },
+        {
+          "const": "missing",
+          "description": "Neither queued nor recorded, for example after the receiver was removed.",
+          "type": "string"
+        }
+      ]
+    },
+    "MessageDirection": {
+      "description": "Which way a message travelled.",
+      "oneOf": [
+        {
+          "const": "to_child",
+          "description": "The delegated task or a message for the child.",
+          "type": "string"
+        },
+        {
+          "const": "to_parent",
+          "description": "A message from the child for its parent.",
+          "type": "string"
+        }
+      ]
+    },
     "ModelCapabilities": {
       "properties": {
         "aliases": {
@@ -13901,7 +14131,7 @@
       "type": "object"
     },
     "NotificationDeliveryClaim": {
-      "description": "The `notification.delivery.claim` reply. `granted` is false when another\nclient or an earlier outcome already holds the delivery.",
+      "description": "The `notification.delivery.claim` reply. `granted` is false when another\nclient or an earlier outcome already holds the delivery, or when the\nprofile's preferences or a snooze suppressed it.",
       "properties": {
         "delivery": {
           "$ref": "#/$defs/NotificationDelivery"
@@ -14035,6 +14265,83 @@
         "channel",
         "client_id",
         "outcome"
+      ],
+      "type": "object"
+    },
+    "NotificationPreferences": {
+      "description": "The profile's notification preferences. A profile that never set them\nnotifies desktop for every activity kind.",
+      "properties": {
+        "desktop": {
+          "type": "boolean"
+        },
+        "muted_kinds": {
+          "description": "In the order they were set, without repeats.",
+          "items": {
+            "$ref": "#/$defs/ActivityKind"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `notification_preferences` type tag.",
+          "enum": [
+            "notification_preferences"
+          ],
+          "type": "string"
+        },
+        "updated_at": {
+          "description": "When the preferences were last set; null for the defaults.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "desktop",
+        "muted_kinds",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "NotificationPreferencesGetRequest": {
+      "additionalProperties": false,
+      "description": "`notification.preferences.get`: the profile's notification preferences.",
+      "properties": {
+        "op": {
+          "const": "notification.preferences.get"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "NotificationPreferencesSetRequest": {
+      "additionalProperties": false,
+      "description": "`notification.preferences.set`: replace the profile's notification preferences.",
+      "properties": {
+        "desktop": {
+          "description": "Whether any activity notifies on the desktop.",
+          "type": "boolean"
+        },
+        "muted_kinds": {
+          "description": "Activity kinds that never notify; repeats are ignored.",
+          "items": {
+            "$ref": "#/$defs/ActivityKind"
+          },
+          "type": "array"
+        },
+        "op": {
+          "const": "notification.preferences.set"
+        }
+      },
+      "required": [
+        "op",
+        "desktop",
+        "muted_kinds"
       ],
       "type": "object"
     },
@@ -14190,6 +14497,71 @@
         "revoked"
       ],
       "type": "string"
+    },
+    "ParentMessageQueued": {
+      "description": "The `orchestration.parent.send` reply: the message is durably queued for\nthe parent.",
+      "properties": {
+        "attribution": {
+          "type": "string"
+        },
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `parent_message_queued` type tag.",
+          "enum": [
+            "parent_message_queued"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "parent_conversation_id",
+        "child_conversation_id",
+        "message_id",
+        "attribution"
+      ],
+      "type": "object"
+    },
+    "ParentSendRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.parent.send`: queue a message from a delegated child to\nits parent Conversation.",
+      "properties": {
+        "caller": {
+          "$ref": "#/$defs/Caller",
+          "description": "The child's own Agent, or the user."
+        },
+        "child_conversation_id": {
+          "description": "The child that sends; its parent receives.",
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.parent.send"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; a retry with the same payload returns the same message.",
+          "type": "string"
+        },
+        "text": {
+          "description": "At most 64 KiB. The parent receives it after a line naming the child.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "child_conversation_id",
+        "caller",
+        "text"
+      ],
+      "type": "object"
     },
     "PartForm": {
       "description": "How one attachment reaches a provider.",
@@ -19341,6 +19713,14 @@
           "type": "string"
         }
       ]
+    },
+    "RequestKind": {
+      "description": "What a pending request asks for.",
+      "enum": [
+        "approval",
+        "question"
+      ],
+      "type": "string"
     },
     "ResourceClaim": {
       "description": "One physical resource claim.",
@@ -27784,6 +28164,20 @@
       "tier": "query"
     },
     {
+      "domain": "activity",
+      "name": "notification.preferences.get",
+      "request": "NotificationPreferencesGetRequest",
+      "response": "NotificationPreferences",
+      "tier": "query"
+    },
+    {
+      "domain": "activity",
+      "name": "notification.preferences.set",
+      "request": "NotificationPreferencesSetRequest",
+      "response": "NotificationPreferences",
+      "tier": "idempotent_command"
+    },
+    {
       "domain": "mcp",
       "name": "mcp.server.list",
       "request": "McpServerListRequest",
@@ -28026,6 +28420,27 @@
       "name": "orchestration.child.wait",
       "request": "ChildWaitRequest",
       "response": "ChildWait",
+      "tier": "query"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.child.answer",
+      "request": "ChildAnswerRequest",
+      "response": "ChildAnswered",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.parent.send",
+      "request": "ParentSendRequest",
+      "response": "ParentMessageQueued",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.child.messages",
+      "request": "ChildMessagesRequest",
+      "response": "ChildMessages",
       "tier": "query"
     },
     {

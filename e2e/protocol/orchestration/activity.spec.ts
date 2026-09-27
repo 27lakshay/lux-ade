@@ -216,10 +216,9 @@ test('one client claims a notification delivery, reports it once, and nobody del
     deliveries: [{ activity_id: failedActivity.id, status: 'failed', reason: 'permission_denied' }] })
 })
 
-// F114 needs notification preferences and snoozed attention to decide which
-// activity notifies. The daemon has no preference model yet, and a snooze does
-// not change delivery (evidence phase2-activity-feed.md, Open).
-test.fixme('notification preferences and a snoozed conversation suppress delivery of its activity (F114)', async ({ profile }) => {
+// F114: snoozed attention decides which activity notifies. Preferences are
+// covered in e2e/protocol/orchestration2/activity.spec.ts.
+test('notification preferences and a snoozed conversation suppress delivery of its activity (F114)', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await profile.call('conversation.snooze', { conversation_id: conversationId, until: Date.now() + 3_600_000 })
   await completedTurns(profile, conversationId, 1)

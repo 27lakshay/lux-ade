@@ -6,6 +6,10 @@
 //! Notification presentation belongs to a client: a client claims a delivery
 //! for one activity and channel, then reports what the OS said. A claim whose
 //! outcome was never reported stays `claimed` and is never delivered again.
+//! The daemon applies the profile's notification preferences and snoozed
+//! attention when a client claims: an activity they exclude is recorded as a
+//! `suppressed` delivery whose reason is `desktop_disabled`, `kind_muted` or
+//! `conversation_snoozed`, and no client presents it.
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -31,6 +35,15 @@ pub fn operations() -> Vec<OperationSpec> {
         OperationSpec::new::<NotificationDeliveryListRequest, NotificationDeliveries>(
             "notification.delivery.list",
             Tier::Query,
+        ),
+        OperationSpec::new::<NotificationPreferencesGetRequest, NotificationPreferences>(
+            "notification.preferences.get",
+            Tier::Query,
+        ),
+        // Replaces the profile's preferences; the same preferences again converge.
+        OperationSpec::new::<NotificationPreferencesSetRequest, NotificationPreferences>(
+            "notification.preferences.set",
+            Tier::IdempotentCommand,
         ),
     ]
 }
@@ -211,12 +224,26 @@ pub struct NotificationDeliveryListRequest {
     pub limit: Option<u32>,
 }
 
+/// `notification.preferences.get`: the profile's notification preferences.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct NotificationPreferencesGetRequest {}
+
+/// `notification.preferences.set`: replace the profile's notification preferences.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct NotificationPreferencesSetRequest {
+    /// Whether any activity notifies on the desktop.
+    pub desktop: bool,
+    /// Activity kinds that never notify; repeats are ignored.
+    pub muted_kinds: Vec<ActivityKind>,
+}
+
 wire_tag!(ActivityListTag, "activity_list");
 wire_tag!(ActivityMarkedTag, "activity_marked");
 wire_tag!(ActivityChangedTag, "activity_changed");
 wire_tag!(DeliveryClaimTag, "notification_delivery_claim");
 wire_tag!(DeliveryTag, "notification_delivery");
 wire_tag!(DeliveriesTag, "notification_deliveries");
+wire_tag!(PreferencesTag, "notification_preferences");
 
 /// The `activity.list` reply.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -240,7 +267,8 @@ pub struct ActivityMarked {
 }
 
 /// The `notification.delivery.claim` reply. `granted` is false when another
-/// client or an earlier outcome already holds the delivery.
+/// client or an earlier outcome already holds the delivery, or when the
+/// profile's preferences or a snooze suppressed it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct NotificationDeliveryClaim {
     #[serde(rename = "type")]
@@ -263,6 +291,19 @@ pub struct NotificationDeliveries {
     #[serde(rename = "type")]
     pub tag: DeliveriesTag,
     pub deliveries: Vec<NotificationDelivery>,
+}
+
+/// The profile's notification preferences. A profile that never set them
+/// notifies desktop for every activity kind.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct NotificationPreferences {
+    #[serde(rename = "type")]
+    pub tag: PreferencesTag,
+    pub desktop: bool,
+    /// In the order they were set, without repeats.
+    pub muted_kinds: Vec<ActivityKind>,
+    /// When the preferences were last set; null for the defaults.
+    pub updated_at: Option<i64>,
 }
 
 /// A `session.subscribe` frame: an activity was recorded or changed state.
@@ -306,6 +347,11 @@ mod tests {
         );
         round_trip::<NotificationDeliveries>(
             json!({"type":"notification_deliveries","deliveries":[delivery]}),
+        );
+        round_trip::<NotificationPreferences>(json!({"type":"notification_preferences",
+            "desktop":true,"muted_kinds":["turn_completed"],"updated_at":null}));
+        round_trip::<NotificationPreferencesSetRequest>(
+            json!({"desktop":false,"muted_kinds":["account_switched","snooze_ended"]}),
         );
     }
 

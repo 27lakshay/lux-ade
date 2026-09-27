@@ -1,10 +1,12 @@
-//! `activity.*` and `notification.delivery.*` operations, and the
+//! `activity.*`, `notification.delivery.*` and `notification.preferences.*`
+//! operations, and the
 //! `activity_changed` feed frames that follow committed activity.
 use super::*;
 use ade_core::contract::activity::{
     Activity, ActivityChanged, ActivityListRequest, ActivityMarkRequest, ActivityMarked,
     NotificationDeliveries, NotificationDeliveryClaim, NotificationDeliveryClaimRequest,
     NotificationDeliveryListRequest, NotificationDeliveryReply, NotificationDeliveryReportRequest,
+    NotificationPreferencesGetRequest, NotificationPreferencesSetRequest,
 };
 
 /// Frames published per database read while catching the feed up.
@@ -64,6 +66,20 @@ impl Sessions {
                         .store
                         .deliveries(list.status, list.limit)?,
                 })
+            }
+            "notification.preferences.get" => {
+                let _: NotificationPreferencesGetRequest = decode(request)?;
+                reply(&self.data.lock().unwrap().store.notification_preferences()?)
+            }
+            "notification.preferences.set" => {
+                let set: NotificationPreferencesSetRequest = decode(request)?;
+                reply(&persistence_result(
+                    self.data
+                        .lock()
+                        .unwrap()
+                        .store
+                        .set_notification_preferences(set.desktop, &set.muted_kinds),
+                )?)
             }
             _ => bail!("Unknown session operation"),
         }
