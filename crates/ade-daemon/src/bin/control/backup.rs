@@ -880,6 +880,9 @@ fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
             id.starts_with("account_") && Uuid::parse_str(&id[8..]).is_ok(),
             "Invalid account identity"
         );
+        // The daemon refuses every account while the account root is readable
+        // by others, and `private_dir` makes only the leaf private.
+        private_dir(&data.join("provider-accounts"))?;
         let home = data.join("provider-accounts").join(id);
         private_dir(&home)?;
         if record["provider"] == "codex" {
