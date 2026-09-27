@@ -2,7 +2,7 @@ use super::*;
 
 pub use ade_core::contract::conversations::SendIntent;
 
-fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
+pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
     let stored: Option<serde_json::Value> = row
         .get::<_, Option<String>>(8)?
         .map(|value| serde_json::from_str(&value))

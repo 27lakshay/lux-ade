@@ -9,9 +9,11 @@ use ade_core::contract::conversations::{
     AttachmentInspection, AttachmentPutRequest, AttachmentReclaim, AttachmentReclaimApplyRequest,
     AttachmentReclaimPreviewReply, AttachmentReclaimPreviewRequest, AttachmentReply,
     ConversationCreateRequest, ConversationCreated, ConversationGetRequest, ConversationSnapshot,
-    DraftGetRequest, DraftReply, DraftSaveRequest, DraftSendAbortRequest, DraftSendCompleteRequest,
-    DraftSendGetRequest, DraftSendPrepareRequest, QueueCancelRequest, QueueEnqueueRequest,
-    QueuePauseRequest, SendIntentPrepared, SendIntentState, WindowCloseRequest, WindowSaveRequest,
+    DraftGetRequest, DraftReply, DraftSaveRequest, DraftSendAbortRequest,
+    DraftSendAcknowledgeRequest, DraftSendCompleteRequest, DraftSendGetRequest,
+    DraftSendListRequest, DraftSendPrepareRequest, PendingSendList, QueueCancelRequest,
+    QueueEnqueueRequest, QueuePauseRequest, SendAcknowledged, SendIntentPrepared, SendIntentState,
+    WindowCloseRequest, WindowSaveRequest,
 };
 
 /// Checks a field before decoding, so it keeps its established error message.
@@ -328,6 +330,42 @@ impl Sessions {
                 ))?;
                 reply(&DraftReply {
                     tag: Default::default(),
+                    draft,
+                })
+            }
+            "draft.send.list" => {
+                let list: DraftSendListRequest = decode(request)?;
+                let window = non_empty("window_id", &list.window_id)?;
+                let limit = crate::store::send_list_limit(list.limit)?;
+                let data = self.data.lock().unwrap();
+                let (sends, next_cursor) = persistence_result(data.store.pending_sends(
+                    window,
+                    list.after.as_deref(),
+                    limit,
+                ))?;
+                reply(&PendingSendList {
+                    tag: Default::default(),
+                    sends,
+                    restored_from_backup: data.store.restored_from_backup()?,
+                    next_cursor,
+                })
+            }
+            "draft.send.acknowledge" => {
+                let acknowledge: DraftSendAcknowledgeRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &acknowledge.conversation_id)?;
+                let window = non_empty("window_id", &acknowledge.window_id)?;
+                let id = non_empty("request_id", &acknowledge.request_id)?;
+                let data = self.data.lock().unwrap();
+                let (resolution, draft) = persistence_result(data.store.acknowledge_send_intent(
+                    conversation,
+                    window,
+                    id,
+                ))?;
+                reply(&SendAcknowledged {
+                    tag: Default::default(),
+                    request_id: id.to_owned(),
+                    conversation_id: conversation.to_owned(),
+                    resolution,
                     draft,
                 })
             }

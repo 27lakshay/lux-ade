@@ -11,8 +11,9 @@ use ade_core::contract::review::{
     GitOperation, GitOperationStatus, ReviewCommitRequest, ReviewDiff, ReviewDiffPage,
     ReviewDiffPageRequest, ReviewDiffRequest, ReviewDiffRow, ReviewDiffRowKind,
     ReviewDiscardRequest, ReviewFeedbackMatch, ReviewFeedbackSearch, ReviewFeedbackSearchRequest,
-    ReviewHunkRequest, ReviewOperationReply, ReviewOperationRequest, ReviewStageRequest,
-    ReviewStatus, ReviewStatusRequest, ReviewUnstageRequest,
+    ReviewHunkRequest, ReviewOperationAcknowledgeRequest, ReviewOperationListRequest,
+    ReviewOperationReply, ReviewOperationRequest, ReviewStageRequest, ReviewStatus,
+    ReviewStatusRequest, ReviewUnstageRequest,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use rusqlite::{Connection, OptionalExtension};
@@ -41,6 +42,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+mod outbox;
 
 type StatusCache = Arc<Mutex<Option<(Instant, ReviewStatus)>>>;
 const DIFF_SNAPSHOT_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -1237,6 +1240,7 @@ impl Review {
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         receipts::ensure(&db)?;
+        outbox::ensure(&db)?;
         migrate_jobs(&mut db)?;
         interrupt_open_receipts(&mut db)?;
         Ok(Arc::new(Self {
@@ -1498,6 +1502,15 @@ impl Review {
             let receipt =
                 Self::stored(&self.db.lock().unwrap(), id)?.context("Unknown review operation")?;
             return Self::operation_reply(root, receipt);
+        }
+        if op == "review.operation.list" {
+            let list: ReviewOperationListRequest = decode(request)?;
+            return reply(&self.list_operations(root, list.include_acknowledged)?);
+        }
+        if op == "review.operation.acknowledge" {
+            let acknowledge: ReviewOperationAcknowledgeRequest = decode(request)?;
+            let id = text("operation_id", &acknowledge.operation_id)?;
+            return reply(&self.acknowledge_operation(root, id)?);
         }
         if op == "review.status" {
             let read: ReviewStatusRequest = decode(request)?;

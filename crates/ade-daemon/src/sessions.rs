@@ -593,6 +593,8 @@ impl Sessions {
             | "draft.send.prepare"
             | "draft.send.complete"
             | "draft.send.abort"
+            | "draft.send.list"
+            | "draft.send.acknowledge"
             | "agent.send"
             | "agent.send_review"
             | "queue.enqueue"

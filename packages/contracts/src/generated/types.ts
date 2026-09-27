@@ -74,8 +74,10 @@ export type ContractDefinition =
   | DraftReply
   | DraftSaveRequest
   | DraftSendAbortRequest
+  | DraftSendAcknowledgeRequest
   | DraftSendCompleteRequest
   | DraftSendGetRequest
+  | DraftSendListRequest
   | DraftSendPrepareRequest
   | ExecutionState
   | FileEntry
@@ -104,6 +106,8 @@ export type ContractDefinition =
   | OutputCoverageStatus
   | PeerEndpoint
   | PendingRequest
+  | PendingSend
+  | PendingSendList
   | PortAssignment
   | PortObservation
   | PreviewKind
@@ -138,6 +142,11 @@ export type ContractDefinition =
   | ReviewFeedbackSearchRequest
   | ReviewFile
   | ReviewHunkRequest
+  | ReviewOperationAcknowledgeRequest
+  | ReviewOperationAcknowledged
+  | ReviewOperationEntry
+  | ReviewOperationList
+  | ReviewOperationListRequest
   | ReviewOperationReply
   | ReviewOperationRequest
   | ReviewStageRequest
@@ -161,9 +170,12 @@ export type ContractDefinition =
   | ScriptRunsRequest
   | ScriptStartRequest
   | ScriptStopRequest
+  | SendAcknowledged
   | SendIntent
   | SendIntentPrepared
   | SendIntentState
+  | SendOutcome
+  | SendResolution
   | Service
   | ServiceChanged
   | ServiceConfigureRequest
@@ -273,6 +285,10 @@ export type OutputCoverageReason =
  * Whether the returned output covers everything the run produced.
  */
 export type OutputCoverageStatus = 'complete' | 'pending' | 'incomplete'
+/**
+ * What the daemon knows about an unresolved send.
+ */
+export type SendOutcome = 'prepared' | 'accepted' | 'rejected' | 'held' | 'conflict'
 export type ProxyAvailability = 'bound' | 'port_occupied'
 export type ReadinessBasis = 'direct_process_tcp_listener' | 'execution_state' | 'identity_changed'
 /**
@@ -314,6 +330,10 @@ export type Script =
  * A run's observed process state.
  */
 export type ScriptRunStatus = 'running' | 'exited' | 'unknown'
+/**
+ * How an acknowledged send settled.
+ */
+export type SendResolution = 'completed' | 'aborted'
 /**
  * Whether a tree is ready for an Agent, from its latest `worktree.switch`.
  */
@@ -1298,6 +1318,17 @@ export interface DraftSendAbortRequest {
   window_id: string
 }
 /**
+ * `draft.send.acknowledge`: settle one listed send once the caller has shown
+ * its outcome. An accepted prompt completes; a rejected one aborts. A prompt
+ * the daemon has not accepted is refused, because only delivery can settle it.
+ */
+export interface DraftSendAcknowledgeRequest {
+  conversation_id: string
+  op: 'draft.send.acknowledge'
+  request_id: string
+  window_id: string
+}
+/**
  * `draft.send.complete`: clear the draft once the prompt was accepted.
  */
 export interface DraftSendCompleteRequest {
@@ -1312,6 +1343,19 @@ export interface DraftSendCompleteRequest {
 export interface DraftSendGetRequest {
   conversation_id: string
   op: 'draft.send.get'
+  window_id: string
+}
+/**
+ * `draft.send.list`: list one window's unresolved sends across Conversations,
+ * ordered by Conversation ID. A later page sends the previous `next_cursor`.
+ */
+export interface DraftSendListRequest {
+  after?: string
+  /**
+   * Page size from 1 to 200; the daemon uses 50 when it is absent.
+   */
+  limit?: number
+  op: 'draft.send.list'
   window_id: string
 }
 /**
@@ -1594,6 +1638,58 @@ export interface OutputCoverage {
 export interface PeerEndpoint {
   port_variable: string
   service: string
+}
+/**
+ * One unresolved send and what the daemon knows about it.
+ */
+export interface PendingSend {
+  intent: SendIntent
+  outcome: SendOutcome
+  [k: string]: unknown
+}
+/**
+ * A prompt recorded before dispatch, with the draft it came from.
+ */
+export interface SendIntent {
+  attachments: Attachment[]
+  conversation_id: string
+  draft_revision: number
+  draft_text: string
+  request_id: string
+  /**
+   * Null unless the send carries one review anchor.
+   */
+  review_anchor: unknown
+  /**
+   * Null unless the send carries a review feedback batch.
+   */
+  review_feedback: unknown
+  /**
+   * `pending`, `rejected`, `completed` or `aborted`.
+   */
+  state: string
+  text: string
+  window_id: string
+  [k: string]: unknown
+}
+/**
+ * The `draft.send.list` reply.
+ */
+export interface PendingSendList {
+  /**
+   * The cursor for the next page; null on the last page.
+   */
+  next_cursor: string | null
+  /**
+   * Whether the profile was restored from a backup, which holds its sends.
+   */
+  restored_from_backup: boolean
+  sends: PendingSend[]
+  /**
+   * The `pending_sends` type tag.
+   */
+  type: 'pending_sends'
+  [k: string]: unknown
 }
 /**
  * `provider.list`: the providers this daemon can launch.
@@ -1923,6 +2019,63 @@ export interface ReviewHunkRequest {
   workspace_id: string
 }
 /**
+ * `review.operation.acknowledge`: record that the person saw an interrupted
+ * Git mutation. The operation never runs again either way.
+ */
+export interface ReviewOperationAcknowledgeRequest {
+  op: 'review.operation.acknowledge'
+  operation_id: string
+  workspace_id: string
+}
+/**
+ * The `review.operation.acknowledge` reply. A repeat returns the first time.
+ */
+export interface ReviewOperationAcknowledged {
+  acknowledged_at: number
+  operation: GitOperation
+  /**
+   * The `review_operation_acknowledged` type tag.
+   */
+  type: 'review_operation_acknowledged'
+  [k: string]: unknown
+}
+/**
+ * One listed Git mutation.
+ */
+export interface ReviewOperationEntry {
+  /**
+   * When the person acknowledged it; null while unacknowledged.
+   */
+  acknowledged_at: number | null
+  operation: GitOperation
+  [k: string]: unknown
+}
+/**
+ * The `review.operation.list` reply.
+ */
+export interface ReviewOperationList {
+  operations: ReviewOperationEntry[]
+  /**
+   * More matching operations exist than the reply carries.
+   */
+  truncated: boolean
+  /**
+   * The `review_operations` type tag.
+   */
+  type: 'review_operations'
+  [k: string]: unknown
+}
+/**
+ * `review.operation.list`: the workspace's Git mutations that still need the
+ * person: running ones and interrupted ones not yet acknowledged, newest
+ * first. `include_acknowledged` adds acknowledged interrupted ones.
+ */
+export interface ReviewOperationListRequest {
+  include_acknowledged?: boolean
+  op: 'review.operation.list'
+  workspace_id: string
+}
+/**
  * The reply to every Git mutation and to `review.operation`.
  */
 export interface ReviewOperationReply {
@@ -2222,28 +2375,17 @@ export interface ScriptStopRequest {
   workspace_id: string
 }
 /**
- * A prompt recorded before dispatch, with the draft it came from.
+ * The `draft.send.acknowledge` reply, with the window's current draft.
  */
-export interface SendIntent {
-  attachments: Attachment[]
+export interface SendAcknowledged {
   conversation_id: string
-  draft_revision: number
-  draft_text: string
+  draft: Draft
   request_id: string
+  resolution: SendResolution
   /**
-   * Null unless the send carries one review anchor.
+   * The `send_acknowledged` type tag.
    */
-  review_anchor: unknown
-  /**
-   * Null unless the send carries a review feedback batch.
-   */
-  review_feedback: unknown
-  /**
-   * `pending`, `rejected`, `completed` or `aborted`.
-   */
-  state: string
-  text: string
-  window_id: string
+  type: 'send_acknowledged'
   [k: string]: unknown
 }
 /**
@@ -3188,7 +3330,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -3207,6 +3349,8 @@ export interface RequestByOperation {
   "draft.send.prepare": DraftSendPrepareRequest
   "draft.send.complete": DraftSendCompleteRequest
   "draft.send.abort": DraftSendAbortRequest
+  "draft.send.list": DraftSendListRequest
+  "draft.send.acknowledge": DraftSendAcknowledgeRequest
   "queue.enqueue": QueueEnqueueRequest
   "queue.cancel": QueueCancelRequest
   "queue.pause": QueuePauseRequest
@@ -3260,6 +3404,8 @@ export interface RequestByOperation {
   "review.discard": ReviewDiscardRequest
   "review.commit": ReviewCommitRequest
   "review.operation": ReviewOperationRequest
+  "review.operation.list": ReviewOperationListRequest
+  "review.operation.acknowledge": ReviewOperationAcknowledgeRequest
   "review.feedback.search": ReviewFeedbackSearchRequest
   "worktree.repository": WorktreeRepositoryRequest
   "worktree.get": WorktreeGetRequest
@@ -3312,6 +3458,8 @@ export interface ResponseByOperation {
   "draft.send.prepare": SendIntentPrepared
   "draft.send.complete": DraftReply
   "draft.send.abort": DraftReply
+  "draft.send.list": PendingSendList
+  "draft.send.acknowledge": SendAcknowledged
   "queue.enqueue": Ack
   "queue.cancel": Ack
   "queue.pause": Ack
@@ -3365,6 +3513,8 @@ export interface ResponseByOperation {
   "review.discard": ReviewOperationReply
   "review.commit": ReviewOperationReply
   "review.operation": ReviewOperationReply
+  "review.operation.list": ReviewOperationList
+  "review.operation.acknowledge": ReviewOperationAcknowledged
   "review.feedback.search": ReviewFeedbackSearch
   "worktree.repository": WorktreeState
   "worktree.get": WorktreeState
