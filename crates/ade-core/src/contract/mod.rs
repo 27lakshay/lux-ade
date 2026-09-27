@@ -41,12 +41,17 @@ pub mod browser;
 pub mod checkpoints;
 pub mod conversations;
 pub mod daemon;
+pub mod devices;
 pub mod files;
 pub mod history;
+pub mod hooks;
 pub mod mcp;
 pub mod orchestration;
+pub mod placement;
 pub mod plugins;
+pub mod providers;
 pub mod remote;
+pub mod repository;
 pub mod resources;
 pub mod retention;
 pub mod review;
@@ -174,6 +179,31 @@ pub const DOMAINS: &[Domain] = &[
         name: "browser",
         operations: browser::operations,
         frames: browser::frames,
+    },
+    Domain {
+        name: "repository",
+        operations: repository::operations,
+        frames: repository::frames,
+    },
+    Domain {
+        name: "hooks",
+        operations: hooks::operations,
+        frames: hooks::frames,
+    },
+    Domain {
+        name: "providers",
+        operations: providers::operations,
+        frames: providers::frames,
+    },
+    Domain {
+        name: "devices",
+        operations: devices::operations,
+        frames: devices::frames,
+    },
+    Domain {
+        name: "placement",
+        operations: placement::operations,
+        frames: placement::frames,
     },
 ];
 
