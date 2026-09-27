@@ -100,7 +100,28 @@ Known gaps from round B:
 Coordinator fix: the retention sweep was deleting unreferenced uploads older
 than 24 hours, a guess about abandonment. It now keeps them; explicit reclaim
 still removes them (`5a95b2c`). Legacy E2E `native-control.spec.ts:39` expects
-backup format 2 and needs a one-line update when E2E returns. None of these is E2E-verified;
+backup format 2 and needs a one-line update when E2E returns.
+
+**Phase 2 round D, merged green at `2d42c18`** (593 in-process tests)
+
+| Slice | Result | Requirements advanced |
+|---|---|---|
+| worktree-carry-adopt | Carry uncommitted changes through Git plumbing with verification; fetched PR refs as sources; explicit ignored-resource rules | F064, F065, F068 |
+| repo-clone-publish | Clone and publish through the system `git`, with exact partial-failure reporting | F062 |
+| plugin-host | `packages/plugin-host` Node process over stdio JSON-RPC, supervised with backoff and fenced by activation generation | F057 |
+| plugin-hooks | Durable after-commit hook outbox with effect IDs; lost deliveries become unknown, never replayed | F058 |
+| provider-capabilities | Revisioned capability records per adapter, readiness, presets validated against capabilities, quota visibility | F027, F028, F029, F030 |
+| generic-adapters | Generic ACP adapter and a custom-executable adapter; capabilities come from the agent's own handshake | F022, F024 |
+| conversation-controls | Steering, rewind, compaction and snoozing, each exposed only where the provider supports it natively | F035, F039, F040, F046 |
+| browser-profiles-context | Named browser profiles, bookmark and history import from unencrypted sources only, design context capture | F092, F093, F094 |
+| devices | Screen and accessibility permission state, iOS simulators through `simctl`, Android through `adb` (adapted from Orca, MIT) | F098, F099, F100 |
+| placement | Explicit execution host on work items; placement on an unavailable host fails instead of running locally | F126, F127, F129 |
+
+Coordinator fix: carrying changes with source cleanup could lose the staged
+version of a file that also had unstaged edits. Cleanup now keeps the source
+in that case (`2d42c18`). The carry Git steps are verified only statically; the
+worker could not run Git outside its tree, and the first E2E pass must run a
+carry end to end. None of these is E2E-verified;
 each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
 
 ## Scope baseline and daily-use gate
