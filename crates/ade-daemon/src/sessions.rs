@@ -35,6 +35,7 @@ mod conversations;
 mod leases;
 mod mcp;
 mod services;
+mod skills;
 mod terminals;
 mod workspaces;
 
@@ -521,6 +522,9 @@ impl Sessions {
             && self.data.lock().unwrap().store.has_pending_rebind()?
         {
             return Err(ade_core::error::NeedsRebind.into());
+        }
+        if op.starts_with("skill.") {
+            return self.skill_command(request);
         }
         if op.starts_with("review.")
             || op.starts_with("file.")
