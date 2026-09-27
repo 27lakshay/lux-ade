@@ -94,6 +94,8 @@ export function fakeSdk(directory) {
               ...(text==='usage-unpriced'?{costBasis:'unknown'}:{})}},total_cost_usd:usage.costUSD});
           emit({type:'rate_limit_event',rate_limit_info:{status:'allowed_warning',rateLimitType:'five_hour',utilization:0.25,resetsAt:4102444800}});
         }
+        // 'usage-exhausted' reports the five-hour limit used up.
+        if(text==='usage-exhausted')emit({type:'rate_limit_event',rate_limit_info:{status:'rejected',rateLimitType:'five_hour',utilization:1,resetsAt:4102444800}});
         emit(result);
       };
       const query={options,closed:false,

@@ -141,19 +141,23 @@ setInterval(() => {}, 1 << 30)
 })
 
 // Architecture section 4: effect commands carry a caller operation ID, a
-// daemon-computed payload fingerprint, a receipt and reconciliation.
-// GAP: service.start and service.stop take no operation_id and return no
-// receipt (phase1-services evidence, "Effect commands have no operation_id or
-// receipt"). A retry converges on service state instead (see the lost-reply
-// test above), but a replay cannot be matched to its original request.
-test.fixme('service.start replays by operation ID and returns its receipt', async ({ profile, repo }) => {
+// daemon-computed payload fingerprint, a receipt and reconciliation. The
+// daemon keeps the receipt in its envelope journal and does not put it on the
+// reply; the guarantee a caller sees is that a replay under the same ID
+// returns the recorded reply without starting again, and another payload
+// under that ID is a conflict that changes nothing.
+test('service.start replays its recorded reply by operation ID and conflicts on another payload', async ({ profile, repo }) => {
   const { workspace } = await profile.call('workspace.open', { path: repo.path })
   const files = await writeServicePrograms(repo.path)
   await configureService(profile, workspace.id, 'web', nodeService(files.server))
   const request = { op: 'service.start', workspace_id: workspace.id, name: 'web', operation_id: 'op-service-start-1' }
-  const first = await profile.rpc(request)
+  const first = await profile.rpc(request) as { metrics: { shell_pid: number } }
   const replay = await profile.rpc(request)
-  expect(first.receipt).toBeTruthy()
-  expect(replay.receipt).toEqual(first.receipt)
+  expect(replay).toEqual(first)
+  await expect(profile.rpc({ ...request, name: 'other' })).rejects.toThrow(/already used for a different request/)
+  // The replay and the conflict started nothing new: the first run still serves.
+  await waitForReadiness(profile, workspace.id, 'web', 'tcp_listening')
+  expect(await isRunning(first.metrics.shell_pid)).toBe(true)
+  expect((await profile.call('service.list', { workspace_id: workspace.id })).states.web?.state).toBe('running')
   await profile.call('service.stop', { workspace_id: workspace.id, name: 'web' })
 })

@@ -30,8 +30,10 @@ product bugs in this area, and all five are fixed:
   could not read its catalogue.
 
 R016 and R019 are partial. The R016 viewer itself (frames, popups and the
-renderer bridge in Electron) is for the UI phase. The R019 fixture has no
-browser tabs and no large searchable history.
+renderer bridge in Electron) is for the UI phase. The R019 load run has since
+moved to `e2e/protocol/load/load.spec.ts`, which adds 5 browser tabs behind a
+scripted owner and a 10,000-message searchable history (see
+`e2e-load-conformance.md`); the tabs' Electron renderers are still not covered.
 
 ## Acceptance criteria and specs
 
@@ -94,11 +96,11 @@ browser tabs and no large searchable history.
 
 | Criterion part | Spec | Result |
 |---|---|---|
-| 10 agents, 20 terminals, 3 services, a 5000-line diff, a slow feed subscriber; sustained and idle phases | `reliability-c/load.spec.ts` | pass |
-| Record p95 admission and echo, process-tree memory and queues | same (results below) | pass |
-| Admission p95 under the provisional 250 ms target in both phases | same | pass after fix 5 |
-| 5 browser tabs | none: needs Electron | not covered |
-| Large searchable history | none | not covered |
+| 10 agents, 20 terminals, 3 services, a 5000-line diff, a slow feed subscriber; sustained, idle and daemon-crash phases | `load/load.spec.ts` (moved from `reliability-c/load.spec.ts`) | pass |
+| Record p95 admission and echo, process-tree memory and queues | same (results below, and `e2e-load-conformance.md`) | pass |
+| Admission p95 under the provisional 250 ms target in every phase | same | pass after fix 5 |
+| 5 browser tabs | `load/load.spec.ts`: 5 tabs through the daemon relay to a scripted owner | pass at daemon level; Electron renderers not covered |
+| Large searchable history | `load/load.spec.ts`: 10,000 imported messages, searched every round | pass |
 
 Load results, one run on the audit host (Apple M4, 10 logical CPUs, 24 GiB),
 with nine other E2E suites running at the same time (load average about 10 to
@@ -234,9 +236,10 @@ Round 3:
 ## Open
 
 - R016: the Electron viewer (frames, popups, the renderer bridge) needs UI-phase E2E.
-- R019: 5 browser tabs and a large searchable history are not in the headless
-  fixture. There is no memory budget yet (decision D16). `terminal.scrollback`
-  reports no capacity.
+- R019: `e2e/protocol/load/load.spec.ts` now has 5 browser tabs (daemon relay
+  to a scripted owner) and a large searchable history; the tabs' Electron
+  renderers and their memory need UI-phase E2E. There is no memory budget yet
+  (decision D16). `terminal.scrollback` reports no capacity.
 - Provider leases are released only by an admitted uninstall
   (`Plugins::release_provider` has no caller). After fix 3, a data-schema raise
   for a provider plugin waits until every Conversation that ever used the old
