@@ -51,7 +51,11 @@ function account(run: string): { provider: string, account: RunSpec['account'] }
     : { mode: 'managed', account_id: choice } }
 }
 
-/** The parent Conversation's repository, from the catalog. */
+/**
+ * The worktree lifecycle repository of the parent Conversation's workspace.
+ * The catalog's `repository_id` is a different identity, so the lifecycle
+ * ledger registers (or finds) the repository by the workspace root.
+ */
 async function parentRepository(socketPath: string, parent: string): Promise<string> {
   const { catalog } = await command(socketPath, 'catalog.get', {})
   const conversation = catalog.conversations.find((item) => item.id === parent)
@@ -61,7 +65,7 @@ async function parentRepository(socketPath: string, parent: string): Promise<str
     throw new CliError('usage', 'The parent workspace is not in a known repository. Pass --repository-id, ' +
       'or --workspace same to share the parent workspace.')
   }
-  return workspace.repository_id
+  return (await command(socketPath, 'worktree.repository', { path: workspace.root })).repository.id
 }
 
 async function start(socketPath: string, rest: string[]): Promise<CommandResult> {

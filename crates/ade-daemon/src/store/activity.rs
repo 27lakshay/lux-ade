@@ -210,9 +210,23 @@ fn channel_name(channel: DeliveryChannel) -> &'static str {
     }
 }
 
+/// The key that makes one real-world event one activity. A turn whose outcome
+/// is unknown is one event, whichever path noticed it: the daemon's restart
+/// recovery and the runtime's attempt reconciliation both report the same
+/// lost turn, so both use the turn's own key.
+pub(crate) fn source_key(recorded: &Recorded) -> String {
+    match (&recorded.kind, &recorded.target.turn_id) {
+        (ActivityKind::OperationUnknown, Some(turn)) => {
+            format!("turn:{}:{turn}:unknown", recorded.target.conversation_id)
+        }
+        _ => recorded.source_key.clone(),
+    }
+}
+
 /// Records activity in the caller's transaction. A repeated source key keeps
 /// the first record.
 pub(super) fn record(tx: &Connection, recorded: Recorded, now: i64) -> Result<()> {
+    let key = source_key(&recorded);
     let activity = Activity {
         id: new_id("activity"),
         sequence: 0,
@@ -227,7 +241,7 @@ pub(super) fn record(tx: &Connection, recorded: Recorded, now: i64) -> Result<()
     };
     tx.execute(
         "INSERT INTO activity(id,source_key,state,data) VALUES(?1,?2,'unread',?3) ON CONFLICT(source_key) DO NOTHING",
-        params![activity.id, recorded.source_key, encode(&activity)?],
+        params![activity.id, key, encode(&activity)?],
     )?;
     Ok(())
 }
@@ -612,6 +626,24 @@ mod tests {
         let unconfirmed = turn_activity(&starting, &after(&starting, "interrupted", None)).unwrap();
         assert_eq!(unconfirmed.kind, ActivityKind::OperationUnknown);
         assert_eq!(unconfirmed.source_key, "turn:c:submission:unknown");
+    }
+
+    #[test]
+    fn every_report_of_one_lost_turn_shares_its_key() {
+        let running = conversation("running");
+        let lost = unknown_turn(&running, &after(&running, "interrupted", Some("restart")));
+        // Runtime reconciliation reports the same turn under its own report key.
+        let reconciled = Recorded {
+            source_key: "runtime-recovery:report_1:agent:c".into(),
+            ..lost.clone()
+        };
+        assert_eq!(source_key(&reconciled), source_key(&lost));
+        // Without a turn, and for other kinds, the recorded key stands.
+        let mut untargeted = reconciled.clone();
+        untargeted.target.turn_id = None;
+        assert_eq!(source_key(&untargeted), "runtime-recovery:report_1:agent:c");
+        let completed = turn_activity(&running, &after(&running, "ready", None)).unwrap();
+        assert_eq!(source_key(&completed), "turn:c:turn:completed");
     }
 
     #[test]
