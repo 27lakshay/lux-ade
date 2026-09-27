@@ -31,8 +31,8 @@ Deferred until the surface that needs it is built:
   cap changes `browser.ts`'s ownership and restore paths, which have no Electron E2E coverage.
 - Saving the pane layout through the daemon's `window.save` (`dock_layout`): the panes still hold
   sample tabs.
-- TanStack Virtual, Streamdown and Shiki, Pierre Diffs, TipTap, Pragmatic drag and drop, zod and
-  Sonner are chosen (D07) and get installed with the surface that uses them.
+- TanStack Virtual, Streamdown and Shiki, Pierre Diffs, TipTap, zod, Sonner and the xterm addons are
+  installed (D07) and get wired in with the surface that uses them; Fallow ignores them until then.
 - Terminal output as raw bytes: the daemon sends JSON frames; this needs a wire format change.
 - Electron E2E (Playwright `_electron`) was dropped from this plan by the user.
 

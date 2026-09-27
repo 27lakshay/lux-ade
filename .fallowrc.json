@@ -13,8 +13,27 @@
     "apps/desktop/src/renderer/src/hooks/**",
     "apps/desktop/src/renderer/src/lib/utils.ts"
   ],
-  // Installed by shadcn for the calendar component's date picker.
-  "ignoreDependencies": ["date-fns"],
+  "ignoreDependencies": [
+    // Installed by shadcn for the calendar component's date picker.
+    "date-fns",
+    // The chosen stack (decision D07), installed ahead of the surfaces that will use it. Remove an
+    // entry once something imports the package.
+    "@pierre/diffs",
+    "@tanstack/react-virtual",
+    "@tiptap/extension-mention",
+    "@tiptap/pm",
+    "@tiptap/react",
+    "@tiptap/starter-kit",
+    "@tiptap/suggestion",
+    "shiki",
+    "sonner",
+    "streamdown",
+    "zod",
+    "@xterm/addon-search",
+    "@xterm/addon-serialize",
+    "@xterm/addon-web-links",
+    "@xterm/addon-webgl"
+  ],
   "boundaries": {
     "zones": [
       { "name": "desktop-main", "patterns": ["apps/desktop/src/main/**"] },
