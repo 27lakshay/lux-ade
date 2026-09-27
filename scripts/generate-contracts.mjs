@@ -71,12 +71,25 @@ ${operations.map((operation) => `  ${quote(operation.name)}: ${operation.respons
 export type FeedFrame = ${frames.map((frame) => frame.frame).join(' | ')}
 `
 
+const operationIdOperations = operations
+  .filter((operation) => operation.tier === 'effect_command'
+    && definitions[operation.request]?.required?.includes('operation_id'))
+  .map((operation) => operation.name)
+
 const tableFile = `${banner}
 
 /** Each operation's tier and domain, and the validator names for its request and response. */
 export const operations = {
 ${operations.map((operation) => `  ${quote(operation.name)}: { tier: ${quote(operation.tier)}, domain: ${quote(operation.domain)}, request: ${quote(operation.request)}, response: ${quote(operation.response)} },`).join('\n')}
 } as const
+
+/**
+ * The effect commands whose request requires a caller-supplied \`operation_id\`.
+ * The SDK fills a fresh one when a caller leaves it out.
+ */
+export const operationIdOperations = [
+${operationIdOperations.map((name) => `  ${quote(name)},`).join('\n')}
+] as const
 
 /** Each feed frame's \`type\` tag and the validator name for it. */
 export const frames = {

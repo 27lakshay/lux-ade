@@ -11,7 +11,7 @@
 // every remote daemon and runtime before the harness checks for survivors.
 import { secretStoreEnvironment } from './secret-store'
 import { execFile, execFileSync } from 'node:child_process'
-import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -72,7 +72,7 @@ export function generateHostKey(): HostKey {
 /** One typed operation over a remote transport, checked against @ade/contracts both ways. */
 export function remoteCall<O extends Operation>(transport: RemoteDaemonTransport, op: O,
   request: CallRequest<O>): Promise<Response<O>> {
-  return transport.command({ op, ...request } as unknown as Request<O>)
+  return transport.command({ op, ...request } as never)
 }
 
 let pythonDirectory: string | null | undefined
@@ -275,7 +275,8 @@ async function stopDaemonAndRuntime(ade: AdeHarness, socket: string, hello: Reco
   await ade.ledger.own(daemonPid, `${role} daemon`)
   await ade.ledger.own(hello.runtime_pid as number, `${role} runtime`)
   await ade.ledger.sweep()
-  await rpc(socket, { op: 'runtime.prepare_restart', boot_id: hello.boot_id }, 5_000)
+  await rpc(socket, { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`, boot_id: hello.boot_id },
+    5_000)
   await waitForExit(daemonPid, 'remote daemon')
   const runtime = await rpc(runtimeSocket, { op: 'hello' }, 2_000).catch(() => null)
   if (!runtime) return

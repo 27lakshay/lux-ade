@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron'
-import { dailyUseCommand, decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseRequest } from '@ade/client'
+import { randomUUID } from 'node:crypto'
+import { dailyUseCommand, decodeDailyUseResponse, requestDaemon, takesOperationId, type DailyUseOperation,
+  type DailyUseRequest } from '@ade/client'
 import { getClient, getClientGeneration, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
 
@@ -87,6 +89,7 @@ export function registerServiceIpc(): void {
           throw new Error('Reset requires confirmation and the inspected registry SHA-256')
         }
         request.expected_registry_sha256 = args.expected_registry_sha256
+        request.operation_id = randomUUID()
       }
       const result = await requestDaemon(endpoint, op, request)
       if (generation !== getClientGeneration() || getSocket() !== endpoint) {
@@ -149,6 +152,7 @@ export function registerServiceIpc(): void {
         request.health_check = { port_variable: fields.port_variable, path: fields.path, timeout_ms: fields.timeout_ms }
       }
     }
+    if (takesOperationId(op)) request.operation_id = randomUUID()
     const result = await requestDaemon(endpoint, op, request)
     if (generation !== getClientGeneration() || getSocket() !== endpoint) {
       throw new Error('Profile changed while the service request completed; inspect the original profile before retrying')

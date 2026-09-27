@@ -10,6 +10,7 @@ pub mod capabilities;
 pub mod checkpoints;
 pub mod credentials;
 pub mod devices;
+pub mod envelope;
 pub mod files;
 pub mod history;
 pub mod hooks;

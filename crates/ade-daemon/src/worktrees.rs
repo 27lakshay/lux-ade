@@ -1278,19 +1278,38 @@ impl Worktrees {
                 );
                 valid("confirm_registry", &accept.confirm_registry)?;
                 let mut d = self.data.lock().unwrap();
-                if self.resources.accept(&d.db, &accept)? {
-                    // Claims taken before recovery live in the old registry.
-                    let paths: Vec<PathBuf> = d.leases.keys().cloned().collect();
-                    for path in paths {
-                        let claim = self.use_claim(&path).unwrap_or_else(|error| {
-                            eprintln!("Lease on {} was not re-claimed: {error}", path.display());
-                            None
-                        });
-                        d.host_claims.insert(path, claim);
+                match self.resources.accept(&d.db, &accept)? {
+                    crate::host_resources::AcceptOutcome::Replayed(Some(recorded)) => {
+                        return Ok(recorded);
                     }
+                    crate::host_resources::AcceptOutcome::Replayed(None) => {
+                        drop(d);
+                        return reply(&self.resources.inspect(None)?);
+                    }
+                    crate::host_resources::AcceptOutcome::Ran { rebound: true } => {
+                        // Claims taken before recovery live in the old registry.
+                        let paths: Vec<PathBuf> = d.leases.keys().cloned().collect();
+                        for path in paths {
+                            let claim = self.use_claim(&path).unwrap_or_else(|error| {
+                                eprintln!(
+                                    "Lease on {} was not re-claimed: {error}",
+                                    path.display()
+                                );
+                                None
+                            });
+                            d.host_claims.insert(path, claim);
+                        }
+                    }
+                    crate::host_resources::AcceptOutcome::Ran { rebound: false } => {}
                 }
                 drop(d);
-                reply(&self.resources.inspect(None)?)
+                let accepted = reply(&self.resources.inspect(None)?)?;
+                crate::host_resources::HostResources::record_accept_reply(
+                    &self.data.lock().unwrap().db,
+                    &accept.operation_id,
+                    &accepted,
+                );
+                Ok(accepted)
             }
             _ => bail!("Unknown resources operation"),
         }

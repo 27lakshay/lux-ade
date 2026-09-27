@@ -3,7 +3,7 @@ import { link, open, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { call, DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation,
   type DailyUseRequest, type DailyUseResponse } from '@ade/client'
-import { boundedInteger, catalog, CliError, jsonObject, object, parseWords, positionals, required,
+import { boundedInteger, catalog, CliError, jsonObject, object, effectOperationId, parseWords, positionals, required,
   type CommandResult } from '../shared.js'
 
 /** A typed request body: the operation's contract without its `op`. */
@@ -154,6 +154,7 @@ export async function runConversationCommand(socketPath: string, area: string | 
     // A preset names its provider; an explicit PROVIDER must agree with it.
     const provider = positionals[1] ?? (preset === undefined ? 'codex' : undefined)
     const fields: Fields<'conversation.create'> = {
+      operation_id: effectOperationId(),
       workspace_id: required(positionals[0], 'WORKSPACE_ID'),
       ...(provider !== undefined ? { provider } : {}),
       title: positionals[2] ?? 'New Conversation',
@@ -183,12 +184,13 @@ export async function runConversationCommand(socketPath: string, area: string | 
     const parsed = parseWords(rest, ['--turn'], [], 'conversation cancel')
     const [conversation_id] = positionals(parsed, 1, 'conversation cancel requires ID [--turn TURN_ID]')
     const turn = parsed.options['--turn']
-    return requestDaemon(socketPath, 'agent.cancel', { conversation_id, ...(turn === undefined ? {} : { turn_id: turn }) })
+    return requestDaemon(socketPath, 'agent.cancel', { operation_id: effectOperationId(), conversation_id,
+      ...(turn === undefined ? {} : { turn_id: turn }) })
   }
   if (area === 'conversation' && (action === 'resume' || action === 'disconnect')) {
     if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)
     const op = ({ resume: 'agent.resume', disconnect: 'agent.disconnect' } as const)[action]
-    return requestDaemon(socketPath, op, { conversation_id: required(rest[0], 'ID') })
+    return requestDaemon(socketPath, op, { operation_id: effectOperationId(), conversation_id: required(rest[0], 'ID') })
   }
   if (area === 'conversation' && action === 'child-transcript') {
     const parsed = parseWords(rest, ['--cursor', '--offset'], [], 'conversation child-transcript')

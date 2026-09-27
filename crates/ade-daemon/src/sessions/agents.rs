@@ -59,6 +59,20 @@ pub(super) struct FailedAgent {
     pub(super) hold: Option<String>,
 }
 
+/// Whether a turn that ended with `status` pauses the prompt queue. An
+/// interrupted or failed turn pauses it, unless the person resumed the queue
+/// while that very turn was still ending: that newer wake is kept.
+pub(super) fn pauses_queue(status: &str, resumed_during: Option<&str>, turn: &str) -> bool {
+    status != "ready" && resumed_during != Some(turn)
+}
+
+/// Whether a provider event that names `turn` belongs to a turn other than
+/// the active one: a cancelled or finished turn whose stream arrives late. An
+/// event that names no turn cannot be fenced and is not stale by this test.
+pub(super) fn another_turn(active: Option<&str>, turn: Option<&str>) -> bool {
+    turn.is_some_and(|turn| active != Some(turn))
+}
+
 /// Why `agent.cancel` must not act, if anything. Only a Conversation with a
 /// turn in flight can be cancelled. A caller that names the turn it saw gets
 /// a refusal once another turn, or none, is active: the cancel was meant for
@@ -988,9 +1002,10 @@ impl Sessions {
                     }
                     .into();
                     c.error = error;
-                    if c.status != "ready" {
+                    if pauses_queue(&c.status, c.queue_resumed_during.as_deref(), &turn) {
                         c.queue_paused = true;
                     }
+                    c.queue_resumed_during = None;
                     c.active_turn_id = None;
                     usage.push((
                         envelope.sequence,
@@ -1073,7 +1088,12 @@ impl Sessions {
                         c.status = "running".into();
                     }
                 }
-                Event::Error { error } => {
+                Event::Error { error, turn } => {
+                    // R003: a late error of a cancelled or finished turn
+                    // never lands on the turn that runs now.
+                    if another_turn(c.active_turn_id.as_deref(), turn.as_deref()) {
+                        continue;
+                    }
                     c.error = Some(error);
                     changed = true;
                 }
@@ -1360,6 +1380,29 @@ mod tests {
             assert_eq!(failed.status, "interrupted");
             assert!(failed.hold.is_some_and(|reason| reason.contains(error)));
         }
+    }
+
+    #[test]
+    fn a_wake_received_while_the_cancelled_turn_ends_is_kept() {
+        // Cancelled, then the person resumed the queue before the turn ended.
+        assert!(!pauses_queue("interrupted", Some("turn-a"), "turn-a"));
+        // No resume, or a resume during another turn: the interruption pauses.
+        assert!(pauses_queue("interrupted", None, "turn-a"));
+        assert!(pauses_queue("error", Some("turn-old"), "turn-a"));
+        // A completed turn never pauses the queue.
+        assert!(!pauses_queue("ready", None, "turn-a"));
+    }
+
+    #[test]
+    fn a_late_event_of_another_turn_is_fenced_from_the_active_one() {
+        // The successor runs; the cancelled turn's late error is stale.
+        assert!(another_turn(Some("turn-b"), Some("turn-a")));
+        // Nothing runs any more: a late error of the finished turn is stale too.
+        assert!(another_turn(None, Some("turn-a")));
+        // The active turn's own error, and an error that names no turn, apply.
+        assert!(!another_turn(Some("turn-b"), Some("turn-b")));
+        assert!(!another_turn(Some("turn-b"), None));
+        assert!(!another_turn(None, None));
     }
 
     #[test]

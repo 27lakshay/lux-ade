@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { dailyUseCommand, type DailyUseOperation, type DailyUseRequest,
+import { dailyUseCommand, type DailyUseCommand, type DailyUseOperation, type DailyUseRequest,
   type DailyUseResponse } from '@ade/client'
 import { CliError, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
 
@@ -52,7 +52,7 @@ function timeout(value: string | undefined): number {
 /** A typed request; the reply is checked against its contract. */
 export async function command<O extends DailyUseOperation>(socketPath: string, op: O,
   fields: Omit<DailyUseRequest<O>, 'op'>): Promise<DailyUseResponse<O>> {
-  return dailyUseCommand<O>(socketPath, { op, ...fields } as DailyUseRequest<O>)
+  return dailyUseCommand<O>(socketPath, { op, ...fields } as unknown as DailyUseCommand<O>)
 }
 
 /** Create BRANCH in a new worktree, wait for the lifecycle operation, and open it as a workspace. */

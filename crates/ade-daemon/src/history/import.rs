@@ -482,6 +482,7 @@ pub fn commit(
                 view_terminal: None,
                 terminal_owner: None,
                 queue_paused: false,
+                queue_resumed_during: None,
                 runtime_run: None,
                 runtime_cursor: 0,
                 runtime_submission: None,

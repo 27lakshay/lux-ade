@@ -1,5 +1,5 @@
 import { call } from '@ade/client'
-import { CliError, parseWords, positionals, requestIdOption, type CommandResult } from '../shared.js'
+import { CliError, effectOperationId, parseWords, positionals, requestIdOption, type CommandResult } from '../shared.js'
 
 export const queueUsage = `  queue add CONVERSATION_ID TEXT --request-id ID
                                         Queue a prompt; ID becomes the queued prompt's ID, so
@@ -28,7 +28,7 @@ export async function runQueueCommand(socketPath: string, area: string | undefin
   if (action === 'pause' || action === 'resume') {
     const [conversation_id] = positionals(parseWords(rest, [], [], `queue ${action}`), 1,
       `queue ${action} requires CONVERSATION_ID`)
-    return call(socketPath, 'queue.pause', { conversation_id, paused: action === 'pause' })
+    return call(socketPath, 'queue.pause', { operation_id: effectOperationId(), conversation_id, paused: action === 'pause' })
   }
   throw new CliError('usage', 'Unknown queue command. Run ade --help for usage.')
 }

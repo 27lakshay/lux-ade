@@ -492,7 +492,7 @@ impl Run {
             if method == "answer" {
                 // A refused or uncertain answer is not proof that the turn
                 // failed. Retain the live request and its once-only receipt.
-                self.append(Event::Error { error });
+                self.append(Event::Error { error, turn: None });
             } else if !failure_ends_run(method) {
                 // A refused control leaves the turn and the run as they were;
                 // its caller reads the error from this receipt.
@@ -906,6 +906,7 @@ mod tests {
         let (run, _) = fixture();
         let big = || Event::Error {
             error: "x".repeat(12 * 1024 * 1024),
+            turn: None,
         };
         for _ in 0..2 {
             assert_eq!(run.append(big()), Journaling::Accept);

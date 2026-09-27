@@ -5,7 +5,7 @@ import {
   type TerminalConnection,
   type TerminalFrame,
 } from '@ade/client'
-import { catalog, CliError, required, type CommandResult, type ErrorCode } from '../shared.js'
+import { catalog, CliError, effectOperationId, required, type CommandResult, type ErrorCode } from '../shared.js'
 
 export const terminalUsage = `  terminal list                         List workspace terminals
   terminal create WORKSPACE_ID --request-id ID
@@ -270,14 +270,16 @@ export async function runTerminalCommand(socketPath: string, area: string | unde
     const terminalId = required(rest[1], 'TERMINAL_ID')
     await terminalTarget(socketPath, workspaceId, terminalId)
     const op = action === 'stop' ? 'terminal.stop' : 'terminal.retire'
-    return dailyUseCommand(socketPath, { op, workspace_id: workspaceId, terminal_id: terminalId })
+    return dailyUseCommand(socketPath, { op, operation_id: effectOperationId(), workspace_id: workspaceId,
+      terminal_id: terminalId })
   }
   if (area === 'terminal' && action === 'restart') {
     if (rest.length !== 2) throw new CliError('usage', 'terminal restart requires WORKSPACE_ID TERMINAL_ID.')
     const workspaceId = required(rest[0], 'WORKSPACE_ID')
     const terminalId = required(rest[1], 'TERMINAL_ID')
     await terminalTarget(socketPath, workspaceId, terminalId)
-    return call(socketPath, 'terminal.restart', { workspace_id: workspaceId, terminal_id: terminalId })
+    return call(socketPath, 'terminal.restart', { operation_id: effectOperationId(), workspace_id: workspaceId,
+      terminal_id: terminalId })
   }
   if (area === 'terminal' && ['inspect', 'send', 'resize'].includes(action ?? '')) {
     const workspaceId = required(rest[0], 'WORKSPACE_ID')

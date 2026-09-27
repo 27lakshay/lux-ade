@@ -643,7 +643,8 @@ fn runtime_command(args: &[String]) -> Result<Value> {
         .context("Running daemon omitted its boot identity")?;
     rpc(
         &socket,
-        &json!({"op":"runtime.prepare_restart","boot_id":boot}),
+        &json!({"op":"runtime.prepare_restart","boot_id":boot,
+            "operation_id":format!("restart-{}", Uuid::new_v4())}),
     )?;
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {

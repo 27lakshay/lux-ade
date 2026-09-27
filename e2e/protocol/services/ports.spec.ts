@@ -40,7 +40,8 @@ test('two profiles with the same assigned port launch one at a time', async ({ a
   expect(await serviceState(second, secondWorkspace.id, 'web')).toBe('stopped')
   // The wire reply names the conflict and its recovery. The SDK, and the CLI through it, fold
   // codes they do not know into `daemon`, so only the message reaches their callers.
-  expect(await rawReply(second.socket, { op: 'service.start', workspace_id: secondWorkspace.id, name: 'web' }))
+  expect(await rawReply(second.socket, { op: 'service.start', operation_id: 'raw-start', workspace_id: secondWorkspace.id,
+    name: 'web' }))
     .toMatchObject({ type: 'error', code: 'host_resource_conflict', recovery: 'inspect_host_resources' })
   const cli = await second.cli('service', 'start', secondWorkspace.id, 'web')
   expect(cli.code).not.toBe(0)

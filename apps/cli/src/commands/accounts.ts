@@ -1,5 +1,5 @@
 import { dailyUseCommand } from '@ade/client'
-import { CliError, jsonObject, required, type CommandResult } from '../shared.js'
+import { CliError, jsonObject, effectOperationId, required, type CommandResult } from '../shared.js'
 
 export const accountUsage = `  account list                           List profile accounts
   account create PROVIDER NAME           Register a native account home
@@ -27,7 +27,8 @@ export async function runAccountCommand(socketPath: string, area: string | undef
   if (area === 'account' && action === 'create') {
     if (rest.length !== 2) throw new CliError('usage', 'account create requires PROVIDER NAME.')
     return dailyUseCommand(socketPath, {
-      op: 'account.create', provider: required(rest[0], 'PROVIDER'), name: required(rest[1], 'NAME'),
+      op: 'account.create', operation_id: effectOperationId(), provider: required(rest[0], 'PROVIDER'),
+      name: required(rest[1], 'NAME'),
     })
   }
   if (area === 'account' && (action === 'inspect' || action === 'verify' || action === 'disable')) {

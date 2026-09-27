@@ -39,6 +39,10 @@ pub struct ScriptRunsRequest {
 /// `script.start`: launch a configured script by name as a supervised PTY.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ScriptStartRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub name: String,
 }
@@ -57,6 +61,10 @@ pub struct ScriptInspectRequest {
 /// `script.stop`: stop a run and wait up to five seconds for it to exit.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ScriptStopRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub run_id: String,
 }
@@ -64,6 +72,10 @@ pub struct ScriptStopRequest {
 /// `script.retire`: remove a stopped run and its retained output.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ScriptRetireRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub run_id: String,
 }
@@ -261,7 +273,7 @@ mod tests {
         );
         request::<ScriptStartRequest>(
             "script.start",
-            json!({"op": "script.start", "workspace_id": "w", "name": "dev"}),
+            json!({"op": "script.start", "operation_id": "o", "workspace_id": "w", "name": "dev"}),
         );
         request::<ScriptInspectRequest>(
             "script.inspect",
@@ -273,11 +285,11 @@ mod tests {
         );
         request::<ScriptStopRequest>(
             "script.stop",
-            json!({"op": "script.stop", "workspace_id": "w", "run_id": "r"}),
+            json!({"op": "script.stop", "operation_id": "o", "workspace_id": "w", "run_id": "r"}),
         );
         request::<ScriptRetireRequest>(
             "script.retire",
-            json!({"op": "script.retire", "workspace_id": "w", "run_id": "r"}),
+            json!({"op": "script.retire", "operation_id": "o", "workspace_id": "w", "run_id": "r"}),
         );
         let (name, _) = names("script.start");
         assert!(!valid(
@@ -286,7 +298,8 @@ mod tests {
         ));
         assert!(!valid(
             &name,
-            &json!({"op": "script.start", "workspace_id": "w", "name": "dev", "extra": 1})
+            &json!({"op": "script.start", "operation_id": "o", "workspace_id": "w", "name": "dev",
+                "extra": 1})
         ));
     }
 

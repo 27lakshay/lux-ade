@@ -207,6 +207,10 @@ fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, 
 /// `conversation.create`: make a Conversation in a workspace.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ConversationCreateRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     /// Defaults to `New Conversation`; at most 256 bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -368,6 +372,10 @@ pub struct QueueCancelRequest {
 /// `queue.pause`: pause or resume a Conversation's prompt queue.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct QueuePauseRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub conversation_id: String,
     pub paused: bool,
 }
@@ -1125,17 +1133,20 @@ mod tests {
     fn conversation_create_round_trips() {
         let minimal: ConversationCreateRequest = request(
             "conversation.create",
-            json!({"op": "conversation.create", "workspace_id": "workspace_1"}),
+            json!({"op": "conversation.create", "operation_id": "o", "workspace_id": "workspace_1"}),
         );
         assert!(minimal.title.is_none() && minimal.account_id.is_none());
         request::<ConversationCreateRequest>(
             "conversation.create",
-            json!({"op": "conversation.create", "workspace_id": "workspace_1",
+            json!({"op": "conversation.create", "operation_id": "o", "workspace_id": "workspace_1",
                 "title": "Title", "provider": "claude", "account_id": "account_1",
                 "provider_config": {"permission_mode": "plan"}}),
         );
         assert!(!validator("ConversationCreateRequest").is_valid(&json!({
-            "op": "conversation.create", "workspace_id": "w", "account_id": null,
+            "op": "conversation.create", "operation_id": "o", "workspace_id": "w", "account_id": null,
+        })));
+        assert!(!validator("ConversationCreateRequest").is_valid(&json!({
+            "op": "conversation.create", "workspace_id": "w",
         })));
         let conversation: Conversation = serde_json::from_value(json!({
             "id": "conversation_1", "workspace_id": "workspace_1", "title": "Title",
@@ -1347,7 +1358,7 @@ mod tests {
         );
         request::<QueuePauseRequest>(
             "queue.pause",
-            json!({"op": "queue.pause", "conversation_id": "c", "paused": true}),
+            json!({"op": "queue.pause", "operation_id": "o", "conversation_id": "c", "paused": true}),
         );
         request::<WindowSaveRequest>(
             "window.save",

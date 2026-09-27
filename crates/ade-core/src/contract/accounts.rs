@@ -62,6 +62,10 @@ pub struct AccountListRequest {}
 /// `account.create`: register a new native account home for a provider.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AccountCreateRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub provider: String,
     /// Trimmed by the daemon; 1 to 80 characters without line breaks.
     pub name: String,

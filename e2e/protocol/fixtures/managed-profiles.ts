@@ -10,6 +10,7 @@
 // harness ledger, and its teardown stops them before the harness checks for
 // survivors.
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { access, appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -194,7 +195,8 @@ export class ManagedProfile {
     await this.log({ via: 'fixture', event: 'stop', pid: hello.pid, runtime_pid: hello.runtime_pid })
     await until('runtime.prepare_restart to be accepted', async () => {
       try {
-        await rpc(this.socket, { op: 'runtime.prepare_restart', boot_id: hello!.boot_id }, 5_000)
+        await rpc(this.socket, { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`,
+          boot_id: hello!.boot_id }, 5_000)
         return true
       } catch (error) {
         if (/retry shortly|retry after completion/.test(String(error))) return undefined

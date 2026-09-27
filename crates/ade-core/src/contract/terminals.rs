@@ -60,6 +60,10 @@ pub struct TerminalOperationRequest {
 /// `terminal_id` it uses the workspace's primary terminal.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
 pub struct TerminalRestartRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -69,6 +73,10 @@ pub struct TerminalRestartRequest {
 /// `terminal.stop`: stop a workspace terminal's shell.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct TerminalStopRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub terminal_id: String,
 }
@@ -76,6 +84,10 @@ pub struct TerminalStopRequest {
 /// `terminal.retire`: remove a stopped terminal from its workspace.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct TerminalRetireRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
     pub workspace_id: String,
     pub terminal_id: String,
 }
@@ -309,11 +321,25 @@ mod tests {
 
     #[test]
     fn terminal_lifecycle_round_trips() {
-        let wire = request("terminal.restart", &TerminalRestartRequest::default());
-        assert_eq!(wire, json!({"op": "terminal.restart"}));
+        let wire = request(
+            "terminal.restart",
+            &TerminalRestartRequest {
+                operation_id: "restart_1".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            wire,
+            json!({"op": "terminal.restart", "operation_id": "restart_1"})
+        );
+        assert!(!valid(
+            "TerminalRestartRequest",
+            &json!({"op": "terminal.restart"})
+        ));
         request(
             "terminal.restart",
             &TerminalRestartRequest {
+                operation_id: "restart_2".into(),
                 workspace_id: Some("workspace_1".into()),
                 terminal_id: Some("terminal_1".into()),
             },
@@ -323,6 +349,7 @@ mod tests {
         request(
             "terminal.stop",
             &TerminalStopRequest {
+                operation_id: "stop_1".into(),
                 workspace_id,
                 terminal_id,
             },
@@ -331,6 +358,7 @@ mod tests {
         request(
             "terminal.retire",
             &TerminalRetireRequest {
+                operation_id: "retire_1".into(),
                 workspace_id,
                 terminal_id,
             },
@@ -340,7 +368,7 @@ mod tests {
         }
         assert!(!valid(
             "TerminalStopRequest",
-            &json!({"op": "terminal.stop", "workspace_id": "w"})
+            &json!({"op": "terminal.stop", "operation_id": "o", "workspace_id": "w"})
         ));
     }
 

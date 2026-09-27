@@ -120,6 +120,7 @@ impl Store {
             terminal_owner: None,
             view_terminal: None,
             queue_paused: false,
+            queue_resumed_during: None,
             runtime_run: None,
             runtime_cursor: 0,
             runtime_submission: None,

@@ -1997,6 +1997,12 @@ export interface AccountCreateRequest {
    */
   name: string
   op: 'account.create'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   provider: string
 }
 /**
@@ -2608,6 +2614,12 @@ export interface AgentCancelRequest {
   conversation_id: string
   op: 'agent.cancel'
   /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
+  /**
    * The turn the caller saw active. When present, the cancel applies only
    * while that turn is still the active one, so a late or retried cancel
    * never stops its successor. Absent, it cancels whatever turn is active.
@@ -2640,6 +2652,12 @@ export interface AgentChildTranscriptRequest {
 export interface AgentDisconnectRequest {
   conversation_id: string
   op: 'agent.disconnect'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
 }
 /**
  * The `agent.list` reply.
@@ -2740,6 +2758,12 @@ export interface AgentListRequest {
 export interface AgentResumeRequest {
   conversation_id: string
   op: 'agent.resume'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
 }
 /**
  * `agent.send`: submit a prompt. `request_id` is the caller-owned operation ID.
@@ -4194,6 +4218,12 @@ export interface Conversation {
   provider_config: unknown
   provider_thread_id: string | null
   queue_paused: boolean
+  /**
+   * The turn that was active when the person resumed the queue. That
+   * turn's interruption or failure then leaves the queue running, so a
+   * wake received while an older run cleans up is kept (R003).
+   */
+  queue_resumed_during?: string | null
   runtime_cursor: number
   runtime_run: string | null
   runtime_submission: string | null
@@ -5331,6 +5361,12 @@ export interface ConversationCreateRequest {
    */
   account_id?: string
   op: 'conversation.create'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   /**
    * A saved preset whose provider, model and permission mode the
    * Conversation uses. Refused when the provider's current capabilities
@@ -9637,6 +9673,12 @@ export interface QueueEnqueueRequest {
 export interface QueuePauseRequest {
   conversation_id: string
   op: 'queue.pause'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   paused: boolean
 }
 /**
@@ -11046,6 +11088,12 @@ export interface RuntimePrepareRestartRequest {
    */
   boot_id: string
   op: 'runtime.prepare_restart'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
 }
 /**
  * The `runtime.recovery` reply.
@@ -11213,6 +11261,12 @@ export interface ScriptListRequest {
  */
 export interface ScriptRetireRequest {
   op: 'script.retire'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   run_id: string
   workspace_id: string
 }
@@ -11328,6 +11382,12 @@ export interface ScriptRunsRequest {
 export interface ScriptStartRequest {
   name: string
   op: 'script.start'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   workspace_id: string
 }
 /**
@@ -11335,6 +11395,12 @@ export interface ScriptStartRequest {
  */
 export interface ScriptStopRequest {
   op: 'script.stop'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   run_id: string
   workspace_id: string
 }
@@ -11770,6 +11836,12 @@ export interface ServiceProxyRecoveryReset {
 export interface ServiceProxyRecoveryResetRequest {
   expected_registry_sha256: string
   op: 'service.proxy.recovery.reset'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
 }
 /**
  * `service.proxy.recovery.retry`: rebind a blocked route's original port.
@@ -11781,6 +11853,12 @@ export interface ServiceProxyRecoveryRetryRequest {
   expected_target_port: number
   name: string
   op: 'service.proxy.recovery.retry'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   port_variable: string
   workspace_id: string
 }
@@ -11795,6 +11873,12 @@ export interface ServiceProxyRemapRequest {
   expected_target_port: number
   name: string
   op: 'service.proxy.remap'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   port_variable: string
   workspace_id: string
 }
@@ -11808,6 +11892,12 @@ export interface ServiceProxyRetireRequest {
   expected_target_port: number
   name: string
   op: 'service.proxy.retire'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   port_variable: string
   workspace_id: string
 }
@@ -11870,6 +11960,12 @@ export interface ServiceProxyTargetRequest {
 export interface ServiceRemoveRequest {
   name: string
   op: 'service.remove'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   revision: number
   workspace_id: string
 }
@@ -11904,6 +12000,12 @@ export interface ServiceReply {
 export interface ServiceStartRequest {
   name: string
   op: 'service.start'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   workspace_id: string
 }
 /**
@@ -11912,6 +12014,12 @@ export interface ServiceStartRequest {
 export interface ServiceStopRequest {
   name: string
   op: 'service.stop'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   workspace_id: string
 }
 /**
@@ -12299,6 +12407,12 @@ export interface TerminalOperationRequest {
  */
 export interface TerminalRestartRequest {
   op: 'terminal.restart'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   terminal_id?: string | null
   workspace_id?: string | null
 }
@@ -12307,6 +12421,12 @@ export interface TerminalRestartRequest {
  */
 export interface TerminalRetireRequest {
   op: 'terminal.retire'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   terminal_id: string
   workspace_id: string
 }
@@ -12315,6 +12435,12 @@ export interface TerminalRetireRequest {
  */
 export interface TerminalStopRequest {
   op: 'terminal.stop'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   terminal_id: string
   workspace_id: string
 }
@@ -12612,6 +12738,12 @@ export interface WorktreeAdoptRequest {
    */
   confirm_path: string
   op: 'worktree.adopt'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
   path: string
   repository_id: string
 }

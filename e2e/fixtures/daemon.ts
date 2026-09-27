@@ -241,7 +241,7 @@ export async function startDaemon(
 async function prepareRestart(socket: string, bootId: unknown): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt++) {
     try {
-      await rpc(socket, { op: 'runtime.prepare_restart', boot_id: bootId })
+      await rpc(socket, { op: 'runtime.prepare_restart', operation_id: `restart-${globalThis.crypto.randomUUID()}`, boot_id: bootId })
       return
     } catch (error) {
       if (attempt === 49 || !String(error).includes('A command is still being admitted')) throw error

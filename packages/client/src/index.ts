@@ -15,19 +15,25 @@ export {
 export { requestDaemon, DaemonRequestError, categoryErrorCodes, daemonRefusalCodes, isDaemonRefusal,
   type DaemonErrorCode, type DaemonResponse, type KnownDaemonErrorCode, type RequestDelivery,
   type RequestOptions } from './request.js'
-export { call, decodeCallReply, encodeCall, type CallRequest } from './call.js'
-export { isOperation, operations, type Operation, type Tier } from '@ade/contracts'
+export { call, decodeCallReply, encodeCall, takesOperationId, type CallRequest, type OperationIdOperation } from './call.js'
+export { isOperation, operationIdOperations, operations, type Operation, type Tier } from '@ade/contracts'
 export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'
 export { decodeDailyUseFeedFrame, decodeDailyUseRequest, decodeDailyUseResponse,
   type DailyUseFeedFrame, type DailyUseOperation, type DailyUseRequest,
   type DailyUseResponse }
 
-/** A typed command against the same profile daemon used by Electron and the CLI. */
+/**
+ * A typed command against the same profile daemon used by Electron and the CLI.
+ * An effect command without an `operation_id` is sent under a fresh one.
+ */
 export async function dailyUseCommand<O extends DailyUseOperation>(endpoint: string,
-  request: DailyUseRequest<O>): Promise<DailyUseResponse<O>> {
-  const { op, ...fields } = request
-  return call(endpoint, op as O, fields as CallRequest<O>)
+  request: DailyUseCommand<O>): Promise<DailyUseResponse<O>> {
+  const { op, ...fields } = request as unknown as { op: O } & Record<string, unknown>
+  return call(endpoint, op, fields as unknown as CallRequest<O>)
 }
+
+/** A command as `dailyUseCommand` takes it: the request with its `op`. */
+export type DailyUseCommand<O extends DailyUseOperation> = { op: O } & CallRequest<O>
 
 const APPLICATION_PROTOCOL = 'ade-application-v1'
 const SESSION_PROTOCOL = 'ade-sessions-v1'
@@ -205,7 +211,7 @@ export class AdeClient {
     return call(this.endpoint, op, request)
   }
 
-  command<O extends DailyUseOperation>(request: DailyUseRequest<O>): Promise<DailyUseResponse<O>> {
+  command<O extends DailyUseOperation>(request: DailyUseCommand<O>): Promise<DailyUseResponse<O>> {
     if (!this.endpoint) return Promise.reject(new Error('Profile daemon endpoint is unavailable'))
     return dailyUseCommand(this.endpoint, request)
   }

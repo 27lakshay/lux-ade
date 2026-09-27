@@ -50,7 +50,8 @@ test('a start or stop whose reply was lost converges when the client retries', a
   await configureService(profile, workspace.id, 'web', nodeService(files.server))
 
   // The client sends start and disconnects: it cannot know whether the run launched.
-  await sendAndHangUp(profile.socket, { op: 'service.start', workspace_id: workspace.id, name: 'web' })
+  await sendAndHangUp(profile.socket, { op: 'service.start', operation_id: 'lost-start', workspace_id: workspace.id,
+    name: 'web' })
   await expect.poll(() => serviceState(profile, workspace.id, 'web')).toBe('running')
   const owner = (await profile.call('service.list', { workspace_id: workspace.id })).services[0].terminal_owner
   // Retrying returns the run the lost request launched instead of a second one.
@@ -58,7 +59,8 @@ test('a start or stop whose reply was lost converges when the client retries', a
   expect(retried.service.terminal_owner).toEqual(owner)
   await waitForReadiness(profile, workspace.id, 'web', 'tcp_listening')
 
-  await sendAndHangUp(profile.socket, { op: 'service.stop', workspace_id: workspace.id, name: 'web' })
+  await sendAndHangUp(profile.socket, { op: 'service.stop', operation_id: 'lost-stop', workspace_id: workspace.id,
+    name: 'web' })
   await expect.poll(() => serviceState(profile, workspace.id, 'web')).toBe('stopped')
   const stopped = await profile.call('service.stop', { workspace_id: workspace.id, name: 'web' })
   expect(stopped.service.terminal_owner).toBeNull()
