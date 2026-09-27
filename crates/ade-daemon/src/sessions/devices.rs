@@ -346,9 +346,10 @@ fn computer() -> (DeviceFamilyStatus, Vec<DeviceSummary>) {
 
 // ---- iOS simulators ------------------------------------------------------------
 
+/// `xcrun` from the host tool directories: the daemon's PATH first, then
+/// `/usr/bin`, the same resolution adb and the emulator get.
 fn xcrun() -> Option<PathBuf> {
-    let path = PathBuf::from("/usr/bin/xcrun");
-    path.is_file().then_some(path)
+    find_tool("xcrun")
 }
 
 fn ios_probe() -> IosProbe {
@@ -898,7 +899,7 @@ impl Sessions {
     fn device_unknown(&self, id: &str, detail: String) -> Result<Value> {
         self.device_settle(id, Status::Unknown, &json!({"error": detail}))?;
         bail!(
-            "Operation {id} outcome is unknown: {detail}. It was not run again; inspect the device and use a new operation ID"
+            "Operation {id} outcome is unknown: {detail}. It was not run again. Inspect the device, release its quarantined claim with resources.claim.resolve, then use a new operation ID"
         )
     }
 
@@ -926,7 +927,7 @@ impl Sessions {
                 (None, None) => bail!("Operation {id} has an unreadable receipt"),
             },
             Status::Unknown => bail!(
-                "Operation {id} outcome is unknown: {}. It was not run again; inspect the device and use a new operation ID",
+                "Operation {id} outcome is unknown: {}. It was not run again. Inspect the device, release its quarantined claim with resources.claim.resolve, then use a new operation ID",
                 record["error"].as_str().unwrap_or("no detail")
             ),
             Status::Accepted | Status::Dispatched | Status::Acknowledged => {
@@ -940,6 +941,18 @@ impl Sessions {
     }
 
     pub(super) fn device_command(&self, request: &Value) -> Result<Value> {
+        // One device, one identity: a case variant of a UDID names the same
+        // simulator for lookup, claims and receipts alike.
+        let canonical;
+        let request = match request["device_id"].as_str().map(Target::parse) {
+            Some(Ok(target)) if request["device_id"] != target.id().as_str() => {
+                let mut copy = request.clone();
+                copy["device_id"] = Value::String(target.id());
+                canonical = copy;
+                &canonical
+            }
+            _ => request,
+        };
         match request["op"].as_str().unwrap_or("") {
             "device.list" => {
                 let list: DeviceListRequest = decode(request)?;
