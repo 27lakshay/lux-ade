@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session } from 'electron'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { browserQuitGuard, closeBrowserWindow, registerBrowserIpc, setBrowserProfile } from './browser'
@@ -39,12 +39,14 @@ import { registerServiceIpc } from './services'
 import { closeAll as closeAllTerminals, closeSenderTerminals, registerTerminalIpc } from './terminals'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
 import { appUrl, registerAppScheme, serveAppScheme } from './app-protocol'
+import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
 import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
 
 let singleWindowId = ''
 enableRemoteDebugging()
 registerAppScheme()
+refuseWebviews()
 if (process.env.ADE_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.ADE_E2E_USER_DATA_DIR)
 }
@@ -174,11 +176,7 @@ function openMainWindow(): void {
     windowIds.delete(window.webContents.id)
   })
 
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void shell.openExternal(url)
-    return { action: 'deny' }
-  })
-
+  lockDownAppWindow(window.webContents)
   void window.loadURL(appUrl())
 }
 
@@ -186,6 +184,7 @@ app
   .whenReady()
   .then(async () => {
     serveAppScheme(session.defaultSession)
+    lockDownAppSession(session.defaultSession)
     if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.platform === 'darwin') {
       app.setActivationPolicy('accessory')
       app.dock?.hide()
