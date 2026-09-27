@@ -21,7 +21,8 @@ export const conversationUsage = `  conversation list [WORKSPACE_ID]      List c
   conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID] [--preset NAME]
   conversation send ID TEXT [--request-id ID]
                                         Send a prompt; retain ID for safe lost-reply retries
-  conversation cancel ID                Request cancellation of the active turn
+  conversation cancel ID [--turn TURN_ID]
+                                        Request cancellation of the active turn; with --turn, only while that turn is active
   conversation resume ID                Reconnect or resume a stopped agent
   conversation disconnect ID            Stop the conversation's idle agent
   conversation child-transcript ID MESSAGE_ID CHILD_ID [--cursor CURSOR] [--offset 0..100000]
@@ -178,9 +179,15 @@ export async function runConversationCommand(socketPath: string, area: string | 
     const response = await requestDaemon(socketPath, 'agent.send', { conversation_id: conversationId, request_id: requestId, text })
     return { ...response, request_id: requestId }
   }
-  if (area === 'conversation' && (action === 'cancel' || action === 'resume' || action === 'disconnect')) {
+  if (area === 'conversation' && action === 'cancel') {
+    const parsed = parseWords(rest, ['--turn'], [], 'conversation cancel')
+    const [conversation_id] = positionals(parsed, 1, 'conversation cancel requires ID [--turn TURN_ID]')
+    const turn = parsed.options['--turn']
+    return requestDaemon(socketPath, 'agent.cancel', { conversation_id, ...(turn === undefined ? {} : { turn_id: turn }) })
+  }
+  if (area === 'conversation' && (action === 'resume' || action === 'disconnect')) {
     if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)
-    const op = ({ cancel: 'agent.cancel', resume: 'agent.resume', disconnect: 'agent.disconnect' } as const)[action]
+    const op = ({ resume: 'agent.resume', disconnect: 'agent.disconnect' } as const)[action]
     return requestDaemon(socketPath, op, { conversation_id: required(rest[0], 'ID') })
   }
   if (area === 'conversation' && action === 'child-transcript') {

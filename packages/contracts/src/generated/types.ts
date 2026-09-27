@@ -2496,6 +2496,12 @@ export interface AgentAnswerRequest {
 export interface AgentCancelRequest {
   conversation_id: string
   op: 'agent.cancel'
+  /**
+   * The turn the caller saw active. When present, the cancel applies only
+   * while that turn is still the active one, so a late or retried cancel
+   * never stops its successor. Absent, it cancels whatever turn is active.
+   */
+  turn_id?: string
 }
 /**
  * `agent.child_transcript`: one page of a provider child agent's transcript.

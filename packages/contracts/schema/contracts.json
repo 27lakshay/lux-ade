@@ -1464,6 +1464,10 @@
         },
         "op": {
           "const": "agent.cancel"
+        },
+        "turn_id": {
+          "description": "The turn the caller saw active. When present, the cancel applies only\nwhile that turn is still the active one, so a late or retried cancel\nnever stops its successor. Absent, it cancels whatever turn is active.",
+          "type": "string"
         }
       },
       "required": [

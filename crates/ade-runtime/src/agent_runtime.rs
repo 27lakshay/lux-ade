@@ -456,7 +456,7 @@ impl Run {
                 // A refused or uncertain answer is not proof that the turn
                 // failed. Retain the live request and its once-only receipt.
                 self.append(Event::Error { error });
-            } else if matches!(method, "steer" | "compact") {
+            } else if !failure_ends_run(method) {
                 // A refused control leaves the turn and the run as they were;
                 // its caller reads the error from this receipt.
             } else {
@@ -485,6 +485,15 @@ impl Drop for Run {
     fn drop(&mut self) {
         self.adapter.stop();
     }
+}
+
+/// Whether a failed Agent command fails the whole run. A refused steer,
+/// compaction or cancellation does not: the cancel names one turn, and by the
+/// time its failure arrives a successor may be running in the same run. Its
+/// caller reads the failure from the command receipt and decides for the turn
+/// it cancelled.
+fn failure_ends_run(method: &str) -> bool {
+    !matches!(method, "steer" | "compact" | "cancel")
 }
 
 pub fn read(reader: &mut BufReader<UnixStream>) -> Result<Value> {
@@ -687,6 +696,15 @@ impl Provider for Remote {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_failed_cancel_never_fails_the_run_it_shares_with_a_successor() {
+        for control in ["cancel", "steer", "compact"] {
+            assert!(!failure_ends_run(control), "{control}");
+        }
+        for operation in ["open", "send", "resume"] {
+            assert!(failure_ends_run(operation), "{operation}");
+        }
+    }
     #[derive(Default)]
     struct Fake {
         sends: AtomicUsize,
