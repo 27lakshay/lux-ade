@@ -26,6 +26,20 @@ export interface RemoteTarget {
    * known_hosts; only an explicitly typed destination uses that.
    */
   hostPublicKey: string | null
+  /**
+   * The pairing this client presents in every hello, from `remote.host.list`
+   * (its pairing ID) and the token its reference names. A target with a
+   * pairing forwards to the host's paired endpoint (`remote.host.start`
+   * daemon.paired_socket), which refuses a revoked pairing. Absent or null for
+   * the host user's own owner socket.
+   */
+  pairing?: RemotePairingCredential | null
+}
+
+/** A pairing ID and its token. The token stays in memory and is never logged. */
+export interface RemotePairingCredential {
+  pairingId: string
+  token: string
 }
 
 export type RemotePhase =
@@ -39,6 +53,7 @@ export type RemotePhase =
 
 /** Why a connection stopped retrying. Each needs a person to act. */
 export type RemoteFailure = 'host_untrusted' | 'auth_failed' | 'incompatible' | 'identity_mismatch' | 'invalid_target'
+  | 'pairing_revoked' | 'unauthorized'
 
 /** The identity a remote daemon proves in its hello. */
 export interface RemoteIdentity {
@@ -68,6 +83,7 @@ export type RemoteEvent =
   | { type: 'hello'; hello: Record<string, unknown> }
   | { type: 'hello_failed'; incompatible: boolean; detail: string }
   | { type: 'link_lost'; detail: string }
+  | { type: 'refused'; failure: 'pairing_revoked' | 'unauthorized'; detail: string }
   | { type: 'retry_due' }
   | { type: 'stop' }
 
@@ -183,6 +199,25 @@ export function validateTarget(target: RemoteTarget): string | null {
   if (target.hostPublicKey !== null && !parseHostPublicKey(target.hostPublicKey)) {
     return 'The pinned host key is not a supported SSH public key.'
   }
+  const pairing = target.pairing
+  if (pairing !== undefined && pairing !== null) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(pairing.pairingId)) return 'Pairing ID must be 1-128 letters, digits, "-" or "_".'
+    if (typeof pairing.token !== 'string' || pairing.token.length === 0 || Buffer.byteLength(pairing.token) > 4096) {
+      return 'The pairing token must be 1 to 4096 bytes.'
+    }
+  }
+  return null
+}
+
+/**
+ * Whether a daemon refused this client's pairing: the host revoked it
+ * (`pairing_revoked`), or does not grant it (`unauthorized`). Neither is
+ * retried; a person pairs again. Only a reply frame counts.
+ */
+export function pairingRefusal(failure: { code: string; replied: boolean }): 'pairing_revoked' | 'unauthorized' | null {
+  if (!failure.replied) return null
+  if (failure.code === 'pairing_revoked') return 'pairing_revoked'
+  if (failure.code === 'unauthenticated') return 'unauthorized'
   return null
 }
 
@@ -282,7 +317,7 @@ function fail(state: RemoteState, failure: RemoteFailure, detail: string): Remot
   }
 }
 
-const failureDetail: Record<Exclude<RemoteFailure, 'invalid_target' | 'incompatible' | 'identity_mismatch'>, string> = {
+const failureDetail: Record<ReturnType<typeof classifySshExit> & RemoteFailure, string> = {
   host_untrusted: 'SSH could not verify the remote host key. Verify and trust the host with ssh first.',
   auth_failed: 'SSH authentication failed. Load a key into the agent or fix ssh_config, then reconnect.',
 }
@@ -294,6 +329,11 @@ export function reduceRemote(state: RemoteState, event: RemoteEvent): RemoteStep
     if (state.phase === 'stopped') return none
     return { state: { ...state, phase: 'stopped', current: null, detail: 'Disconnected by request.' },
       effects: [{ type: 'kill_forward' }, { type: 'cancel_retry' }] }
+  }
+  if (event.type === 'refused') {
+    // The host itself refused this pairing: stop, and send nothing further.
+    if (state.phase === 'stopped' || state.phase === 'failed' || state.phase === 'idle') return none
+    return fail(state, event.failure, event.detail)
   }
   if (event.type === 'start') {
     if (state.failure === 'invalid_target') return none

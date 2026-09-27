@@ -8,9 +8,25 @@ export const remoteConnectUsage = `  remote status --host ID --remote-profile ID
   remote request OP [JSON_OBJECT] --host ID --remote-profile ID --ssh DEST --remote-socket PATH [--host-key KEY]
                                         Send one command to the remote daemon; a lost reply is
                                         reported with delivery unknown and is not retried
+      Both take [--pairing ID --token-env NAME] to present a pairing on the host's paired
+      endpoint (remote start's daemon.paired_socket); the host refuses a revoked pairing
 `
 
-const targetOptions = ['--host', '--remote-profile', '--ssh', '--remote-socket', '--host-key', '--timeout-ms'] as const
+const targetOptions = ['--host', '--remote-profile', '--ssh', '--remote-socket', '--host-key', '--timeout-ms',
+  '--pairing', '--token-env'] as const
+
+/** The pairing to present, with its token read from the named variable; never from the command line. */
+function pairing(options: Record<string, string>): RemoteTarget['pairing'] {
+  const pairingId = options['--pairing']
+  const variable = options['--token-env']
+  if (pairingId === undefined && variable === undefined) return null
+  if (pairingId === undefined || variable === undefined) {
+    throw new CliError('usage', '--pairing and --token-env are given together.')
+  }
+  const token = process.env[variable]
+  if (!token) throw new CliError('usage', `The pairing token variable ${variable} is not set.`)
+  return { pairingId, token }
+}
 
 function remoteTarget(options: Record<string, string>): RemoteTarget {
   const target = {
@@ -19,6 +35,7 @@ function remoteTarget(options: Record<string, string>): RemoteTarget {
     destination: required(options['--ssh'], '--ssh'),
     remoteSocket: required(options['--remote-socket'], '--remote-socket'),
     hostPublicKey: options['--host-key'] ?? null,
+    pairing: pairing(options),
   }
   const invalid = validateTarget(target)
   if (invalid) throw new CliError('usage', invalid)

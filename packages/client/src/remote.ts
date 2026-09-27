@@ -5,20 +5,22 @@
 // Pattern studied, not copied: Orca src/main/ssh/system-ssh-forward-process.ts (MIT).
 import { spawn, type ChildProcess } from 'node:child_process'
 import { lstatSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  decodeRequest, decodeResponse, type ExecutionHostEntry, type Operation, type PlacementDecision, type Request,
-  type Response,
+  decodeRequest, decodeResponse, type ExecutionHost, type ExecutionHostEntry, type Operation, type PlacementDecision,
+  type Request, type Response,
 } from '@ade/contracts'
+import { AdeClient } from './index.js'
 import { DaemonRequestError, requestDaemon, type DaemonResponse, type RequestOptions } from './request.js'
 import {
-  admitRemoteRequest, connectionKey, requestLostLink, initialRemoteState, pinnedKnownHosts, reduceRemote, sshForwardArgs,
-  validateLocalSocket,
+  admitRemoteRequest, connectionKey, pairingRefusal, requestLostLink, initialRemoteState, pinnedKnownHosts,
+  reduceRemote, sshForwardArgs, validateLocalSocket,
   type RemoteEffect, type RemoteEvent, type RemoteState, type RemoteTarget,
 } from './remote-state.js'
 import {
-  admitPlacement, previewCapability, type PlacementAdmission, type PreviewCapability,
+  admitPlacement, previewCapability, sshPreviewForwardArgs, type PlacementAdmission, type PreviewCapability,
 } from './placement.js'
 
 export {
@@ -27,8 +29,29 @@ export {
 } from './placement.js'
 export {
   connectionKey, remoteStatus, validateTarget,
-  type RemoteFailure, type RemoteIdentity, type RemotePhase, type RemoteState, type RemoteTarget,
+  type RemoteFailure, type RemoteIdentity, type RemotePairingCredential, type RemotePhase, type RemoteState,
+  type RemoteTarget,
 } from './remote-state.js'
+
+/**
+ * A remote service forwarded to this machine over SSH: `localUrl` reaches the
+ * service at `remoteHost:remotePort` on `host` and nowhere else. When the
+ * forward ends it stays closed; it is never reopened against another host.
+ */
+export interface RemotePreview {
+  readonly host: ExecutionHost
+  /** The service URL as the remote host sees it. */
+  readonly url: string
+  /** The same URL through the forward, on this machine's loopback address. */
+  readonly localUrl: string
+  readonly localPort: number
+  readonly remoteHost: string
+  readonly remotePort: number
+  /** Resolves with the reason once the forward has ended. */
+  readonly closed: Promise<string>
+  isOpen(): boolean
+  close(): void
+}
 
 export interface RemoteTransportOptions {
   /** The ssh executable. Defaults to `ssh` on PATH. */
@@ -57,6 +80,8 @@ export class RemoteDaemonTransport {
   private childGeneration = 0
   private probeTimer: ReturnType<typeof setTimeout> | null = null
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly previews = new Set<RemotePreview>()
+  private readonly feeds = new Set<AdeClient>()
 
   constructor(readonly target: RemoteTarget, private readonly options: RemoteTransportOptions = {}) {
     this.target = Object.freeze({ ...target })
@@ -96,8 +121,11 @@ export class RemoteDaemonTransport {
     this.dispatch({ type: 'stop' })
   }
 
-  /** Stops the forward for good and removes the private socket directory. */
+  /** Stops the forward, its feeds and previews for good and removes the private socket directory. */
   dispose(): void {
+    for (const feed of this.feeds) feed.stop()
+    this.feeds.clear()
+    for (const preview of this.previews) preview.close()
     this.stop()
     rmSync(this.directory, { recursive: true, force: true })
   }
@@ -120,8 +148,10 @@ export class RemoteDaemonTransport {
       unsubscribe = this.subscribe((state) => {
         if (state.phase === 'connected') finish(null, state)
         else if (state.phase === 'failed') {
-          finish(new DaemonRequestError(state.failure === 'incompatible' ? 'incompatible' : 'unavailable',
-            state.detail), state)
+          const code = state.failure === 'incompatible' ? 'incompatible'
+            : state.failure === 'pairing_revoked' ? 'pairing_revoked'
+              : state.failure === 'unauthorized' ? 'unauthenticated' : 'unavailable'
+          finish(new DaemonRequestError(code, state.detail), state)
         } else if (state.phase === 'stopped') finish(new DaemonRequestError('unavailable', state.detail), state)
       })
     })
@@ -136,13 +166,86 @@ export class RemoteDaemonTransport {
     const admission = admitRemoteRequest(this.state, this.target)
     if (!admission.admitted) throw new DaemonRequestError('unavailable', admission.reason, 'not_sent')
     try {
-      return await requestDaemon(this.localSocket, op, fields, options)
+      return await requestDaemon(this.localSocket, op, fields, { ...options, pairing: this.target.pairing ?? null })
     } catch (error) {
-      if (error instanceof DaemonRequestError && requestLostLink(error)) {
-        this.dispatch({ type: 'link_lost', detail: 'The forwarded remote socket closed.' })
+      if (error instanceof DaemonRequestError) {
+        const refused = pairingRefusal(error)
+        if (refused) this.dispatch({ type: 'refused', failure: refused, detail: error.message })
+        else if (requestLostLink(error)) this.dispatch({ type: 'link_lost', detail: 'The forwarded remote socket closed.' })
       }
       throw error
     }
+  }
+
+  /**
+   * The remote daemon's feed (`session.subscribe`) over this transport's
+   * forward, presenting this target's pairing. Frames carry the remote
+   * daemon's own boot ID and revision, so they cannot be confused with
+   * another host's. The feed reconnects only through this same forward, and
+   * stops for good when the host refuses the pairing. Call start() on it.
+   */
+  openFeed(): AdeClient {
+    const feed = new AdeClient(this.localSocket, { pairing: this.target.pairing ?? null })
+    this.feeds.add(feed)
+    return feed
+  }
+
+  /**
+   * Forwards a service URL on this transport's host to this machine with
+   * `ssh -L 127.0.0.1:PORT:remoteHost:remotePort`, pinned to the same host
+   * key. It is refused, with nothing started, unless {@link previewCapability}
+   * reports it available now: the entry is this host's, the URL is that
+   * host's own loopback address, and the transport is connected.
+   */
+  async openPreview(entry: ExecutionHostEntry, url: string, options: { timeoutMs?: number } = {}): Promise<RemotePreview> {
+    const capability = this.previewCapability(entry, url)
+    if (!capability.available || capability.remoteHost === null || capability.remotePort === null) {
+      throw new DaemonRequestError('unavailable', `${capability.reason ?? 'This preview cannot be forwarded.'} ` +
+        'Nothing was forwarded.', 'not_sent')
+    }
+    const localPort = await freeLoopbackPort()
+    const args = sshPreviewForwardArgs(this.target, capability, localPort, this.knownHostsFile)
+    const child = spawn(this.options.sshPath ?? 'ssh', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderr = ''
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (stderr.length < STDERR_LIMIT) stderr += chunk.toString('utf8').slice(0, STDERR_LIMIT - stderr.length)
+    })
+    let open = true
+    let settle: (reason: string) => void = () => {}
+    const closed = new Promise<string>((resolve) => { settle = resolve })
+    const end = (reason: string): void => {
+      if (!open) return
+      open = false
+      this.previews.delete(preview)
+      settle(reason)
+    }
+    child.once('error', (error) => end(`The preview forward could not run: ${error.message}`))
+    child.once('exit', (code) => end(code === 0 || code === null ? 'The preview forward was closed.'
+      : `The preview forward to ${this.target.hostId} ended: ${stderr.trim() || `exit ${code}`}`))
+    const local = new URL(url)
+    local.hostname = '127.0.0.1'
+    local.port = String(localPort)
+    const preview: RemotePreview = {
+      host: capability.host, url, localUrl: local.toString(), localPort,
+      remoteHost: capability.remoteHost, remotePort: capability.remotePort, closed,
+      isOpen: () => open,
+      close: () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+        end('The preview forward was closed.')
+      },
+    }
+    this.previews.add(preview)
+    const deadline = Date.now() + (options.timeoutMs ?? this.options.forwardTimeoutMs ?? 20_000)
+    while (open && !(await acceptsConnections(localPort))) {
+      if (Date.now() >= deadline) {
+        preview.close()
+        throw new DaemonRequestError('timeout', `The preview forward to ${this.target.hostId} did not open in time.`,
+          'not_sent')
+      }
+      await new Promise((resolve) => setTimeout(resolve, FORWARD_PROBE_MS))
+    }
+    if (!open) throw new DaemonRequestError('unavailable', `${await closed} Nothing is forwarded.`, 'not_sent')
+    return preview
   }
 
   /**
@@ -260,7 +363,8 @@ export class RemoteDaemonTransport {
 
   private sendHello(): void {
     const generation = this.childGeneration
-    requestDaemon(this.localSocket, 'hello', {}, { timeoutMs: this.options.helloTimeoutMs ?? 10_000 }).then(
+    requestDaemon(this.localSocket, 'hello', {}, { timeoutMs: this.options.helloTimeoutMs ?? 10_000,
+      pairing: this.target.pairing ?? null }).then(
       (hello) => {
         if (generation !== this.childGeneration) return
         try { decodeResponse('hello', hello) }
@@ -272,12 +376,35 @@ export class RemoteDaemonTransport {
       },
       (error: unknown) => {
         if (generation !== this.childGeneration) return
+        const refused = error instanceof DaemonRequestError ? pairingRefusal(error) : null
+        if (refused) return this.dispatch({ type: 'refused', failure: refused, detail: (error as Error).message })
         const incompatible = error instanceof DaemonRequestError && error.code === 'incompatible'
         this.dispatch({ type: 'hello_failed', incompatible,
           detail: error instanceof Error ? error.message : String(error) })
       },
     )
   }
+}
+
+/** A loopback port nothing listens on now, for the local end of a preview forward. */
+function freeLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      server.close(() => typeof address === 'object' && address ? resolve(address.port)
+        : reject(new Error('No loopback port was assigned.')))
+    })
+  })
+}
+
+function acceptsConnections(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createConnection({ host: '127.0.0.1', port })
+    probe.once('connect', () => { probe.destroy(); resolve(true) })
+    probe.once('error', () => resolve(false))
+  })
 }
 
 /**
@@ -294,9 +421,10 @@ export class RemoteConnections {
     const existing = this.transports.get(key)
     if (existing) {
       if (existing.target.destination !== target.destination || existing.target.remoteSocket !== target.remoteSocket ||
-        existing.target.hostPublicKey !== target.hostPublicKey) {
+        existing.target.hostPublicKey !== target.hostPublicKey ||
+        existing.target.pairing?.pairingId !== target.pairing?.pairingId) {
         throw new DaemonRequestError('conflict',
-          'This host and profile is already bound to a different SSH destination, remote socket or host key.')
+          'This host and profile is already bound to a different SSH destination, remote socket, host key or pairing.')
       }
       return existing
     }

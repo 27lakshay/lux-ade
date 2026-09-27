@@ -14,7 +14,7 @@ use ade_core::contract::remote::{
     RemoteHostInstallRequest, RemoteHostListRequest, RemoteHostProbe, RemoteHostProbeRequest,
     RemoteHostRemoveRequest, RemoteHostRemoved, RemoteHostReply, RemoteHostStart,
     RemoteHostStartRequest, RemoteHosts, RemotePairRequest, RemotePairing, RemotePairingReply,
-    RemoteRevokeRequest, StartOutcome,
+    RemoteRevokeRequest, StartOutcome, TokenReference,
 };
 use ade_core::protocol::{APPLICATION_PROTOCOL, RUNTIME_PROTOCOL};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -33,8 +33,11 @@ CREATE TABLE IF NOT EXISTS remote_host_installs(host_id TEXT PRIMARY KEY, contro
 const START_SCHEMA: &str = "CREATE TABLE remote_host_starts(host_id TEXT PRIMARY KEY, result TEXT NOT NULL, settled_at INTEGER NOT NULL);
 INSERT INTO remote_host_starts(host_id,result,settled_at) SELECT host_id,result,updated_at FROM (SELECT json_extract(result,'$.host_id') AS host_id,result,updated_at,row_number() OVER (PARTITION BY json_extract(result,'$.host_id') ORDER BY updated_at DESC, rowid DESC) AS n FROM operations WHERE op='remote.host.start' AND result IS NOT NULL) WHERE n=1 AND host_id IS NOT NULL;";
 
-/// Revocation is enforced where this profile starts or attaches the host.
-const ENFORCEMENT: &str = "local_profile";
+/// Only this profile refuses the pairing.
+const LOCAL_ENFORCEMENT: &str = "local_profile";
+/// The host recorded the revocation and refuses the pairing itself.
+const REMOTE_ENFORCEMENT: &str = "remote_daemon";
+const REVOKE_TIMEOUT: Duration = Duration::from_secs(45);
 const OUTPUT_LIMIT: u64 = 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(45);
 const START_TIMEOUT: Duration = Duration::from_secs(60);
@@ -454,6 +457,38 @@ fn start_reply(
     }
 }
 
+/// Reads a pairing token from where its reference points. The value is used
+/// only to compute the digest the host stores; it is never written anywhere.
+fn resolve_token(reference: &TokenReference) -> Result<String> {
+    let token = match reference {
+        TokenReference::Env(name) => std::env::var(name).with_context(|| {
+            format!("The pairing token variable {name} is not set in this daemon's environment")
+        })?,
+        TokenReference::Keychain { service, account } => {
+            let found = run(
+                "/usr/bin/security",
+                &[
+                    "find-generic-password".to_owned(),
+                    "-s".to_owned(),
+                    service.clone(),
+                    "-a".to_owned(),
+                    account.clone(),
+                    "-w".to_owned(),
+                ],
+                Input::Nothing,
+                RESOLVE_TIMEOUT,
+            )?;
+            ensure!(
+                found.code == Some(0),
+                "The Keychain has no pairing token for service {service}, account {account}"
+            );
+            found.stdout.trim_end_matches('\n').to_owned()
+        }
+    };
+    ensure!(!token.is_empty(), "The pairing token is empty");
+    Ok(token)
+}
+
 /// Probes, then starts or attaches. Only a start that ran can be unknown.
 fn attempt_start(stored: &Stored, operation_id: &str) -> RemoteHostStart {
     let host_id = &stored.host.host_id;
@@ -465,6 +500,14 @@ fn attempt_start(stored: &Stored, operation_id: &str) -> RemoteHostStart {
             Some(detail),
             None,
         )
+    };
+    // Admission checked the pairing is active; the host is granted exactly it.
+    let Some(pairing) = stored.host.pairing.as_ref() else {
+        return failed(format!("{host_id} is not paired; nothing was started"));
+    };
+    let digest = match resolve_token(&pairing.token_reference) {
+        Ok(token) => crate::remote_access::token_sha256(&token),
+        Err(error) => return failed(format!("{error:#}; nothing was started")),
     };
     let probe = match probe(stored) {
         Ok(probe) => probe,
@@ -488,7 +531,11 @@ fn attempt_start(stored: &Stored, operation_id: &str) -> RemoteHostStart {
             "The remote backend is not compatible ({gaps}); nothing was installed or started"
         ));
     };
-    let script = decide::start_script(control, stored.host.remote_profile_id.as_deref());
+    let script = decide::start_script(
+        control,
+        stored.host.remote_profile_id.as_deref(),
+        Some((&pairing.pairing_id, &digest)),
+    );
     let finished = match remote_shell(stored, &script, START_TIMEOUT) {
         Ok(finished) => finished,
         Err(error) => return failed(format!("{error:#}; nothing was started")),
@@ -735,7 +782,23 @@ impl Sessions {
             }
             "remote.host.revoke" => {
                 let revoke: RemoteRevokeRequest = decode(request)?;
-                self.remote_store(|connection| revoke_pairing(connection, &revoke))
+                let (stored, pairing) = self.remote_store(|connection| {
+                    let pairing = revoke_pairing(connection, &revoke)?;
+                    Ok((required_host(connection, &revoke.host_id)?, pairing))
+                })?;
+                // The revocation is final here first; then the host records it,
+                // without the data lock. A host that cannot be reached keeps
+                // the pairing refused by this profile, and revoking again retries.
+                let (enforcement, detail) = match remote_revoke(&stored, &pairing.pairing_id) {
+                    Ok(()) => (REMOTE_ENFORCEMENT, None),
+                    Err(error) => (
+                        LOCAL_ENFORCEMENT,
+                        Some(format!(
+                            "{error:#}. This profile refuses the pairing; the host has not recorded the revocation yet. Revoke again when the host is reachable"
+                        )),
+                    ),
+                };
+                pairing_reply(&revoke.host_id, pairing, enforcement, detail)
             }
             "remote.host.start" => self.remote_start(request),
             "remote.host.install" => self.remote_install(request),
@@ -989,10 +1052,34 @@ fn pair_host(connection: &Connection, pair: &RemotePairRequest) -> Result<Value>
         }
     };
     tx.commit()?;
-    pairing_reply(&pair.host_id, pairing)
+    // Granted on the host by the next `remote.host.start`.
+    pairing_reply(&pair.host_id, pairing, LOCAL_ENFORCEMENT, None)
 }
 
-fn revoke_pairing(connection: &Connection, revoke: &RemoteRevokeRequest) -> Result<Value> {
+/// Records a revoked pairing on the host, pinned to its key.
+fn remote_revoke(stored: &Stored, pairing_id: &str) -> Result<()> {
+    let script = decide::revoke_script(
+        effective_backend(stored),
+        pairing_id,
+        stored.host.remote_profile_id.as_deref(),
+    );
+    let finished = remote_shell(stored, &script, REVOKE_TIMEOUT)?;
+    ensure!(!finished.timed_out, "The host did not answer in time");
+    ensure!(
+        !decide::host_key_rejected(&finished.stderr),
+        "{} did not present the pinned host key {}",
+        stored.host.host_id,
+        stored.host.host_key_fingerprint
+    );
+    ensure!(
+        decide::revocation_confirmed(&finished, pairing_id),
+        "The host could not record the revocation: {}",
+        decide::diagnostic(&finished.stderr)
+    );
+    Ok(())
+}
+
+fn revoke_pairing(connection: &Connection, revoke: &RemoteRevokeRequest) -> Result<RemotePairing> {
     let tx = transaction(connection)?;
     tx.execute(
         "UPDATE remote_pairings SET state='revoked',revoked_at=?3 WHERE pairing_id=?1 AND host_id=?2 AND state='active'",
@@ -1014,15 +1101,21 @@ fn revoke_pairing(connection: &Connection, revoke: &RemoteRevokeRequest) -> Resu
             )
         })?;
     tx.commit()?;
-    pairing_reply(&revoke.host_id, pairing)
+    Ok(pairing)
 }
 
-fn pairing_reply(host_id: &str, pairing: RemotePairing) -> Result<Value> {
+fn pairing_reply(
+    host_id: &str,
+    pairing: RemotePairing,
+    enforcement: &str,
+    detail: Option<String>,
+) -> Result<Value> {
     reply(&RemotePairingReply {
         tag: Default::default(),
         host_id: host_id.to_owned(),
         pairing,
-        enforcement: ENFORCEMENT.to_owned(),
+        enforcement: enforcement.to_owned(),
+        detail,
     })
 }
 

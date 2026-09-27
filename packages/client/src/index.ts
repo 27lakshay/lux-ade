@@ -1,5 +1,6 @@
 import { createConnection, type Socket } from 'node:net'
 import { call, type CallRequest } from './call.js'
+import { helloLine } from './request.js'
 import { decodeFeedFrame as decodeDailyUseFeedFrame, decodeRequest as decodeDailyUseRequest,
   decodeResponse as decodeDailyUseResponse, type FeedFrame as DailyUseFeedFrame,
   type Operation as DailyUseOperation, type Request as DailyUseRequest,
@@ -159,7 +160,13 @@ export class AdeClient {
   private running = false
   private retryCount = 0
 
-  constructor(private readonly endpoint: string | undefined) {}
+  /**
+   * `pairing` is presented in the hello, for a remote host's paired endpoint
+   * reached through a forward. A host that refuses the pairing ends the feed:
+   * it is not retried.
+   */
+  constructor(private readonly endpoint: string | undefined,
+    private readonly options: { pairing?: { pairingId: string; token: string } | null } = {}) {}
 
   getState(): ClientState {
     return this.state
@@ -267,7 +274,7 @@ export class AdeClient {
       socket.destroy()
     }
     socket.setTimeout(HANDSHAKE_TIMEOUT_MS, () => fail('Daemon handshake timed out.'))
-    socket.on('connect', () => socket.write('{"op":"hello"}\n'))
+    socket.on('connect', () => socket.write(helloLine(this.options.pairing)))
     socket.on('data', (chunk: Buffer) => {
       if (generation !== this.generation) return
       buffer = Buffer.concat([buffer, chunk])
@@ -279,7 +286,17 @@ export class AdeClient {
         buffer = buffer.subarray(end + 1)
         const frame = parseFrame(line)
         if (!frame) return fail('Daemon sent an invalid JSON frame.')
-        if (frame.type === 'error') return fail(requiredString(frame.message) ?? 'Daemon returned an error.')
+        if (frame.type === 'error') {
+          if (phase === 'hello' && (frame.code === 'pairing_revoked' || frame.code === 'unauthenticated')) {
+            // The host refused this pairing. Retrying cannot help: a person pairs again.
+            this.running = false
+            this.publish({ status: 'unavailable',
+              detail: requiredString(frame.message) ?? 'The host refused this pairing.' })
+            socket.destroy()
+            return
+          }
+          return fail(requiredString(frame.message) ?? 'Daemon returned an error.')
+        }
         const previousPhase = phase
         const result = this.applyFrame(frame, phase, socket)
         if (result === 'invalid') return fail('Daemon sent an invalid or discontinuous state frame.')

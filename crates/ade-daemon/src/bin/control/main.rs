@@ -2,6 +2,7 @@
 //! executable and OS services; development Python tools are not on this path.
 mod backup;
 
+use ade_daemon::remote_access;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -357,6 +358,72 @@ fn start_runtime(
     }
 }
 
+/// A pairing ID and its token digest, as `--grant` names them.
+type GrantArgument = (String, String);
+
+/// `profiles start [PROFILE_ID] [--grant PAIRING_ID:TOKEN_SHA256]`.
+fn start_arguments(rest: &[String]) -> Result<(Option<&str>, Option<GrantArgument>)> {
+    let mut positional = None;
+    let mut grant = None;
+    let mut index = 0;
+    while index < rest.len() {
+        if rest[index] == "--grant" {
+            let value = rest.get(index + 1).context("Missing --grant value")?;
+            let (pairing_id, digest) = value
+                .split_once(':')
+                .context("Access grant refused: --grant takes PAIRING_ID:TOKEN_SHA256")?;
+            grant = Some((pairing_id.to_owned(), digest.to_owned()));
+            index += 2;
+        } else {
+            ensure!(positional.is_none(), "Unexpected argument {}", rest[index]);
+            positional = Some(rest[index].as_str());
+            index += 1;
+        }
+    }
+    Ok((positional, grant))
+}
+fn read_grants(runtime: &Path) -> Result<remote_access::Grants> {
+    let path = runtime.join(remote_access::GRANTS_FILE);
+    match fs::read(&path) {
+        Ok(bytes) => remote_access::Grants::parse(&bytes)
+            .with_context(|| format!("Access grant refused: {} is unreadable", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+        Err(error) => Err(error.into()),
+    }
+}
+/// Rewrites the grant file under its lock; the daemon only reads it.
+fn update_grants(
+    runtime: &Path,
+    change: impl FnOnce(&mut remote_access::Grants, i64) -> Result<()>,
+) -> Result<remote_access::Grants> {
+    let _lock = Lock::acquire(&runtime.join(remote_access::GRANTS_LOCK), true)?;
+    let mut grants = read_grants(runtime)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            elapsed.as_millis().min(i64::MAX as u128) as i64
+        });
+    change(&mut grants, now)?;
+    private_write(
+        &runtime.join(remote_access::GRANTS_FILE),
+        &serde_json::to_vec(&grants)?,
+    )?;
+    Ok(grants)
+}
+/// Waits until the daemon's paired endpoint accepts connections.
+fn wait_for_endpoint(endpoint: &Path) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while UnixStream::connect(endpoint).is_err() {
+        ensure!(
+            Instant::now() < deadline,
+            "The daemon did not open its paired endpoint {}",
+            endpoint.display()
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
+}
+
 fn profiles(args: &[String]) -> Result<Value> {
     let mut home = std::env::var_os("ADE_PROFILES_HOME")
         .map(PathBuf::from)
@@ -424,16 +491,67 @@ fn profiles(args: &[String]) -> Result<Value> {
             )
         }
         "start" => {
-            let item = find_profile(&value, rest.first().map(String::as_str))?;
+            let (positional, grant) = start_arguments(rest)?;
+            let item = find_profile(&value, positional)?;
             let path = profile_path(&home, &item.id)?;
             let runtime = path.join("runtime");
             let workspace = path.join("workspace");
             private_dir(&workspace)?;
+            // The grant is written before the daemon starts, so a new daemon
+            // opens its paired endpoint before it answers hello.
+            if let Some((pairing_id, digest)) = &grant {
+                private_dir(&runtime)?;
+                update_grants(&runtime, |grants, now| {
+                    remote_access::grant(grants, pairing_id, digest, now).map(|_| ())
+                })?;
+            }
             let launched = start_runtime(&runtime, &workspace, &daemon, packaged())?;
+            let access = match &grant {
+                Some((pairing_id, _)) => {
+                    let endpoint = remote_access::paired_socket(Path::new(
+                        launched["socket"]
+                            .as_str()
+                            .context("Started daemon has no socket")?,
+                    ));
+                    wait_for_endpoint(&endpoint)?;
+                    json!({"pairing_id":pairing_id,"endpoint":endpoint})
+                }
+                None => Value::Null,
+            };
             Ok(
                 json!({"type":"profile_started","profile":profile_view(&home,item,value.selected_id.as_deref())?,
-                "socket":launched["socket"],"daemon":launched["daemon"]}),
+                "socket":launched["socket"],"daemon":launched["daemon"],"access":access}),
             )
+        }
+        "access-revoke" | "access-list" => {
+            let (pairing_id, profile_id) = if action == "access-revoke" {
+                (
+                    Some(rest.first().context("Missing pairing ID")?.as_str()),
+                    rest.get(1).map(String::as_str),
+                )
+            } else {
+                (None, rest.first().map(String::as_str))
+            };
+            let item = find_profile(&value, profile_id)?;
+            let runtime = profile_path(&home, &item.id)?.join("runtime");
+            private_dir(&runtime)?;
+            let grants = match pairing_id {
+                Some(pairing_id) => update_grants(&runtime, |grants, now| {
+                    remote_access::revoke(grants, pairing_id, now).map(|_| ())
+                })?,
+                None => read_grants(&runtime)?,
+            };
+            // Digests stay on the host; the listing names pairings and states only.
+            let listed = grants
+                .grants
+                .iter()
+                .map(|grant| {
+                    json!({"pairing_id":grant.pairing_id,"state":grant.state,
+                    "granted_at_ms":grant.granted_at_ms,"revoked_at_ms":grant.revoked_at_ms})
+                })
+                .collect::<Vec<_>>();
+            Ok(json!({"type":"access_grants","profile_id":item.id,
+                "revoked":pairing_id,"grants":listed}))
         }
         "backup-backend" | "restore-backend" | "pending-restores" | "resume-restore" => {
             backup::profile_command(&home, &mut value, action, rest)

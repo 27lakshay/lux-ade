@@ -1,6 +1,6 @@
 // Steps the remote specs share: register, pair and start a remote host through
 // the local profile daemon, and name the SDK transport target for it.
-import { expect, type RemoteHost, type RemoteLab, type RemoteTarget } from '../fixtures/remote-hosts'
+import { expect, pairingTokenEnv, type RemoteHost, type RemoteLab, type RemoteTarget } from '../fixtures/remote-hosts'
 import type { ScratchProfile } from '../fixtures'
 
 let operations = 0
@@ -14,8 +14,9 @@ export async function addAndPair(profile: ScratchProfile, host: RemoteHost, host
   const added = await profile.call('remote.host.add', { host_id: hostId, ssh_target: host.name,
     expected_fingerprint: host.hostKey.fingerprint, ...(options.label ? { label: options.label } : {}),
     ...(options.remoteProfileId ? { remote_profile_id: options.remoteProfileId } : {}) })
+  // The lab profile holds the token in this variable; a start grants it on the host.
   const paired = await profile.call('remote.host.pair', { host_id: hostId,
-    token_reference: { env: `ADE_${hostId.toUpperCase().replace(/-/g, '_')}_TOKEN` } })
+    token_reference: { env: pairingTokenEnv } })
   expect(paired.pairing.state).toBe('active')
   return { host: added.host, pairing: paired.pairing }
 }

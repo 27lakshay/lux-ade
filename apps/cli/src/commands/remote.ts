@@ -11,8 +11,10 @@ export const remoteUsage = `  remote list                           List registe
   remote probe HOST_ID                  Verify the host key and report what the ADE backend lacks
   remote pair HOST_ID (--token-env NAME | --token-keychain SERVICE --token-account ACCOUNT)
                                         Record a pairing; only the token's location is stored
-  remote revoke HOST_ID PAIRING_ID      Revoke a pairing; this profile stops starting the host
-  remote start HOST_ID --request-id ID  Start or attach the remote profile daemon
+  remote revoke HOST_ID PAIRING_ID      Revoke a pairing here, then on the host, which refuses it
+                                        on its paired endpoint; run again if the host was unreachable
+  remote start HOST_ID --request-id ID  Start or attach the remote profile daemon and grant the
+                                        pairing on it; the token is read from its reference
   remote install HOST_ID --request-id ID
                                         Copy this installation's backend into ~/.ade/backend on
                                         the host when it lacks a compatible one; changes nothing else
@@ -76,8 +78,8 @@ export async function runRemoteCommand(socketPath: string, area: string | undefi
     }
     case 'revoke': {
       if (rest.length !== 2) throw new CliError('usage', 'remote revoke takes HOST_ID PAIRING_ID.')
-      return dailyUseCommand(socketPath, { op: 'remote.host.revoke',
-        host_id: required(rest[0], 'HOST_ID'), pairing_id: required(rest[1], 'PAIRING_ID') })
+      return call(socketPath, 'remote.host.revoke', { host_id: required(rest[0], 'HOST_ID'),
+        pairing_id: required(rest[1], 'PAIRING_ID') }, { timeoutMs: remoteDeadlineMs('remote.host.revoke') })
     }
     case 'start': {
       const { args, options } = split(rest, 1, ['--request-id'], 'start')

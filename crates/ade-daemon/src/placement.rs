@@ -432,6 +432,7 @@ mod tests {
                     build_id: None,
                     application_protocol: "a".into(),
                     runtime_protocol: "r".into(),
+                    paired_socket: None,
                 }),
             },
             settled_at_ms: at,

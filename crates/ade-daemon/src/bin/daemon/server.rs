@@ -2,6 +2,7 @@ mod browser_automation;
 mod browser_context;
 mod browser_tools;
 mod diagnostics;
+mod paired;
 
 use crate::browser_reconcile::{HeldReceipt, owner_settlement};
 use ade_core::contract::conversations::Ack;
@@ -1956,6 +1957,9 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     {
         host.ensure_terminal(&host.default_workspace, None, false)?;
     }
+    // The paired endpoint opens before the owner socket answers hello, so a
+    // start that granted a pairing finds it ready.
+    let paired = paired::Paired::start(&host);
     let (listener, _socket) = runtime::SocketGuard::bind(Path::new(&socket))?;
     eprintln!(
         "lux-ade daemon {} listening at {socket}; runtime {}; durable state {}",
@@ -1994,6 +1998,9 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
             }
             Err(e) => return Err(e.into()),
         }
+    }
+    if let Some(paired) = paired {
+        paired.close();
     }
     // Returning ends remaining observer threads. No provider or Git worker may be
     // live in this process at this point; the supervisor retains providers and shells.
