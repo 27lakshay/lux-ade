@@ -620,6 +620,7 @@ export type ContractDefinition =
   | RetentionPreviewRequest
   | RetentionReceiptStore
   | RetentionWithheld
+  | ReviewBranchRequest
   | ReviewCommitRequest
   | ReviewDiff
   | ReviewDiffPage
@@ -631,8 +632,11 @@ export type ContractDefinition =
   | ReviewFeedbackMatch
   | ReviewFeedbackSearch
   | ReviewFeedbackSearchRequest
+  | ReviewFetchRequest
   | ReviewFile
   | ReviewHunkRequest
+  | ReviewMergeAction
+  | ReviewMergeRequest
   | ReviewOperationAcknowledgeRequest
   | ReviewOperationAcknowledged
   | ReviewOperationEntry
@@ -640,7 +644,11 @@ export type ContractDefinition =
   | ReviewOperationListRequest
   | ReviewOperationReply
   | ReviewOperationRequest
+  | ReviewPullRequest
+  | ReviewPushRequest
   | ReviewStageRequest
+  | ReviewStashAction
+  | ReviewStashRequest
   | ReviewStatus
   | ReviewStatusRequest
   | ReviewUnstageRequest
@@ -1748,6 +1756,14 @@ export type RetentionOutcome = 'removed' | 'failed'
  * What one diff line is.
  */
 export type ReviewDiffRowKind = 'hunk' | 'context' | 'added' | 'removed' | 'meta'
+/**
+ * What `review.merge` does.
+ */
+export type ReviewMergeAction = 'merge' | 'abort'
+/**
+ * What `review.stash` does.
+ */
+export type ReviewStashAction = 'push' | 'pop'
 /**
  * A configured workspace script, as `script.list` returns it.
  */
@@ -6602,8 +6618,10 @@ export interface GitOperation {
    */
   recovery?: string | null
   /**
-   * The success result: `{head, output}` for a commit, otherwise
-   * `{changed, action, receipt}`.
+   * The success result: `{head, output}` for a commit, `{changed, action,
+   * receipt}` for a file change, and `{action, branch, head, ...}` for a
+   * branch, stash, merge, fetch, pull or push. A merge or stash pop that
+   * stopped on conflicts fails with `{action, conflicts}` here.
    */
   result?: unknown
   started_at: number
@@ -10087,6 +10105,31 @@ export interface RetentionPreviewRequest {
   op: 'retention.preview'
 }
 /**
+ * `review.branch`: create a branch at HEAD, switch to a local branch, or both.
+ * Git refuses a switch that would overwrite local changes.
+ */
+export interface ReviewBranchRequest {
+  /**
+   * Create the branch at HEAD first; it must not exist yet.
+   */
+  create?: boolean
+  /**
+   * The status `index_token` the user reviewed.
+   */
+  index_token: string
+  /**
+   * The local branch name, checked with `git check-ref-format --branch`.
+   */
+  name: string
+  op: 'review.branch'
+  operation_id: string
+  /**
+   * Switch to the branch. At least one of `create` and `switch` is true.
+   */
+  switch?: boolean
+  workspace_id: string
+}
+/**
  * `review.commit`: commit the reviewed staged index.
  */
 export interface ReviewCommitRequest {
@@ -10250,6 +10293,19 @@ export interface ReviewFeedbackSearchRequest {
   workspace_id: string
 }
 /**
+ * `review.fetch`: fetch one configured remote. Only remote-tracking refs change.
+ */
+export interface ReviewFetchRequest {
+  op: 'review.fetch'
+  operation_id: string
+  /**
+   * A configured remote name; the current branch's upstream remote, else
+   * `origin`, when absent. URLs are refused.
+   */
+  remote?: string
+  workspace_id: string
+}
+/**
  * `review.hunk`: stage, or with `staged` unstage, one hunk of a reviewed diff.
  */
 export interface ReviewHunkRequest {
@@ -10265,6 +10321,25 @@ export interface ReviewHunkRequest {
    * The `review.diff` token the hunk was chosen from.
    */
   token: string
+  workspace_id: string
+}
+/**
+ * `review.merge`: merge a branch or commit into the current branch, or abort
+ * a stopped merge. A merge that stops on conflicts fails and lists them in
+ * the receipt's `result.conflicts`; resolve, stage and commit, or abort.
+ */
+export interface ReviewMergeRequest {
+  action: ReviewMergeAction
+  /**
+   * The status `index_token` the user reviewed.
+   */
+  index_token: string
+  op: 'review.merge'
+  operation_id: string
+  /**
+   * Merge only: a local branch, remote-tracking branch, tag or commit.
+   */
+  target?: string
   workspace_id: string
 }
 /**
@@ -10344,12 +10419,63 @@ export interface ReviewOperationRequest {
   workspace_id: string
 }
 /**
+ * `review.pull`: fetch the current branch's upstream and fast-forward to it.
+ * A diverged branch fails; fetch and merge explicitly instead.
+ */
+export interface ReviewPullRequest {
+  /**
+   * The status `index_token` the user reviewed.
+   */
+  index_token: string
+  op: 'review.pull'
+  operation_id: string
+  workspace_id: string
+}
+/**
+ * `review.push`: push the current branch without force, to its upstream, or
+ * to the same-named branch on `remote`, which then becomes the upstream.
+ */
+export interface ReviewPushRequest {
+  /**
+   * The status `index_token` the user reviewed.
+   */
+  index_token: string
+  op: 'review.push'
+  operation_id: string
+  /**
+   * Required when the branch has no upstream; must be a configured remote name.
+   */
+  remote?: string
+  workspace_id: string
+}
+/**
  * `review.stage`: stage one reviewed file at a status revision.
  */
 export interface ReviewStageRequest {
   op: 'review.stage'
   operation_id: string
   path: string
+  revision: string
+  workspace_id: string
+}
+/**
+ * `review.stash`: save or restore uncommitted changes.
+ */
+export interface ReviewStashRequest {
+  action: ReviewStashAction
+  /**
+   * Push only: also save untracked files.
+   */
+  include_untracked?: boolean
+  /**
+   * Push only: the stash message.
+   */
+  message?: string
+  op: 'review.stash'
+  operation_id: string
+  /**
+   * The status `revision` the user reviewed; a changed tree fails as stale.
+   */
   revision: string
   workspace_id: string
 }
@@ -12523,7 +12649,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -12613,6 +12739,12 @@ export interface RequestByOperation {
   "review.unstage": ReviewUnstageRequest
   "review.discard": ReviewDiscardRequest
   "review.commit": ReviewCommitRequest
+  "review.branch": ReviewBranchRequest
+  "review.stash": ReviewStashRequest
+  "review.merge": ReviewMergeRequest
+  "review.fetch": ReviewFetchRequest
+  "review.pull": ReviewPullRequest
+  "review.push": ReviewPushRequest
   "review.operation": ReviewOperationRequest
   "review.operation.list": ReviewOperationListRequest
   "review.operation.acknowledge": ReviewOperationAcknowledgeRequest
@@ -12878,6 +13010,12 @@ export interface ResponseByOperation {
   "review.unstage": ReviewOperationReply
   "review.discard": ReviewOperationReply
   "review.commit": ReviewOperationReply
+  "review.branch": ReviewOperationReply
+  "review.stash": ReviewOperationReply
+  "review.merge": ReviewOperationReply
+  "review.fetch": ReviewOperationReply
+  "review.pull": ReviewOperationReply
+  "review.push": ReviewOperationReply
   "review.operation": ReviewOperationReply
   "review.operation.list": ReviewOperationList
   "review.operation.acknowledge": ReviewOperationAcknowledged

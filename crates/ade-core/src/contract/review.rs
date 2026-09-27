@@ -36,6 +36,30 @@ pub fn operations() -> Vec<OperationSpec> {
             "review.commit",
             Tier::EffectCommand,
         ),
+        OperationSpec::new::<ReviewBranchRequest, ReviewOperationReply>(
+            "review.branch",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<ReviewStashRequest, ReviewOperationReply>(
+            "review.stash",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<ReviewMergeRequest, ReviewOperationReply>(
+            "review.merge",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<ReviewFetchRequest, ReviewOperationReply>(
+            "review.fetch",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<ReviewPullRequest, ReviewOperationReply>(
+            "review.pull",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<ReviewPushRequest, ReviewOperationReply>(
+            "review.push",
+            Tier::EffectCommand,
+        ),
         OperationSpec::new::<ReviewOperationRequest, ReviewOperationReply>(
             "review.operation",
             Tier::Query,
@@ -160,6 +184,119 @@ pub struct ReviewCommitRequest {
     #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub message: String,
+    /// The status `index_token` the user reviewed.
+    pub index_token: String,
+}
+
+/// `review.branch`: create a branch at HEAD, switch to a local branch, or both.
+/// Git refuses a switch that would overwrite local changes.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewBranchRequest {
+    pub workspace_id: String,
+    #[serde(rename = "operation_id", alias = "request_id")]
+    pub operation_id: String,
+    /// The local branch name, checked with `git check-ref-format --branch`.
+    pub name: String,
+    /// Create the branch at HEAD first; it must not exist yet.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub create: bool,
+    /// Switch to the branch. At least one of `create` and `switch` is true.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub switch: bool,
+    /// The status `index_token` the user reviewed.
+    pub index_token: String,
+}
+
+/// What `review.stash` does.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStashAction {
+    /// Save the working changes and the index, leaving a clean tree.
+    Push,
+    /// Apply the newest stash and drop it; a conflicting stash is kept.
+    Pop,
+}
+
+/// `review.stash`: save or restore uncommitted changes.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewStashRequest {
+    pub workspace_id: String,
+    #[serde(rename = "operation_id", alias = "request_id")]
+    pub operation_id: String,
+    pub action: ReviewStashAction,
+    /// The status `revision` the user reviewed; a changed tree fails as stale.
+    pub revision: String,
+    /// Push only: also save untracked files.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub include_untracked: bool,
+    /// Push only: the stash message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub message: Option<String>,
+}
+
+/// What `review.merge` does.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewMergeAction {
+    /// Merge `target` into the current branch with Git's default strategy.
+    Merge,
+    /// Abort the merge in progress and restore the pre-merge state.
+    Abort,
+}
+
+/// `review.merge`: merge a branch or commit into the current branch, or abort
+/// a stopped merge. A merge that stops on conflicts fails and lists them in
+/// the receipt's `result.conflicts`; resolve, stage and commit, or abort.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewMergeRequest {
+    pub workspace_id: String,
+    #[serde(rename = "operation_id", alias = "request_id")]
+    pub operation_id: String,
+    pub action: ReviewMergeAction,
+    /// Merge only: a local branch, remote-tracking branch, tag or commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub target: Option<String>,
+    /// The status `index_token` the user reviewed.
+    pub index_token: String,
+}
+
+/// `review.fetch`: fetch one configured remote. Only remote-tracking refs change.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewFetchRequest {
+    pub workspace_id: String,
+    #[serde(rename = "operation_id", alias = "request_id")]
+    pub operation_id: String,
+    /// A configured remote name; the current branch's upstream remote, else
+    /// `origin`, when absent. URLs are refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub remote: Option<String>,
+}
+
+/// `review.pull`: fetch the current branch's upstream and fast-forward to it.
+/// A diverged branch fails; fetch and merge explicitly instead.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewPullRequest {
+    pub workspace_id: String,
+    #[serde(rename = "operation_id", alias = "request_id")]
+    pub operation_id: String,
+    /// The status `index_token` the user reviewed.
+    pub index_token: String,
+}
+
+/// `review.push`: push the current branch without force, to its upstream, or
+/// to the same-named branch on `remote`, which then becomes the upstream.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewPushRequest {
+    pub workspace_id: String,
+    #[serde(rename = "operation_id", alias = "request_id")]
+    pub operation_id: String,
+    /// Required when the branch has no upstream; must be a configured remote name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub remote: Option<String>,
     /// The status `index_token` the user reviewed.
     pub index_token: String,
 }
@@ -347,8 +484,10 @@ pub struct GitOperation {
     pub op: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<i64>,
-    /// The success result: `{head, output}` for a commit, otherwise
-    /// `{changed, action, receipt}`.
+    /// The success result: `{head, output}` for a commit, `{changed, action,
+    /// receipt}` for a file change, and `{action, branch, head, ...}` for a
+    /// branch, stash, merge, fetch, pull or push. A merge or stash pop that
+    /// stopped on conflicts fails with `{action, conflicts}` here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Value")]
     pub result: Option<Value>,
@@ -511,6 +650,33 @@ mod tests {
             "review.commit",
             json!({"workspace_id": "w", "operation_id": "o", "message": "m", "index_token": "i"}),
         );
+        request::<ReviewBranchRequest>(
+            "review.branch",
+            json!({"workspace_id": "w", "operation_id": "o", "name": "b", "create": true,
+                "switch": true, "index_token": "i"}),
+        );
+        request::<ReviewStashRequest>(
+            "review.stash",
+            json!({"workspace_id": "w", "operation_id": "o", "action": "push", "revision": "r",
+                "include_untracked": true, "message": "m"}),
+        );
+        request::<ReviewMergeRequest>(
+            "review.merge",
+            json!({"workspace_id": "w", "operation_id": "o", "action": "merge", "target": "t",
+                "index_token": "i"}),
+        );
+        request::<ReviewFetchRequest>(
+            "review.fetch",
+            json!({"workspace_id": "w", "operation_id": "o", "remote": "origin"}),
+        );
+        request::<ReviewPullRequest>(
+            "review.pull",
+            json!({"workspace_id": "w", "operation_id": "o", "index_token": "i"}),
+        );
+        request::<ReviewPushRequest>(
+            "review.push",
+            json!({"workspace_id": "w", "operation_id": "o", "remote": "origin", "index_token": "i"}),
+        );
         request::<ReviewOperationRequest>(
             "review.operation",
             json!({"workspace_id": "w", "operation_id": "o"}),
@@ -622,6 +788,12 @@ mod tests {
                     | "review.unstage"
                     | "review.discard"
                     | "review.commit"
+                    | "review.branch"
+                    | "review.stash"
+                    | "review.merge"
+                    | "review.fetch"
+                    | "review.pull"
+                    | "review.push"
             );
             assert_eq!(spec.tier == Tier::EffectCommand, effect, "{}", spec.name);
             let acknowledge = spec.name == "review.operation.acknowledge";
