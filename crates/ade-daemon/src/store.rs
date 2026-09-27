@@ -23,6 +23,7 @@ mod bindings;
 mod conversations;
 mod migrations;
 mod send_intents;
+mod send_outbox;
 mod terminals;
 #[cfg(test)]
 mod tests;
@@ -32,6 +33,7 @@ pub use attachments::*;
 pub use bindings::*;
 use conversations::*;
 pub use send_intents::*;
+pub use send_outbox::*;
 pub(crate) use terminals::forget_terminal_views;
 
 fn decode<T: DeserializeOwned>(value: String) -> Result<T> {

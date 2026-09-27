@@ -2196,6 +2196,31 @@
       ],
       "type": "object"
     },
+    "DraftSendAcknowledgeRequest": {
+      "additionalProperties": false,
+      "description": "`draft.send.acknowledge`: settle one listed send once the caller has shown\nits outcome. An accepted prompt completes; a rejected one aborts. A prompt\nthe daemon has not accepted is refused, because only delivery can settle it.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.send.acknowledge"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id",
+        "request_id"
+      ],
+      "type": "object"
+    },
     "DraftSendCompleteRequest": {
       "additionalProperties": false,
       "description": "`draft.send.complete`: clear the draft once the prompt was accepted.",
@@ -2238,6 +2263,32 @@
       "required": [
         "op",
         "conversation_id",
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "DraftSendListRequest": {
+      "additionalProperties": false,
+      "description": "`draft.send.list`: list one window's unresolved sends across Conversations,\nordered by Conversation ID. A later page sends the previous `next_cursor`.",
+      "properties": {
+        "after": {
+          "type": "string"
+        },
+        "limit": {
+          "description": "Page size from 1 to 200; the daemon uses 50 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "draft.send.list"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
         "window_id"
       ],
       "type": "object"
@@ -3110,6 +3161,58 @@
         "status",
         "answer_dispatched",
         "answer_attempt"
+      ],
+      "type": "object"
+    },
+    "PendingSend": {
+      "description": "One unresolved send and what the daemon knows about it.",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/SendIntent"
+        },
+        "outcome": {
+          "$ref": "#/$defs/SendOutcome"
+        }
+      },
+      "required": [
+        "intent",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "PendingSendList": {
+      "description": "The `draft.send.list` reply.",
+      "properties": {
+        "next_cursor": {
+          "description": "The cursor for the next page; null on the last page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "restored_from_backup": {
+          "description": "Whether the profile was restored from a backup, which holds its sends.",
+          "type": "boolean"
+        },
+        "sends": {
+          "items": {
+            "$ref": "#/$defs/PendingSend"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `pending_sends` type tag.",
+          "enum": [
+            "pending_sends"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sends",
+        "restored_from_backup",
+        "next_cursor"
       ],
       "type": "object"
     },
@@ -3988,6 +4091,123 @@
       ],
       "type": "object"
     },
+    "ReviewOperationAcknowledgeRequest": {
+      "additionalProperties": false,
+      "description": "`review.operation.acknowledge`: record that the person saw an interrupted\nGit mutation. The operation never runs again either way.",
+      "properties": {
+        "op": {
+          "const": "review.operation.acknowledge"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "ReviewOperationAcknowledged": {
+      "description": "The `review.operation.acknowledge` reply. A repeat returns the first time.",
+      "properties": {
+        "acknowledged_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "operation": {
+          "$ref": "#/$defs/GitOperation"
+        },
+        "type": {
+          "description": "The `review_operation_acknowledged` type tag.",
+          "enum": [
+            "review_operation_acknowledged"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation",
+        "acknowledged_at"
+      ],
+      "type": "object"
+    },
+    "ReviewOperationEntry": {
+      "description": "One listed Git mutation.",
+      "properties": {
+        "acknowledged_at": {
+          "description": "When the person acknowledged it; null while unacknowledged.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "operation": {
+          "$ref": "#/$defs/GitOperation"
+        }
+      },
+      "required": [
+        "operation",
+        "acknowledged_at"
+      ],
+      "type": "object"
+    },
+    "ReviewOperationList": {
+      "description": "The `review.operation.list` reply.",
+      "properties": {
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/ReviewOperationEntry"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "description": "More matching operations exist than the reply carries.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `review_operations` type tag.",
+          "enum": [
+            "review_operations"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operations",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "ReviewOperationListRequest": {
+      "additionalProperties": false,
+      "description": "`review.operation.list`: the workspace's Git mutations that still need the\nperson: running ones and interrupted ones not yet acknowledged, newest\nfirst. `include_acknowledged` adds acknowledged interrupted ones.",
+      "properties": {
+        "include_acknowledged": {
+          "type": "boolean"
+        },
+        "op": {
+          "const": "review.operation.list"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
     "ReviewOperationReply": {
       "description": "The reply to every Git mutation and to `review.operation`.",
       "properties": {
@@ -4655,6 +4875,38 @@
       ],
       "type": "object"
     },
+    "SendAcknowledged": {
+      "description": "The `draft.send.acknowledge` reply, with the window's current draft.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "draft": {
+          "$ref": "#/$defs/Draft"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "resolution": {
+          "$ref": "#/$defs/SendResolution"
+        },
+        "type": {
+          "description": "The `send_acknowledged` type tag.",
+          "enum": [
+            "send_acknowledged"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "request_id",
+        "conversation_id",
+        "resolution",
+        "draft"
+      ],
+      "type": "object"
+    },
     "SendIntent": {
       "description": "A prompt recorded before dispatch, with the draft it came from.",
       "properties": {
@@ -4760,6 +5012,51 @@
         "restored_from_backup"
       ],
       "type": "object"
+    },
+    "SendOutcome": {
+      "description": "What the daemon knows about an unresolved send.",
+      "oneOf": [
+        {
+          "const": "prepared",
+          "description": "Recorded, but no accepted message exists. Retry delivery with the same ID.",
+          "type": "string"
+        },
+        {
+          "const": "accepted",
+          "description": "The prompt was accepted as a message. Acknowledge it to clear the draft.",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "The daemon rejected it before admission. Acknowledge it to release the draft.",
+          "type": "string"
+        },
+        {
+          "const": "held",
+          "description": "A restored backup holds it until its source outcome is reconciled.",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "A rejected intent has an accepted message. The records disagree; the\ndaemon settles neither way.",
+          "type": "string"
+        }
+      ]
+    },
+    "SendResolution": {
+      "description": "How an acknowledged send settled.",
+      "oneOf": [
+        {
+          "const": "completed",
+          "description": "The accepted prompt's draft was cleared.",
+          "type": "string"
+        },
+        {
+          "const": "aborted",
+          "description": "The rejected prompt was released; the draft keeps its text.",
+          "type": "string"
+        }
+      ]
     },
     "Service": {
       "properties": {
@@ -7107,6 +7404,20 @@
     },
     {
       "domain": "conversations",
+      "name": "draft.send.list",
+      "request": "DraftSendListRequest",
+      "response": "PendingSendList",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.send.acknowledge",
+      "request": "DraftSendAcknowledgeRequest",
+      "response": "SendAcknowledged",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
       "name": "queue.enqueue",
       "request": "QueueEnqueueRequest",
       "response": "Ack",
@@ -7475,6 +7786,20 @@
       "request": "ReviewOperationRequest",
       "response": "ReviewOperationReply",
       "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.operation.list",
+      "request": "ReviewOperationListRequest",
+      "response": "ReviewOperationList",
+      "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.operation.acknowledge",
+      "request": "ReviewOperationAcknowledgeRequest",
+      "response": "ReviewOperationAcknowledged",
+      "tier": "idempotent_command"
     },
     {
       "domain": "review",

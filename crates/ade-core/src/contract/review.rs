@@ -40,6 +40,14 @@ pub fn operations() -> Vec<OperationSpec> {
             "review.operation",
             Tier::Query,
         ),
+        OperationSpec::new::<ReviewOperationListRequest, ReviewOperationList>(
+            "review.operation.list",
+            Tier::Query,
+        ),
+        OperationSpec::new::<ReviewOperationAcknowledgeRequest, ReviewOperationAcknowledged>(
+            "review.operation.acknowledge",
+            Tier::IdempotentCommand,
+        ),
         OperationSpec::new::<ReviewFeedbackSearchRequest, ReviewFeedbackSearch>(
             "review.feedback.search",
             Tier::Query,
@@ -164,6 +172,25 @@ pub struct ReviewOperationRequest {
     pub operation_id: String,
 }
 
+/// `review.operation.list`: the workspace's Git mutations that still need the
+/// person: running ones and interrupted ones not yet acknowledged, newest
+/// first. `include_acknowledged` adds acknowledged interrupted ones.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewOperationListRequest {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub include_acknowledged: bool,
+}
+
+/// `review.operation.acknowledge`: record that the person saw an interrupted
+/// Git mutation. The operation never runs again either way.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewOperationAcknowledgeRequest {
+    pub workspace_id: String,
+    #[serde(rename = "operation_id", alias = "request_id")]
+    pub operation_id: String,
+}
+
 /// `review.feedback.search`: find saved review notes by file, note text or both.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewFeedbackSearchRequest {
@@ -188,6 +215,11 @@ wire_tag!(ReviewStatusTag, "review_status");
 wire_tag!(ReviewDiffTag, "review_diff");
 wire_tag!(ReviewDiffPageTag, "review_diff_page");
 wire_tag!(ReviewOperationTag, "review_operation");
+wire_tag!(ReviewOperationListTag, "review_operations");
+wire_tag!(
+    ReviewOperationAcknowledgedTag,
+    "review_operation_acknowledged"
+);
 wire_tag!(ReviewFeedbackSearchTag, "review_feedback_search");
 
 /// The `review.status` reply.
@@ -341,6 +373,33 @@ pub struct GitOperation {
     pub backup_path: Option<String>,
 }
 
+/// One listed Git mutation.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewOperationEntry {
+    pub operation: GitOperation,
+    /// When the person acknowledged it; null while unacknowledged.
+    pub acknowledged_at: Option<i64>,
+}
+
+/// The `review.operation.list` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewOperationList {
+    #[serde(rename = "type")]
+    pub tag: ReviewOperationListTag,
+    pub operations: Vec<ReviewOperationEntry>,
+    /// More matching operations exist than the reply carries.
+    pub truncated: bool,
+}
+
+/// The `review.operation.acknowledge` reply. A repeat returns the first time.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewOperationAcknowledged {
+    #[serde(rename = "type")]
+    pub tag: ReviewOperationAcknowledgedTag,
+    pub operation: GitOperation,
+    pub acknowledged_at: i64,
+}
+
 /// The `review.feedback.search` reply.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewFeedbackSearch {
@@ -456,6 +515,19 @@ mod tests {
             "review.operation",
             json!({"workspace_id": "w", "operation_id": "o"}),
         );
+        request::<ReviewOperationListRequest>(
+            "review.operation.list",
+            json!({"workspace_id": "w"}),
+        );
+        let all: ReviewOperationListRequest = request(
+            "review.operation.list",
+            json!({"workspace_id": "w", "include_acknowledged": true}),
+        );
+        assert!(all.include_acknowledged);
+        request::<ReviewOperationAcknowledgeRequest>(
+            "review.operation.acknowledge",
+            json!({"workspace_id": "w", "operation_id": "o"}),
+        );
         request::<ReviewFeedbackSearchRequest>(
             "review.feedback.search",
             json!({"workspace_id": "w", "path": "a", "query": "q", "before": 9, "limit": 20}),
@@ -517,6 +589,21 @@ mod tests {
                 "started_at": 1, "op": "review.commit", "finished_at": 2,
                 "result": {"head": "abc", "output": "[main abc] m\n"}}}),
         );
+        reply::<ReviewOperationList>(
+            "review.operation.list",
+            json!({"type": "review_operations", "operations": [
+                {"operation": {"id": "o", "status": "interrupted", "started_at": 1,
+                    "op": "review.commit", "error": "Interrupted"}, "acknowledged_at": null},
+                {"operation": {"id": "p", "status": "running", "started_at": 2,
+                    "op": "review.stage"}, "acknowledged_at": 3}],
+                "truncated": false}),
+        );
+        reply::<ReviewOperationAcknowledged>(
+            "review.operation.acknowledge",
+            json!({"type": "review_operation_acknowledged", "operation": {"id": "o",
+                "status": "interrupted", "started_at": 1, "op": "review.commit",
+                "error": "Interrupted"}, "acknowledged_at": 5}),
+        );
         reply::<ReviewFeedbackSearch>(
             "review.feedback.search",
             json!({"type": "review_feedback_search", "results": [{"message_id": "m",
@@ -537,6 +624,13 @@ mod tests {
                     | "review.commit"
             );
             assert_eq!(spec.tier == Tier::EffectCommand, effect, "{}", spec.name);
+            let acknowledge = spec.name == "review.operation.acknowledge";
+            assert_eq!(
+                spec.tier == Tier::IdempotentCommand,
+                acknowledge,
+                "{}",
+                spec.name
+            );
         }
     }
 }

@@ -34,6 +34,12 @@ pub fn operations() -> Vec<OperationSpec> {
             "draft.send.abort",
             Tier::IdempotentCommand,
         ),
+        OperationSpec::new::<DraftSendListRequest, PendingSendList>("draft.send.list", Tier::Query),
+        // Settles the send the only way the daemon's evidence allows; it never dispatches.
+        OperationSpec::new::<DraftSendAcknowledgeRequest, SendAcknowledged>(
+            "draft.send.acknowledge",
+            Tier::IdempotentCommand,
+        ),
         // The queue delivers each queued prompt to the provider when it drains.
         OperationSpec::new::<QueueEnqueueRequest, Ack>("queue.enqueue", Tier::EffectCommand),
         OperationSpec::new::<QueueCancelRequest, Ack>("queue.cancel", Tier::IdempotentCommand),
@@ -257,6 +263,30 @@ pub struct DraftSendAbortRequest {
     pub request_id: String,
 }
 
+/// `draft.send.list`: list one window's unresolved sends across Conversations,
+/// ordered by Conversation ID. A later page sends the previous `next_cursor`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DraftSendListRequest {
+    pub window_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub after: Option<String>,
+    /// Page size from 1 to 200; the daemon uses 50 when it is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    pub limit: Option<u64>,
+}
+
+/// `draft.send.acknowledge`: settle one listed send once the caller has shown
+/// its outcome. An accepted prompt completes; a rejected one aborts. A prompt
+/// the daemon has not accepted is refused, because only delivery can settle it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DraftSendAcknowledgeRequest {
+    pub conversation_id: String,
+    pub window_id: String,
+    pub request_id: String,
+}
+
 /// `queue.enqueue`: queue a prompt. `request_id` becomes the queued prompt's ID.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct QueueEnqueueRequest {
@@ -339,6 +369,8 @@ pub struct AttachmentReclaimApplyRequest {
 
 wire_tag!(DraftTag, "draft");
 wire_tag!(SendIntentTag, "send_intent");
+wire_tag!(PendingSendsTag, "pending_sends");
+wire_tag!(SendAcknowledgedTag, "send_acknowledged");
 wire_tag!(AttachmentTag, "attachment");
 wire_tag!(AttachmentInspectionTag, "attachment_inspection");
 wire_tag!(AttachmentReclaimPreviewTag, "attachment_reclaim_preview");
@@ -402,6 +434,64 @@ pub struct SendIntentPrepared {
     #[serde(rename = "type")]
     pub tag: SendIntentTag,
     pub intent: SendIntent,
+}
+
+/// What the daemon knows about an unresolved send.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SendOutcome {
+    /// Recorded, but no accepted message exists. Retry delivery with the same ID.
+    Prepared,
+    /// The prompt was accepted as a message. Acknowledge it to clear the draft.
+    Accepted,
+    /// The daemon rejected it before admission. Acknowledge it to release the draft.
+    Rejected,
+    /// A restored backup holds it until its source outcome is reconciled.
+    Held,
+    /// A rejected intent has an accepted message. The records disagree; the
+    /// daemon settles neither way.
+    Conflict,
+}
+
+/// One unresolved send and what the daemon knows about it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct PendingSend {
+    pub intent: SendIntent,
+    pub outcome: SendOutcome,
+}
+
+/// The `draft.send.list` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PendingSendList {
+    #[serde(rename = "type")]
+    pub tag: PendingSendsTag,
+    pub sends: Vec<PendingSend>,
+    /// Whether the profile was restored from a backup, which holds its sends.
+    pub restored_from_backup: bool,
+    /// The cursor for the next page; null on the last page.
+    pub next_cursor: Option<String>,
+}
+
+/// How an acknowledged send settled.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SendResolution {
+    /// The accepted prompt's draft was cleared.
+    Completed,
+    /// The rejected prompt was released; the draft keeps its text.
+    Aborted,
+}
+
+/// The `draft.send.acknowledge` reply, with the window's current draft.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct SendAcknowledged {
+    #[serde(rename = "type")]
+    pub tag: SendAcknowledgedTag,
+    pub request_id: String,
+    pub conversation_id: String,
+    pub resolution: SendResolution,
+    #[schemars(with = "DraftSchema")]
+    pub draft: Draft,
 }
 
 /// The `attachment.put` and `attachment.import` reply.
@@ -569,6 +659,8 @@ mod tests {
             ("draft.send.prepare", "idempotent_command"),
             ("draft.send.complete", "idempotent_command"),
             ("draft.send.abort", "idempotent_command"),
+            ("draft.send.list", "query"),
+            ("draft.send.acknowledge", "idempotent_command"),
             ("queue.enqueue", "effect_command"),
             ("queue.cancel", "idempotent_command"),
             ("queue.pause", "effect_command"),
@@ -728,6 +820,71 @@ mod tests {
             },
             json!({"type": "send_intent", "intent": wire_intent}),
         );
+    }
+
+    #[test]
+    fn send_outbox_round_trips() {
+        request::<DraftSendListRequest>(
+            "draft.send.list",
+            json!({"op": "draft.send.list", "window_id": "w"}),
+        );
+        request::<DraftSendListRequest>(
+            "draft.send.list",
+            json!({"op": "draft.send.list", "window_id": "w", "after": "c", "limit": 10}),
+        );
+        request::<DraftSendAcknowledgeRequest>(
+            "draft.send.acknowledge",
+            json!({"op": "draft.send.acknowledge", "conversation_id": "c", "window_id": "w",
+                "request_id": "send_1"}),
+        );
+        let wire_intent = serde_json::to_value(intent()).unwrap();
+        response(
+            "draft.send.list",
+            &PendingSendList {
+                tag: PendingSendsTag::Tag,
+                sends: vec![PendingSend {
+                    intent: intent(),
+                    outcome: SendOutcome::Accepted,
+                }],
+                restored_from_backup: false,
+                next_cursor: Some("conversation_1".into()),
+            },
+            json!({"type": "pending_sends", "sends": [{"intent": wire_intent,
+                "outcome": "accepted"}], "restored_from_backup": false,
+                "next_cursor": "conversation_1"}),
+        );
+        response(
+            "draft.send.list",
+            &PendingSendList {
+                tag: PendingSendsTag::Tag,
+                sends: vec![],
+                restored_from_backup: true,
+                next_cursor: None,
+            },
+            json!({"type": "pending_sends", "sends": [], "restored_from_backup": true,
+                "next_cursor": null}),
+        );
+        response(
+            "draft.send.acknowledge",
+            &SendAcknowledged {
+                tag: SendAcknowledgedTag::Tag,
+                request_id: "send_1".into(),
+                conversation_id: "c".into(),
+                resolution: SendResolution::Completed,
+                draft: Draft {
+                    text: String::new(),
+                    revision: 3,
+                    attachments: vec![],
+                },
+            },
+            json!({"type": "send_acknowledged", "request_id": "send_1",
+                "conversation_id": "c", "resolution": "completed",
+                "draft": {"text": "", "revision": 3}}),
+        );
+        for outcome in ["prepared", "accepted", "rejected", "held", "conflict"] {
+            let decoded: SendOutcome = serde_json::from_value(json!(outcome)).unwrap();
+            assert_eq!(serde_json::to_value(decoded).unwrap(), json!(outcome));
+        }
     }
 
     #[test]
