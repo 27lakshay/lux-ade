@@ -29,7 +29,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F007 | Independent profiles | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F008 | Multiple windows | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F009 | Remote-only client use | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
-| F010 | Background continuity | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
+| F010 | Background continuity | V1 | [01-foundation](01-foundation/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-profiles.md)) |
 | F011 | Tabs and split panes | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F012 | Floating and detached views | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F013 | Themes and theme import/export | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
@@ -94,7 +94,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F072 | Built-in code editor | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F073 | File previews | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
 | F074 | Diff review and agent feedback | V1 | [06-files-git](06-files-git/spec.md) | Verified |
-| F075 | Ordinary Git operations | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
+| F075 | Ordinary Git operations | V1 | [06-files-git](06-files-git/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-files-git.md)) |
 | F076 | PR creation and management | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F077 | Advanced PR status and review | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F078 | Multiple forge support | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
@@ -118,15 +118,15 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F096 | Browser diagnostics | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
 | F097 | Browser recording | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
 | F098 | Computer and screen access | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
-| F099 | iOS simulator integration | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
-| F100 | Android device and emulator integration | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
+| F099 | iOS simulator integration | V1 | [08-browser-devices](08-browser-devices/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-devplug.md)) |
+| F100 | Android device and emulator integration | V1 | [08-browser-devices](08-browser-devices/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-devplug.md)) |
 | F101 | Complete application command API | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
 | F102 | CLI support | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
 | F103 | Client SDK | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
-| F104 | Delegation | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
+| F104 | Delegation | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-orchestration2.md)) |
 | F105 | Parallel runs and comparison | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
-| F106 | Parent and child tracking | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
-| F107 | Agent messages, waits and questions | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
+| F106 | Parent and child tracking | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-orchestration2.md)) |
+| F107 | Agent messages, waits and questions | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-orchestration2.md)) |
 | F108 | Task DAG orchestration | Not now | [09-api-orchestration](09-api-orchestration/spec.md) | Not scheduled |
 | F109 | Advanced orchestration recovery engine | Not now | [09-api-orchestration](09-api-orchestration/spec.md) | Not scheduled |
 | F110 | Specialist discovery | Not now | [09-api-orchestration](09-api-orchestration/spec.md) | Not scheduled |
@@ -136,19 +136,19 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F114 | Desktop notifications | V1 | [10-notifications](10-notifications/spec.md) | Unverified |
 | F115 | Push notifications | Design now, ship later | [10-notifications](10-notifications/spec.md) | Not scheduled |
 | F116 | Cross-client notification coordination | Design now, ship later | [10-notifications](10-notifications/spec.md) | Not scheduled |
-| F117 | Activity feed | V1 | [10-notifications](10-notifications/spec.md) | Unverified |
+| F117 | Activity feed | V1 | [10-notifications](10-notifications/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-orchestration2.md)) |
 | F118 | Ongoing widgets | Not now | [10-notifications](10-notifications/spec.md) | Not scheduled |
 | F119 | Dictation | Design now, ship later | [10-notifications](10-notifications/spec.md) | Not scheduled |
 | F120 | Conversational voice | Design now, ship later | [10-notifications](10-notifications/spec.md) | Not scheduled |
-| F121 | Direct LAN/VPN connectivity | V1 | [11-remote](11-remote/spec.md) | Unverified |
-| F122 | Pairing and revocation | V1 | [11-remote](11-remote/spec.md) | Unverified |
+| F121 | Direct LAN/VPN connectivity | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-remote2.md)) |
+| F122 | Pairing and revocation | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-remote2.md)) |
 | F123 | Relay connectivity | Design now, ship later | [11-remote](11-remote/spec.md) | Not scheduled |
 | F124 | SSH bootstrap and connection | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-remote.md)) |
 | F125 | Remote workspaces | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-remote.md)) |
-| F126 | Multiple execution hosts | V1 | [11-remote](11-remote/spec.md) | Unverified |
+| F126 | Multiple execution hosts | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-remote2.md)) |
 | F127 | Execution placement | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-remote.md)) |
 | F128 | Disposable VM/container environments | Not now | [11-remote](11-remote/spec.md) | Not scheduled |
-| F129 | Remote previews and device access | V1 | [11-remote](11-remote/spec.md) | Unverified |
+| F129 | Remote previews and device access | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-remote2.md)) |
 | F130 | Polished self-host deployment product | Not now | [11-remote](11-remote/spec.md) | Not scheduled |
 | F131 | Central MCP catalog | V1 | [12-integrations-operations](12-integrations-operations/spec.md) | Unverified |
 | F132 | Central skill catalog | V1 | [12-integrations-operations](12-integrations-operations/spec.md) | Unverified |
@@ -176,18 +176,18 @@ These apply in addition to the 107 selected features.
 | R003 | Cancel one run without affecting its successor | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R004 | Stop existing execution during overload | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R005 | Retain independent work across frontend and daemon restarts | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R006 | See actual process uncertainty | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R006 | See actual process uncertainty | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R007 | Coordinate physical resources across profiles | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R008 | Know when output recovery reaches its limit | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R009 | Keep one slow client from degrading other work | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R010 | Restore a consistent application view | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R008 | Know when output recovery reaches its limit | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
+| R009 | Keep one slow client from degrading other work | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
+| R010 | Restore a consistent application view | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R011 | Avoid stale results after changing context | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R012 | Retain account identity through credential changes | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R013 | Continue active work while plugins update | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R014 | Restore a complete managed backup | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-backup.md)) |
 | R015 | Control retention without losing referenced work | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R016 | Keep preview content separate from application authority | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R017 | Keep remote targets stable during connection failure | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R017 | Keep remote targets stable during connection failure | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-remote2.md)) |
 | R018 | Understand failures without exposing secrets | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R019 | Use many active resources responsively | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R020 | Run the packaged application independently of development tooling | [Shared reliability](13-reliability/spec.md) | Unverified |

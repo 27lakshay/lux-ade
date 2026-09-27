@@ -1091,3 +1091,33 @@ Fixed and proven:
 A fix round covers the two blockers and the delegation provider gap. Browser
 automation and diagnostics (F091–F097) live in Electron main and wait for
 Electron E2E in the UI phase.
+
+## Headless E2E, round 3
+
+**Merged:** seven of ten slices. `check:static` passes with 770 in-process tests.
+The protocol suite runs 506 passing specs in 3.7 minutes with one
+deterministic failure, `reliability-a/overload.spec.ts` "with the data volume
+full". Since the merge, a cancellation under a full data volume is reported as
+recorded, where the slice expected an explicit failure. Two merged slices
+disagree about where cancellation is recorded under storage failure; this needs
+a fix. It affects R004, which is not accepted.
+
+**Newly accepted (17):** R006, R008, R009, R010, R017, F010, F075, F099, F100,
+F104, F106, F107, F117, F121, F122, F126 and F129. The register now holds 58
+accepted rows.
+
+**Not merged:**
+- **secret-refs:** secrets stored as Keychain or environment references. Its
+  final E2E never completed, because the Mac's keychain service (securityd)
+  stopped answering during its runs; it answers again now. Review also found
+  that a restored profile could delete another profile's Keychain item through
+  plugin credential references. Held for a fix and a full rerun, with keychain
+  specs serialized.
+- **reliability-c:** R007, R013, R015 and R018 pass, but the slice broke the
+  `browser.list` and `browser.inspect` wire shape for the real Electron owner
+  in fixed-socket mode. Held for a fix.
+- **ops-3:** the worker lost network access mid-run (DNS failure). Its branch
+  has five unreviewed commits (native Claude rewind, MCP catalog wired into
+  launches, retention limits, SSH clone and publish). Held for completion and
+  review.
+
