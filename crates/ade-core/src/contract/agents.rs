@@ -43,6 +43,12 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AgentCancelRequest {
     pub conversation_id: String,
+    /// The turn the caller saw active. When present, the cancel applies only
+    /// while that turn is still the active one, so a late or retried cancel
+    /// never stops its successor. Absent, it cancels whatever turn is active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
+    pub turn_id: Option<String>,
 }
 
 /// `agent.resume`: reconnect the Conversation's Agent.
@@ -288,6 +294,11 @@ mod tests {
             let (name, _, _) = operation(op);
             assert!(!validator(&name).is_valid(&json!({"op": op})));
         }
+        let fenced: AgentCancelRequest = request(
+            "agent.cancel",
+            json!({"op": "agent.cancel", "conversation_id": "conversation_1", "turn_id": "turn_1"}),
+        );
+        assert_eq!(fenced.turn_id.as_deref(), Some("turn_1"));
     }
 
     #[test]

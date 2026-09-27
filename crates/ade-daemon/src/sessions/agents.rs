@@ -37,6 +37,25 @@ pub(super) struct FailedAgent {
     pub(super) hold: Option<String>,
 }
 
+/// Why `agent.cancel` must not act, if anything. Only a Conversation with a
+/// turn in flight can be cancelled. A caller that names the turn it saw gets
+/// a refusal once another turn, or none, is active: the cancel was meant for
+/// a predecessor and must not stop its successor.
+pub(super) fn cancel_refusal(
+    status: &str,
+    active_turn: Option<&str>,
+    expected_turn: Option<&str>,
+) -> Option<String> {
+    let in_flight = matches!(status, "starting" | "running" | "waiting" | "cancelling");
+    match expected_turn {
+        Some(turn) if !in_flight || active_turn != Some(turn) => Some(format!(
+            "Turn {turn} is no longer active; nothing was cancelled"
+        )),
+        None if !in_flight => Some("Agent has no active turn".into()),
+        _ => None,
+    }
+}
+
 /// Decides a failed Agent's record from its stop. `stop` is `None` when no
 /// provider was attached. Only a confirmed stop releases the worktree lease;
 /// an unconfirmed one keeps it and marks the attempt interrupted, because the
@@ -1068,37 +1087,49 @@ impl Sessions {
         }
         Ok(())
     }
-    pub(super) fn cancel(self: &Arc<Self>, id: &str) -> Result<()> {
-        let (run, rpc, thread, turn) = {
+    /// Cancels the active turn. With `expected_turn`, only while that turn is
+    /// still the active one: a late or retried cancel never stops a successor.
+    ///
+    /// Stopping existing work must not depend on storage: when the
+    /// cancellation cannot be recorded, the provider is still asked to stop
+    /// the turn, and the reply reports that the state was not recorded.
+    pub(super) fn cancel(self: &Arc<Self>, id: &str, expected_turn: Option<&str>) -> Result<()> {
+        let (run, rpc, thread, turn, submission, unrecorded) = {
             let mut d = self.data.lock().unwrap();
             let mut c = d.store.conversation(id)?;
-            ensure!(
-                matches!(
-                    c.status.as_str(),
-                    "starting" | "running" | "waiting" | "cancelling"
-                ),
-                "Agent has no active turn"
-            );
+            if let Some(refusal) =
+                cancel_refusal(&c.status, c.active_turn_id.as_deref(), expected_turn)
+            {
+                bail!(refusal);
+            }
             let a = d
                 .agents
                 .get(id)
                 .ok_or_else(|| anyhow!("Agent is not connected"))?;
             let run = a.run_id.clone();
             let rpc = a.rpc.clone();
+            let submission = a.submission.clone();
             let thread = c.provider_thread_id.clone();
             let turn = c.active_turn_id.clone();
             c.status = "cancelling".into();
             c.queue_paused = true;
-            d.store.commit_conversation(&c, &[], &[])?;
-            self.changed(&mut d, &c, &[])?;
-            (run, rpc, thread, turn)
+            let unrecorded = match d.store.commit_conversation(&c, &[], &[]) {
+                Ok(()) => {
+                    self.changed(&mut d, &c, &[])?;
+                    None
+                }
+                Err(error) => Some(error),
+            };
+            (run, rpc, thread, turn, submission, unrecorded)
         };
         if let (Some(rpc), Some(thread), Some(turn)) = (rpc, thread, turn) {
             let hub = self.clone();
             let id = id.to_owned();
             std::thread::spawn(move || {
                 if let Err(error) = rpc.cancel(&thread, &turn) {
-                    hub.fail(&id, &run, error.to_string());
+                    // A late failure belongs to the cancelled submission only;
+                    // a successor turn in the same run must not be failed.
+                    hub.fail_if(&id, &run, error.to_string(), submission.as_deref());
                 }
             });
         } else {
@@ -1107,6 +1138,11 @@ impl Sessions {
                 &run,
                 "Cancelled while the Agent was starting; resume the Conversation to continue."
                     .into(),
+            );
+        }
+        if let Some(error) = unrecorded {
+            bail!(
+                "ADE asked the provider to stop this turn but could not record the cancellation ({error:#}); the Conversation updates once storage accepts writes again"
             );
         }
         Ok(())
@@ -1275,6 +1311,35 @@ mod tests {
             let failed = failed_agent(Some(Err(error.into())));
             assert_eq!(failed.status, "interrupted");
             assert!(failed.hold.is_some_and(|reason| reason.contains(error)));
+        }
+    }
+
+    #[test]
+    fn a_cancel_naming_an_earlier_turn_never_stops_its_successor() {
+        // Unfenced: any turn in flight is cancelled.
+        assert_eq!(cancel_refusal("running", Some("turn-b"), None), None);
+        assert_eq!(cancel_refusal("starting", None, None), None);
+        assert!(cancel_refusal("idle", None, None).is_some());
+        // Fenced to the turn the caller saw.
+        assert_eq!(
+            cancel_refusal("running", Some("turn-a"), Some("turn-a")),
+            None
+        );
+        assert_eq!(
+            cancel_refusal("cancelling", Some("turn-a"), Some("turn-a")),
+            None
+        );
+        for (status, active) in [
+            ("running", Some("turn-b")),
+            ("starting", None),
+            ("interrupted", None),
+            ("idle", None),
+        ] {
+            let refusal = cancel_refusal(status, active, Some("turn-a"));
+            assert!(
+                refusal.is_some_and(|reason| reason.contains("no longer active")),
+                "{status}"
+            );
         }
     }
 

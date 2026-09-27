@@ -656,7 +656,10 @@ impl Sessions {
             }
             "agent.cancel" => {
                 let cancel: AgentCancelRequest = decode(request)?;
-                self.cancel(non_empty("conversation_id", &cancel.conversation_id)?)?;
+                self.cancel(
+                    non_empty("conversation_id", &cancel.conversation_id)?,
+                    cancel.turn_id.as_deref(),
+                )?;
                 reply(&Ack::default())
             }
             "agent.answer" => {
