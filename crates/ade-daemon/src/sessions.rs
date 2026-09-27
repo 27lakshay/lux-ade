@@ -31,6 +31,7 @@ mod accounts;
 mod agents;
 mod conversations;
 mod leases;
+mod orchestration;
 mod services;
 mod terminals;
 mod workspaces;
@@ -688,6 +689,7 @@ impl Sessions {
             | "agent.answer"
             | "window.save"
             | "window.close" => self.conversation_command(request),
+            op if op.starts_with("orchestration.") => self.orchestration_command(request),
             _ => bail!("Unknown session operation"),
         }
     }

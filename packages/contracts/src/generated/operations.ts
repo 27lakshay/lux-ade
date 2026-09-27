@@ -108,6 +108,11 @@ export const operations = {
   "browser.navigate": { tier: "effect_command", domain: "daemon", request: "BrowserNavigateRequest", response: "BrowserMutation" },
   "browser.close": { tier: "effect_command", domain: "daemon", request: "BrowserCloseRequest", response: "BrowserMutation" },
   "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
+  "orchestration.delegate": { tier: "effect_command", domain: "orchestration", request: "DelegateRequest", response: "ChildDelegated" },
+  "orchestration.children": { tier: "query", domain: "orchestration", request: "ChildrenRequest", response: "ChildList" },
+  "orchestration.child.get": { tier: "query", domain: "orchestration", request: "ChildGetRequest", response: "ChildReply" },
+  "orchestration.child.send": { tier: "effect_command", domain: "orchestration", request: "ChildSendRequest", response: "ChildMessageQueued" },
+  "orchestration.child.wait": { tier: "query", domain: "orchestration", request: "ChildWaitRequest", response: "ChildWait" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

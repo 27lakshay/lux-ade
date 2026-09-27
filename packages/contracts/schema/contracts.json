@@ -84,6 +84,54 @@
       ],
       "type": "object"
     },
+    "AccountChoice": {
+      "description": "The child's provider account, stated explicitly.",
+      "oneOf": [
+        {
+          "description": "The parent's account; the child must use the parent's provider.",
+          "properties": {
+            "mode": {
+              "const": "inherit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A managed account of the child's provider.",
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "mode": {
+              "const": "managed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "account_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The provider's own ambient login, outside ADE's managed accounts.",
+          "properties": {
+            "mode": {
+              "const": "ambient",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "AccountCreateRequest": {
       "additionalProperties": false,
       "description": "`account.create`: register a new native account home for a provider.",
@@ -1451,6 +1499,39 @@
       ],
       "type": "object"
     },
+    "Caller": {
+      "description": "Who asks. An Agent caller names its own Conversation; the daemon records\nthe attribution and refuses an Agent that acts as another Conversation.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "user",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "conversation_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "conversation_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "CatalogFrame": {
       "description": "The `catalog.get` reply and the `catalog` feed frame.",
       "properties": {
@@ -1527,6 +1608,231 @@
       ],
       "type": "object"
     },
+    "ChildDelegated": {
+      "description": "The `orchestration.delegate` reply: the child is admitted and its task is\nqueued. It says nothing about completion; wait for that.",
+      "properties": {
+        "child": {
+          "$ref": "#/$defs/ChildRecord"
+        },
+        "type": {
+          "description": "The `child_delegated` type tag.",
+          "enum": [
+            "child_delegated"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "child"
+      ],
+      "type": "object"
+    },
+    "ChildGetRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.child.get`: one child and its parent link.",
+      "properties": {
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.child.get"
+        }
+      },
+      "required": [
+        "op",
+        "child_conversation_id"
+      ],
+      "type": "object"
+    },
+    "ChildList": {
+      "description": "The `orchestration.children` reply.",
+      "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/$defs/ChildRecord"
+          },
+          "type": "array"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `child_list` type tag.",
+          "enum": [
+            "child_list"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "parent_conversation_id",
+        "children"
+      ],
+      "type": "object"
+    },
+    "ChildMessageQueued": {
+      "description": "The `orchestration.child.send` reply: the message is durably queued.",
+      "properties": {
+        "attribution": {
+          "type": "string"
+        },
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `child_message_queued` type tag.",
+          "enum": [
+            "child_message_queued"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "child_conversation_id",
+        "message_id",
+        "attribution"
+      ],
+      "type": "object"
+    },
+    "ChildRecord": {
+      "description": "A durable parent and child link with the child's current Conversation state.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attribution": {
+          "description": "`user`, or `agent:` followed by the delegating Conversation ID.",
+          "type": "string"
+        },
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "depth": {
+          "description": "1 for a child of a top-level Conversation.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation_id": {
+          "description": "The `orchestration.delegate` operation that created the child.",
+          "type": "string"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "status": {
+          "description": "The child Conversation's status, or `unavailable` when it is gone.",
+          "type": "string"
+        },
+        "task_message_id": {
+          "description": "The queued prompt that carries the task.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        },
+        "workspace_mode": {
+          "$ref": "#/$defs/WorkspaceMode"
+        },
+        "worktree_operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "child_conversation_id",
+        "parent_conversation_id",
+        "operation_id",
+        "attribution",
+        "depth",
+        "provider",
+        "account_id",
+        "workspace_id",
+        "workspace_mode",
+        "worktree_operation_id",
+        "task_message_id",
+        "created_at",
+        "status",
+        "error"
+      ],
+      "type": "object"
+    },
+    "ChildReply": {
+      "description": "The `orchestration.child.get` reply.",
+      "properties": {
+        "child": {
+          "$ref": "#/$defs/ChildRecord"
+        },
+        "type": {
+          "description": "The `child` type tag.",
+          "enum": [
+            "child"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "child"
+      ],
+      "type": "object"
+    },
+    "ChildSendRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.child.send`: queue a message for a delegated child.",
+      "properties": {
+        "caller": {
+          "$ref": "#/$defs/Caller"
+        },
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.child.send"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; a retry with the same payload returns the same message.",
+          "type": "string"
+        },
+        "text": {
+          "description": "At most 64 KiB.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "child_conversation_id",
+        "caller",
+        "text"
+      ],
+      "type": "object"
+    },
     "ChildTranscriptPage": {
       "description": "The `agent.child_transcript` reply, passed through from the provider bridge.\nOffset-paged providers send `next_offset` (null on the last page); cursor-paged\nproviders send `next_cursor` instead.",
       "properties": {
@@ -1564,6 +1870,203 @@
         "type",
         "child_id",
         "items"
+      ],
+      "type": "object"
+    },
+    "ChildWait": {
+      "description": "The `orchestration.child.wait` reply.",
+      "oneOf": [
+        {
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "outcome": {
+              "$ref": "#/$defs/Outcome"
+            },
+            "state": {
+              "const": "settled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "outcome",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "$ref": "#/$defs/PendingPhase"
+            },
+            "state": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The child asked a question or needs approval. Answer each request once\nwith `agent.answer` on the child Conversation.",
+          "properties": {
+            "request_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state": {
+              "const": "needs_input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "request_ids"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The message will not progress without intervention.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "blocked",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The deadline passed while the turn was still pending.",
+          "properties": {
+            "phase": {
+              "$ref": "#/$defs/PendingPhase"
+            },
+            "state": {
+              "const": "timed_out",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The child Conversation no longer exists.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "deadline_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "done": {
+          "description": "Whether the wait has an answer; false only for `pending`.",
+          "type": "boolean"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `child_wait` type tag.",
+          "enum": [
+            "child_wait"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "child_conversation_id",
+        "message_id",
+        "done",
+        "deadline_ms"
+      ],
+      "type": "object"
+    },
+    "ChildWaitRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.child.wait`: read whether a child's turn has settled.\n\nThe daemon never holds the request open. Send `timeout_ms` on the first\ncall and the returned `deadline_ms` on each repeat.",
+      "properties": {
+        "child_conversation_id": {
+          "type": "string"
+        },
+        "deadline_ms": {
+          "description": "An absolute deadline in Unix milliseconds from an earlier reply.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "message_id": {
+          "description": "The delegated task or child message to wait for; the newest one when absent.",
+          "type": "string"
+        },
+        "op": {
+          "const": "orchestration.child.wait"
+        },
+        "timeout_ms": {
+          "description": "From 0 to 86 400 000; 0 when absent. Ignored when `deadline_ms` is present.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "child_conversation_id"
+      ],
+      "type": "object"
+    },
+    "ChildrenRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.children`: the children a Conversation delegated, oldest first.",
+      "properties": {
+        "op": {
+          "const": "orchestration.children"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "parent_conversation_id"
       ],
       "type": "object"
     },
@@ -2021,6 +2524,57 @@
         "terminal_snapshot_format",
         "terminal_snapshot_formats",
         "boot_id"
+      ],
+      "type": "object"
+    },
+    "DelegateRequest": {
+      "additionalProperties": false,
+      "description": "`orchestration.delegate`: start a child Conversation for a task.",
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/AccountChoice"
+        },
+        "caller": {
+          "$ref": "#/$defs/Caller"
+        },
+        "op": {
+          "const": "orchestration.delegate"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; a retry with the same payload returns the same child.",
+          "type": "string"
+        },
+        "parent_conversation_id": {
+          "type": "string"
+        },
+        "provider": {
+          "description": "The child's provider ID, stated explicitly.",
+          "type": "string"
+        },
+        "provider_config": {
+          "description": "Provider settings; the daemon validates them for the provider."
+        },
+        "task": {
+          "description": "The first prompt; at most 64 KiB.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Defaults to the task's first line, cut to 45 characters; at most 256 bytes.",
+          "type": "string"
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceChoice"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "parent_conversation_id",
+        "caller",
+        "provider",
+        "account",
+        "workspace",
+        "task"
       ],
       "type": "object"
     },
@@ -3024,6 +3578,24 @@
       ],
       "type": "object"
     },
+    "Outcome": {
+      "description": "How a settled turn ended.",
+      "oneOf": [
+        {
+          "enum": [
+            "completed",
+            "failed",
+            "interrupted"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "The turn ended but ADE holds no evidence of how.",
+          "type": "string"
+        }
+      ]
+    },
     "OutputCoverage": {
       "description": "How much of a run's output the durable spool holds and the reply returns.",
       "properties": {
@@ -3113,6 +3685,24 @@
         "port_variable"
       ],
       "type": "object"
+    },
+    "PendingPhase": {
+      "description": "How far an unsettled turn has progressed.",
+      "oneOf": [
+        {
+          "enum": [
+            "starting",
+            "running",
+            "cancelling"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Durably queued; not yet submitted to the provider.",
+          "type": "string"
+        }
+      ]
     },
     "PendingRequest": {
       "properties": {
@@ -6476,6 +7066,57 @@
       ],
       "type": "object"
     },
+    "WorkspaceChoice": {
+      "description": "Where the child works, stated explicitly. Parallel children in the same\nworkspace share its files; ADE never merges their edits.",
+      "oneOf": [
+        {
+          "description": "The parent's workspace.",
+          "properties": {
+            "mode": {
+              "const": "same",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A new linked worktree made by a succeeded `worktree.switch` with\n`create`, then opened as `workspace_id`. The daemon verifies both.",
+          "properties": {
+            "mode": {
+              "const": "new_worktree",
+              "type": "string"
+            },
+            "repository_id": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            },
+            "worktree_operation_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "workspace_id",
+            "repository_id",
+            "worktree_operation_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WorkspaceMode": {
+      "description": "How the child's workspace was chosen.",
+      "enum": [
+        "same",
+        "new_worktree"
+      ],
+      "type": "string"
+    },
     "WorkspaceOpenRequest": {
       "additionalProperties": false,
       "description": "`workspace.open`: register a folder, or return the workspace already at it.",
@@ -8051,6 +8692,41 @@
       "name": "browser.operation",
       "request": "BrowserOperationRequest",
       "response": "BrowserOperation",
+      "tier": "query"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.delegate",
+      "request": "DelegateRequest",
+      "response": "ChildDelegated",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.children",
+      "request": "ChildrenRequest",
+      "response": "ChildList",
+      "tier": "query"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.child.get",
+      "request": "ChildGetRequest",
+      "response": "ChildReply",
+      "tier": "query"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.child.send",
+      "request": "ChildSendRequest",
+      "response": "ChildMessageQueued",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "orchestration",
+      "name": "orchestration.child.wait",
+      "request": "ChildWaitRequest",
+      "response": "ChildWait",
       "tier": "query"
     }
   ]

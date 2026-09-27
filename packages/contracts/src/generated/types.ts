@@ -3,6 +3,7 @@
 export type ContractDefinition =
   | Account
   | AccountAck
+  | AccountChoice
   | AccountCreateRequest
   | AccountDisableRequest
   | AccountDisabled
@@ -54,10 +55,21 @@ export type ContractDefinition =
   | BrowserTabRecord
   | BrowserTabReply
   | BrowserTabs
+  | Caller
   | CatalogFrame
   | CatalogGetRequest
   | Catalogue
+  | ChildDelegated
+  | ChildGetRequest
+  | ChildList
+  | ChildMessageQueued
+  | ChildRecord
+  | ChildReply
+  | ChildSendRequest
   | ChildTranscriptPage
+  | ChildWait
+  | ChildWaitRequest
+  | ChildrenRequest
   | ClaudeIdentity
   | CodexIdentity
   | Config
@@ -68,6 +80,7 @@ export type ContractDefinition =
   | ConversationGetRequest
   | ConversationSnapshot
   | DaemonHello
+  | DelegateRequest
   | Descriptor
   | Draft
   | DraftGetRequest
@@ -101,10 +114,12 @@ export type ContractDefinition =
   | ListenerRow
   | Message
   | OmpIdentity
+  | Outcome
   | OutputCoverage
   | OutputCoverageReason
   | OutputCoverageStatus
   | PeerEndpoint
+  | PendingPhase
   | PendingRequest
   | PendingSend
   | PendingSendList
@@ -217,6 +232,8 @@ export type ContractDefinition =
   | WindowCloseRequest
   | WindowSaveRequest
   | WorkspaceAck
+  | WorkspaceChoice
+  | WorkspaceMode
   | WorkspaceOpenRequest
   | WorkspaceRebindCatalog
   | WorkspaceRebindEntry
@@ -243,6 +260,23 @@ export type ContractDefinition =
   | WorktreeState
   | WorktreeSwitchRequest
 /**
+ * The child's provider account, stated explicitly.
+ */
+export type AccountChoice =
+  | {
+      mode: 'inherit'
+      [k: string]: unknown
+    }
+  | {
+      account_id: string
+      mode: 'managed'
+      [k: string]: unknown
+    }
+  | {
+      mode: 'ambient'
+      [k: string]: unknown
+    }
+/**
  * What `worktree.remove` does with the removed tree's branch.
  */
 export type BranchPolicy = 'keep' | 'merged'
@@ -250,6 +284,97 @@ export type BranchPolicy = 'keep' | 'merged'
  * Where a browser mutation stands.
  */
 export type BrowserOperationState = 'accepted' | 'unknown' | 'completed'
+/**
+ * Who asks. An Agent caller names its own Conversation; the daemon records
+ * the attribution and refuses an Agent that acts as another Conversation.
+ */
+export type Caller =
+  | {
+      kind: 'user'
+      [k: string]: unknown
+    }
+  | {
+      conversation_id: string
+      kind: 'agent'
+      [k: string]: unknown
+    }
+/**
+ * How the child's workspace was chosen.
+ */
+export type WorkspaceMode = 'same' | 'new_worktree'
+/**
+ * The `orchestration.child.wait` reply.
+ */
+export type ChildWait = {
+  child_conversation_id: string
+  deadline_ms: number
+  /**
+   * Whether the wait has an answer; false only for `pending`.
+   */
+  done: boolean
+  message_id: string
+  /**
+   * The `child_wait` type tag.
+   */
+  type: 'child_wait'
+  [k: string]: unknown
+} & ChildWait1
+export type ChildWait1 =
+  | {
+      error: string | null
+      outcome: Outcome
+      state: 'settled'
+      [k: string]: unknown
+    }
+  | {
+      phase: PendingPhase
+      state: 'pending'
+      [k: string]: unknown
+    }
+  | {
+      request_ids: string[]
+      state: 'needs_input'
+      [k: string]: unknown
+    }
+  | {
+      reason: string
+      state: 'blocked'
+      [k: string]: unknown
+    }
+  | {
+      phase: PendingPhase
+      state: 'timed_out'
+      [k: string]: unknown
+    }
+  | {
+      reason: string
+      state: 'unavailable'
+      [k: string]: unknown
+    }
+/**
+ * How a settled turn ended.
+ */
+export type Outcome = ('completed' | 'failed' | 'interrupted') | 'unknown'
+/**
+ * How far an unsettled turn has progressed.
+ */
+export type PendingPhase = ('starting' | 'running' | 'cancelling') | 'queued'
+/**
+ * Where the child works, stated explicitly. Parallel children in the same
+ * workspace share its files; ADE never merges their edits.
+ */
+export type WorkspaceChoice =
+  | {
+      mode: 'same'
+      [k: string]: unknown
+    }
+  | {
+      mode: 'new_worktree'
+      repository_id: string
+      workspace_id: string
+      worktree_operation_id: string
+      [k: string]: unknown
+    }
 /**
  * Whether a service's recorded run is live in the current runtime.
  */
@@ -1094,6 +1219,112 @@ export interface CatalogGetRequest {
   op: 'catalog.get'
 }
 /**
+ * The `orchestration.delegate` reply: the child is admitted and its task is
+ * queued. It says nothing about completion; wait for that.
+ */
+export interface ChildDelegated {
+  child: ChildRecord
+  /**
+   * The `child_delegated` type tag.
+   */
+  type: 'child_delegated'
+  [k: string]: unknown
+}
+/**
+ * A durable parent and child link with the child's current Conversation state.
+ */
+export interface ChildRecord {
+  account_id: string | null
+  /**
+   * `user`, or `agent:` followed by the delegating Conversation ID.
+   */
+  attribution: string
+  child_conversation_id: string
+  created_at: number
+  /**
+   * 1 for a child of a top-level Conversation.
+   */
+  depth: number
+  error: string | null
+  /**
+   * The `orchestration.delegate` operation that created the child.
+   */
+  operation_id: string
+  parent_conversation_id: string
+  provider: string
+  /**
+   * The child Conversation's status, or `unavailable` when it is gone.
+   */
+  status: string
+  /**
+   * The queued prompt that carries the task.
+   */
+  task_message_id: string
+  workspace_id: string
+  workspace_mode: WorkspaceMode
+  worktree_operation_id: string | null
+  [k: string]: unknown
+}
+/**
+ * `orchestration.child.get`: one child and its parent link.
+ */
+export interface ChildGetRequest {
+  child_conversation_id: string
+  op: 'orchestration.child.get'
+}
+/**
+ * The `orchestration.children` reply.
+ */
+export interface ChildList {
+  children: ChildRecord[]
+  parent_conversation_id: string
+  /**
+   * The `child_list` type tag.
+   */
+  type: 'child_list'
+  [k: string]: unknown
+}
+/**
+ * The `orchestration.child.send` reply: the message is durably queued.
+ */
+export interface ChildMessageQueued {
+  attribution: string
+  child_conversation_id: string
+  message_id: string
+  /**
+   * The `child_message_queued` type tag.
+   */
+  type: 'child_message_queued'
+  [k: string]: unknown
+}
+/**
+ * The `orchestration.child.get` reply.
+ */
+export interface ChildReply {
+  child: ChildRecord
+  /**
+   * The `child` type tag.
+   */
+  type: 'child'
+  [k: string]: unknown
+}
+/**
+ * `orchestration.child.send`: queue a message for a delegated child.
+ */
+export interface ChildSendRequest {
+  caller: Caller
+  child_conversation_id: string
+  op: 'orchestration.child.send'
+  /**
+   * Caller-owned operation ID; a retry with the same payload returns the same message.
+   */
+  operation_id: string
+  /**
+   * At most 64 KiB.
+   */
+  text: string
+}
+/**
  * The `agent.child_transcript` reply, passed through from the provider bridge.
  * Offset-paged providers send `next_offset` (null on the last page); cursor-paged
  * providers send `next_cursor` instead.
@@ -1111,6 +1342,35 @@ export interface ChildTranscriptPage {
    */
   type: 'child_transcript'
   [k: string]: unknown
+}
+/**
+ * `orchestration.child.wait`: read whether a child's turn has settled.
+ *
+ * The daemon never holds the request open. Send `timeout_ms` on the first
+ * call and the returned `deadline_ms` on each repeat.
+ */
+export interface ChildWaitRequest {
+  child_conversation_id: string
+  /**
+   * An absolute deadline in Unix milliseconds from an earlier reply.
+   */
+  deadline_ms?: number
+  /**
+   * The delegated task or child message to wait for; the newest one when absent.
+   */
+  message_id?: string
+  op: 'orchestration.child.wait'
+  /**
+   * From 0 to 86 400 000; 0 when absent. Ignored when `deadline_ms` is present.
+   */
+  timeout_ms?: number
+}
+/**
+ * `orchestration.children`: the children a Conversation delegated, oldest first.
+ */
+export interface ChildrenRequest {
+  op: 'orchestration.children'
+  parent_conversation_id: string
 }
 /**
  * A repository's stored lifecycle configuration.
@@ -1268,6 +1528,36 @@ export interface DaemonHello {
   type: 'hello'
   worktree_protocol: string
   [k: string]: unknown
+}
+/**
+ * `orchestration.delegate`: start a child Conversation for a task.
+ */
+export interface DelegateRequest {
+  account: AccountChoice
+  caller: Caller
+  op: 'orchestration.delegate'
+  /**
+   * Caller-owned operation ID; a retry with the same payload returns the same child.
+   */
+  operation_id: string
+  parent_conversation_id: string
+  /**
+   * The child's provider ID, stated explicitly.
+   */
+  provider: string
+  /**
+   * Provider settings; the daemon validates them for the provider.
+   */
+  provider_config?: unknown
+  /**
+   * The first prompt; at most 64 KiB.
+   */
+  task: string
+  /**
+   * Defaults to the task's first line, cut to 45 characters; at most 256 bytes.
+   */
+  title?: string
+  workspace: WorkspaceChoice
 }
 /**
  * The schema of [`Draft`], which the model defines without one.
@@ -3334,7 +3624,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -3443,6 +3733,11 @@ export interface RequestByOperation {
   "browser.navigate": BrowserNavigateRequest
   "browser.close": BrowserCloseRequest
   "browser.operation": BrowserOperationRequest
+  "orchestration.delegate": DelegateRequest
+  "orchestration.children": ChildrenRequest
+  "orchestration.child.get": ChildGetRequest
+  "orchestration.child.send": ChildSendRequest
+  "orchestration.child.wait": ChildWaitRequest
 }
 
 export interface ResponseByOperation {
@@ -3552,6 +3847,11 @@ export interface ResponseByOperation {
   "browser.navigate": BrowserMutation
   "browser.close": BrowserMutation
   "browser.operation": BrowserOperation
+  "orchestration.delegate": ChildDelegated
+  "orchestration.children": ChildList
+  "orchestration.child.get": ChildReply
+  "orchestration.child.send": ChildMessageQueued
+  "orchestration.child.wait": ChildWait
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged
