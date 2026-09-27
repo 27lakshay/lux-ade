@@ -44,6 +44,24 @@ browser operations moved onto `receipts.rs`. In-process tests grew from 87 to
 153. Wall time: about 23 minutes of worker time, plus about 25 minutes of
 coordinator merging.
 
+**Phase 2 round A, merged green at `a1d4219`** (219 in-process tests)
+
+| Slice | Result | Requirements advanced |
+|---|---|---|
+| outbox-daemon | `draft.send.list` and `draft.send.acknowledge`, `review.operation.list` and `review.operation.acknowledge` | R001, R002, R005, F036, F075 |
+| sdk-sync-core | Feed catch-up moved from the renderer into `@ade/client/sync`, a Node-free reducer with loading, current and stale states; one shared page limit | R010 |
+| backup-rust | Rust backup gains attachment integrity checks, a test-gated pause hook, a destination guard, the pre-schema-12 rejection and lifecycle recovery fields; `browser_lease.py` deleted | F050, R014 |
+| browser-crash | Browser mutations reconcile against the owner's real tabs after an owner or daemon crash, settled with evidence or reported unknown | F095, F101, F102 |
+| terminal-ownership | Input, resize and detach fenced by stream incarnation, with one explicit viewport owner | F083 |
+| runtime-replay | Replay overflow reported as degraded output, not a fake exit; reserved receipt capacity for cancel and settlement | R004, R008 |
+| runtime-descendants | Process-tree liveness verdict with TERM-to-KILL escalation, PID-reuse checks and quarantine when emptiness is unproven | R006 |
+| session-lease | Leases reconciled against the runtime before new admission after a daemon restart | R005, R006 |
+| service-ports | The actual listener verified to belong to the service's process tree; bind failure reported explicitly | F085–F089 |
+
+The coordinator fixed one review blocker: a terminal stop could be dropped
+while the process-tree lock was busy (`a1d4219`). None of these is E2E-verified;
+each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
+
 ## Scope baseline and daily-use gate
 
 The baseline is commit `cada60a`, where `requirements.md` records exactly 107
