@@ -149,6 +149,24 @@ pub enum SchemaChange {
     Refuse(String),
 }
 
+/// Why a disabled plugin cannot be uninstalled yet, if anything still runs
+/// from its artifacts. Provider sessions lease a generation's directory, and
+/// a superseded host drains while it runs from its own; removing either
+/// directory under them would fail code they have not loaded yet.
+pub fn uninstall_refusal(plugin_id: &str, provider_leases: u32, draining: usize) -> Option<String> {
+    if provider_leases > 0 {
+        Some(format!(
+            "{provider_leases} provider session(s) still lease plugin {plugin_id}; end them before uninstalling"
+        ))
+    } else if draining > 0 {
+        Some(format!(
+            "{draining} superseded backend host(s) of plugin {plugin_id} are still draining; retry once they stop"
+        ))
+    } else {
+        None
+    }
+}
+
 /// The data schema never moves below what is stored: code rollback does not
 /// roll data back. It may rise only while no provider session leases the
 /// plugin, since those sessions run older code against the same records.
@@ -291,6 +309,17 @@ mod tests {
         assert_eq!(settle(false, false, 1), Settle::Leased);
         assert_eq!(settle(false, true, 0), Settle::Draining);
         assert_eq!(settle(false, false, 0), Settle::Retire);
+    }
+
+    /// A reload superseded generation N while a call was open on it; the
+    /// user disabled and uninstalled inside the drain window. The uninstall
+    /// is refused until the drain ends, so N's directory stays in place.
+    #[test]
+    fn uninstall_waits_for_leases_and_draining_hosts() {
+        assert!(uninstall_refusal("a.b", 0, 1).is_some_and(|m| m.contains("draining")));
+        assert!(uninstall_refusal("a.b", 2, 1).is_some_and(|m| m.contains("lease")));
+        assert!(uninstall_refusal("a.b", 1, 0).is_some());
+        assert_eq!(uninstall_refusal("a.b", 0, 0), None);
     }
 
     #[test]

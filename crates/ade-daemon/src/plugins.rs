@@ -600,9 +600,10 @@ impl Core {
 
     fn host_restart(&self, request: PluginHostRestartRequest) -> Result<Value> {
         let spec = self.launch_spec(&request.plugin_id)?;
-        self.hosts
-            .restart(&spec)
-            .map_err(|message| coded("not_applied", message))?;
+        self.hosts.restart(&spec).map_err(|error| match error {
+            host::RestartError::NotApplied(message) => coded("not_applied", message),
+            host::RestartError::Failed(message) => coded("failed", message),
+        })?;
         self.host_reply(&request.plugin_id)
     }
 
@@ -846,15 +847,11 @@ impl Core {
             )
         );
         let leases = reload::lease_count(&state.db, id)?;
-        ensure!(
-            leases == 0,
-            coded(
-                "conflict",
-                format!(
-                    "{leases} provider session(s) still lease plugin {id}; end them before uninstalling"
-                )
-            )
-        );
+        // A disabled plugin gains no new drain, so the set can only shrink.
+        let draining = self.hosts.draining(id).len();
+        if let Some(message) = dev::uninstall_refusal(id, leases, draining) {
+            return Err(coded("conflict", message).into());
+        }
         let tx = state.db.transaction()?;
         tx.execute("DELETE FROM plugins WHERE id=?1", [id])?;
         tx.execute("DELETE FROM plugin_generations WHERE plugin_id=?1", [id])?;
