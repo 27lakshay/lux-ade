@@ -255,7 +255,11 @@ impl Provider for Adapter {
             }
         }
         *self.session.lock().unwrap() = Some(session.clone());
-        Ok(Connected { session, history })
+        Ok(Connected {
+            session,
+            history,
+            rewound_from: None,
+        })
     }
     fn send(
         &self,

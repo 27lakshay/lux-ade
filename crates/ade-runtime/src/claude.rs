@@ -44,6 +44,10 @@ impl Adapter {
                 &account.native_home,
                 executable,
             );
+            // ADE's own data directory: task results and fork records, never credentials.
+            if let Some(directory) = std::env::var_os("ADE_DATA_DIR") {
+                command.env("ADE_DATA_DIR", directory);
+            }
         }
         Ok(Arc::new(Self {
             rpc: Rpc::spawn(command, events, provider::bridge_event)?,
@@ -109,13 +113,18 @@ impl Provider for Adapter {
             .request("cancel", json!({"session":session,"turn":turn}))?;
         Ok(())
     }
-    /// Agent SDK 0.3.281: the bridge restarts its query with `resume` and
-    /// `resumeSessionAt` set to the last chain entry before `turn`, the
-    /// prompt UUID that started it.
-    fn rewind(&self, session: &str, turn: &str, _operation: &str) -> Result<()> {
-        self.rpc
+    /// Agent SDK 0.3.281: the bridge forks the session with `forkSession`
+    /// up to the last chain entry before `turn`, the prompt UUID that
+    /// started it, and resumes the fork. The fork is the new native session.
+    fn rewind(&self, session: &str, turn: &str, _operation: &str) -> Result<Option<String>> {
+        let reply = self
+            .rpc
             .request("rewind", json!({"session":session,"drop_from":turn}))?;
-        Ok(())
+        let forked = reply["session"]
+            .as_str()
+            .filter(|forked| !forked.is_empty() && *forked != session)
+            .context("Claude rewind did not name its forked session")?;
+        Ok(Some(forked.to_owned()))
     }
     fn prepare_submission(&self) -> Option<String> {
         Some(uuid::Uuid::new_v4().to_string())
@@ -246,8 +255,8 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
                 "Streaming input accepts messages during a turn; ADE queues prompts until the turn settles",
             ),
             rewind: capability(
-                NativeOnly,
-                "Query.rewindFiles() restores files to a user message",
+                Supported,
+                "forkSession() up to the entry before a turn, then resume the fork; files rewind through ADE checkpoints, not Query.rewindFiles()",
             ),
             compaction: capability(NativeOnly, "The /compact command"),
             resume: capability(
@@ -260,8 +269,8 @@ pub fn capabilities() -> crate::capabilities::CapabilityRecord {
             ),
             fork: capability(NativeOnly, "The forkSession option"),
             account_switch: capability(
-                Unknown,
-                "No in-session account switch is documented; a native session belongs to one config directory",
+                Supported,
+                "ADE copies the session transcript into the new account's CLAUDE_CONFIG_DIR/projects and resumes it there, as the Agent SDK documents for resuming a session on another host",
             ),
         },
         quota: capability(

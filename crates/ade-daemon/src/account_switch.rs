@@ -157,7 +157,7 @@ pub fn disclosure(
     truncated: bool,
 ) -> String {
     match continuity {
-        SwitchContinuity::NativeContinuation => "Future turns continue the same native session under the new account. Turns already run stay attributed to the earlier account.".to_owned(),
+        SwitchContinuity::NativeContinuation => "Future turns continue the same native session under the new account. ADE copies its native transcript into the new account's home, and the earlier account keeps its copy. Turns already run stay attributed to the earlier account; file checkpoints the provider kept under the earlier account do not carry over.".to_owned(),
         SwitchContinuity::NewNativeSession if !native_session && messages == 0 => {
             "Future turns run under the new account. No native session or transcript exists yet, so nothing is transferred.".to_owned()
         }

@@ -7727,6 +7727,20 @@
           "minimum": 0,
           "type": "integer"
         },
+        "native_session": {
+          "description": "After a rewind the provider performed by forking: the native session\nthe Conversation continues in. The earlier one is kept unchanged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_native_session": {
+          "description": "After a forking rewind: the native session the Conversation left.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "removed_messages": {
           "maximum": 9007199254740991,
           "minimum": 0,

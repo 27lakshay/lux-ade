@@ -33,7 +33,7 @@ pub fn native(provider: &str, control: ConversationControl) -> Result<&'static s
         ("codex", Steer) => Ok("turn/steer"),
         ("codex", Compact) => Ok("thread/compact/start"),
         ("codex", RewindConversation) => missing(
-            "Codex thread/revert rewrites only paginated threads, and ADE's adapter starts legacy threads, so it does not call it",
+            "Codex removed thread/rollback, and thread/revert rewrites only paginated threads while ADE's adapter starts legacy ones; thread/fork at an earlier turn exists but ADE's adapter does not call it",
         ),
         ("claude", Steer) => {
             missing("ADE's Claude adapter admits one turn at a time and has no native steer path")
@@ -41,7 +41,7 @@ pub fn native(provider: &str, control: ConversationControl) -> Result<&'static s
         ("claude", Compact) => {
             missing("ADE's Claude adapter does not issue Claude Code's compaction command yet")
         }
-        ("claude", RewindConversation) => Ok("claude.resume_session_at"),
+        ("claude", RewindConversation) => Ok("claude.fork_session"),
         ("omp", Steer) => missing(
             "Oh My Pi RPC has steer, but ADE's adapter cannot yet bind a steered entry to its submission ledger",
         ),
@@ -216,10 +216,7 @@ mod tests {
         }
         let claude = decide(&facts("claude", "ready"), RewindConversation);
         assert!(claude.available);
-        assert_eq!(
-            claude.mechanism.as_deref(),
-            Some("claude.resume_session_at")
-        );
+        assert_eq!(claude.mechanism.as_deref(), Some("claude.fork_session"));
         for status in ["running", "waiting", "starting", "cancelling"] {
             let busy = decide(&facts("claude", status), RewindConversation);
             assert!(!busy.available, "{status}");

@@ -5276,6 +5276,15 @@ export interface ConversationRewindHistory {
    */
   history_epoch: number
   kept_messages: number
+  /**
+   * After a rewind the provider performed by forking: the native session
+   * the Conversation continues in. The earlier one is kept unchanged.
+   */
+  native_session?: string | null
+  /**
+   * After a forking rewind: the native session the Conversation left.
+   */
+  previous_native_session?: string | null
   removed_messages: number
   removed_turns: number
   /**

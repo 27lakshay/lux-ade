@@ -201,7 +201,8 @@ test('F026: a legacy conversation on the provider login can move to a managed ac
     continuity: 'new_native_session' })
   expect(await conversation(profile, legacy.conversationId)).toMatchObject({ account_id: work.id, account_context: 'managed' })
 
-  // Claude declares no native continuation either; the preview says so and the switch refuses it.
+  // Claude declares native continuation, but a conversation with no native session yet has nothing to
+  // continue: the preview offers a new native session and the switch refuses native continuation.
   const { providers: [claudeRecord] } = await profile.call('provider.capabilities', { provider: 'claude' })
   const first = await verifiedAccount(profile, clis, 'claude', 'One', { email: 'one@example.invalid', account_id: 'org-1' })
   const second = await verifiedAccount(profile, clis, 'claude', 'Two', { email: 'two@example.invalid', account_id: 'org-2' })
@@ -215,8 +216,5 @@ test('F026: a legacy conversation on the provider login can move to a managed ac
     .toMatchObject({ continuity: 'new_native_session', context_transfer: 'none', agent_stopped: false })
 })
 
-// No bundled adapter declares `conversation.account_switch: supported`, so the
-// native-continuation path (same native session under the new account) has no
-// provider to run against. Gap: an adapter, or a fixture provider, that
-// declares and implements native account continuation.
-test.fixme('F026: a provider that declares native continuation keeps its native session across a switch', async () => {})
+// Native continuation, where Claude keeps its native session across a switch,
+// is proved in e2e/protocol/accounts-rewind/account-switch.spec.ts.

@@ -65,8 +65,10 @@ pub trait Provider: Send + Sync {
     }
     /// Returns the provider's history to before `turn` (F039): `turn` and
     /// every later turn leave the provider's history. `operation` identifies
-    /// the request so a retry is not delivered twice.
-    fn rewind(&self, _session: &str, _turn: &str, _operation: &str) -> Result<()> {
+    /// the request so a retry is not delivered twice. Returns the native
+    /// session the Conversation continues in when the provider rewinds by
+    /// forking into a new one; the earlier session stays unchanged.
+    fn rewind(&self, _session: &str, _turn: &str, _operation: &str) -> Result<Option<String>> {
         bail!("This provider adapter does not support rewinding the conversation")
     }
     fn prepare_submission(&self) -> Option<String> {

@@ -190,15 +190,28 @@ impl Store {
     /// Removes every message from `sequence` on and moves the history epoch,
     /// in one transaction with `settle`, which records the operation's
     /// outcome. Returns how many messages went and the new epoch. The search
-    /// index drops them through its delete journal.
+    /// index drops them through its delete journal. `moved` names the
+    /// provider session the rewind left and the fork it continues in; the
+    /// Conversation moves only if it is still on the session it left.
     pub fn rewind_history(
         &self,
         conversation: &str,
         sequence: i64,
+        moved: Option<(&str, &str)>,
         settle: impl FnOnce(&Connection, u64, u64) -> Result<()>,
     ) -> Result<(u64, u64)> {
         self.connection.execute_batch(HISTORY_EPOCHS)?;
         let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        if let Some((from, to)) = moved {
+            let mut current: Conversation = one(&tx, "conversations", conversation)?;
+            ensure!(
+                current.provider_thread_id.as_deref() == Some(from),
+                "The Conversation's provider session changed during the rewind"
+            );
+            current.provider_thread_id = Some(to.to_owned());
+            current.updated_at = now_ms();
+            write_conversation(&tx, &current)?;
+        }
         let removed = tx.execute(
             "DELETE FROM messages WHERE conversation_id=?1 AND sequence>=?2",
             params![conversation, sequence],

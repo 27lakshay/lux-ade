@@ -11,6 +11,7 @@ use ade_core::contract::accounts::{
     AccountSwitchRequest, AccountSwitched, AccountSwitches, ContextTransfer, SwitchContinuity,
 };
 use ade_core::contract::providers::{Capability, Support};
+use std::path::{Path, PathBuf};
 
 /// The owned inputs of one eligibility decision.
 struct Gathered {
@@ -104,6 +105,111 @@ fn transfer(d: &Data, conversation: &str, continuity: SwitchContinuity) -> Resul
         })
         .collect();
     Ok(switch::excerpt(&lines))
+}
+
+/// Native continuation for Claude (F026): copies the session's transcript,
+/// `<config>/projects/<project>/<session>.jsonl`, and its `<session>/`
+/// sidecar directory from the earlier account's config home into the new
+/// one's, where `resume` finds it; the Agent SDK documents moving a session
+/// file this way to resume it on another host. The earlier home keeps its
+/// copy. A transcript already in place with the same bytes is accepted, so a
+/// retried switch converges; different bytes are never overwritten.
+fn carry_claude_session(session: &str, from: &Path, to: &Path) -> Result<()> {
+    ensure!(
+        !session.is_empty()
+            && session.len() <= 128
+            && session
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
+        "The native session ID is not a Claude session ID"
+    );
+    let name = format!("{session}.jsonl");
+    let projects = from.join("projects");
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&projects) {
+        for entry in entries.flatten() {
+            let candidate = entry.path().join(&name);
+            if std::fs::symlink_metadata(&candidate).is_ok_and(|meta| meta.file_type().is_file()) {
+                found.push(entry.file_name());
+            }
+        }
+    }
+    let project = match found.as_slice() {
+        [project] => project.clone(),
+        [] => bail!(
+            "Claude's transcript for this session is not in the earlier account's home; nothing was switched"
+        ),
+        _ => bail!(
+            "Claude's transcript for this session is in more than one project directory; nothing was switched"
+        ),
+    };
+    let source = projects.join(&project);
+    let target = to.join("projects").join(&project);
+    copy_new_file(&source.join(&name), &target.join(&name))?;
+    let sidecar = source.join(session);
+    if std::fs::symlink_metadata(&sidecar).is_ok_and(|meta| meta.file_type().is_dir()) {
+        copy_new_tree(&sidecar, &target.join(session), 0)?;
+    }
+    Ok(())
+}
+
+/// Copies one regular file into place through a temporary name. An existing
+/// target must already hold the same bytes.
+fn copy_new_file(source: &Path, target: &Path) -> Result<()> {
+    let bytes =
+        std::fs::read(source).with_context(|| format!("Could not read {}", source.display()))?;
+    match std::fs::symlink_metadata(target) {
+        Ok(meta) => {
+            ensure!(
+                meta.file_type().is_file() && std::fs::read(target)? == bytes,
+                "A different copy of {} already exists in the new account's home; nothing was overwritten",
+                target.display()
+            );
+            return Ok(());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let parent = target.parent().context("Invalid transcript target")?;
+    std::fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(
+        ".{}.ade-{}",
+        target.file_name().unwrap_or_default().to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&temporary, &bytes)?;
+    if let Err(error) = std::fs::rename(&temporary, target) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// Copies the regular files under `source`; links and other entries are skipped.
+fn copy_new_tree(source: &Path, target: &Path, depth: usize) -> Result<()> {
+    ensure!(depth < 8, "Claude's session directory is nested too deeply");
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            copy_new_tree(&entry.path(), &target.join(entry.file_name()), depth + 1)?;
+        } else if kind.is_file() {
+            copy_new_file(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+/// The config home a Claude conversation's native session lives in: its
+/// managed account's, or, on the provider login, the daemon user's own.
+fn claude_home(d: &Data, account: Option<&str>) -> Result<PathBuf> {
+    match account {
+        Some(account) => Ok(PathBuf::from(d.store.account(account)?.native_home)),
+        None => Ok(crate::history::import::NativeStore::default_for(
+            ade_core::contract::history::HistoryImportProvider::Claude,
+        )?
+        .home),
+    }
 }
 
 impl Sessions {
@@ -225,6 +331,30 @@ impl Sessions {
             }
         };
         let prior = gathered.conversation;
+        // Native continuation carries the native session to the new account
+        // before the switch commits; a failed copy leaves the switch unapplied.
+        if continuity == SwitchContinuity::NativeContinuation {
+            let carried = (|| -> Result<()> {
+                let session = prior
+                    .provider_thread_id
+                    .as_deref()
+                    .context("No native session to continue")?;
+                ensure!(
+                    prior.provider == "claude",
+                    "ADE cannot carry this provider's native session to another account"
+                );
+                let from = claude_home(&d, prior.account_id.as_deref())?;
+                let to = PathBuf::from(&gathered.target.native_home);
+                ensure!(from != to, "Both accounts use the same native home");
+                carry_claude_session(session, &from, &to)
+            })();
+            if let Err(error) = carried {
+                if agent_stopped {
+                    self.record_stopped_agent(&mut d, id, now);
+                }
+                return Err(error);
+            }
+        }
         let from_generation = prior
             .account_id
             .as_deref()

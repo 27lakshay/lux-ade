@@ -644,15 +644,24 @@ impl Sessions {
             let mut d = self.data.lock().unwrap();
             ensure!(Self::owns(&d, id, run), "Agent was cancelled");
             let mut current = d.store.conversation(id)?;
+            // A rewind the runtime performed but this daemon has not settled
+            // leaves the Conversation on the session the fork left; the
+            // rewind's retry moves it (F039).
+            let unsettled_rewind = restore
+                && connected.rewound_from.is_some()
+                && current.provider_thread_id == connected.rewound_from;
             ensure!(
-                current
-                    .provider_thread_id
-                    .as_ref()
-                    .is_none_or(|id| id == &connected.session),
+                unsettled_rewind
+                    || current
+                        .provider_thread_id
+                        .as_ref()
+                        .is_none_or(|id| id == &connected.session),
                 "Runtime provider identity changed"
             );
             let needs_history = !restore || current.provider_thread_id.is_none();
-            current.provider_thread_id = Some(connected.session);
+            if !unsettled_rewind {
+                current.provider_thread_id = Some(connected.session);
+            }
             current.error = None;
             current.updated_at = now_ms();
             let messages: Vec<_> = if needs_history {
