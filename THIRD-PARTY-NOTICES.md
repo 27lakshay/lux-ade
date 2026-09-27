@@ -51,3 +51,4 @@ must ship with any distribution that includes them.
 | ADE file | Source path | Changes |
 |---|---|---|
 | `crates/ade-runtime/src/terminal_ownership.rs` | `packages/server/src/terminal/terminal-size-ownership.ts` | Modified: ported to Rust; added input-driven transfer, ranked hand-off on detach and incarnation fencing |
+| `apps/desktop/src/main/browser-automation-core.ts` | `packages/desktop/src/features/browser-automation/actionability.ts` | Modified: the actionability loop now takes a selector lookup instead of a snapshot reference |
