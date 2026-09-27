@@ -1160,3 +1160,22 @@ alone; it is queued to be made deterministic.)
 
 Register: 72 accepted rows.
 
+**Round 4 fixes, merged at `65efca1`** (804 in-process tests; 792 of 795 protocol specs
+at 2 workers. Two failures pass alone and are load-sensitive; the third was a
+coordinator merge error in the fault-suite list, now fixed.)
+
+- Resource resolve now records its reply in the same transaction as the
+  effect. Accept settles on its first replay after a crash, proven by a
+  debug-only pause point and a SIGKILL spec.
+- `conversation.delete` adds tombstones, so late pages cannot resurrect a
+  deleted conversation. `conversation.create` now refuses a disabled account.
+- Storage errors report "full" only for a real SQLITE_FULL or ENOSPC. The two
+  new receipt databases are in backups.
+- The obsolete fixme specs pass, and there is a fixme inventory
+  (`evidence/e2e-fixme-inventory.md`).
+- Held: the terminal-flood fix. It changes the terminal stream, and callers must
+  handle a mid-stream resync snapshot first; round 5 carries it.
+
+**Newly accepted (4):** R001, R002, R003 and R011. The register now holds 76
+accepted rows.
+

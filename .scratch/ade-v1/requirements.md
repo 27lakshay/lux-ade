@@ -171,9 +171,9 @@ These apply in addition to the 107 selected features.
 
 | ID | Requirement | Specification | Implementation |
 |---|---|---|---|
-| R001 | Keep accepted operations after a daemon failure | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R002 | Receive consistent retry results | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R003 | Cancel one run without affecting its successor | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R001 | Keep accepted operations after a daemon failure | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `65efca1` ([evidence](evidence/e2e-reliability-core.md)) |
+| R002 | Receive consistent retry results | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `65efca1` ([evidence](evidence/e2e-reliability-core.md)) |
+| R003 | Cancel one run without affecting its successor | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `65efca1` ([evidence](evidence/e2e-reliability-core.md)) |
 | R004 | Stop existing execution during overload | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R005 | Retain independent work across frontend and daemon restarts | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R006 | See actual process uncertainty | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
@@ -181,7 +181,7 @@ These apply in addition to the 107 selected features.
 | R008 | Know when output recovery reaches its limit | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R009 | Keep one slow client from degrading other work | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R010 | Restore a consistent application view | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
-| R011 | Avoid stale results after changing context | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R011 | Avoid stale results after changing context | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `65efca1` ([evidence](evidence/e2e-conversation-delete.md)) |
 | R012 | Retain account identity through credential changes | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R013 | Continue active work while plugins update | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-reliability-c.md)) |
 | R014 | Restore a complete managed backup | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-backup.md)) |
