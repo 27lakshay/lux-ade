@@ -17,6 +17,8 @@ export type BrowserOwner = {
   ownerId: string
   /** Every command the daemon relayed, oldest first. */
   commands: BrowserOwnerCommand[]
+  /** Register again, as the desktop owner does when it sees a new daemon `boot_id`. */
+  register(): Promise<void>
   /** Unregister from the daemon and stop listening. */
   close(): Promise<void>
 }
@@ -88,16 +90,22 @@ export async function startBrowserOwner(profile: ScratchProfile,
   })
   server.unref()
   await chmod(socket, 0o600)
-  const registered = await profile.rpc({ op: 'browser.owner.register', profile_id: profileId, owner_id: ownerId,
-    socket_path: socket })
-  if (registered.type === 'error') {
+  const register = async () => {
+    const registered = await profile.rpc({ op: 'browser.owner.register', profile_id: profileId, owner_id: ownerId,
+      socket_path: socket })
+    if (registered.type === 'error') throw new Error(`The browser owner fixture could not register: ${JSON.stringify(registered)}`)
+  }
+  try {
+    await register()
+  } catch (error) {
     server.close()
-    throw new Error(`The browser owner fixture could not register: ${JSON.stringify(registered)}`)
+    throw error
   }
   return {
     profileId,
     ownerId,
     commands,
+    register,
     async close() {
       await profile.rpc({ op: 'browser.owner.unregister', profile_id: profileId, owner_id: ownerId }).catch(() => undefined)
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()))

@@ -3,7 +3,12 @@
 // Codex mock Conversations, terminals are real shells attached over the
 // protocol, and services are the node HTTP fixture. Nothing calls a model.
 import { performance } from 'node:perf_hooks'
+import { pathToFileURL } from 'node:url'
+import { Worker } from 'node:worker_threads'
+import type { CallRequest, Operation } from '../../../packages/client/dist/index.js'
+import type { Response } from '../../../packages/contracts/dist/index.js'
 import { send, waitForIdle } from './conversations'
+import { binaries } from './environment'
 import type { ScratchProfile } from './profile'
 import { turnReply } from './providers'
 import { configureService, nodeService, waitForReadiness, writeServicePrograms } from './services'
@@ -93,4 +98,60 @@ export async function terminalEcho(terminal: TerminalStream, rounds: number, bas
     samples.push(ms)
   }
   return samples
+}
+
+type WorkerReply = { id: number; ms: number; value?: unknown; error?: string }
+
+/**
+ * Times SDK calls on a worker thread. A load spec's own thread also reads
+ * every terminal flood it starts, so a call timed there would include the
+ * test's own parsing time; the worker's event loop does nothing but the
+ * timed calls. The calls go through the SDK's `call()` with its contract
+ * checks, but are not written to the test's operations log.
+ */
+export class AdmissionClient {
+  private next = 0
+  private readonly pending = new Map<number, (reply: WorkerReply) => void>()
+
+  private constructor(private readonly worker: Worker) {
+    worker.on('message', (reply: WorkerReply) => {
+      this.pending.get(reply.id)?.(reply)
+      this.pending.delete(reply.id)
+    })
+    worker.unref()
+  }
+
+  static start(profile: ScratchProfile): AdmissionClient {
+    const code = `
+      const { parentPort, workerData } = require('node:worker_threads')
+      const { performance } = require('node:perf_hooks')
+      const sdk = import(workerData.client)
+      parentPort.on('message', async ({ id, op, request }) => {
+        const { call } = await sdk
+        const started = performance.now()
+        try {
+          const value = await call(workerData.socket, op, request)
+          parentPort.postMessage({ id, ms: performance.now() - started, value })
+        } catch (error) {
+          parentPort.postMessage({ id, ms: performance.now() - started, error: String((error && error.message) || error) })
+        }
+      })`
+    return new AdmissionClient(new Worker(code, { eval: true,
+      workerData: { client: pathToFileURL(binaries.client).href, socket: profile.socket } }))
+  }
+
+  /** Call `op` from the worker; return its wall time there and its reply. A failed call throws. */
+  async time<O extends Operation>(op: O, request: CallRequest<O>): Promise<{ ms: number; value: Response<O> }> {
+    const id = ++this.next
+    const reply = await new Promise<WorkerReply>((resolveReply) => {
+      this.pending.set(id, resolveReply)
+      this.worker.postMessage({ id, op, request })
+    })
+    if (reply.error !== undefined) throw new Error(`${op} failed on the admission client: ${reply.error}`)
+    return { ms: reply.ms, value: reply.value as Response<O> }
+  }
+
+  async close(): Promise<void> {
+    await this.worker.terminate()
+  }
 }

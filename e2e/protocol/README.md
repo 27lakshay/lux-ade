@@ -53,6 +53,7 @@ test('a Codex turn reaches the transcript', async ({ profile, repo }) => {
 | `isRunning(pid)` | Process liveness. It treats an unreaped zombie as exited. |
 | `profile.secrets` | The profile's test-only secret store (`fixtures/secret-store.ts`), an encrypted file in the scratch HOME. `scratchEnvironment` sets `ADE_SECRET_STORE=file` for every process a spec starts, so no daemon reaches the Keychain. `add`, `find`, `delete` and `accounts` act on items as a user would on their Keychain; `raw()` gives the file's bytes for at-rest checks. Pointing `profile.env.ADE_SECRET_FILE` into a missing directory makes the store unavailable. |
 | `fixtures/devices`: `DeviceHost` | PATH and SDK-root shims for `xcrun simctl`, `idb`, `adb`, `emulator` and `aapt2` over one `state.json`, with holds that pause an effect and a record of every effect, input included. |
+| `fixtures/browser-owner`: `startBrowserOwner` | A scripted browser owner on a private socket; `register()` registers it again, as the desktop owner does after a new daemon `boot_id`. |
 | `fixtures/faulty-plugin`: `stageFaultyPlugin`, `breakActivation`, `healActivation` | A backend plugin whose activation throws, exits or hangs while a switch file exists, with commands that freeze its host and flood its log. |
 
 The provider mocks are `scripts/fixtures/codex_mock.py` and
@@ -107,6 +108,29 @@ pnpm exec playwright test --config playwright.faults.config.ts --list
 
 It takes the same arguments as `test:e2e:protocol:only`, such as a path or
 `--grep`, and the same `ADE_E2E_WORKERS`.
+
+`fault-suite.ts` also maps every fault class of section 12 of the proposed
+architecture to the tests that inject it (`faultClasses`). A test named there
+joins the suite even when its title uses no word from the vocabulary.
+`load/fault-classes.spec.ts` lists the suite and fails when a mapped test is
+renamed, deleted or dropped from it; a fault that no protocol E2E test can
+inject yet carries a `gap` and shows as a `fixme`. When you rename a mapped
+test, update its entry.
+
+## Load run
+
+`load/load.spec.ts` (tagged `@load`) is the R019 load fixture: 10 agents,
+20 terminals, 3 services, 5 browser tabs behind a scripted owner, 10,000
+imported history messages, a 5000-line diff and a slow subscriber, through
+sustained, idle and daemon-crash phases. It asserts the provisional 250 ms
+p95 command admission and records echo, CPU, memory, queues and recovery
+time. It is heavy and measures latency, so it is left out of the fault suite.
+Run it alone:
+
+    ADE_E2E_WORKERS=1 ADE_E2E_LOAD_RESULTS=/tmp/load.json pnpm test:e2e:protocol:only load/load.spec.ts
+
+`fixtures/load.ts` has the workload and `AdmissionClient`, which times SDK
+calls on a worker thread so the test's own terminal parsing is not counted.
 
 ## When a test fails
 
