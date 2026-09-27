@@ -512,6 +512,10 @@ impl Sessions {
                 let enqueue: QueueEnqueueRequest = decode(request)?;
                 self.queue_change(&enqueue.conversation_id, |d, c| {
                     Self::ensure_not_imported(c)?;
+                    if !enqueue.attachments.is_empty() {
+                        let prompt = d.store.prompt(&c.id, &enqueue.text, &enqueue.attachments)?;
+                        ade_core::prompt_context::admit(&c.provider, &prompt)?;
+                    }
                     d.store.enqueue_content(
                         &c.id,
                         non_empty("request_id", &enqueue.request_id)?,

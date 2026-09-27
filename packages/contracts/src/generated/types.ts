@@ -176,6 +176,16 @@ export type ContractDefinition =
   | CommittedChanges
   | CommittedFile
   | Config
+  | ContextCaptureRequest
+  | ContextGetRequest
+  | ContextKind
+  | ContextNode
+  | ContextNodeReply
+  | ContextOrigin
+  | ContextPlan
+  | ContextPlanRequest
+  | ContextProvenance
+  | ContextSource
   | ControlAvailability
   | ControlOutcome
   | Conversation
@@ -369,6 +379,7 @@ export type ContractDefinition =
   | OutputCoverageStatus
   | PackageRegistry
   | PairingState
+  | PartForm
   | PathOverlap
   | PeerEndpoint
   | PendingPhase
@@ -389,6 +400,8 @@ export type ContractDefinition =
   | PlacementResolveRequest
   | PlacementSource
   | Placements
+  | PlanRejection
+  | PlannedPart
   | PluginActivation
   | PluginCommandContribution
   | PluginCommandInvokeRequest
@@ -456,6 +469,7 @@ export type ContractDefinition =
   | ProviderCapabilities
   | ProviderCapabilitiesRequest
   | ProviderListRequest
+  | ProviderMediaSupport
   | ProviderOrigin
   | ProviderQuota
   | ProviderQuotaRequest
@@ -486,6 +500,7 @@ export type ContractDefinition =
   | RegistryScope
   | RegistryState
   | RegistryStatus
+  | RejectionCode
   | RemoteDaemon
   | RemoteHost
   | RemoteHostAddRequest
@@ -1034,6 +1049,63 @@ export type CommittedChanges =
  * How an ignored resource of the primary checkout reaches a tree.
  */
 export type ResourceMode = 'copy' | 'link' | 'skip'
+/**
+ * One selection to capture.
+ */
+export type ContextSource =
+  | {
+      end_line: number
+      kind: 'file_range'
+      path: string
+      start_line: number
+      workspace_id: string
+    }
+  | {
+      hunk: number
+      kind: 'diff_hunk'
+      path: string
+      staged?: boolean
+      token: string
+      workspace_id: string
+    }
+  | {
+      /**
+       * The selection's first buffer row, when the client knows it.
+       */
+      first_row?: number
+      kind: 'terminal_output'
+      terminal_id: string
+      text: string
+      workspace_id: string
+    }
+  | {
+      kind: 'service_log'
+      lines: number
+      service: string
+      text: string
+      workspace_id: string
+    }
+  | {
+      capture_id: string
+      kind: 'browser_capture'
+    }
+/**
+ * What a context node was captured from.
+ */
+export type ContextKind = 'file_range' | 'diff_hunk' | 'terminal_output' | 'service_log' | 'browser_capture'
+/**
+ * Who produced the captured bytes.
+ */
+export type ContextOrigin = 'daemon_read' | 'client_supplied' | 'browser_owner'
+/**
+ * How one attachment reaches a provider.
+ */
+export type PartForm = 'native_image' | 'text_block' | 'prompt_text' | 'adapter_declared'
+/**
+ * Why a provider would refuse an attachment or the whole prompt.
+ */
+export type RejectionCode =
+  'unsupported_media_type' | 'image_too_large' | 'request_too_large' | 'attachments_unsupported'
 /**
  * A control whose support depends on the provider or on ADE's checkpoints.
  */
@@ -4162,6 +4234,175 @@ export interface Hook {
    * The hook's time limit; the daemon accepts 1 to 3600 and uses 300 when absent.
    */
   timeout_seconds?: number
+}
+/**
+ * `context.capture`: capture one selection into a context node.
+ */
+export interface ContextCaptureRequest {
+  conversation_id: string
+  op: 'context.capture'
+  /**
+   * The node ID, and the ID of the attachment a text capture stores.
+   */
+  request_id: string
+  source: ContextSource
+}
+/**
+ * `context.get`: read one recorded context node.
+ */
+export interface ContextGetRequest {
+  conversation_id: string
+  node_id: string
+  op: 'context.get'
+}
+/**
+ * One captured selection and the attachments that carry it.
+ */
+export interface ContextNode {
+  /**
+   * Add these to a draft or send to include the node.
+   */
+  attachments: Attachment[]
+  captured_at: number
+  conversation_id: string
+  id: string
+  kind: ContextKind
+  omitted_bytes: number
+  omitted_lines: number
+  origin: ContextOrigin
+  provenance: ContextProvenance
+  /**
+   * Lowercase hex SHA-256 of each attachment's bytes, in order.
+   */
+  sha256: string[]
+  /**
+   * Whether bounds cut the selection. The stored document says so too.
+   */
+  truncated: boolean
+  [k: string]: unknown
+}
+/**
+ * Where a node came from. Fields that do not apply to its kind are null.
+ */
+export interface ContextProvenance {
+  capture_id: string | null
+  diff_token: string | null
+  end_line: number | null
+  hunk: number | null
+  path: string | null
+  service: string | null
+  staged: boolean | null
+  /**
+   * The captured lines, 1-based and inclusive, within the source.
+   */
+  start_line: number | null
+  terminal_id: string | null
+  title: string | null
+  /**
+   * The source's line count when the daemon read the whole source.
+   */
+  total_lines: number | null
+  /**
+   * The captured page's URL, without user information, query or fragment.
+   */
+  url: string | null
+  workspace_id: string | null
+  [k: string]: unknown
+}
+/**
+ * The `context.capture` and `context.get` reply.
+ */
+export interface ContextNodeReply {
+  /**
+   * False when an attachment was reclaimed; attach the context again.
+   */
+  available: boolean
+  node: ContextNode
+  /**
+   * The `context_node` type tag.
+   */
+  type: 'context_node'
+  [k: string]: unknown
+}
+/**
+ * The `context.plan` reply.
+ */
+export interface ContextPlan {
+  /**
+   * True only when there are no rejections.
+   */
+  admissible: boolean
+  parts: PlannedPart[]
+  rejections: PlanRejection[]
+  support: ProviderMediaSupport
+  /**
+   * The `context_plan` type tag.
+   */
+  type: 'context_plan'
+  [k: string]: unknown
+}
+/**
+ * One attachment's planned form.
+ */
+export interface PlannedPart {
+  attachment_id: string
+  form: PartForm
+  /**
+   * The exact text placed before a text attachment's contents.
+   */
+  text_prefix: string | null
+  [k: string]: unknown
+}
+/**
+ * One refusal found before dispatch.
+ */
+export interface PlanRejection {
+  /**
+   * Null when the refusal covers the whole prompt.
+   */
+  attachment_id: string | null
+  code: RejectionCode
+  message: string
+  [k: string]: unknown
+}
+/**
+ * What a provider accepts, and where each limit comes from.
+ */
+export interface ProviderMediaSupport {
+  image_form: string | null
+  image_types: string[]
+  /**
+   * False for a provider ADE has no table for, such as a generic adapter.
+   */
+  known: boolean
+  /**
+   * The largest image, in raw bytes, this provider takes.
+   */
+  max_image_bytes: number | null
+  /**
+   * The largest whole prompt request, in bytes, this provider takes.
+   */
+  max_request_bytes: number | null
+  provider: string
+  /**
+   * Where the limits come from.
+   */
+  sources: string[]
+  text_form: string | null
+  [k: string]: unknown
+}
+/**
+ * `context.plan`: how the conversation's provider would receive these
+ * attachments, and which it would refuse, before anything is sent.
+ */
+export interface ContextPlanRequest {
+  attachments?: Attachment[]
+  conversation_id: string
+  op: 'context.plan'
+  /**
+   * The prompt text, which counts toward request limits.
+   */
+  text?: string
 }
 /**
  * Whether one control may run on a Conversation now.
@@ -10976,7 +11217,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -11216,6 +11457,9 @@ export interface RequestByOperation {
   "placement.release": PlacementReleaseRequest
   "command.list": CommandListRequest
   "command.invoke": CommandInvokeRequest
+  "context.capture": ContextCaptureRequest
+  "context.get": ContextGetRequest
+  "context.plan": ContextPlanRequest
 }
 
 export interface ResponseByOperation {
@@ -11456,6 +11700,9 @@ export interface ResponseByOperation {
   "placement.release": PlacementReleased
   "command.list": CommandList
   "command.invoke": CommandInvoked
+  "context.capture": ContextNodeReply
+  "context.get": ContextNodeReply
+  "context.plan": ContextPlan
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

@@ -140,6 +140,7 @@ impl Sessions {
                 self.worktrees.agent_lease(&workspace.root)?
             };
             let prompt = d.store.prompt(id, text, attachments)?;
+            ade_core::prompt_context::admit(&current.provider, &prompt)?;
             let mut begin = d.store.begin_content_turn_with_feedback(
                 id,
                 key,

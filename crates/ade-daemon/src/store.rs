@@ -21,6 +21,7 @@ mod accounts;
 mod activity;
 mod attachments;
 mod bindings;
+pub mod context_nodes;
 mod conversations;
 mod migrations;
 mod send_intents;

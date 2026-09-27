@@ -135,51 +135,68 @@ impl Store {
     ) -> Result<Attachment> {
         check_id(id)?;
         self.conversation(conversation)?;
-        ensure!(
-            !name.is_empty() && name.len() <= 255 && !name.contains(['\0', '\n', '\r']),
-            "Invalid attachment name"
-        );
-        let media_type = crate::prompt::media_type(bytes)?;
-        let attachment = Attachment {
-            id: id.into(),
-            name: name.into(),
-            media_type: media_type.into(),
-            size: bytes.len(),
-        };
         let tx = self.transaction()?;
-        let prior: Option<(String, String, Vec<u8>, String)> = tx
-            .query_row(
-                "SELECT conversation_id,metadata,data,state FROM attachments WHERE id=?1",
-                [id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .optional()?;
-        if let Some((owner, metadata, data, state)) = prior {
-            ensure!(
-                state == "live"
-                    && owner == conversation
-                    && decode::<Attachment>(metadata)? == attachment
-                    && data == bytes,
-                "Attachment ID was already used or discarded"
-            );
-            return Ok(attachment);
-        }
-        let total: i64 = tx.query_row(
-            "SELECT COALESCE(sum(length(data)),0) FROM attachments WHERE conversation_id=?1",
-            [conversation],
-            |row| row.get(0),
-        )?;
-        ensure!(
-            total + bytes.len() as i64 <= 128 * 1024 * 1024,
-            "Conversation attachment storage exceeds 128 MiB"
-        );
-        tx.execute(
-            "INSERT INTO attachments(id,conversation_id,metadata,data,generation,state,created_at) VALUES(?1,?2,?3,?4,?5,'live',?6)",
-            params![id, conversation, encode(&attachment)?, bytes, new_id("attachment_generation"), now_ms()],
-        )?;
+        let attachment = store_attachment(&tx, conversation, id, name, bytes)?;
         tx.commit()?;
         Ok(attachment)
     }
+}
+
+/// Stores one attachment inside the caller's transaction, which has checked
+/// the ID and the Conversation. A repeat with the same ID converges only on
+/// identical bytes and metadata.
+pub(super) fn store_attachment(
+    tx: &Connection,
+    conversation: &str,
+    id: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<Attachment> {
+    ensure!(
+        !name.is_empty() && name.len() <= 255 && !name.contains(['\0', '\n', '\r']),
+        "Invalid attachment name"
+    );
+    let media_type = crate::prompt::media_type(bytes)?;
+    let attachment = Attachment {
+        id: id.into(),
+        name: name.into(),
+        media_type: media_type.into(),
+        size: bytes.len(),
+    };
+    let prior: Option<(String, String, Vec<u8>, String)> = tx
+        .query_row(
+            "SELECT conversation_id,metadata,data,state FROM attachments WHERE id=?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    if let Some((owner, metadata, data, state)) = prior {
+        ensure!(
+            state == "live"
+                && owner == conversation
+                && decode::<Attachment>(metadata)? == attachment
+                && data == bytes,
+            "Attachment ID was already used or discarded"
+        );
+        return Ok(attachment);
+    }
+    let total: i64 = tx.query_row(
+        "SELECT COALESCE(sum(length(data)),0) FROM attachments WHERE conversation_id=?1",
+        [conversation],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        total + bytes.len() as i64 <= 128 * 1024 * 1024,
+        "Conversation attachment storage exceeds 128 MiB"
+    );
+    tx.execute(
+            "INSERT INTO attachments(id,conversation_id,metadata,data,generation,state,created_at) VALUES(?1,?2,?3,?4,?5,'live',?6)",
+            params![id, conversation, encode(&attachment)?, bytes, new_id("attachment_generation"), now_ms()],
+        )?;
+    Ok(attachment)
+}
+
+impl Store {
     /// Only an explicit exact-ID discard can reclaim an upload. Unsaved client-held
     /// uploads have no durable reference, so they are never swept automatically.
     pub fn attachment_reclaim_preview(

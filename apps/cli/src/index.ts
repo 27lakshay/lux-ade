@@ -9,6 +9,7 @@ import { adapterUsage, runAdapterCommand } from './commands/adapters.js'
 import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
+import { contextUsage, runContextCommand } from './commands/context.js'
 import { conversationControlUsage, runConversationControlCommand } from './commands/conversation-controls.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { deviceUsage, runDeviceCommand } from './commands/devices.js'
@@ -83,6 +84,7 @@ const usage = [
   worktreeLifecycleUsage,
   conversationUsage,
   conversationControlUsage,
+  contextUsage,
   historyUsage,
   importUsage,
   usageAnalyticsUsage,
@@ -228,6 +230,7 @@ const commandAreas = [
   runWorktreeLifecycleCommand,
   runConversationCommand,
   runConversationControlCommand,
+  runContextCommand,
   runHistoryCommand,
   runImportCommand,
   runUsageCommand,
