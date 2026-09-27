@@ -6,7 +6,7 @@ import { chmod, cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, send, startConversation, turnReply, waitForIdle, waitForMessage, type AdeHarness,
-  type CliResult, type ScratchProfile } from '../fixtures'
+  type CliResult, type ProfileOptions, type ScratchProfile } from '../fixtures'
 import { control, nextProfileDataDirectory } from '../fixtures/control'
 
 /** A 1x1 PNG. */
@@ -101,11 +101,12 @@ export async function createBackup(ade: AdeHarness, profile: ScratchProfile, nam
 }
 
 /** Restore `bundle` where the next scratch profile keeps its data, then start that profile. */
-export async function restoreIntoNewProfile(ade: AdeHarness, bundle: string): Promise<ScratchProfile> {
+export async function restoreIntoNewProfile(ade: AdeHarness, bundle: string,
+  options: ProfileOptions = {}): Promise<ScratchProfile> {
   const target = await nextProfileDataDirectory(ade)
   const restored = await control(ade, ['backup', 'restore', '--backup', bundle, '--data-dir', target])
   expect(restored.code, restored.stderr).toBe(0)
-  const profile = await ade.profile()
+  const profile = await ade.profile(options)
   expect(profile.dataDirectory).toBe(target)
   return profile
 }
@@ -120,9 +121,10 @@ export async function copyBundle(bundle: string, to: string): Promise<string> {
   return to
 }
 
-/** Change the bundle's `sessions.sqlite` and record its new hash and schema in the manifest, as a well-formed bundle would. */
-export async function rewriteDatabase(bundle: string, change: (db: DatabaseSync) => void): Promise<void> {
-  const path = join(bundle, 'sessions.sqlite')
+/** Change a bundle database (`sessions.sqlite` unless named) and record its new hash and schema in the manifest, as a well-formed bundle would. */
+export async function rewriteDatabase(bundle: string, change: (db: DatabaseSync) => void,
+  name = 'sessions.sqlite'): Promise<void> {
+  const path = join(bundle, name)
   const db = new DatabaseSync(path)
   try { change(db) } finally { db.close() }
   const bytes = await readFile(path)
@@ -130,7 +132,7 @@ export async function rewriteDatabase(bundle: string, change: (db: DatabaseSync)
   const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
   check.close()
   const manifest = await readManifest(bundle)
-  const entry = manifest.entries.find((candidate) => candidate.path === 'sessions.sqlite')!
+  const entry = manifest.entries.find((candidate) => candidate.path === name)!
   entry.sha256 = createHash('sha256').update(bytes).digest('hex')
   entry.size = bytes.length
   entry.schema = version

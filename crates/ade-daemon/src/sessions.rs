@@ -148,6 +148,14 @@ impl Sessions {
     }
     pub fn open(path: &Path, runtime: Arc<Supervisor>) -> Result<Arc<Self>> {
         let store = Store::open(path)?;
+        // Secret values saved before references existed move into the
+        // Keychain now. One that cannot move is never launched and is tried
+        // again on the next open; the profile still opens.
+        match store.migrate_service_secrets() {
+            Ok(0) => {}
+            Ok(moved) => tracing::info!("Moved {moved} service secret value(s) into the Keychain"),
+            Err(error) => tracing::warn!("{error:#}"),
+        }
         crate::hooks::recover(&store.connection, now_ms())?;
         let (queue_wake, queue_rx) = mpsc::sync_channel(1);
 

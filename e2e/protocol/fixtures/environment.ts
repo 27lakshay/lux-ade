@@ -4,6 +4,7 @@
 // user profile, accounts or credentials.
 import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
+import { secretStoreEnvironment } from './secret-store'
 
 /** The repository checkout these fixtures belong to. */
 export const repositoryRoot = resolve(__dirname, '../../..')
@@ -57,6 +58,9 @@ export function scratchEnvironment(home: string, extra: Record<string, string> =
     GIT_CONFIG_GLOBAL: join(home, '.gitconfig'),
     GIT_TERMINAL_PROMPT: '0',
     SHELL: '/bin/sh',
+    // Every daemon a spec starts keeps secrets in a file in the scratch HOME,
+    // never in the Keychain (machine safety, AGENTS.md).
+    ...secretStoreEnvironment(home),
     ...extra,
   }
 }

@@ -164,6 +164,12 @@ export function createHost(options = {}) {
     }
     const settings = params.settings ?? {}
     if (!isObject(settings)) throw new RpcError(INVALID_PARAMS, 'settings must be an object')
+    // Credential settings resolved by the daemon for this activation only;
+    // `settings` holds their references.
+    const credentials = params.credentials ?? {}
+    if (!isObject(credentials) || !Object.values(credentials).every((value) => typeof value === 'string')) {
+      throw new RpcError(INVALID_PARAMS, 'credentials must map setting keys to strings')
+    }
     state = 'activating'
     generation = requested
     pluginId = id
@@ -173,6 +179,7 @@ export function createHost(options = {}) {
       pluginId: id,
       generation: requested,
       settings: Object.freeze({ ...settings }),
+      credentials: Object.freeze({ ...credentials }),
       commands: Object.freeze({ register }),
       hooks: Object.freeze({ on }),
       /** @param {...unknown} parts */

@@ -129,9 +129,10 @@ test('keeps namespaced records and settings apart, across a restart and an unins
     .rejects.toMatchObject({ code: 'invalid_request' })
   await expect(profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'undeclared', value: 'x' }))
     .rejects.toMatchObject({ code: 'invalid_request' })
-  // A credential setting holds a reference, never a default or a non-reference value.
-  await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value: 'keychain:e2e/token' })
-  for (const value of ['', 42]) {
+  // A credential setting holds a typed reference, never a default or a non-reference value.
+  const tokenReference = { keychain: { service: 'e2e', account: 'token' } }
+  await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value: tokenReference })
+  for (const value of ['', 42, 'keychain:e2e/token']) {
     await expect(profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value }))
       .rejects.toMatchObject({ code: 'invalid_request' })
   }
@@ -149,7 +150,7 @@ test('keeps namespaced records and settings apart, across a restart and an unins
     .toEqual([expect.objectContaining({ key: 'a', value: { n: 2 }, revision: 2 })])
   expect((await profile.call('plugin.setting.list', { plugin_id: pluginId })).settings)
     .toEqual([expect.objectContaining({ key: 'out_dir', value: outDir, is_default: false }),
-      expect.objectContaining({ key: 'token', kind: 'credential_ref', value: 'keychain:e2e/token', is_default: false })])
+      expect.objectContaining({ key: 'token', kind: 'credential_ref', value: tokenReference, is_default: false })])
 
   await profile.call('plugin.disable', { plugin_id: pluginId })
   await profile.call('plugin.uninstall', { operation_id: 'keep-data', plugin_id: pluginId })

@@ -12,6 +12,7 @@ import type { CallRequest, Operation } from '../../../packages/client/dist/index
 import type { Response } from '../../../packages/contracts/dist/index.js'
 import { rpc } from '../../fixtures/daemon'
 import { binaries, scratchEnvironment } from './environment'
+import { ScratchSecretStore } from './secret-store'
 import { isRunning, type ProcessLedger } from './processes'
 import { mockCalls, providerEnvironment, releaseMock, type MockCall, type MockProvider } from './providers'
 
@@ -95,6 +96,11 @@ export class ScratchProfile {
   readonly defaultWorkspaceRoot: string
   readonly logsDirectory: string
   readonly env: Record<string, string>
+  /**
+   * The test-only secret store inside `home` that the daemon keeps secrets
+   * in (ADE_SECRET_STORE=file). No spec process ever reaches the Keychain.
+   */
+  readonly secrets: ScratchSecretStore
   private daemon: ChildProcess | null = null
   private current: Hello | null = null
   private launches = 0
@@ -107,6 +113,7 @@ export class ScratchProfile {
     this.home = join(root, 'home')
     this.defaultWorkspaceRoot = join(root, 'workspace')
     this.logsDirectory = join(root, 'logs')
+    this.secrets = new ScratchSecretStore(this.home)
     this.env = scratchEnvironment(this.home, {
       ...providerEnvironment(root),
       ADE_DATA_DIR: this.dataDirectory,
@@ -131,6 +138,7 @@ export class ScratchProfile {
       await mkdir(directory, { recursive: true, mode: 0o700 })
     }
     await writeFile(join(profile.home, '.gitconfig'), '[user]\n\tname = ADE E2E\n\temail = e2e@example.invalid\n')
+    await profile.secrets.create()
     await profile.launchDaemon()
     return profile
   }
@@ -286,6 +294,11 @@ export class ScratchProfile {
     const stderrPath = join(this.logsDirectory, `daemon-${launch}.stderr`)
     const stderr = openSync(stderrPath, 'a')
     let child: ChildProcess
+    // Machine safety: a spec daemon keeps secrets in the file store, never the Keychain.
+    if (this.env.ADE_SECRET_STORE !== 'file' || 'ADE_KEYCHAIN' in this.env) {
+      closeSync(stderr)
+      throw new Error('A spec daemon must run with ADE_SECRET_STORE=file and no ADE_KEYCHAIN')
+    }
     try {
       child = spawn(binaries.daemon, [], { cwd: this.defaultWorkspaceRoot, env: this.env,
         stdio: ['ignore', 'ignore', stderr] })

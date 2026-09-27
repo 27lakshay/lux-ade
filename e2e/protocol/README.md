@@ -51,6 +51,7 @@ test('a Codex turn reaches the transcript', async ({ profile, repo }) => {
 | `startConversation`, `send`, `waitForIdle`, `waitForMessage`, `waitForPendingRequest`, `fixtureAnswers` | Conversation steps over the SDK. |
 | `profile.mockCalls(provider)`, `profile.releaseMock(provider, file)` | Reads what a mock received. Creates the file a scripted mock waits for. |
 | `isRunning(pid)` | Process liveness. It treats an unreaped zombie as exited. |
+| `profile.secrets` | The profile's test-only secret store (`fixtures/secret-store.ts`), an encrypted file in the scratch HOME. `scratchEnvironment` sets `ADE_SECRET_STORE=file` for every process a spec starts, so no daemon reaches the Keychain. `add`, `find`, `delete` and `accounts` act on items as a user would on their Keychain; `raw()` gives the file's bytes for at-rest checks. Pointing `profile.env.ADE_SECRET_FILE` into a missing directory makes the store unavailable. |
 | `fixtures/devices`: `DeviceHost` | PATH and SDK-root shims for `xcrun simctl`, `idb`, `adb`, `emulator` and `aapt2` over one `state.json`, with holds that pause an effect and a record of every effect, input included. |
 | `fixtures/faulty-plugin`: `stageFaultyPlugin`, `breakActivation`, `healActivation` | A backend plugin whose activation throws, exits or hangs while a switch file exists, with commands that freeze its host and flood its log. |
 
@@ -123,7 +124,9 @@ The failing test keeps its temp root and attaches:
 
 Never call the macOS Security framework or the `security` tool, create
 keychains, or touch the login keychain from a spec or fixture. Secret storage is
-tested through the test-only file backend. Specs that use other system services
+tested through the test-only file backend (`ADE_SECRET_STORE=file`, set by
+`scratchEnvironment`); `ScratchProfile` refuses to launch a daemon without it.
+A release daemon refuses that setting, so the file backend never ships. Specs that use other system services
 (the `volume` fixture uses `hdiutil`) skip unless `ADE_E2E_SYSTEM=1`. Run those
 alone:
 
