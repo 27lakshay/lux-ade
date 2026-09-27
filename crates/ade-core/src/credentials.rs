@@ -53,6 +53,16 @@ impl CredentialReference {
         matches!(self, Self::Keychain { service, .. } if service == ADE_KEYCHAIN_SERVICE)
     }
 
+    /// Whether the profile with owner ID `owner` made this item: an ADE
+    /// item whose account starts with `<owner>/`. Only that profile may
+    /// reuse or delete it.
+    pub fn owned_by(&self, owner: &str) -> bool {
+        matches!(self, Self::Keychain { service, account }
+            if service == ADE_KEYCHAIN_SERVICE
+                && !owner.is_empty()
+                && account.strip_prefix(owner).is_some_and(|rest| rest.starts_with('/')))
+    }
+
     /// A short description for messages; it never contains a secret.
     pub fn describe(&self) -> String {
         match self {
@@ -101,6 +111,22 @@ mod tests {
                 account: "a".into()
             }
             .ade_owned()
+        );
+        // Ownership is per profile: the account starts with the owner ID.
+        let mine: CredentialReference = serde_json::from_value(
+            json!({"keychain": {"service": ADE_KEYCHAIN_SERVICE, "account": "p1/service/x/y"}}),
+        )
+        .unwrap();
+        assert!(mine.owned_by("p1"));
+        assert!(!mine.owned_by("p"));
+        assert!(!mine.owned_by("p2"));
+        assert!(!mine.owned_by(""));
+        assert!(
+            !CredentialReference::Keychain {
+                service: "mine".into(),
+                account: "p1/a".into()
+            }
+            .owned_by("p1")
         );
         // A pasted token is not a variable name.
         assert!(

@@ -4,19 +4,154 @@
 //! generic password. Values are read only when a process that needs them is
 //! launched, and are never written to a database, a reply or a log.
 //!
-//! Items ADE creates live under [`ADE_KEYCHAIN_SERVICE`] with an account that
-//! names their owner and a random suffix, so a replaced value never overwrites
-//! the item a stored reference still names. `ADE_KEYCHAIN`, when set, is the
-//! path of the only keychain ADE reads and writes; otherwise ADE uses the
-//! user's default keychain and search list. The Keychain never shows a prompt
-//! to this process: a locked keychain or an item that needs permission is an
-//! error.
+//! Generic passwords live in a [`SecretStore`]. Production uses the macOS
+//! Keychain. A debug build started with `ADE_SECRET_STORE=file` uses an
+//! encrypted file instead, so tests never reach the Keychain; a release build
+//! refuses that setting and does not contain the file store at all.
+//!
+//! Items ADE creates live under [`ADE_KEYCHAIN_SERVICE`] with an account of
+//! `<profile owner>/<scope>/<random>`. The owner is an ID the profile's data
+//! directory holds and a backup never copies, so a restored or copied profile
+//! owns none of the original's items: it neither reuses nor deletes them.
+//! `ADE_KEYCHAIN`, when set, is the path of the only keychain ADE reads and
+//! writes; otherwise ADE uses the user's default keychain and search list.
+//! The Keychain never shows a prompt to this process: a locked keychain or an
+//! item that needs permission is an error.
 use ade_core::credentials::{ADE_KEYCHAIN_SERVICE, CredentialReference};
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::sync::OnceLock;
 
 /// The most bytes ADE stores or reads for one secret.
 const MAX_SECRET_BYTES: usize = 8 * 1024;
+/// The file in the data directory that holds the profile's owner ID.
+pub const OWNER_FILE: &str = "secret-owner";
+
+/// Where generic passwords live. `find` fails when the item does not exist;
+/// `add` fails when it already does; `delete` of a missing item succeeds.
+pub trait SecretStore: Send + Sync {
+    fn find(&self, service: &str, account: &str) -> Result<Vec<u8>>;
+    fn add(&self, service: &str, account: &str, value: &[u8]) -> Result<()>;
+    fn delete(&self, service: &str, account: &str) -> Result<()>;
+}
+
+/// The production store: the macOS Keychain, unchanged.
+struct KeychainStore;
+
+impl SecretStore for KeychainStore {
+    fn find(&self, service: &str, account: &str) -> Result<Vec<u8>> {
+        keychain::find(service, account)
+    }
+    fn add(&self, service: &str, account: &str, value: &[u8]) -> Result<()> {
+        keychain::add(service, account, value)
+    }
+    fn delete(&self, service: &str, account: &str) -> Result<()> {
+        keychain::delete(service, account)
+    }
+}
+
+/// Which store a daemon uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    Keychain,
+    /// The test-only encrypted file store.
+    File,
+}
+
+/// Decides the store from `ADE_SECRET_STORE`. Unset is the Keychain; `file`
+/// is the test store, which a release build refuses so it never ships.
+pub fn backend(setting: Option<&str>, release: bool) -> Result<Backend> {
+    match setting {
+        None => Ok(Backend::Keychain),
+        Some("file") if release => bail!(
+            "ADE_SECRET_STORE=file selects the test-only secret store, which a release build refuses"
+        ),
+        Some("file") => Ok(Backend::File),
+        Some(other) => bail!("ADE_SECRET_STORE={other:?} names no secret store; leave it unset"),
+    }
+}
+
+struct Profile {
+    owner: String,
+    store: Box<dyn SecretStore>,
+}
+
+static PROFILE: OnceLock<Profile> = OnceLock::new();
+
+/// Chooses the secret store and reads the profile's owner ID. The daemon
+/// calls it once before opening any store; until then every secret
+/// operation fails rather than reaching a default.
+pub fn init(data_dir: &Path) -> Result<()> {
+    let setting = match std::env::var("ADE_SECRET_STORE") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => bail!("ADE_SECRET_STORE is not valid UTF-8"),
+    };
+    let store: Box<dyn SecretStore> = match backend(setting.as_deref(), !cfg!(debug_assertions))? {
+        Backend::Keychain => Box::new(KeychainStore),
+        Backend::File => file_store()?,
+    };
+    let owner = owner_id(data_dir)?;
+    PROFILE
+        .set(Profile { owner, store })
+        .map_err(|_| anyhow::anyhow!("The secret store is already chosen"))
+}
+
+#[cfg(debug_assertions)]
+fn file_store() -> Result<Box<dyn SecretStore>> {
+    Ok(Box::new(file::FileStore::from_env()?))
+}
+
+#[cfg(not(debug_assertions))]
+fn file_store() -> Result<Box<dyn SecretStore>> {
+    bail!("This build has no file secret store")
+}
+
+fn profile() -> Result<&'static Profile> {
+    PROFILE
+        .get()
+        .context("The secret store has not been chosen for this process")
+}
+
+/// The owner ID in `data_dir`, made on first use. It is written to a
+/// temporary file and linked into place, so a crash never leaves it empty and
+/// two racing starts agree on one ID.
+fn owner_id(data_dir: &Path) -> Result<String> {
+    let path = data_dir.join(OWNER_FILE);
+    if !path.exists() {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let temporary = data_dir.join(format!(".{OWNER_FILE}.{id}"));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .context("The profile's secret owner ID cannot be written")?;
+        file.write_all(id.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        let linked = std::fs::hard_link(&temporary, &path);
+        let _ = std::fs::remove_file(&temporary);
+        match linked {
+            Ok(()) => return Ok(id),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error).context("The profile's secret owner ID cannot be written");
+            }
+        }
+    }
+    let id =
+        std::fs::read_to_string(&path).context("The profile's secret owner ID cannot be read")?;
+    anyhow::ensure!(
+        id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "The profile's secret owner ID in {} is damaged",
+        path.display()
+    );
+    Ok(id)
+}
 
 /// The value `reference` names now.
 pub fn resolve(reference: &CredentialReference) -> Result<String> {
@@ -32,7 +167,8 @@ pub fn resolve(reference: &CredentialReference) -> Result<String> {
             }
         },
         CredentialReference::Keychain { service, account } => {
-            let bytes = keychain::find(service, account)
+            let bytes = profile()
+                .and_then(|profile| profile.store.find(service, account))
                 .with_context(|| format!("{} cannot be read", reference.describe()))?;
             anyhow::ensure!(
                 bytes.len() <= MAX_SECRET_BYTES,
@@ -61,15 +197,22 @@ pub fn resolve_all(
         .collect()
 }
 
-/// Moves `value` into a new Keychain item ADE owns and returns its
+/// Moves `value` into a new item this profile owns and returns its
 /// reference. `scope` names the owner, such as `service/<workspace>/<name>/<KEY>`.
 pub fn store_new(scope: &str, value: &str) -> Result<CredentialReference> {
     anyhow::ensure!(
         value.len() <= MAX_SECRET_BYTES && !value.contains('\0'),
         "A secret value must be at most {MAX_SECRET_BYTES} bytes without NUL"
     );
-    let account = format!("{scope}/{}", uuid::Uuid::new_v4().simple());
-    keychain::add(ADE_KEYCHAIN_SERVICE, &account, value.as_bytes())
+    let profile = profile()?;
+    let account = format!(
+        "{}/{scope}/{}",
+        profile.owner,
+        uuid::Uuid::new_v4().simple()
+    );
+    profile
+        .store
+        .add(ADE_KEYCHAIN_SERVICE, &account, value.as_bytes())
         .context("The secret could not be stored in the Keychain")?;
     Ok(CredentialReference::Keychain {
         service: ADE_KEYCHAIN_SERVICE.into(),
@@ -77,18 +220,31 @@ pub fn store_new(scope: &str, value: &str) -> Result<CredentialReference> {
     })
 }
 
-/// Whether `reference` is an item ADE owns that holds exactly `value`, so a
-/// repeated save may keep it instead of making another.
-pub fn owned_holds(reference: &CredentialReference, value: &str) -> bool {
-    reference.ade_owned() && resolve(reference).is_ok_and(|stored| stored == value)
+/// Whether this profile made the item `reference` names. An item another
+/// profile made, including the original of a restored copy, is not its own.
+pub fn owns(reference: &CredentialReference) -> bool {
+    profile().is_ok_and(|profile| reference.owned_by(&profile.owner))
 }
 
-/// Deletes the item `reference` names when ADE owns it. A reference the user
-/// made is never touched. An item already gone counts as deleted.
+/// Whether `reference` is an item this profile owns that holds exactly
+/// `value`, so a repeated save may keep it instead of making another.
+pub fn owned_holds(reference: &CredentialReference, value: &str) -> bool {
+    owns(reference) && resolve(reference).is_ok_and(|stored| stored == value)
+}
+
+/// Deletes the item `reference` names when this profile owns it. A reference
+/// the user made is never touched, and deleting an item another profile made
+/// is refused. An item already gone counts as deleted.
 pub fn delete_owned(reference: &CredentialReference) -> Result<()> {
     match reference {
         CredentialReference::Keychain { service, account } if reference.ade_owned() => {
-            keychain::delete(service, account)
+            let profile = profile()?;
+            anyhow::ensure!(
+                reference.owned_by(&profile.owner),
+                "{} belongs to another ADE profile, so this profile never deletes it",
+                reference.describe()
+            );
+            profile.store.delete(service, account)
         }
         _ => Ok(()),
     }
@@ -124,6 +280,299 @@ impl Pending {
 impl Drop for Pending {
     fn drop(&mut self) {
         delete_owned_quietly(self.0.iter());
+    }
+}
+
+/// The test-only secret store: one file of items, encrypted and
+/// authenticated under a key from the daemon's environment. Only debug
+/// builds contain it.
+///
+/// `ADE_SECRET_FILE` is the absolute path of the file; its directory must
+/// exist, or the store is unavailable, as a missing keychain is. A missing
+/// file is an empty store. `ADE_SECRET_KEY` is 32 bytes as 64 hex digits.
+///
+/// The file is JSON `{"version":1,"nonce","data","tag"}`, all hex. `data` is
+/// the JSON list of items XORed with a SHA-256 counter keystream, block `i`
+/// being SHA-256(enc_key ‖ nonce ‖ i as u64 big-endian); `tag` is
+/// HMAC-SHA-256(mac_key, nonce ‖ data). `enc_key` and `mac_key` are
+/// SHA-256 of `ade-secret-file enc\0` and `ade-secret-file mac\0` followed
+/// by the key. `e2e/protocol/fixtures/secret-store.ts` implements the same
+/// format so specs can add and inspect items as a user would. It guards test
+/// values only and is not production cryptography.
+#[cfg(debug_assertions)]
+pub mod file {
+    use super::SecretStore;
+    use anyhow::{Context, Result, bail, ensure};
+    use serde::{Deserialize, Serialize};
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    #[derive(Serialize, Deserialize)]
+    struct Item {
+        service: String,
+        account: String,
+        value: String,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct Envelope {
+        version: u32,
+        nonce: String,
+        data: String,
+        tag: String,
+    }
+
+    pub struct FileStore {
+        path: PathBuf,
+        enc_key: [u8; 32],
+        mac_key: [u8; 32],
+        lock: Mutex<()>,
+    }
+
+    fn sha256(parts: &[&[u8]]) -> [u8; 32] {
+        let mut hash = Sha256::new();
+        for part in parts {
+            hash.update(part);
+        }
+        hash.finalize().into()
+    }
+
+    fn hmac(key: &[u8; 32], message: &[&[u8]]) -> [u8; 32] {
+        let mut inner = [0x36u8; 64];
+        let mut outer = [0x5cu8; 64];
+        for (index, byte) in key.iter().enumerate() {
+            inner[index] ^= byte;
+            outer[index] ^= byte;
+        }
+        let mut parts: Vec<&[u8]> = vec![&inner];
+        parts.extend_from_slice(message);
+        let digest = sha256(&parts);
+        sha256(&[&outer, &digest])
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn unhex(text: &str) -> Result<Vec<u8>> {
+        ensure!(
+            text.len().is_multiple_of(2) && text.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "not hex"
+        );
+        (0..text.len())
+            .step_by(2)
+            .map(|index| Ok(u8::from_str_radix(&text[index..index + 2], 16)?))
+            .collect()
+    }
+
+    impl FileStore {
+        pub fn from_env() -> Result<Self> {
+            let path = PathBuf::from(
+                std::env::var_os("ADE_SECRET_FILE")
+                    .context("ADE_SECRET_STORE=file needs ADE_SECRET_FILE")?,
+            );
+            ensure!(
+                path.is_absolute(),
+                "ADE_SECRET_FILE must be an absolute path"
+            );
+            let key = std::env::var("ADE_SECRET_KEY")
+                .ok()
+                .and_then(|text| unhex(&text).ok())
+                .filter(|key| key.len() == 32)
+                .context("ADE_SECRET_STORE=file needs ADE_SECRET_KEY as 64 hex digits")?;
+            Ok(Self::new(path, &key))
+        }
+
+        pub fn new(path: PathBuf, key: &[u8]) -> Self {
+            Self {
+                path,
+                enc_key: sha256(&[b"ade-secret-file enc\0", key]),
+                mac_key: sha256(&[b"ade-secret-file mac\0", key]),
+                lock: Mutex::new(()),
+            }
+        }
+
+        fn keystream(&self, nonce: &[u8], data: &mut [u8]) {
+            for (block, chunk) in data.chunks_mut(32).enumerate() {
+                let pad = sha256(&[&self.enc_key, nonce, &(block as u64).to_be_bytes()]);
+                for (byte, key) in chunk.iter_mut().zip(pad) {
+                    *byte ^= key;
+                }
+            }
+        }
+
+        fn load(&self) -> Result<Vec<Item>> {
+            let directory = self
+                .path
+                .parent()
+                .context("ADE_SECRET_FILE has no directory")?;
+            if !directory.is_dir() {
+                bail!(
+                    "the secret store directory {} does not exist",
+                    directory.display()
+                );
+            }
+            let text = match std::fs::read(&self.path) {
+                Ok(text) => text,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+                Err(error) => return Err(error).context("the secret store cannot be read"),
+            };
+            let envelope: Envelope =
+                serde_json::from_slice(&text).context("the secret store is damaged")?;
+            ensure!(
+                envelope.version == 1,
+                "the secret store has an unknown version"
+            );
+            let nonce = unhex(&envelope.nonce).context("the secret store is damaged")?;
+            let mut data = unhex(&envelope.data).context("the secret store is damaged")?;
+            let tag = unhex(&envelope.tag).context("the secret store is damaged")?;
+            let expected = hmac(&self.mac_key, &[&nonce, &data]);
+            ensure!(
+                tag.len() == 32
+                    && tag
+                        .iter()
+                        .zip(expected)
+                        .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+                        == 0,
+                "the secret store failed authentication; its key or contents changed"
+            );
+            self.keystream(&nonce, &mut data);
+            serde_json::from_slice(&data).context("the secret store is damaged")
+        }
+
+        fn save(&self, items: &[Item]) -> Result<()> {
+            let nonce = [
+                *uuid::Uuid::new_v4().as_bytes(),
+                *uuid::Uuid::new_v4().as_bytes(),
+            ]
+            .concat();
+            let mut data = serde_json::to_vec(items)?;
+            self.keystream(&nonce, &mut data);
+            let tag = hmac(&self.mac_key, &[&nonce, &data]);
+            let envelope = Envelope {
+                version: 1,
+                nonce: hex(&nonce),
+                data: hex(&data),
+                tag: hex(&tag),
+            };
+            let temporary = self
+                .path
+                .with_extension(format!("tmp-{}", uuid::Uuid::new_v4().simple()));
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&temporary)
+                .context("the secret store cannot be written")?;
+            file.write_all(&serde_json::to_vec(&envelope)?)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temporary, &self.path).context("the secret store cannot be written")
+        }
+    }
+
+    impl SecretStore for FileStore {
+        fn find(&self, service: &str, account: &str) -> Result<Vec<u8>> {
+            let _held = self.lock.lock().unwrap();
+            self.load()?
+                .into_iter()
+                .find(|item| item.service == service && item.account == account)
+                .map(|item| item.value.into_bytes())
+                .context("the item does not exist")
+        }
+        fn add(&self, service: &str, account: &str, value: &[u8]) -> Result<()> {
+            let _held = self.lock.lock().unwrap();
+            let mut items = self.load()?;
+            ensure!(
+                !items
+                    .iter()
+                    .any(|item| item.service == service && item.account == account),
+                "the item already exists"
+            );
+            items.push(Item {
+                service: service.into(),
+                account: account.into(),
+                value: String::from_utf8(value.to_vec()).context("a secret must be UTF-8")?,
+            });
+            self.save(&items)
+        }
+        fn delete(&self, service: &str, account: &str) -> Result<()> {
+            let _held = self.lock.lock().unwrap();
+            let mut items = self.load()?;
+            let before = items.len();
+            items.retain(|item| !(item.service == service && item.account == account));
+            if items.len() == before {
+                return Ok(());
+            }
+            self.save(&items)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn items_round_trip_encrypted_and_a_wrong_key_is_refused() {
+            let directory = std::env::temp_dir()
+                .join(format!("ade-secret-file-{}", uuid::Uuid::new_v4().simple()));
+            std::fs::create_dir(&directory).unwrap();
+            let path = directory.join("store.json");
+            let store = FileStore::new(path.clone(), &[7u8; 32]);
+            store.add("s", "a", b"plain-value-123").unwrap();
+            assert!(store.add("s", "a", b"again").is_err());
+            assert_eq!(store.find("s", "a").unwrap(), b"plain-value-123");
+            assert!(
+                !String::from_utf8_lossy(&std::fs::read(&path).unwrap())
+                    .contains("plain-value-123")
+            );
+            let other = FileStore::new(path.clone(), &[8u8; 32]);
+            assert!(
+                other
+                    .find("s", "a")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("authentication")
+            );
+            store.delete("s", "a").unwrap();
+            store.delete("s", "a").unwrap();
+            assert!(
+                store
+                    .find("s", "a")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("does not exist")
+            );
+            let missing = FileStore::new(directory.join("gone/store.json"), &[7u8; 32]);
+            assert!(
+                missing
+                    .find("s", "a")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("does not exist")
+            );
+            std::fs::remove_dir_all(directory).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_file_store_is_chosen_only_by_name_and_never_in_a_release_build() {
+        assert_eq!(backend(None, true).unwrap(), Backend::Keychain);
+        assert_eq!(backend(None, false).unwrap(), Backend::Keychain);
+        assert_eq!(backend(Some("file"), false).unwrap(), Backend::File);
+        let refused = backend(Some("file"), true).unwrap_err().to_string();
+        assert!(refused.contains("release build refuses"), "{refused}");
+        for other in ["", "keychain", "FILE"] {
+            assert!(backend(Some(other), false).is_err());
+        }
     }
 }
 

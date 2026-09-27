@@ -223,6 +223,57 @@ fn withhold_secrets(path: &Path) -> Result<()> {
     tx.commit()?;
     Ok(())
 }
+/// Drops every plugin setting that names an item ADE made, as services drop
+/// theirs. A bundle then never names an item another profile owns, so a
+/// profile restored beside the original cannot reach it; the restored
+/// plugin's credential is unset until it is sent again. References the user
+/// made stay. Backup applies it to the copy it takes, and restore to the
+/// copy it places, which covers a bundle made before this rule.
+fn withhold_plugin_credentials(path: &Path) -> Result<()> {
+    let mut db = Connection::open(path)?;
+    if !tables(&db)?.iter().any(|name| name == "plugin_settings") {
+        return Ok(());
+    }
+    db.pragma_update(None, "secure_delete", "ON")?;
+    let tx = db.transaction()?;
+    let rows = {
+        let mut query = tx.prepare("SELECT rowid,value FROM plugin_settings")?;
+        query
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for (row, value) in rows {
+        if serde_json::from_str::<ade_core::credentials::CredentialReference>(&value)
+            .is_ok_and(|reference| reference.ade_owned())
+        {
+            tx.execute("DELETE FROM plugin_settings WHERE rowid=?1", [row])?;
+        }
+    }
+    tx.commit()?;
+    db.execute_batch("VACUUM")?;
+    Ok(())
+}
+/// Refuses a plugin registry that still names an item ADE made.
+fn plugin_credentials_withheld(path: &Path) -> Result<()> {
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    if !tables(&db)?.iter().any(|name| name == "plugin_settings") {
+        return Ok(());
+    }
+    let mut query = db.prepare("SELECT value FROM plugin_settings")?;
+    let values = query
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    ensure!(
+        !values.iter().any(|value| {
+            serde_json::from_str::<ade_core::credentials::CredentialReference>(value)
+                .is_ok_and(|reference| reference.ade_owned())
+        }),
+        "Backup holds a plugin credential reference it declares excluded"
+    );
+    Ok(())
+}
 fn secrets_withheld(path: &Path) -> Result<()> {
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     if !tables(&db)?.iter().any(|name| name == "services") {
@@ -447,6 +498,11 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
             withhold_secrets(target)?;
             exclude_projection(target)?;
             secrets_withheld(target)?;
+        }
+        if name == PLUGINS_DB {
+            withhold_plugin_credentials(target)?;
+            sync(target)?;
+            plugin_credentials_withheld(target)?;
         }
         Some(schema(target, name)?)
     } else {
@@ -796,6 +852,9 @@ fn validate(source: &Path) -> Result<(Value, Plan)> {
     }
     if plan.has(PLUGINS_DB) {
         plugin_artifacts(&source.join(PLUGINS_DB), plan.artifact_files())?;
+        if plan.format >= coverage::PLUGIN_CREDENTIALS_WITHHELD_SINCE {
+            plugin_credentials_withheld(&source.join(PLUGINS_DB))?;
+        }
     }
     Ok((value, plan))
 }
@@ -999,6 +1058,7 @@ fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
 /// restored profile would load another profile's artifacts.
 fn rebase_plugins(database: &Path, files: &[FileRecord], final_data: &Path) -> Result<()> {
     let placed = plugin_artifacts(database, files)?;
+    withhold_plugin_credentials(database)?;
     let mut db = Connection::open(database)?;
     db.pragma_update(None, "journal_mode", "DELETE")?;
     let tx = db.transaction()?;

@@ -1865,6 +1865,9 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     // Lock the original directory before recovery or supervisor ownership changes.
     let _writer = runtime::lock(&directory, "writer.lock")?;
     let directory = std::fs::canonicalize(directory)?;
+    // Choose the secret store before any store opens: opening moves secrets
+    // saved in plain text into it. A release build refuses the test store.
+    ade_daemon::credentials::init(&directory)?;
     anyhow::ensure!(
         UnixStream::connect(&socket).is_err(),
         "A daemon is already listening at {socket}"

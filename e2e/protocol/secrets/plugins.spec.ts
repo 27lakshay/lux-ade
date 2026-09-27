@@ -1,17 +1,17 @@
 // F059 plugin credentials (architecture section 7): a `credential_ref`
 // setting stores a typed reference, never a secret. `{"secret": "..."}` moves
-// a value into a Keychain item ADE owns. The plugin sees the reference in its
-// settings and, at each host activation, the value the daemon resolved; no
-// reply or database row carries the value. A reference that names nothing
-// refuses the host start before any plugin code runs.
+// a value into an item the profile owns in its secret store: the Keychain in
+// production, the test-only encrypted file store here (fixtures/secret-store.ts).
+// The plugin sees the reference in its settings and, at each host activation,
+// the value the daemon resolved; no reply or database row carries the value.
+// A reference that names nothing refuses the host start before any plugin
+// code runs.
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { installAndEnable, pluginLines, stagePlugin } from '../fixtures/plugins'
-import { ADE_KEYCHAIN_SERVICE, REDACTED, filesHolding, ownedReference, pluginsDatabase, sha256,
+import { ADE_KEYCHAIN_SERVICE, REDACTED, filesHolding, ownedReference, pluginsDatabase, sha256, storeHoldsPlainly,
   type KeychainReference } from './helpers'
-
-test.use({ keychain: true })
 
 const SECRET = 'plugin-secret-91b2f0'
 
@@ -39,15 +39,17 @@ test('a plugin credential is stored as a reference and its value reaches only th
   const set = await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value: { secret: SECRET } })
   expect(JSON.stringify(set)).not.toContain(SECRET)
   const reference = await token(profile, pluginId) as KeychainReference
-  expect(reference).toEqual(ownedReference(`plugin/${pluginId}/token`))
-  // The item exists; only the daemon may read it, and the activation below proves its value.
-  expect(await profile.keychain.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([reference.keychain.account])
+  expect(reference).toEqual(await ownedReference(profile, `plugin/${pluginId}/token`))
+  // The item holds the value, encrypted at rest; no profile file holds it.
+  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([reference.keychain.account])
+  expect(await profile.secrets.find(ADE_KEYCHAIN_SERVICE, reference.keychain.account)).toBe(SECRET)
   expect(await filesHolding(profile, SECRET)).toEqual([])
+  expect(await storeHoldsPlainly(profile, SECRET)).toBe(false)
 
   // Sending the same secret again converges on the same item.
   await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value: { secret: SECRET } })
   expect(await token(profile, pluginId)).toEqual(reference)
-  expect(await profile.keychain.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([reference.keychain.account])
+  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([reference.keychain.account])
 
   // The activated plugin gets the reference in settings and the value as a credential.
   expect(await activation(profile, pluginId, outDir)).toMatchObject({ token_reference: reference, token_sha256: sha256(SECRET) })
@@ -68,12 +70,12 @@ test('a plugin credential is stored as a reference and its value reaches only th
   // Rotation makes a new item and deletes the old one.
   await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value: { secret: 'rotated-91b2f0' } })
   const rotated = await token(profile, pluginId) as KeychainReference
-  expect(await profile.keychain.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([rotated.keychain.account])
+  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([rotated.keychain.account])
   expect(await activation(profile, pluginId, outDir)).toMatchObject({ token_sha256: sha256('rotated-91b2f0') })
 
   // A reference to the daemon's environment replaces ADE's item, which is deleted.
   await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value: { env: 'E2E_PLUGIN_TOKEN' } })
-  expect(await profile.keychain.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([])
+  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([])
   const activations = (await pluginLines(outDir, 'lifecycle.jsonl')).filter((line) => line.event === 'activate').length
   // The daemon has no such variable: the host start is refused before plugin code runs.
   await expect(profile.call('plugin.host.restart', { plugin_id: pluginId })).rejects.toMatchObject({ code: 'failed',
@@ -91,13 +93,13 @@ test('a plugin credential is stored as a reference and its value reaches only th
   await profile.call('plugin.setting.set', { plugin_id: pluginId, key: 'token', value: { secret: SECRET } })
   await profile.call('plugin.disable', { plugin_id: pluginId })
   await profile.call('plugin.uninstall', { operation_id: 'keep', plugin_id: pluginId })
-  expect(await profile.keychain.accounts(ADE_KEYCHAIN_SERVICE)).toHaveLength(1)
+  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toHaveLength(1)
   await profile.call('plugin.install', { operation_id: 'again', source: { kind: 'local', path: await stagePlugin(ade.root, 'backend') } })
   await profile.call('plugin.uninstall', { operation_id: 'purge', plugin_id: pluginId, purge_data: true })
-  expect(await profile.keychain.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([])
+  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([])
 })
 
-test('a plugin credential stored as text before references moves into the keychain when the profile opens', async ({ ade, profile }) => {
+test('a plugin credential stored as text before references moves into the secret store when the profile opens', async ({ ade, profile }) => {
   const { pluginId, outDir } = await installAndEnable(profile, await stagePlugin(ade.root, 'backend'))
   const other = await installAndEnable(profile, await stagePlugin(ade.root, 'backend', otherManifest))
 
@@ -111,22 +113,22 @@ test('a plugin credential stored as text before references moves into the keycha
   db.close()
   expect(await filesHolding(profile, SECRET)).not.toEqual([])
 
-  // Without a usable keychain the secret cannot move: it is never shown or
-  // given to the plugin. A text that names a reference needs no keychain.
-  const keychain = profile.env.ADE_KEYCHAIN
-  profile.env.ADE_KEYCHAIN = join(profile.home, 'missing.keychain-db')
+  // Without a usable store the secret cannot move: it is never shown or
+  // given to the plugin. A text that names a reference needs no store.
+  const store = profile.env.ADE_SECRET_FILE
+  profile.env.ADE_SECRET_FILE = join(profile.home, 'missing', 'store.json')
   await profile.restartDaemon()
   expect(await token(profile, pluginId)).toBe(REDACTED)
   expect(await token(profile, other.pluginId)).toEqual({ env: 'E2E_OTHER_TOKEN' })
   await expect(profile.call('plugin.host.restart', { plugin_id: pluginId })).rejects.toMatchObject({ code: 'failed',
     message: expect.stringMatching(/Credential setting token is still stored in plain text/) })
 
-  // The next open with the keychain moves it; no plugin file keeps a copy.
-  profile.env.ADE_KEYCHAIN = keychain
+  // The next open with the store moves it; no plugin file keeps a copy.
+  profile.env.ADE_SECRET_FILE = store
   await profile.restartDaemon()
   const reference = await token(profile, pluginId) as KeychainReference
-  expect(reference).toEqual(ownedReference(`plugin/${pluginId}/token`))
-  expect(await profile.keychain.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([reference.keychain.account])
+  expect(reference).toEqual(await ownedReference(profile, `plugin/${pluginId}/token`))
+  expect(await profile.secrets.accounts(ADE_KEYCHAIN_SERVICE)).toEqual([reference.keychain.account])
   expect(await filesHolding(profile, SECRET)).toEqual([])
   expect(await activation(profile, pluginId, outDir)).toMatchObject({ token_reference: reference, token_sha256: sha256(SECRET) })
 })
