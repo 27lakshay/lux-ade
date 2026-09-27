@@ -170,17 +170,28 @@ pub fn settle_lifecycle(dispatched: bool, observed: bool) -> Settlement {
     }
 }
 
-/// A shared-use claim from an earlier incarnation of this profile is
-/// superseded when the profile's own reconciliation claims the same key
+/// A lease's shared-use claim from an earlier incarnation of this profile is
+/// superseded when the profile's own reconciliation leases the same key
 /// again: the checkout stays protected by the new claim throughout.
+///
+/// Only a lease claim qualifies: shared, with no operation ID, and
+/// quarantined because its owner was lost while it was in use. A claim that
+/// an effect (setup, carry, resources) holds under an operation ID records
+/// that the effect's outcome is unknown, so only explicit resolution retires
+/// it.
 pub fn superseded_by(
     old: &Claim,
     key: &Key,
+    mode: ClaimMode,
     purpose: ClaimPurpose,
     profile: &str,
     incarnation: &str,
 ) -> bool {
     purpose == ClaimPurpose::Use
+        && mode == ClaimMode::Shared
+        && old.mode == ClaimMode::Shared
+        && old.operation_id.is_none()
+        && old.reason.as_deref() == Some("owner_lost_during_use")
         && old.purpose == ClaimPurpose::Use
         && old.state == ClaimState::Quarantined
         && old.owner_profile == profile
@@ -302,6 +313,7 @@ pub fn supersedes(old: &Claim, wanted: &Wanted) -> bool {
         Resource::Checkout => superseded_by(
             old,
             wanted.key,
+            wanted.mode,
             wanted.purpose,
             wanted.profile,
             wanted.incarnation,
@@ -2068,16 +2080,21 @@ mod tests {
     }
 
     #[test]
-    fn only_this_profiles_own_quarantined_use_of_the_same_key_is_superseded() {
+    fn only_this_profiles_own_quarantined_lease_of_the_same_key_is_superseded() {
         let same = key(&["tree", "root"]);
         let use_ = ClaimPurpose::Use;
-        let old = claim(ClaimState::Quarantined, use_, "old");
-        assert!(superseded_by(&old, &same, use_, "p", "new"));
-        assert!(!superseded_by(&old, &same, use_, "other", "new"));
-        assert!(!superseded_by(&old, &same, use_, "p", "old"));
+        let lost = |state, purpose| Claim {
+            reason: Some("owner_lost_during_use".into()),
+            ..claim(state, purpose, "old")
+        };
+        let old = lost(ClaimState::Quarantined, use_);
+        assert!(superseded_by(&old, &same, Shared, use_, "p", "new"));
+        assert!(!superseded_by(&old, &same, Shared, use_, "other", "new"));
+        assert!(!superseded_by(&old, &same, Shared, use_, "p", "old"));
         assert!(!superseded_by(
             &old,
             &same,
+            Shared,
             ClaimPurpose::Remove,
             "p",
             "new"
@@ -2085,14 +2102,59 @@ mod tests {
         assert!(!superseded_by(
             &old,
             &key(&["other", "root"]),
+            Shared,
             use_,
             "p",
             "new"
         ));
-        let active = claim(ClaimState::Active, use_, "old");
-        assert!(!superseded_by(&active, &same, use_, "p", "new"));
-        let removal = claim(ClaimState::Quarantined, ClaimPurpose::Remove, "old");
-        assert!(!superseded_by(&removal, &same, use_, "p", "new"));
+        assert!(!superseded_by(&old, &same, Exclusive, use_, "p", "new"));
+        let active = lost(ClaimState::Active, use_);
+        assert!(!superseded_by(&active, &same, Shared, use_, "p", "new"));
+        let removal = lost(ClaimState::Quarantined, ClaimPurpose::Remove);
+        assert!(!superseded_by(&removal, &same, Shared, use_, "p", "new"));
+    }
+
+    #[test]
+    fn a_lease_after_restart_never_retires_an_effects_quarantined_claim() {
+        let same = key(&["tree", "root"]);
+        let use_ = ClaimPurpose::Use;
+        // Setup's shared claim, quarantined because a hook timed out.
+        let setup = Claim {
+            operation_id: Some("op_setup".into()),
+            reason: Some("hook_outcome_unknown".into()),
+            ..claim(ClaimState::Quarantined, use_, "old")
+        };
+        assert!(!superseded_by(&setup, &same, Shared, use_, "p", "new"));
+        // Carry's exclusive target claim, quarantined with an unknown outcome.
+        let carry = Claim {
+            mode: Exclusive,
+            operation_id: Some("op_carry".into()),
+            reason: Some("carry_outcome_unknown".into()),
+            ..claim(ClaimState::Quarantined, use_, "old")
+        };
+        assert!(!superseded_by(&carry, &same, Shared, use_, "p", "new"));
+        // An effect's claim whose owner was lost mid-effect.
+        let mid_effect = Claim {
+            operation_id: Some("op_resources".into()),
+            reason: Some("owner_lost_during_use".into()),
+            ..claim(ClaimState::Quarantined, use_, "old")
+        };
+        assert!(!superseded_by(&mid_effect, &same, Shared, use_, "p", "new"));
+        // Through the take decision: the carry claim survives and refuses the
+        // lease that a new incarnation wants.
+        let wanted = Wanted {
+            key: &same,
+            resource: &Resource::Checkout,
+            mode: Shared,
+            purpose: use_,
+            holder: None,
+            operation_id: None,
+            profile: "p",
+            incarnation: "new",
+            verified_idle: false,
+        };
+        assert!(!supersedes(&carry, &wanted));
+        assert!(claim_conflicts(&carry, &wanted));
     }
 
     #[test]
