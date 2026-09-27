@@ -17,7 +17,7 @@ test('the inventory lists simulators, AVDs and adb devices with a reason for eve
 
   // iOS: only iOS runtimes; the watch is not a target.
   const ios = family(list, 'ios_simulator')
-  expect(ios).toMatchObject({ available: true, reasons: [], tools: [host.path('xcrun')] })
+  expect(ios).toMatchObject({ available: true, reasons: [], tools: [host.path('xcrun'), host.path('idb')] })
   expect(list.devices.some((entry) => entry.device_id.includes(samples.watch))).toBe(false)
 
   const iphone = device(list, `ios-sim:${samples.iphone}`)

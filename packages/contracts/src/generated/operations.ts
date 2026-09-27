@@ -264,6 +264,7 @@ export const operations = {
   "device.boot": { tier: "effect_command", domain: "devices", request: "DeviceBootRequest", response: "DeviceBooted" },
   "device.app.install": { tier: "effect_command", domain: "devices", request: "DeviceAppInstallRequest", response: "DeviceAppInstalled" },
   "device.app.launch": { tier: "effect_command", domain: "devices", request: "DeviceAppLaunchRequest", response: "DeviceAppLaunched" },
+  "device.input": { tier: "effect_command", domain: "devices", request: "DeviceInputRequest", response: "DeviceInputSent" },
   "placement.hosts": { tier: "query", domain: "placement", request: "PlacementHostsRequest", response: "ExecutionHosts" },
   "placement.check": { tier: "query", domain: "placement", request: "PlacementCheckRequest", response: "PlacementDecision" },
   "placement.record": { tier: "idempotent_command", domain: "placement", request: "PlacementRecordRequest", response: "PlacementReply" },

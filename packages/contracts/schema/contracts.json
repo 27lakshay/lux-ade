@@ -8482,13 +8482,22 @@
     },
     "DeviceCapability": {
       "description": "An operation a device can take.",
-      "enum": [
-        "screenshot",
-        "boot",
-        "install_app",
-        "launch_app"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "screenshot",
+            "boot",
+            "install_app",
+            "launch_app"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "input",
+          "description": "Send touch, text and key input (`device.input`).",
+          "type": "string"
+        }
+      ]
     },
     "DeviceCapabilityStatus": {
       "description": "Whether one capability is available on one device now.",
@@ -8599,6 +8608,189 @@
       ],
       "type": "object"
     },
+    "DeviceInputAction": {
+      "description": "One input event. Coordinates are in the device's input space: pixels on\nAndroid (the screenshot's pixels), points on an iOS simulator.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "tap",
+              "type": "string"
+            },
+            "x": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "y": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "x",
+            "y"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "duration_ms": {
+              "description": "1 to 10000 milliseconds; 300 when absent.",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "from_x": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "from_y": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "swipe",
+              "type": "string"
+            },
+            "to_x": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "to_y": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "from_x",
+            "from_y",
+            "to_x",
+            "to_y"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Printable ASCII typed into the device's focused field, at most 1000\ncharacters.",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/DeviceKey"
+            },
+            "kind": {
+              "const": "key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "key"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DeviceInputRequest": {
+      "additionalProperties": false,
+      "description": "`device.input`: send one input event to one exact booted device. The\ndaemon never sends it to the focused, booted or only device instead, and\nrecords who asked.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/DeviceInputAction"
+        },
+        "caller": {
+          "$ref": "#/$defs/Caller",
+          "description": "Who asks: the user, or an Agent naming its own Conversation."
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "device.input"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "host_id",
+        "device_id",
+        "caller",
+        "action"
+      ],
+      "type": "object"
+    },
+    "DeviceInputSent": {
+      "description": "The `device.input` reply, sent once the device's tool accepted the event.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/DeviceInputAction"
+        },
+        "attribution": {
+          "description": "`user`, or `agent:<conversation ID>`.",
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "serial": {
+          "description": "The adb serial the event went to on Android; null for a simulator.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `device_input_sent` type tag.",
+          "enum": [
+            "device_input_sent"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "host_id",
+        "device_id",
+        "action",
+        "attribution",
+        "serial"
+      ],
+      "type": "object"
+    },
     "DeviceInventory": {
       "description": "The `device.list` reply.",
       "properties": {
@@ -8638,6 +8830,18 @@
         "observed_at_ms"
       ],
       "type": "object"
+    },
+    "DeviceKey": {
+      "description": "A key `device.input` can press. Not every family has every key: an iOS\nsimulator has no Back key.",
+      "enum": [
+        "home",
+        "back",
+        "enter",
+        "delete",
+        "tab",
+        "escape"
+      ],
+      "type": "string"
     },
     "DeviceKind": {
       "description": "What kind of target a device is.",
@@ -29269,6 +29473,13 @@
       "name": "device.app.launch",
       "request": "DeviceAppLaunchRequest",
       "response": "DeviceAppLaunched",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "devices",
+      "name": "device.input",
+      "request": "DeviceInputRequest",
+      "response": "DeviceInputSent",
       "tier": "effect_command"
     },
     {

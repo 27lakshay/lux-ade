@@ -15,6 +15,8 @@
     "test:e2e": "pnpm build:backend && pnpm build && playwright test",
     "test:e2e:protocol": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:protocol:only",
     "test:e2e:protocol:only": "playwright test --config playwright.protocol.config.ts",
+    "test:e2e:protocol:faults": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:protocol:faults:only",
+    "test:e2e:protocol:faults:only": "playwright test --config playwright.faults.config.ts",
     "test:e2e:package": "playwright test --config playwright.package.config.ts",
     "test:e2e:live": "python3 scripts/live_provider_check.py",
     "test:e2e:live:desktop": "playwright test --config playwright.live.config.ts",

@@ -10,6 +10,9 @@ pnpm test:e2e:protocol:only boot --grep "restart"
 ```
 
 - `ADE_E2E_WORKERS=N` sets the worker count. It defaults to half the CPUs.
+- `pnpm test:e2e:protocol:faults` builds, then runs the fault conformance
+  suite; `pnpm test:e2e:protocol:faults:only` runs it without building. See
+  [Fault conformance suite](#fault-conformance-suite).
 - Tests in a file run in parallel. There are no retries, so the first failure
   is the one reported.
 - `ADE_E2E_KEEP=1` keeps each test's scratch directory after a pass. A failed
@@ -48,6 +51,8 @@ test('a Codex turn reaches the transcript', async ({ profile, repo }) => {
 | `startConversation`, `send`, `waitForIdle`, `waitForMessage`, `waitForPendingRequest`, `fixtureAnswers` | Conversation steps over the SDK. |
 | `profile.mockCalls(provider)`, `profile.releaseMock(provider, file)` | Reads what a mock received. Creates the file a scripted mock waits for. |
 | `isRunning(pid)` | Process liveness. It treats an unreaped zombie as exited. |
+| `fixtures/devices`: `DeviceHost` | PATH and SDK-root shims for `xcrun simctl`, `idb`, `adb`, `emulator` and `aapt2` over one `state.json`, with holds that pause an effect and a record of every effect, input included. |
+| `fixtures/faulty-plugin`: `stageFaultyPlugin`, `breakActivation`, `healActivation` | A backend plugin whose activation throws, exits or hangs while a switch file exists, with commands that freeze its host and flood its log. |
 
 The provider mocks are `scripts/fixtures/codex_mock.py` and
 `scripts/fixtures/claude_mock.mjs`, which serves `providers/claude/fake-sdk.mjs`.
@@ -77,6 +82,30 @@ repositories to a profile. Use mocks and scratch repositories only.
 
 **Keep tests independent.** Tests run in parallel in any order. Do not share
 state between tests through files, ports or module variables.
+
+## Fault conformance suite
+
+F140 asks for the fault matrix to run as one named suite through public
+interfaces. `pnpm test:e2e:protocol:faults` is that suite. It runs, across
+every area, each test that injects a fault: daemon or runtime kills and
+restarts, crashed, hung or frozen processes, lost replies and unknown
+outcomes, duplicate and conflicting requests, races for a resource, revoked
+or disconnected targets, and corrupt input.
+
+The suite is `playwright.faults.config.ts`: the protocol configuration with a
+`grep` from [`fault-suite.ts`](fault-suite.ts). A test joins it when its file
+path or title names a fault from that vocabulary, such as "crash", "restart",
+"unknown", "conflict" or "race", or when its title carries the `@fault` tag.
+There is no list of files to keep in step. When you write a fault test,
+name the fault in its title; add `@fault` only when no word from the
+vocabulary fits. To see what the suite runs:
+
+```sh
+pnpm exec playwright test --config playwright.faults.config.ts --list
+```
+
+It takes the same arguments as `test:e2e:protocol:only`, such as a path or
+`--grep`, and the same `ADE_E2E_WORKERS`.
 
 ## When a test fails
 

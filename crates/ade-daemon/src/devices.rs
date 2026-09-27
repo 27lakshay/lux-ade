@@ -11,10 +11,11 @@
 //! (c) 2026 Lovecast Inc.): the simctl JSON shape, the `adb devices -l` line
 //! grammar, the `emulator -list-avds` noise filter and the SDK root order.
 use ade_core::contract::devices::{
-    DeviceCapability, DeviceCapabilityStatus, DeviceFamily, DeviceFamilyStatus, DeviceKind,
-    DevicePermission, DevicePermissionState, DevicePermissionStatus, DeviceReason,
-    DeviceReasonCode, DeviceState, DeviceSummary,
+    DeviceCapability, DeviceCapabilityStatus, DeviceFamily, DeviceFamilyStatus, DeviceInputAction,
+    DeviceKey, DeviceKind, DevicePermission, DevicePermissionState, DevicePermissionStatus,
+    DeviceReason, DeviceReasonCode, DeviceState, DeviceSummary,
 };
+use ade_core::contract::orchestration::Caller;
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -528,6 +529,19 @@ pub fn classify_computer(
         }
     };
     let several = displays.len() > 1;
+    // Posting events to a display would act on whatever window has focus,
+    // so ADE does not offer it; nothing is ever redirected to the focused app.
+    let display_input = if permissions.accessibility != DevicePermissionState::Granted {
+        reason(
+            DeviceReasonCode::PermissionDenied,
+            "Accessibility is not granted",
+        )
+    } else {
+        reason(
+            DeviceReasonCode::NotSupported,
+            "Input to a display or application is not built; ADE never sends input to whatever has focus",
+        )
+    };
     let devices: Vec<DeviceSummary> = displays
         .iter()
         .map(|display| {
@@ -556,7 +570,10 @@ pub fn classify_computer(
                 state: DeviceState::Connected,
                 runtime: None,
                 serial: None,
-                capabilities: vec![capability(DeviceCapability::Screenshot, blocked)],
+                capabilities: vec![
+                    capability(DeviceCapability::Screenshot, blocked),
+                    capability(DeviceCapability::Input, Some(display_input.clone())),
+                ],
             }
         })
         .collect();
@@ -580,6 +597,8 @@ pub enum IosProbe {
     ToolFailed(String),
     Listed {
         xcrun: String,
+        /// `idb`, which sends simulator input; simctl cannot.
+        idb: Option<String>,
         simulators: Vec<Simulator>,
     },
 }
@@ -592,7 +611,7 @@ pub fn classify_ios(probe: IosProbe) -> (DeviceFamilyStatus, Vec<DeviceSummary>)
         tools,
         permissions: vec![],
     };
-    let (xcrun, simulators) = match probe {
+    let (xcrun, idb, simulators) = match probe {
         IosProbe::NotMacos => {
             let why = reason(
                 DeviceReasonCode::PlatformUnsupported,
@@ -608,7 +627,11 @@ pub fn classify_ios(probe: IosProbe) -> (DeviceFamilyStatus, Vec<DeviceSummary>)
             let why = reason(DeviceReasonCode::ToolFailed, detail);
             return (family(false, vec![why], vec![]), vec![]);
         }
-        IosProbe::Listed { xcrun, simulators } => (xcrun, simulators),
+        IosProbe::Listed {
+            xcrun,
+            idb,
+            simulators,
+        } => (xcrun, idb, simulators),
     };
     let mut reasons = Vec::new();
     if simulators.is_empty() {
@@ -622,12 +645,16 @@ pub fn classify_ios(probe: IosProbe) -> (DeviceFamilyStatus, Vec<DeviceSummary>)
             "No iOS simulator has an installed runtime. Install one in Xcode > Settings > Components",
         ));
     }
-    let devices: Vec<DeviceSummary> = simulators.iter().map(ios_summary).collect();
+    let devices: Vec<DeviceSummary> = simulators
+        .iter()
+        .map(|simulator| ios_summary(simulator, idb.is_some()))
+        .collect();
     let available = simulators.iter().any(|simulator| simulator.available);
-    (family(available, reasons, vec![xcrun]), devices)
+    let tools = std::iter::once(xcrun).chain(idb).collect();
+    (family(available, reasons, tools), devices)
 }
 
-fn ios_summary(simulator: &Simulator) -> DeviceSummary {
+fn ios_summary(simulator: &Simulator, idb: bool) -> DeviceSummary {
     use DeviceCapability::*;
     let missing = (!simulator.available).then(|| {
         reason(
@@ -650,10 +677,14 @@ fn ios_summary(simulator: &Simulator) -> DeviceSummary {
             "The simulator is changing state",
         )
     };
-    let capabilities = [Boot, Screenshot, InstallApp, LaunchApp]
+    let capabilities = [Boot, Screenshot, InstallApp, LaunchApp, Input]
         .into_iter()
         .map(|kind| {
             let blocked = missing.clone().or(match (simulator.state, kind) {
+                (_, Input) if !idb => Some(reason(
+                    DeviceReasonCode::ToolMissing,
+                    "Simulator input needs idb (brew install idb-companion, pipx install fb-idb); simctl cannot send touches",
+                )),
                 (DeviceState::Shutdown, Boot) => None,
                 (DeviceState::Booted, Boot) => Some(reason(
                     DeviceReasonCode::DeviceBooted,
@@ -794,6 +825,7 @@ pub fn classify_android(probe: AndroidProbe) -> (DeviceFamilyStatus, Vec<DeviceS
                 capability(Screenshot, Some(not_booted())),
                 capability(InstallApp, Some(not_booted())),
                 capability(LaunchApp, Some(not_booted())),
+                capability(Input, Some(not_booted())),
             ],
         });
     }
@@ -898,7 +930,8 @@ fn android_running_summary(entry: &RunningAndroid, tools: &AndroidTools) -> Devi
             capability(Boot, boot),
             capability(Screenshot, blocked.clone()),
             capability(InstallApp, install),
-            capability(LaunchApp, blocked),
+            capability(LaunchApp, blocked.clone()),
+            capability(Input, blocked),
         ],
     }
 }
@@ -972,9 +1005,267 @@ pub fn boot_timeout(requested: Option<u64>) -> Result<u64> {
     Ok(timeout)
 }
 
+// ---- Input ---------------------------------------------------------------------
+
+/// The largest coordinate `device.input` accepts.
+pub const MAX_INPUT_COORDINATE: u32 = 100_000;
+pub const MAX_INPUT_TEXT: usize = 1_000;
+const DEFAULT_SWIPE_MS: u32 = 300;
+
+/// The recorded attribution of an input: `user` or `agent:<conversation ID>`.
+pub fn input_attribution(caller: &Caller) -> Result<String> {
+    Ok(match caller {
+        Caller::User => "user".into(),
+        Caller::Agent { conversation_id } => {
+            ensure!(
+                !conversation_id.is_empty()
+                    && conversation_id.len() <= 128
+                    && conversation_id.bytes().all(|byte| byte.is_ascii_graphic()),
+                "caller conversation_id is invalid"
+            );
+            format!("agent:{conversation_id}")
+        }
+    })
+}
+
+/// Checks an input event's bounds before anything is recorded or sent.
+pub fn validate_input(action: &DeviceInputAction) -> Result<()> {
+    let point = |x: u32, y: u32| {
+        ensure!(
+            x <= MAX_INPUT_COORDINATE && y <= MAX_INPUT_COORDINATE,
+            "Input coordinates must be at most {MAX_INPUT_COORDINATE}"
+        );
+        Ok(())
+    };
+    match action {
+        DeviceInputAction::Tap { x, y } => point(*x, *y),
+        DeviceInputAction::Swipe {
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            duration_ms,
+        } => {
+            point(*from_x, *from_y)?;
+            point(*to_x, *to_y)?;
+            ensure!(
+                duration_ms.is_none_or(|ms| (1..=10_000).contains(&ms)),
+                "duration_ms must be between 1 and 10000"
+            );
+            Ok(())
+        }
+        DeviceInputAction::Text { text } => {
+            ensure!(
+                !text.is_empty() && text.len() <= MAX_INPUT_TEXT,
+                "Input text must be 1 to {MAX_INPUT_TEXT} characters"
+            );
+            ensure!(
+                text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)),
+                "Input text must be printable ASCII"
+            );
+            Ok(())
+        }
+        DeviceInputAction::Key { .. } => Ok(()),
+    }
+}
+
+/// The `adb shell` words for one input event. adb joins them into one
+/// command line for the device's shell, so text is single-quoted and its
+/// spaces become `%s`, which `input text` reads as a space.
+pub fn android_input_args(action: &DeviceInputAction) -> Result<Vec<String>> {
+    validate_input(action)?;
+    let words = |items: &[&str]| items.iter().map(|word| (*word).to_owned()).collect();
+    Ok(match action {
+        DeviceInputAction::Tap { x, y } => words(&["input", "tap", &x.to_string(), &y.to_string()]),
+        DeviceInputAction::Swipe {
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            duration_ms,
+        } => words(&[
+            "input",
+            "swipe",
+            &from_x.to_string(),
+            &from_y.to_string(),
+            &to_x.to_string(),
+            &to_y.to_string(),
+            &duration_ms.unwrap_or(DEFAULT_SWIPE_MS).to_string(),
+        ]),
+        DeviceInputAction::Text { text } => {
+            // `input text` has no escape for a literal `%s`.
+            ensure!(
+                !text.contains("%s"),
+                "Android input text cannot contain \"%s\""
+            );
+            let quoted = format!("'{}'", text.replace('\'', "'\\''").replace(' ', "%s"));
+            words(&["input", "text", &quoted])
+        }
+        DeviceInputAction::Key { key } => {
+            let code = match key {
+                DeviceKey::Home => "KEYCODE_HOME",
+                DeviceKey::Back => "KEYCODE_BACK",
+                DeviceKey::Enter => "KEYCODE_ENTER",
+                DeviceKey::Delete => "KEYCODE_DEL",
+                DeviceKey::Tab => "KEYCODE_TAB",
+                DeviceKey::Escape => "KEYCODE_ESCAPE",
+            };
+            words(&["input", "keyevent", code])
+        }
+    })
+}
+
+/// The `idb` arguments for one input event to simulator `udid`. idb runs
+/// without a shell, so text passes through as one argument.
+pub fn idb_input_args(action: &DeviceInputAction, udid: &str) -> Result<Vec<String>> {
+    validate_input(action)?;
+    let mut args: Vec<String> = match action {
+        DeviceInputAction::Tap { x, y } => {
+            vec!["ui".into(), "tap".into(), x.to_string(), y.to_string()]
+        }
+        DeviceInputAction::Swipe {
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            duration_ms,
+        } => vec![
+            "ui".into(),
+            "swipe".into(),
+            from_x.to_string(),
+            from_y.to_string(),
+            to_x.to_string(),
+            to_y.to_string(),
+            "--duration".into(),
+            format!(
+                "{:.3}",
+                f64::from(duration_ms.unwrap_or(DEFAULT_SWIPE_MS)) / 1000.0
+            ),
+        ],
+        DeviceInputAction::Text { text } => vec!["ui".into(), "text".into(), text.clone()],
+        DeviceInputAction::Key {
+            key: DeviceKey::Home,
+        } => {
+            vec!["ui".into(), "button".into(), "HOME".into()]
+        }
+        DeviceInputAction::Key {
+            key: DeviceKey::Back,
+        } => {
+            bail!("An iOS simulator has no Back key")
+        }
+        // USB HID keyboard usage IDs.
+        DeviceInputAction::Key { key } => {
+            let code = match key {
+                DeviceKey::Enter => 40,
+                DeviceKey::Escape => 41,
+                DeviceKey::Delete => 42,
+                _ => 43,
+            };
+            vec!["ui".into(), "key".into(), code.to_string()]
+        }
+    };
+    args.extend(["--udid".into(), udid.to_owned()]);
+    Ok(args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_is_bounded_attributed_and_quoted_for_each_tool() {
+        use DeviceInputAction::*;
+        assert_eq!(input_attribution(&Caller::User).unwrap(), "user");
+        let agent = Caller::Agent {
+            conversation_id: "c1".into(),
+        };
+        assert_eq!(input_attribution(&agent).unwrap(), "agent:c1");
+        let bad = Caller::Agent {
+            conversation_id: "a b".into(),
+        };
+        assert!(input_attribution(&bad).is_err());
+
+        assert!(validate_input(&Tap { x: 100_001, y: 0 }).is_err());
+        assert!(
+            validate_input(&Text {
+                text: String::new()
+            })
+            .is_err()
+        );
+        assert!(validate_input(&Text { text: "é".into() }).is_err());
+        assert!(
+            validate_input(&Text {
+                text: "a\nb".into()
+            })
+            .is_err()
+        );
+        let slow = Swipe {
+            from_x: 0,
+            from_y: 0,
+            to_x: 1,
+            to_y: 1,
+            duration_ms: Some(10_001),
+        };
+        assert!(validate_input(&slow).is_err());
+
+        let typed = android_input_args(&Text {
+            text: "it's a b;rm".into(),
+        })
+        .unwrap();
+        assert_eq!(typed, ["input", "text", r"'it'\''s%sa%sb;rm'"]);
+        assert!(
+            android_input_args(&Text {
+                text: "50%s".into()
+            })
+            .is_err()
+        );
+        assert_eq!(
+            android_input_args(&Swipe {
+                from_x: 1,
+                from_y: 2,
+                to_x: 3,
+                to_y: 4,
+                duration_ms: None
+            })
+            .unwrap(),
+            ["input", "swipe", "1", "2", "3", "4", "300"]
+        );
+        assert_eq!(
+            android_input_args(&Key {
+                key: DeviceKey::Back
+            })
+            .unwrap(),
+            ["input", "keyevent", "KEYCODE_BACK"]
+        );
+
+        assert_eq!(
+            idb_input_args(&Tap { x: 5, y: 6 }, "U").unwrap(),
+            ["ui", "tap", "5", "6", "--udid", "U"]
+        );
+        assert_eq!(
+            idb_input_args(&Text { text: "a b".into() }, "U").unwrap(),
+            ["ui", "text", "a b", "--udid", "U"]
+        );
+        assert!(
+            idb_input_args(
+                &Key {
+                    key: DeviceKey::Back
+                },
+                "U"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            idb_input_args(
+                &Key {
+                    key: DeviceKey::Enter
+                },
+                "U"
+            )
+            .unwrap(),
+            ["ui", "key", "40", "--udid", "U"]
+        );
+    }
 
     const SIMCTL: &str = r#"{
       "devices" : {
@@ -1068,6 +1359,7 @@ mod tests {
     fn ios_classification_explains_every_unavailable_capability() {
         let (family, devices) = classify_ios(IosProbe::Listed {
             xcrun: "/usr/bin/xcrun".into(),
+            idb: None,
             simulators: parse_simctl_devices(SIMCTL).unwrap(),
         });
         assert!(family.available);
@@ -1117,6 +1409,7 @@ mod tests {
             .collect();
         let (family, _) = classify_ios(IosProbe::Listed {
             xcrun: "x".into(),
+            idb: None,
             simulators: only_missing,
         });
         assert!(!family.available);

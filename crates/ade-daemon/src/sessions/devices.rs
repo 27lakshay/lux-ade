@@ -17,9 +17,10 @@ use crate::receipts::{self, Admission, Status};
 use ade_core::contract::devices::{
     DeviceAppInstallRequest, DeviceAppInstalled, DeviceAppLaunchRequest, DeviceAppLaunched,
     DeviceBootRequest, DeviceBooted, DeviceCapability, DeviceFamily, DeviceFamilyStatus,
-    DeviceHost, DeviceInventory, DeviceListRequest, DeviceScreenshot, DeviceScreenshotRequest,
-    DeviceState, DeviceSummary,
+    DeviceHost, DeviceInputRequest, DeviceInputSent, DeviceInventory, DeviceListRequest,
+    DeviceScreenshot, DeviceScreenshotRequest, DeviceState, DeviceSummary,
 };
+use ade_core::contract::orchestration::Caller;
 use ade_core::model::now_ms;
 use base64::Engine;
 use rusqlite::{Connection, Transaction, TransactionBehavior};
@@ -31,6 +32,7 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(15);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
+const INPUT_TIMEOUT: Duration = Duration::from_secs(30);
 const TEXT_LIMIT: usize = 4 * 1024 * 1024;
 
 // ---- Process execution -------------------------------------------------------
@@ -368,6 +370,7 @@ fn ios_probe() -> IosProbe {
         Ok(ran) if ran.success => match core::parse_simctl_devices(&ran.text()) {
             Ok(simulators) => IosProbe::Listed {
                 xcrun: xcrun.display().to_string(),
+                idb: find_tool("idb").map(|path| path.display().to_string()),
                 simulators,
             },
             Err(error) => IosProbe::ToolFailed(error.to_string()),
@@ -999,6 +1002,7 @@ impl Sessions {
             "device.boot" => self.device_boot(request),
             "device.app.install" => self.device_install(request),
             "device.app.launch" => self.device_launch(request),
+            "device.input" => self.device_input(request),
             _ => bail!("Unknown device operation"),
         }
     }
@@ -1371,6 +1375,101 @@ impl Sessions {
                 }
             }
         }
+    }
+}
+
+impl Sessions {
+    /// Whether a Conversation exists, so an Agent caller cannot be invented.
+    fn conversation_exists(&self, id: &str) -> Result<bool> {
+        self.device_db(false, |db| {
+            Ok(rusqlite::OptionalExtension::optional(db.query_row(
+                "SELECT 1 FROM conversations WHERE id=?1",
+                [id],
+                |_| Ok(()),
+            ))?
+            .is_some())
+        })
+    }
+
+    fn device_input(&self, request: &Value) -> Result<Value> {
+        const OP: &str = "device.input";
+        let input: DeviceInputRequest = decode(request)?;
+        let id = operation_id(&input.operation_id)?;
+        let attribution = core::input_attribution(&input.caller)?;
+        core::validate_input(&input.action)?;
+        let _claim = Claim::acquire(&input.device_id, id)?;
+        let _host = HostClaim::acquire(self, &input.device_id, id)?;
+        let admission = self.device_peek(id, OP, request)?;
+        if admission != Admission::New {
+            // Whether an interrupted input reached the device is not observable.
+            return self.device_replay(id, admission, |_| {
+                Reconciled::Unknown(
+                    "the input was interrupted before its outcome was recorded".into(),
+                )
+            });
+        }
+        if let Caller::Agent { conversation_id } = &input.caller {
+            ensure!(
+                self.conversation_exists(conversation_id)?,
+                "Caller Conversation {conversation_id} does not exist"
+            );
+        }
+        let (target, probed) = locate(&input.host_id, &input.device_id)?;
+        let device = core::require(&probed.devices, &input.device_id, DeviceCapability::Input)?;
+        let tools = probed.android.clone().unwrap_or_default();
+        let (program, args, serial) = match &target {
+            Target::IosSimulator(udid) => (
+                find_tool("idb").context("idb was not found")?,
+                core::idb_input_args(&input.action, udid)?,
+                None,
+            ),
+            Target::AndroidAvd(_) | Target::AndroidSerial(_) => {
+                let serial = android_serial(&tools, device, &target)?;
+                let mut args = vec!["-s".to_owned(), serial.clone(), "shell".into()];
+                args.extend(core::android_input_args(&input.action)?);
+                (
+                    tools.adb.clone().context("adb was not found")?,
+                    args,
+                    Some(serial),
+                )
+            }
+            Target::Display(_) => bail!("Device {} does not take input", input.device_id),
+        };
+        let sent = reply(&DeviceInputSent {
+            tag: Default::default(),
+            operation_id: input.operation_id.clone(),
+            host_id: input.host_id.clone(),
+            device_id: input.device_id.clone(),
+            action: input.action.clone(),
+            attribution: attribution.clone(),
+            serial: serial.clone(),
+        });
+        let record = json!({"op": OP, "device_id": input.device_id, "attribution": attribution,
+            "serial": serial});
+        let admission = self.device_dispatch(id, OP, request, &record)?;
+        if admission != Admission::New {
+            return self.device_replay(id, admission, |_| {
+                Reconciled::Unknown("a concurrent input holds this receipt".into())
+            });
+        }
+        // An emulator serial is a port another AVD can take; confirm it last.
+        if let Some(serial) = &serial
+            && let Err(error) = confirm_serial(&tools, serial, &target)
+        {
+            return self.device_finish(id, Err(error));
+        }
+        let words: Vec<&str> = args.iter().map(String::as_str).collect();
+        let ran = match run(&program, &words, INPUT_TIMEOUT, 64 * 1024) {
+            Ok(ran) => ran,
+            // A tool that timed out may have delivered the event.
+            Err(error) => return self.device_unknown(id, error.to_string()),
+        };
+        // `adb shell` reports a device-side failure on stdout with status 0.
+        let text = ran.text();
+        if !ran.success || text.contains("Error:") || text.contains("Exception") {
+            return self.device_finish(id, Err(anyhow!("Input failed: {}", ran.detail())));
+        }
+        self.device_finish(id, sent)
     }
 }
 

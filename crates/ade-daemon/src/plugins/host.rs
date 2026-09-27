@@ -31,7 +31,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(15);
 pub const INVOKE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -456,7 +456,52 @@ struct SlotState {
 #[derive(Default)]
 struct Slot {
     state: Mutex<Option<SlotState>>,
+    /// A host the slot is waiting on while it holds `state`: an activation
+    /// or a restart's deactivation, each bounded by its timeout. Status reads
+    /// it instead of waiting for the slot, so a hung plugin stays inspectable.
+    busy: Mutex<Option<Busy>>,
 }
+
+#[derive(Clone)]
+struct Busy {
+    key: HostKey,
+    pid: u32,
+    started_at: i64,
+    crashes: u32,
+    logs: Arc<Mutex<VecDeque<String>>>,
+}
+
+/// Publishes a [`Busy`] host for as long as it lives.
+struct BusyGuard<'a>(&'a Slot);
+
+impl<'a> BusyGuard<'a> {
+    fn new(slot: &'a Slot, process: &HostProcess, crashes: u32, action: &str) -> Self {
+        push_log(
+            &process.shared.logs,
+            format!(
+                "[ade] waiting for generation {} attempt {} to {action}",
+                process.key.generation, process.key.attempt
+            ),
+        );
+        *slot.busy.lock().unwrap() = Some(Busy {
+            key: process.key,
+            pid: process.pid(),
+            started_at: process.started_at,
+            crashes,
+            logs: process.shared.logs.clone(),
+        });
+        Self(slot)
+    }
+}
+
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        *self.0.busy.lock().unwrap() = None;
+    }
+}
+
+/// How long `status` waits for a slot before it reports the busy host.
+const STATUS_WAIT: Duration = Duration::from_millis(200);
 
 /// Supervises every plugin's backend host.
 pub struct Hosts {
@@ -611,13 +656,18 @@ impl Hosts {
                 spec.plugin_id,
                 state.last_error.as_deref().unwrap_or("none")
             )),
-            StartDecision::Start(key) => self.start(state, key),
+            StartDecision::Start(key) => self.start(&slot, state, key),
         }
     }
 
     /// Starts attempt `key` and activates it, holding the slot lock for at
     /// most the activation timeout. A failed start counts as a crash.
-    fn start(&self, state: &mut SlotState, key: HostKey) -> Result<Arc<HostProcess>, String> {
+    fn start(
+        &self,
+        slot: &Slot,
+        state: &mut SlotState,
+        key: HostKey,
+    ) -> Result<Arc<HostProcess>, String> {
         let spec = state.spec.clone().ok_or("Plugin host has no launch spec")?;
         let now = now_ms();
         let this = self.this.clone();
@@ -632,6 +682,7 @@ impl Hosts {
             Ok(process) => process,
             Err(error) => return Err(self.fail_start(state, key, error)),
         };
+        let busy = BusyGuard::new(slot, &process, state.supervision.crashes, "activate");
         let activated = process.call(
             "activate",
             json!({
@@ -645,6 +696,7 @@ impl Hosts {
             }),
             ACTIVATE_TIMEOUT,
         );
+        drop(busy);
         if let Err(error) = activated {
             process.kill();
             let message = match error {
@@ -729,7 +781,7 @@ impl Hosts {
             return;
         }
         if let StartDecision::Start(key) = state.supervision.decide_start(now_ms())
-            && let Err(error) = self.start(state, key)
+            && let Err(error) = self.start(&slot, state, key)
         {
             tracing::warn!(target: "ade", event = "plugin_host_restart_failed", error = %error);
         }
@@ -773,6 +825,7 @@ impl Hosts {
         state.supervision.reset();
         let stopped = retire(state);
         if let Some(process) = &stopped {
+            let _busy = BusyGuard::new(&slot, process, 0, "deactivate");
             let _ = process.call(
                 "deactivate",
                 json!({"generation": process.key.generation}),
@@ -781,7 +834,7 @@ impl Hosts {
             process.kill();
         }
         let started = match state.supervision.decide_start(now_ms()) {
-            StartDecision::Start(key) => self.start(state, key).map(|_| ()),
+            StartDecision::Start(key) => self.start(&slot, state, key).map(|_| ()),
             other => Err(format!("Plugin host could not restart: {other:?}")),
         };
         started.map_err(|error| RestartError::failed(stopped.is_some(), error))
@@ -808,8 +861,31 @@ impl Hosts {
         live_generation: Option<u64>,
     ) -> PluginHostStatus {
         let slot = self.slot(plugin_id);
+        let waited = Instant::now();
+        let guard = loop {
+            match slot.state.try_lock() {
+                Ok(guard) => break Some(guard),
+                Err(std::sync::TryLockError::Poisoned(poison)) => break Some(poison.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) if waited.elapsed() < STATUS_WAIT => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => break None,
+            }
+        };
+        let guard = match guard {
+            Some(guard) => guard,
+            None => {
+                let busy = slot.busy.lock().unwrap().clone();
+                match busy {
+                    Some(busy) if has_backend && live_generation == Some(busy.key.generation) => {
+                        return busy_status(plugin_id, &busy);
+                    }
+                    // Nothing published: the slot is only briefly held.
+                    _ => slot.state.lock().unwrap(),
+                }
+            }
+        };
         let (mut status, process) = {
-            let guard = slot.state.lock().unwrap();
             let current = guard
                 .as_ref()
                 .filter(|state| Some(state.supervision.generation) == live_generation);
@@ -850,6 +926,8 @@ impl Hosts {
             };
             (status, process)
         };
+        // The health probe runs without the slot.
+        drop(guard);
         if let Some(process) = process {
             match process.call("health", json!({}), HEALTH_TIMEOUT) {
                 Ok(health) => {
@@ -884,6 +962,26 @@ impl Drop for Hosts {
                 process.kill();
             }
         }
+    }
+}
+
+/// A host the slot is waiting on. It has not answered yet, so it is not
+/// probed (`responsive` is null), and the crash count is the one it started
+/// with; its log tail says what the slot is waiting for.
+fn busy_status(plugin_id: &str, busy: &Busy) -> PluginHostStatus {
+    PluginHostStatus {
+        plugin_id: plugin_id.to_owned(),
+        state: PluginHostState::Running,
+        generation: Some(busy.key.generation),
+        attempt: busy.key.attempt,
+        pid: Some(busy.pid),
+        started_at: Some(busy.started_at),
+        crashes: busy.crashes,
+        retry_at: None,
+        last_error: None,
+        responsive: None,
+        registered: Vec::new(),
+        log_tail: busy.logs.lock().unwrap().iter().cloned().collect(),
     }
 }
 
