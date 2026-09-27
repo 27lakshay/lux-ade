@@ -2,6 +2,7 @@ import { dailyUseCommand } from '@ade/client'
 import { CliError, required, type CommandResult } from '../shared.js'
 import { browserDiagnosticsUsage, runBrowserDiagnosticsCommand } from './browser-diagnostics.js'
 import { browserContextUsage, runBrowserContextCommand } from './browser-context.js'
+import { browserAutomationUsage, runBrowserAutomationCommand } from './browser-automation.js'
 
 export const browserUsage = `  browser owner                         Inspect the selected profile's live browser owner
   browser list OWNER_ID                 List tabs under that exact owner
@@ -10,7 +11,7 @@ export const browserUsage = `  browser owner                         Inspect the
   browser navigate OWNER_ID TAB_ID URL --request-id ID
   browser close OWNER_ID TAB_ID --request-id ID
   browser operation REQUEST_ID          Inspect a browser mutation receipt
-${browserDiagnosticsUsage}${browserContextUsage}`
+${browserDiagnosticsUsage}${browserContextUsage}${browserAutomationUsage}`
 
 export async function runBrowserCommand(socketPath: string, area: string | undefined, action: string | undefined,
   rest: string[]): Promise<CommandResult | undefined> {
@@ -32,6 +33,9 @@ export async function runBrowserCommand(socketPath: string, area: string | undef
   }
   if (area === 'browser' && (action === 'partition' || action === 'import' || action === 'capture')) {
     return runBrowserContextCommand(socketPath, () => browserProfile(socketPath), action, rest)
+  }
+  if (area === 'browser' && ['click', 'type', 'evaluate', 'wait', 'screenshot'].includes(action ?? '')) {
+    return runBrowserAutomationCommand(socketPath, () => browserProfile(socketPath), action as string, rest)
   }
   if (area === 'browser' && action === 'operation') {
     if (rest.length !== 1) throw new CliError('usage', 'browser operation requires REQUEST_ID.')

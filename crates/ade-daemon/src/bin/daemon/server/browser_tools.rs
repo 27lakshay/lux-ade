@@ -9,8 +9,8 @@ use super::*;
 use ade_core::contract::browser::{
     BrowserCaptureKind, BrowserDiagnostics, BrowserDiagnosticsAttachRequest,
     BrowserDiagnosticsDetachRequest, BrowserDiagnosticsReadRequest, BrowserDiagnosticsState,
-    BrowserRecording, BrowserRecordingGetRequest, BrowserRecordingStartRequest,
-    BrowserRecordingStopRequest,
+    BrowserEvaluation, BrowserRecording, BrowserRecordingGetRequest, BrowserRecordingStartRequest,
+    BrowserRecordingStopRequest, BrowserScreenshot, BrowserWait,
 };
 
 /// The operations this module relays.
@@ -23,7 +23,7 @@ pub(super) fn is_browser_tool(op: &str) -> bool {
             | "browser.recording.start"
             | "browser.recording.stop"
             | "browser.recording.get"
-    )
+    ) || super::browser_automation::is_automation_query(op)
 }
 
 /// The exact resource a request names. The reply must name the same one.
@@ -39,6 +39,8 @@ struct Relay {
     owner_id: String,
     target: Target,
     forward: Value,
+    /// A longer reply window for an operation that waits on the page.
+    reply_timeout: Option<Duration>,
 }
 
 fn invalid(message: impl std::fmt::Display) -> Value {
@@ -74,6 +76,15 @@ fn relay_request(op: &str, request: &Value) -> Result<Relay, Value> {
             .map(Target::Recording)
             .map_err(invalid)
     };
+    if super::browser_automation::is_automation_query(op) {
+        let relay = super::browser_automation::query_relay(op, request)?;
+        return Ok(Relay {
+            owner_id,
+            target: Target::Tab(relay.tab_id),
+            forward: relay.forward,
+            reply_timeout: Some(relay.reply_timeout),
+        });
+    }
     let (target, forward) = match op {
         "browser.diagnostics.attach" => {
             let target = tab()?;
@@ -128,6 +139,7 @@ fn relay_request(op: &str, request: &Value) -> Result<Relay, Value> {
         owner_id,
         target,
         forward,
+        reply_timeout: None,
     })
 }
 
@@ -155,6 +167,9 @@ fn contract_reply(op: &str, reply: Value) -> Option<Value> {
     let expected = match op {
         "browser.diagnostics.attach" | "browser.diagnostics.detach" => "browser_diagnostics_state",
         "browser.diagnostics.read" => "browser_diagnostics",
+        "browser.evaluate" => "browser_evaluation",
+        "browser.wait" => "browser_wait",
+        "browser.screenshot" => "browser_screenshot",
         _ => "browser_recording",
     };
     if reply["type"] != expected {
@@ -165,6 +180,15 @@ fn contract_reply(op: &str, reply: Value) -> Option<Value> {
             .ok()
             .map(|value| super::reply(&value)),
         "browser_diagnostics" => serde_json::from_value::<BrowserDiagnostics>(reply)
+            .ok()
+            .map(|value| super::reply(&value)),
+        "browser_evaluation" => serde_json::from_value::<BrowserEvaluation>(reply)
+            .ok()
+            .map(|value| super::reply(&value)),
+        "browser_wait" => serde_json::from_value::<BrowserWait>(reply)
+            .ok()
+            .map(|value| super::reply(&value)),
+        "browser_screenshot" => serde_json::from_value::<BrowserScreenshot>(reply)
             .ok()
             .map(|value| super::reply(&value)),
         _ => serde_json::from_value::<BrowserRecording>(reply)
@@ -199,7 +223,10 @@ impl Host {
         // A command whose reply is lost may have run; repeating the same
         // request converges, so the caller is told to repeat, not to guess.
         let lost = |message: &str| {
-            if op.ends_with(".read") || op.ends_with(".get") {
+            if op.ends_with(".read")
+                || op.ends_with(".get")
+                || super::browser_automation::is_automation_query(op)
+            {
                 browser_error("unavailable", message)
             } else {
                 browser_error(
@@ -209,7 +236,13 @@ impl Host {
             }
         };
         let _permit = self.browser_budget.acquire();
-        let mut stream = match browser_connect(&owner) {
+        let connected = browser_connect(&owner).and_then(|stream| {
+            if let Some(window) = relay.reply_timeout {
+                stream.set_read_timeout(Some(window))?;
+            }
+            Ok(stream)
+        });
+        let mut stream = match connected {
             Ok(stream) => stream,
             Err(_) => return browser_error("unavailable", "Browser owner is unavailable"),
         };

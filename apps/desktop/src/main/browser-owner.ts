@@ -7,10 +7,14 @@ import { mutateBrowserOwner, readBrowserOperation, readBrowserOwner, reconcileBr
 import { diagnosticsAttach, diagnosticsDetach, diagnosticsRead } from './browser-diagnostics'
 import { browserRecordingRequest, stopAllRecordings } from './browser-recording'
 import { captureDesignContext } from './browser-capture'
+import { browserInputMutation, evaluateInTab, screenshotTab, waitInTab } from './browser-automation'
 
 const maxRequestBytes = 64 * 1024
 const browserTools = new Set(['browser.diagnostics.attach', 'browser.diagnostics.detach', 'browser.diagnostics.read',
-  'browser.recording.start', 'browser.recording.stop', 'browser.recording.get', 'browser.context.capture'])
+  'browser.recording.start', 'browser.recording.stop', 'browser.recording.get', 'browser.context.capture',
+  'browser.evaluate', 'browser.wait', 'browser.screenshot'])
+/** A request's time on the socket once its frame arrived; automation may wait on the page. */
+const handlingTimeoutMs = 30_000
 
 /** Maps a diagnostics or recording failure to its wire code; unprefixed failures are unavailable. */
 function toolErrorCode(error: unknown): string {
@@ -70,6 +74,7 @@ export class BrowserOwner {
       const end = frame.indexOf('\n')
       if (end < 0) return
       peer.removeAllListeners('data')
+      peer.setTimeout(handlingTimeoutMs, () => peer.destroy())
       void this.handle(frame.slice(0, end)).then((response) => {
         if (!peer.destroyed) peer.end(`${JSON.stringify(response)}\n`)
       })
@@ -90,7 +95,8 @@ export class BrowserOwner {
         catch (error) { return { type: 'error', code: toolErrorCode(error), message: String(error), ...identity } }
       }
       if (value.op !== 'browser.list' && value.op !== 'browser.inspect' && value.op !== 'browser.operation' &&
-        value.op !== 'browser.open' && value.op !== 'browser.navigate' && value.op !== 'browser.close') {
+        value.op !== 'browser.open' && value.op !== 'browser.navigate' && value.op !== 'browser.close' &&
+        value.op !== 'browser.click' && value.op !== 'browser.type') {
         throw new Error('Unsupported browser operation')
       }
       if (value.op === 'browser.operation') {
@@ -104,15 +110,18 @@ export class BrowserOwner {
       }
       const mutation = { request_id: value.request_id, payload_fingerprint: value.payload_fingerprint }
       try {
-        const result = await mutateBrowserOwner(this.browserProfileId, this.profileId, this.ownerId,
-          value.op, value.request_id, value.payload_fingerprint, value.tab_id, value.url, value.partition_id)
+        const result = value.op === 'browser.click' || value.op === 'browser.type'
+          ? await browserInputMutation(this.browserProfileId, this.profileId, this.ownerId, value.op, value)
+          : await mutateBrowserOwner(this.browserProfileId, this.profileId, this.ownerId,
+            value.op, value.request_id, value.payload_fingerprint, value.tab_id, value.url, value.partition_id)
         return { ...identity, ...mutation, ...result }
       } catch (error) {
         const message = String(error)
         const code = message.includes('outcome_unknown:') ? 'outcome_unknown'
           : message.includes('not_applied:') ? 'not_applied'
-          : message.includes('conflicts with a different target') ? 'conflict'
-            : message.includes('Invalid browser') || message.includes('fingerprint does not match') ? 'invalid_request'
+          : message.includes('conflicts with a different target') || message.includes('conflict:') ? 'conflict'
+            : message.includes('Invalid browser') || message.includes('fingerprint does not match') ||
+              message.includes('invalid_request:') ? 'invalid_request'
               : 'unavailable'
         return { type: 'error', code, message, ...identity, ...mutation }
       }
@@ -128,6 +137,11 @@ export class BrowserOwner {
     if (op === 'browser.context.capture') {
       return captureDesignContext(this.browserProfileId, value.tab_id, value.selector, value.screenshot)
     }
+    if (op === 'browser.evaluate') return evaluateInTab(this.browserProfileId, value.tab_id, value.expression, value.timeout_ms)
+    if (op === 'browser.wait') {
+      return waitInTab(this.browserProfileId, value.tab_id, value.selector, value.state, value.timeout_ms)
+    }
+    if (op === 'browser.screenshot') return screenshotTab(this.browserProfileId, value.tab_id)
     if (op === 'browser.diagnostics.read') {
       return diagnosticsRead(this.browserProfileId, value.tab_id, value.after, value.limit)
     }

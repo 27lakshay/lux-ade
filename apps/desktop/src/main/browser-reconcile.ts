@@ -1,7 +1,7 @@
 // Decides what an interrupted browser mutation did, from the intent its pending
 // receipt recorded and the tabs the owner holds now. It never re-runs the effect.
 
-export type BrowserMutationOp = 'browser.open' | 'browser.navigate' | 'browser.close'
+export type BrowserMutationOp = 'browser.open' | 'browser.navigate' | 'browser.close' | 'browser.click' | 'browser.type'
 
 /** What a pending receipt recorded before its effect ran. */
 export type BrowserIntent = {
@@ -12,6 +12,12 @@ export type BrowserIntent = {
   url: string | null
   /** The target tab's requested URL when a navigate was admitted. */
   priorUrl: string | null
+  /**
+   * For click and type: `prepared` until input is about to reach the page,
+   * then `dispatching`. Input leaves no trace in the tabs, so this is the
+   * only evidence.
+   */
+  stage?: 'prepared' | 'dispatching' | null
 }
 
 export type BrowserVerdict =
@@ -49,5 +55,12 @@ export function reconcileBrowserEffect(intent: BrowserIntent | null, inFlight: b
       // Admission checked that the target existed before recording intent.
       return tab ? { outcome: 'not_applied', evidence: 'target_tab_present' }
         : { outcome: 'applied', tabId: intent.target, evidence: 'target_tab_absent' }
+    case 'browser.click':
+    case 'browser.type':
+      // The dispatching mark is durable before any input is sent, so a
+      // receipt still prepared proves the page received nothing.
+      if (intent.stage === 'prepared') return { outcome: 'not_applied', evidence: 'input_not_dispatched' }
+      if (intent.stage === 'dispatching') return { outcome: 'unknown', evidence: 'input_unobservable' }
+      return { outcome: 'unknown', evidence: 'intent_not_recorded' }
   }
 }

@@ -73,6 +73,7 @@ export type ContractDefinition =
   | BrowserAttachment
   | BrowserAttachmentState
   | BrowserCaptureKind
+  | BrowserClickRequest
   | BrowserCloseRequest
   | BrowserConsoleEntry
   | BrowserContextCapture
@@ -83,6 +84,8 @@ export type ContractDefinition =
   | BrowserDiagnosticsDropped
   | BrowserDiagnosticsReadRequest
   | BrowserDiagnosticsState
+  | BrowserEvaluateRequest
+  | BrowserEvaluation
   | BrowserImport
   | BrowserImportAvailability
   | BrowserImportClass
@@ -119,9 +122,15 @@ export type ContractDefinition =
   | BrowserRecordingStartRequest
   | BrowserRecordingState
   | BrowserRecordingStopRequest
+  | BrowserScreenshot
+  | BrowserScreenshotRequest
   | BrowserTabRecord
   | BrowserTabReply
   | BrowserTabs
+  | BrowserTypeRequest
+  | BrowserWait
+  | BrowserWaitRequest
+  | BrowserWaitState
   | Caller
   | Capability1
   | CapabilityChange
@@ -874,6 +883,10 @@ export type BrowserOperationState = 'accepted' | 'unknown' | 'completed'
  * Where a recording stands.
  */
 export type BrowserRecordingState = ('recording' | 'stopped') | 'interrupted'
+/**
+ * The element state `browser.wait` waits for.
+ */
+export type BrowserWaitState = 'attached' | 'visible' | 'detached' | 'hidden'
 /**
  * Who asks. An Agent caller names its own Conversation; the daemon records
  * the attribution and refuses an Agent that acts as another Conversation.
@@ -2683,6 +2696,28 @@ export interface BrowserAttachment {
   [k: string]: unknown
 }
 /**
+ * `browser.click`: a trusted left click at the centre of the first element the
+ * selector matches, once it is visible, enabled, stable and not covered.
+ * The fingerprint covers the operation, profile, owner, tab and selector;
+ * `timeout_ms` is not part of it.
+ */
+export interface BrowserClickRequest {
+  op: 'browser.click'
+  operation_id: string
+  owner_id: string
+  profile_id: string
+  /**
+   * A CSS selector of 1 to 1024 characters without control characters.
+   */
+  selector: string
+  tab_id: string
+  /**
+   * How long to wait for the element to become actionable, 100 to 10000
+   * milliseconds; 5000 when absent.
+   */
+  timeout_ms?: number
+}
+/**
  * `browser.close`: close an exact tab.
  */
 export interface BrowserCloseRequest {
@@ -2919,6 +2954,61 @@ export interface BrowserDiagnosticsState {
   [k: string]: unknown
 }
 /**
+ * `browser.evaluate`: evaluate a read-only JavaScript expression in the tab's
+ * page. The debugger refuses any expression whose side effects it cannot rule
+ * out, such as an assignment, a DOM write or a network call; that is an
+ * `invalid_request`. The value returns as JSON and is bounded.
+ */
+export interface BrowserEvaluateRequest {
+  /**
+   * 1 to 8192 characters.
+   */
+  expression: string
+  op: 'browser.evaluate'
+  owner_id: string
+  profile_id: string
+  tab_id: string
+  /**
+   * Execution limit, 50 to 5000 milliseconds; 1000 when absent.
+   */
+  timeout_ms?: number
+}
+/**
+ * The `browser.evaluate` reply. A value or an exception is reported, never both.
+ */
+export interface BrowserEvaluation {
+  /**
+   * The thrown exception's text, cut to 1024 characters.
+   */
+  exception: string | null
+  owner_id: string
+  profile_id: string
+  tab_id: string
+  /**
+   * The value's JSON exceeded 65536 bytes and was left out.
+   */
+  truncated: boolean
+  /**
+   * The `browser_evaluation` type tag.
+   */
+  type: 'browser_evaluation'
+  /**
+   * The page URL without user information, query or fragment; empty when
+   * the page is not HTTP(S).
+   */
+  url: string
+  /**
+   * The value as JSON; `null` when it has no JSON form, was left out or threw.
+   */
+  value: unknown
+  /**
+   * The JavaScript type: `undefined`, `boolean`, `number`, `string`,
+   * `bigint`, `object`, `function` or `symbol`; `null` after an exception.
+   */
+  value_type: string | null
+  [k: string]: unknown
+}
+/**
  * The `browser.import.run` and `browser.import.get` reply.
  */
 export interface BrowserImport {
@@ -3071,9 +3161,10 @@ export interface BrowserListRequest {
   profile_id: string
 }
 /**
- * The `browser.open`, `browser.navigate` and `browser.close` reply, relayed
- * from the owner. `payload_fingerprint` is the daemon's fingerprint of the
- * operation, its profile, owner, tab and URL.
+ * The `browser.open`, `browser.navigate`, `browser.close`, `browser.click` and
+ * `browser.type` reply, relayed from the owner. `payload_fingerprint` is the
+ * daemon's fingerprint of the operation, its profile, owner, tab and URL, and
+ * for click and type the selector and typed input.
  */
 export interface BrowserMutation {
   op: string
@@ -3379,6 +3470,49 @@ export interface BrowserRecordingStopRequest {
   recording_id: string
 }
 /**
+ * The `browser.screenshot` reply.
+ */
+export interface BrowserScreenshot {
+  captured_at_ms: number
+  /**
+   * Base64 image bytes.
+   */
+  data: string
+  height: number
+  /**
+   * `image/png` or `image/jpeg`.
+   */
+  media_type: string
+  owner_id: string
+  profile_id: string
+  /**
+   * The capture was scaled down to fit.
+   */
+  scaled: boolean
+  tab_id: string
+  /**
+   * The `browser_screenshot` type tag.
+   */
+  type: 'browser_screenshot'
+  /**
+   * The page URL without user information, query or fragment; empty when
+   * the page is not HTTP(S).
+   */
+  url: string
+  width: number
+  [k: string]: unknown
+}
+/**
+ * `browser.screenshot`: the visible viewport of the tab's page, scaled so no
+ * side exceeds 1600 pixels and encoded within 512 KiB.
+ */
+export interface BrowserScreenshotRequest {
+  op: 'browser.screenshot'
+  owner_id: string
+  profile_id: string
+  tab_id: string
+}
+/**
  * One browser tab as the owner reports it. The owner uses camelCase names.
  */
 export interface BrowserTabRecord {
@@ -3429,6 +3563,82 @@ export interface BrowserTabs {
    */
   type: 'browser_tabs'
   [k: string]: unknown
+}
+/**
+ * `browser.type`: focus the first editable element the selector matches and
+ * insert text as trusted input. The caret moves to the end of the element's
+ * content first, or the content is selected and replaced when `replace` is
+ * true. The fingerprint covers the operation, profile, owner, tab, selector,
+ * text and `replace`; `timeout_ms` is not part of it. The owner's receipt
+ * never stores the text.
+ */
+export interface BrowserTypeRequest {
+  op: 'browser.type'
+  operation_id: string
+  owner_id: string
+  profile_id: string
+  /**
+   * Replace the element's content; false when absent.
+   */
+  replace?: boolean | null
+  /**
+   * A CSS selector of 1 to 1024 characters without control characters.
+   */
+  selector: string
+  tab_id: string
+  /**
+   * 1 to 4096 characters. Tab and line feed are the only control characters.
+   */
+  text: string
+  /**
+   * 100 to 10000 milliseconds; 5000 when absent.
+   */
+  timeout_ms?: number
+}
+/**
+ * The `browser.wait` reply.
+ */
+export interface BrowserWait {
+  elapsed_ms: number
+  owner_id: string
+  profile_id: string
+  satisfied: boolean
+  selector: string
+  state: BrowserWaitState
+  tab_id: string
+  /**
+   * The `browser_wait` type tag.
+   */
+  type: 'browser_wait'
+  /**
+   * The page URL without user information, query or fragment; empty when
+   * the page is not HTTP(S).
+   */
+  url: string
+  [k: string]: unknown
+}
+/**
+ * `browser.wait`: wait until the selector reaches a state in the tab's page.
+ * A wait that runs out of time is an answer, not an error: `satisfied` is
+ * false.
+ */
+export interface BrowserWaitRequest {
+  op: 'browser.wait'
+  owner_id: string
+  profile_id: string
+  /**
+   * A CSS selector of 1 to 1024 characters without control characters.
+   */
+  selector: string
+  /**
+   * `visible` when absent.
+   */
+  state?: BrowserWaitState | null
+  tab_id: string
+  /**
+   * 0 to 10000 milliseconds; 5000 when absent. 0 checks once.
+   */
+  timeout_ms?: number
 }
 /**
  * One capability and why it has that support.
@@ -11437,7 +11647,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -11648,6 +11858,11 @@ export interface RequestByOperation {
   "browser.import.run": BrowserImportRunRequest
   "browser.import.get": BrowserImportGetRequest
   "browser.context.capture": BrowserContextCaptureRequest
+  "browser.click": BrowserClickRequest
+  "browser.type": BrowserTypeRequest
+  "browser.evaluate": BrowserEvaluateRequest
+  "browser.wait": BrowserWaitRequest
+  "browser.screenshot": BrowserScreenshotRequest
   "repository.coverage": RepositoryCoverageRequest
   "repository.clone": RepositoryCloneRequest
   "repository.publish.preview": RepositoryPublishPreviewRequest
@@ -11896,6 +12111,11 @@ export interface ResponseByOperation {
   "browser.import.run": BrowserImport
   "browser.import.get": BrowserImport
   "browser.context.capture": BrowserContextCapture
+  "browser.click": BrowserMutation
+  "browser.type": BrowserMutation
+  "browser.evaluate": BrowserEvaluation
+  "browser.wait": BrowserWait
+  "browser.screenshot": BrowserScreenshot
   "repository.coverage": RepositoryCoverage
   "repository.clone": RepositoryCloned
   "repository.publish.preview": RepositoryPublishPreview

@@ -7,18 +7,28 @@ import { getBrowserOwner, getProfileState, getStartupProfileSelection, isSwitchi
   setSwitching, type Profile } from './profile-connection'
 import type { QuitGuard } from './quit-guards'
 import { reconcileBrowserEffect, type BrowserIntent } from './browser-reconcile'
+import { automationPayloadTail, selectorProblem, textProblem } from './browser-automation-core'
 
 // `partitionId` names the tab's browser partition (F092); absent means the
 // profile's default browser storage.
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string
   partitionId?: string }
-type BrowserMutation = 'browser.open' | 'browser.navigate' | 'browser.close'
+type BrowserMutation = 'browser.open' | 'browser.navigate' | 'browser.close' | 'browser.click' | 'browser.type'
+const inputOps: readonly string[] = ['browser.click', 'browser.type']
+/**
+ * A click or type (F095). `run` prepares the input, calls `commit` just before
+ * input reaches the page, then sends it and returns the tab ID.
+ */
+export type BrowserInputAction = { selector: string; text?: string; replace?: boolean
+  run: (commit: () => Promise<void>) => Promise<string> }
 // A pending receipt records its intent (`target`, `url`, `priorUrl`) before the
 // effect runs, so a crash can be reconciled against the tabs. Receipts written
-// before intent was recorded lack those fields and stay unknown.
+// before intent was recorded lack those fields and stay unknown. A click or
+// type also records `stage`, and never its selector or text.
 type BrowserReceipt = { requestId: string; fingerprint: string; profileId: string; ownerId: string;
   status: 'pending' | 'completed' | 'not_applied'; op: BrowserMutation; tabId: string | null
-  target?: string | null; url?: string | null; priorUrl?: string | null; evidence?: string; partitionId?: string }
+  target?: string | null; url?: string | null; priorUrl?: string | null; evidence?: string; partitionId?: string
+  stage?: 'prepared' | 'dispatching' }
 type Saved = { version: 1; selectedId: string | null; tabs: Array<Pick<Tab, 'id' | 'profileId' | 'requestedUrl' | 'observedUrl' | 'title' | 'partitionId'>> }
 type ProfileTabs = { selectedId: string | null; tabs: Map<string, Tab>; views: Map<string, WebContentsView>;
   inFlightOperations: Map<string, BrowserReceipt>; writes: Promise<void> }
@@ -166,7 +176,8 @@ function validBrowserReceipt(value: unknown, requestId: string, profileId: strin
   if (item.requestId !== requestId || item.profileId !== profileId || !validId(item.ownerId) ||
     !/^[a-f0-9]{64}$/.test(item.fingerprint) ||
     !['pending', 'completed', 'not_applied'].includes(item.status) ||
-    !['browser.open', 'browser.navigate', 'browser.close'].includes(item.op) ||
+    !['browser.open', 'browser.navigate', 'browser.close', ...inputOps].includes(item.op) ||
+    !(item.stage === undefined || (inputOps.includes(item.op) && ['prepared', 'dispatching'].includes(item.stage))) ||
     !(item.tabId === null || validId(item.tabId)) ||
     (item.status === 'completed' && item.tabId === null) ||
     !(item.target === undefined || item.target === null || validId(item.target)) ||
@@ -1011,7 +1022,8 @@ export async function readBrowserOperation(browserProfileId: string, profileId: 
 }
 function browserIntent(receipt: BrowserReceipt): BrowserIntent | null {
   if (receipt.target === undefined) return null
-  return { op: receipt.op, target: receipt.target, url: receipt.url ?? null, priorUrl: receipt.priorUrl ?? null }
+  return { op: receipt.op, target: receipt.target, url: receipt.url ?? null, priorUrl: receipt.priorUrl ?? null,
+    stage: receipt.stage ?? null }
 }
 /**
  * Settles a pending receipt from the owner's tabs without re-running its
@@ -1166,7 +1178,7 @@ async function closeBrowserTab(id: string, tabId: unknown): Promise<string> {
 }
 export async function mutateBrowserOwner(browserProfileId: string, profileId: string, ownerId: string,
   op: BrowserMutation, requestId: unknown, fingerprint: unknown, tabId?: unknown,
-  url?: unknown, partitionId?: unknown): Promise<Record<string, unknown>> {
+  url?: unknown, partitionId?: unknown, action?: BrowserInputAction): Promise<Record<string, unknown>> {
   if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(requestId) ||
     typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(fingerprint)) {
     throw new Error('Invalid browser request identity')
@@ -1175,8 +1187,12 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
   if (partitionId !== undefined && (op !== 'browser.open' || !validPartition(partitionId))) {
     throw new Error('Invalid browser mutation target')
   }
+  const input = inputOps.includes(op)
+  if (input !== (action !== undefined)) throw new Error('Invalid browser mutation target')
+  const tail = action ? automationPayloadTail(op as 'browser.click' | 'browser.type', action.selector, action.text,
+    action.replace) : partitionId === undefined ? [] : [partitionId]
   const expected = createHash('sha256').update(JSON.stringify([op, profileId, ownerId,
-    tabId ?? null, url ?? null, ...(partitionId === undefined ? [] : [partitionId])])).digest('hex')
+    tabId ?? null, url ?? null, ...tail])).digest('hex')
   if (expected !== fingerprint) throw new Error('Browser request fingerprint does not match its target')
   const lease = liveBrowserLease(browserProfileId)
   browserOperations.set(browserProfileId, (browserOperations.get(browserProfileId) ?? 0) + 1)
@@ -1185,8 +1201,14 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
   requireBrowserLease(browserProfileId, lease)
   if (op === 'browser.open' && (!allowedUrl(url) || tabId !== undefined) ||
     op === 'browser.navigate' && (!validId(tabId) || !allowedUrl(url)) ||
-    op === 'browser.close' && (!validId(tabId) || url !== undefined)) {
+    op === 'browser.close' && (!validId(tabId) || url !== undefined) ||
+    input && (!validId(tabId) || url !== undefined)) {
     throw new Error('Invalid browser mutation target')
+  }
+  if (action) {
+    const problem = selectorProblem(action.selector) ??
+      (op === 'browser.type' ? textProblem(action.text) : action.text === undefined ? null : 'text is not allowed')
+    if (problem) throw new Error(`Invalid browser automation request: ${problem}`)
   }
   const receipt: BrowserReceipt = { requestId, fingerprint, profileId, ownerId, status: 'pending', op, tabId: null }
   const running = state.inFlightOperations.get(requestId)
@@ -1223,11 +1245,20 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
       receipt.target = tab.id
       receipt.url = op === 'browser.navigate' ? url as string : null
       receipt.priorUrl = op === 'browser.navigate' ? tab.requestedUrl : null
+      if (input) receipt.stage = 'prepared'
     }
     recorded = true
     await writeBrowserReceipt(browserProfileId, receipt)
     requireBrowserLease(browserProfileId, lease)
-    const resultId = op === 'browser.open'
+    // Input may reach the page only after the dispatching mark is durable.
+    const commit = async (): Promise<void> => {
+      requireBrowserLease(browserProfileId, lease)
+      receipt.stage = 'dispatching'
+      await writeBrowserReceipt(browserProfileId, receipt)
+      requireBrowserLease(browserProfileId, lease)
+    }
+    const resultId = action ? await action.run(commit)
+      : op === 'browser.open'
       ? await openBrowserTab(browserProfileId, url, receipt.target, receipt.partitionId)
       : op === 'browser.navigate' ? await navigateBrowserTab(browserProfileId, tabId, url)
       : await closeBrowserTab(browserProfileId, tabId)
@@ -1237,6 +1268,15 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
     catch { receipt.status = 'pending'; throw new Error('browser receipt could not be saved') }
     return { type: 'browser_mutation', op, tab_id: resultId }
   } catch (error) {
+    // A click or type that failed before its dispatching mark sent no input:
+    // settle it as not applied and report the definite failure.
+    if (recorded && receipt.status === 'pending' && receipt.stage === 'prepared' &&
+      !String(error).includes('not_applied:')) {
+      const settled: BrowserReceipt = { ...receipt, status: 'not_applied', evidence: 'input_not_dispatched' }
+      let definite = false
+      try { await writeBrowserReceipt(browserProfileId, settled); definite = true } catch { /* Stays unknown. */ }
+      if (definite) throw error
+    }
     // A failed receipt write may still have reached the disk, so any failure
     // once recording starts stays unknown until reconciliation proves otherwise.
     if (recorded && receipt.status !== 'completed' && !String(error).includes('not_applied:')) {

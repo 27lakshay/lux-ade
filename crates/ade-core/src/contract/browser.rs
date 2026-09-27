@@ -1,6 +1,6 @@
 //! Browser diagnostics and recording contracts (F096, F097, decision D11),
 //! browser partitions (F092), browser import (F093, decision D10) and design
-//! context capture (F094).
+//! context capture (F094) and agent browser automation (F095).
 //!
 //! The daemon relays these operations to the registered browser owner (the
 //! desktop main process) like the other `browser.*` reads. Each one names an
@@ -63,6 +63,23 @@ pub fn operations() -> Vec<OperationSpec> {
         OperationSpec::new::<BrowserContextCaptureRequest, BrowserContextCapture>(
             "browser.context.capture",
             Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<BrowserClickRequest, super::daemon::BrowserMutation>(
+            "browser.click",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<BrowserTypeRequest, super::daemon::BrowserMutation>(
+            "browser.type",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<BrowserEvaluateRequest, BrowserEvaluation>(
+            "browser.evaluate",
+            Tier::Query,
+        ),
+        OperationSpec::new::<BrowserWaitRequest, BrowserWait>("browser.wait", Tier::Query),
+        OperationSpec::new::<BrowserScreenshotRequest, BrowserScreenshot>(
+            "browser.screenshot",
+            Tier::Query,
         ),
     ]
 }
@@ -602,6 +619,196 @@ pub struct BrowserContextCapture {
     pub captured_at_ms: i64,
 }
 
+// ---------------------------------------------------------------------------
+// Agent browser automation (F095)
+// ---------------------------------------------------------------------------
+//
+// Every automation operation names an exact owner and tab. The owner acts on
+// that tab's page only; it never follows focus or the selected tab, and a
+// closed tab fails the operation instead of redirecting it. Click, type and
+// evaluate drive the page through the tab's debugger. When DevTools is open on
+// the tab, or a debugger client outside ADE holds it, they fail with
+// `conflict` before anything reaches the page.
+//
+// `browser.click` and `browser.type` are effect commands. They reply with a
+// `browser_mutation` like `browser.navigate`, and `browser.operation` reads
+// their receipts. The owner records a pending receipt before it prepares the
+// action and marks it dispatching just before input reaches the page. After a
+// crash, a receipt that never reached dispatching settles as `not_applied`;
+// one that did stays unknown, because page input cannot be observed
+// afterwards. The owner never sends the input again.
+
+/// `browser.click`: a trusted left click at the centre of the first element the
+/// selector matches, once it is visible, enabled, stable and not covered.
+/// The fingerprint covers the operation, profile, owner, tab and selector;
+/// `timeout_ms` is not part of it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserClickRequest {
+    pub profile_id: String,
+    pub owner_id: String,
+    #[serde(alias = "request_id")]
+    pub operation_id: String,
+    pub tab_id: String,
+    /// A CSS selector of 1 to 1024 characters without control characters.
+    pub selector: String,
+    /// How long to wait for the element to become actionable, 100 to 10000
+    /// milliseconds; 5000 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// `browser.type`: focus the first editable element the selector matches and
+/// insert text as trusted input. The caret moves to the end of the element's
+/// content first, or the content is selected and replaced when `replace` is
+/// true. The fingerprint covers the operation, profile, owner, tab, selector,
+/// text and `replace`; `timeout_ms` is not part of it. The owner's receipt
+/// never stores the text.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserTypeRequest {
+    pub profile_id: String,
+    pub owner_id: String,
+    #[serde(alias = "request_id")]
+    pub operation_id: String,
+    pub tab_id: String,
+    /// A CSS selector of 1 to 1024 characters without control characters.
+    pub selector: String,
+    /// 1 to 4096 characters. Tab and line feed are the only control characters.
+    pub text: String,
+    /// Replace the element's content; false when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace: Option<bool>,
+    /// 100 to 10000 milliseconds; 5000 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// `browser.evaluate`: evaluate a read-only JavaScript expression in the tab's
+/// page. The debugger refuses any expression whose side effects it cannot rule
+/// out, such as an assignment, a DOM write or a network call; that is an
+/// `invalid_request`. The value returns as JSON and is bounded.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserEvaluateRequest {
+    pub profile_id: String,
+    pub owner_id: String,
+    pub tab_id: String,
+    /// 1 to 8192 characters.
+    pub expression: String,
+    /// Execution limit, 50 to 5000 milliseconds; 1000 when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// The element state `browser.wait` waits for.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserWaitState {
+    /// An element matches the selector.
+    Attached,
+    /// A matching element has a box, and is not hidden or transparent.
+    Visible,
+    /// No element matches the selector.
+    Detached,
+    /// No matching element is visible.
+    Hidden,
+}
+
+/// `browser.wait`: wait until the selector reaches a state in the tab's page.
+/// A wait that runs out of time is an answer, not an error: `satisfied` is
+/// false.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserWaitRequest {
+    pub profile_id: String,
+    pub owner_id: String,
+    pub tab_id: String,
+    /// A CSS selector of 1 to 1024 characters without control characters.
+    pub selector: String,
+    /// `visible` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<BrowserWaitState>,
+    /// 0 to 10000 milliseconds; 5000 when absent. 0 checks once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// `browser.screenshot`: the visible viewport of the tab's page, scaled so no
+/// side exceeds 1600 pixels and encoded within 512 KiB.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserScreenshotRequest {
+    pub profile_id: String,
+    pub owner_id: String,
+    pub tab_id: String,
+}
+
+wire_tag!(BrowserEvaluationTag, "browser_evaluation");
+wire_tag!(BrowserWaitTag, "browser_wait");
+wire_tag!(BrowserScreenshotTag, "browser_screenshot");
+
+/// The `browser.evaluate` reply. A value or an exception is reported, never both.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserEvaluation {
+    #[serde(rename = "type")]
+    pub tag: BrowserEvaluationTag,
+    pub profile_id: String,
+    pub owner_id: String,
+    pub tab_id: String,
+    /// The page URL without user information, query or fragment; empty when
+    /// the page is not HTTP(S).
+    pub url: String,
+    /// The JavaScript type: `undefined`, `boolean`, `number`, `string`,
+    /// `bigint`, `object`, `function` or `symbol`; `null` after an exception.
+    pub value_type: Option<String>,
+    /// The value as JSON; `null` when it has no JSON form, was left out or threw.
+    #[schemars(with = "serde_json::Value")]
+    pub value: serde_json::Value,
+    /// The value's JSON exceeded 65536 bytes and was left out.
+    pub truncated: bool,
+    /// The thrown exception's text, cut to 1024 characters.
+    pub exception: Option<String>,
+}
+
+/// The `browser.wait` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserWait {
+    #[serde(rename = "type")]
+    pub tag: BrowserWaitTag,
+    pub profile_id: String,
+    pub owner_id: String,
+    pub tab_id: String,
+    pub selector: String,
+    pub state: BrowserWaitState,
+    pub satisfied: bool,
+    pub elapsed_ms: u64,
+    /// The page URL without user information, query or fragment; empty when
+    /// the page is not HTTP(S).
+    pub url: String,
+}
+
+/// The `browser.screenshot` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct BrowserScreenshot {
+    #[serde(rename = "type")]
+    pub tag: BrowserScreenshotTag,
+    pub profile_id: String,
+    pub owner_id: String,
+    pub tab_id: String,
+    /// The page URL without user information, query or fragment; empty when
+    /// the page is not HTTP(S).
+    pub url: String,
+    /// `image/png` or `image/jpeg`.
+    pub media_type: String,
+    /// Base64 image bytes.
+    pub data: String,
+    pub width: u32,
+    pub height: u32,
+    /// The capture was scaled down to fit.
+    pub scaled: bool,
+    pub captured_at_ms: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,6 +999,74 @@ mod tests {
                     "media_type": "text/plain", "size": 10},
                 "screenshot": null, "screenshot_unavailable": "not_requested",
                 "truncated": [], "captured_at_ms": 4}),
+        );
+    }
+
+    #[test]
+    fn automation_requests_and_replies_round_trip() {
+        request::<BrowserClickRequest>(
+            "browser.click",
+            json!({"op": "browser.click", "profile_id": "p", "owner_id": "o",
+                "operation_id": "op-1", "tab_id": "t", "selector": "#go", "timeout_ms": 2000}),
+        );
+        request::<BrowserTypeRequest>(
+            "browser.type",
+            json!({"op": "browser.type", "profile_id": "p", "owner_id": "o",
+                "operation_id": "op-2", "tab_id": "t", "selector": "input", "text": "hi",
+                "replace": true}),
+        );
+        request::<BrowserEvaluateRequest>(
+            "browser.evaluate",
+            json!({"op": "browser.evaluate", "profile_id": "p", "owner_id": "o",
+                "tab_id": "t", "expression": "document.title"}),
+        );
+        request::<BrowserWaitRequest>(
+            "browser.wait",
+            json!({"op": "browser.wait", "profile_id": "p", "owner_id": "o",
+                "tab_id": "t", "selector": ".ready", "state": "hidden", "timeout_ms": 0}),
+        );
+        request::<BrowserScreenshotRequest>(
+            "browser.screenshot",
+            json!({"op": "browser.screenshot", "profile_id": "p", "owner_id": "o", "tab_id": "t"}),
+        );
+        // No automation request may omit its tab: nothing follows focus.
+        for op in [
+            "browser.click",
+            "browser.evaluate",
+            "browser.wait",
+            "browser.screenshot",
+        ] {
+            let (name, _) = names(op);
+            assert!(!valid(
+                &name,
+                &json!({"op": op, "profile_id": "p", "owner_id": "o", "operation_id": "x",
+                    "selector": "a", "expression": "1"})
+            ));
+        }
+        response::<crate::contract::daemon::BrowserMutation>(
+            "browser.click",
+            json!({"type": "browser_mutation", "profile_id": "p", "owner_id": "o",
+                "request_id": "op-1", "payload_fingerprint": "f", "op": "browser.click",
+                "tab_id": "t"}),
+        );
+        response::<BrowserEvaluation>(
+            "browser.evaluate",
+            json!({"type": "browser_evaluation", "profile_id": "p", "owner_id": "o",
+                "tab_id": "t", "url": "https://a.test/", "value_type": "string",
+                "value": "A", "truncated": false, "exception": null}),
+        );
+        response::<BrowserWait>(
+            "browser.wait",
+            json!({"type": "browser_wait", "profile_id": "p", "owner_id": "o", "tab_id": "t",
+                "selector": ".ready", "state": "visible", "satisfied": false,
+                "elapsed_ms": 5000, "url": "https://a.test/"}),
+        );
+        response::<BrowserScreenshot>(
+            "browser.screenshot",
+            json!({"type": "browser_screenshot", "profile_id": "p", "owner_id": "o",
+                "tab_id": "t", "url": "https://a.test/", "media_type": "image/png",
+                "data": "iVBO", "width": 10, "height": 5, "scaled": false,
+                "captured_at_ms": 7}),
         );
     }
 }

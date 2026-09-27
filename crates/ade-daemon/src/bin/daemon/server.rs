@@ -1,3 +1,4 @@
+mod browser_automation;
 mod browser_context;
 mod browser_tools;
 mod diagnostics;
@@ -197,6 +198,22 @@ fn browser_payload(
     url: Option<&str>,
 ) -> Value {
     json!([op, profile_id, owner_id, tab_id, url])
+}
+
+/// One validated browser effect command, ready for admission and dispatch.
+struct BrowserEffect<'a> {
+    profile_id: &'a str,
+    op: &'a str,
+    owner_id: String,
+    request_id: String,
+    /// The exact tab; the owner's reply must name it. `None` for an open.
+    tab_id: Option<String>,
+    /// The fingerprinted payload; see `browser_payload`.
+    payload: Value,
+    /// Request fields forwarded to the owner besides its identity and tab.
+    forward: serde_json::Map<String, Value>,
+    /// How long to wait for the owner's reply before the outcome is unknown.
+    reply_timeout: Duration,
 }
 
 /// A browser mutation receipt as the journal holds it. `result` carries
@@ -615,6 +632,39 @@ impl Host {
         let mut payload =
             browser_payload(op, profile_id, &owner_id, tab_id.as_deref(), url.as_deref());
         browser_context::with_partition(&mut payload, partition.as_deref());
+        let mut forward = serde_json::Map::new();
+        if let Some(url) = url {
+            forward.insert("url".into(), json!(url));
+        }
+        if let Some(partition) = partition {
+            forward.insert("partition_id".into(), json!(partition));
+        }
+        self.browser_effect(BrowserEffect {
+            profile_id,
+            op,
+            owner_id,
+            request_id,
+            tab_id,
+            payload,
+            forward,
+            reply_timeout: BROWSER_TIMEOUT,
+        })
+    }
+
+    /// Admits, dispatches and settles one browser effect command. The receipt
+    /// is dispatched before the owner sees the command; a lost or foreign
+    /// reply leaves it unknown for `browser.operation` to reconcile.
+    fn browser_effect(&self, effect: BrowserEffect<'_>) -> Value {
+        let BrowserEffect {
+            profile_id,
+            op,
+            owner_id,
+            request_id,
+            tab_id,
+            payload,
+            forward,
+            reply_timeout,
+        } = effect;
         let fingerprint = receipts::fingerprint(&payload);
         {
             // Probe the journal without admitting: dropping the transaction
@@ -671,7 +721,13 @@ impl Host {
         {
             return browser_error("unavailable", "Browser owner changed before dispatch");
         }
-        let mut stream = match browser_connect(&owner) {
+        // An effect that may wait on the page gets its own reply window, set
+        // before dispatch so a failure here leaves nothing sent.
+        let connected = browser_connect(&owner).and_then(|stream| {
+            stream.set_read_timeout(Some(reply_timeout))?;
+            Ok(stream)
+        });
+        let mut stream = match connected {
             Ok(stream) => stream,
             Err(_) => return browser_error("unavailable", "Browser owner is unavailable"),
         };
@@ -691,11 +747,8 @@ impl Host {
         if let Some(tab_id) = &tab_id {
             command["tab_id"] = json!(tab_id);
         }
-        if let Some(url) = &url {
-            command["url"] = json!(url);
-        }
-        if let Some(partition) = &partition {
-            command["partition_id"] = json!(partition);
+        for (key, value) in forward {
+            command[key] = value;
         }
         let uncertain = || {
             browser_error(
@@ -740,7 +793,9 @@ impl Host {
                         } else {
                             // A reply outside the contract leaves the outcome unknown.
                             serde_json::from_value::<BrowserMutation>(value)
-                                .map_or_else(|_| uncertain(), |typed| reply(&typed))
+                                .ok()
+                                .filter(|typed| typed.op == op)
+                                .map_or_else(uncertain, |typed| reply(&typed))
                         }
                     }
                     _ => uncertain(),
@@ -1653,6 +1708,8 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                     Ok(host.browser_command(&request))
                 } else if browser_context::is_browser_context(op) {
                     Ok(host.browser_context(&request))
+                } else if browser_automation::is_automation_effect(op) {
+                    Ok(host.browser_automation(&request))
                 } else if browser_tools::is_browser_tool(op) {
                     Ok(host.browser_tool(&request))
                 } else {
