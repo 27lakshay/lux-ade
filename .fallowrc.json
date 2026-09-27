@@ -18,6 +18,9 @@
     "date-fns",
     // The chosen stack (decision D07), installed ahead of the surfaces that will use it. Remove an
     // entry once something imports the package.
+    "@atlaskit/pragmatic-drag-and-drop",
+    "@atlaskit/pragmatic-drag-and-drop-auto-scroll",
+    "@atlaskit/pragmatic-drag-and-drop-hitbox",
     "@pierre/diffs",
     "@tanstack/react-virtual",
     "@tiptap/extension-mention",
