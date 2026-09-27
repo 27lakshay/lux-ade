@@ -173,7 +173,39 @@ fix workers fixed all 19, each with review. The confirmed defects were:
 One fix introduced a new race, in which a provider attached during a failure
 could leak without a lease. The coordinator closed it (`317687a`). The boot
 smoke passed all 15 read paths again afterwards. The 20 minor findings are in
-[the audit record](audit-2026-09-27.md); a verify-then-fix round follows. None of these is E2E-verified;
+[the audit record](audit-2026-09-27.md).
+
+**Minor audit findings, merged green** (725 in-process tests)
+
+Eight workers traced all 20 minor findings in the current code, confirmed each
+one and fixed it; every fix was reviewed with no blockers. Highlights:
+- a replayed slash-command invocation no longer reports `queued` for a
+  cancelled prompt;
+- answer forms no longer vanish from live updates while an answer is uncertain;
+- worktree removal checks physical identity again before deleting;
+- a killed `git push` settles as unknown, not "not pushed";
+- a shared lease can no longer land inside an unbound creation claim.
+The final boot smoke passed all 15 read paths.
+
+**Where the build stops, and what is next**
+
+The backend and CLI now have a first implementation for most v1 feature
+families. Nothing is accepted: every acceptance criterion in the register is an
+E2E observation, and E2E is paused. The natural next steps need you:
+1. **UI phase.** Designs go in Pen first (see project memory). The renderer
+   still has the prototype panes on the new per-domain bridge.
+2. **E2E return.** Update the legacy assertions each evidence file lists, add
+   the E2E each slice names under "needs E2E later", and run a carry end to end
+   first.
+3. **Live accounts.** Real Oh My Pi and real two-account checks.
+4. **Open decisions:** D03 (the additional provider roster; the generic-adapters
+   evidence has a proposal), D15 (restore range), and the items under "Needs your
+   confirmation" above.
+
+Additional additive wire values introduced by the audit fixes, which no current
+client matches exhaustively: `ControlOutcome::Refused` and
+`CommandInvokeOutcome::Cancelled`. After an unconfirmed provider stop, a
+conversation now shows status `interrupted` instead of `error`. None of these is E2E-verified;
 each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
 
 ## Scope baseline and daily-use gate
