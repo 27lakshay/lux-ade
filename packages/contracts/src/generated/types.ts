@@ -125,6 +125,17 @@ export type ContractDefinition =
   | HealthCheckRequest
   | HealthPolicy
   | HelloRequest
+  | HistoryConversation
+  | HistoryIndexRebuildRequest
+  | HistoryIndexReply
+  | HistoryIndexStatus
+  | HistoryIndexStatusRequest
+  | HistoryList
+  | HistoryListRequest
+  | HistoryMatch
+  | HistoryProvenance
+  | HistorySearch
+  | HistorySearchRequest
   | HostResourcesState
   | Inspection
   | Installation
@@ -2272,6 +2283,191 @@ export interface HealthPolicy {
  */
 export interface HelloRequest {
   op: 'hello'
+}
+/**
+ * One conversation in the combined history.
+ */
+export interface HistoryConversation {
+  message_count: number
+  provenance: HistoryProvenance
+  status: string
+  [k: string]: unknown
+}
+/**
+ * Where a history item came from. ADE never implies that one provider's
+ * session continues another's.
+ */
+export interface HistoryProvenance {
+  account_id: string | null
+  conversation_id: string
+  conversation_title: string
+  /**
+   * Milliseconds since the Unix epoch.
+   */
+  conversation_updated_at: number
+  /**
+   * The provider's own session or thread ID, when the provider assigned one.
+   */
+  native_session_id: string | null
+  provider: string
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * `history.index.rebuild`: discard the search index and rebuild it from
+ * durable history. It applies only while the index is still at
+ * `expected_epoch`, so a repeated request does not restart a rebuild.
+ */
+export interface HistoryIndexRebuildRequest {
+  /**
+   * The `epoch` from the status the caller last saw.
+   */
+  expected_epoch: number
+  op: 'history.index.rebuild'
+}
+/**
+ * The `history.index.status` and `history.index.rebuild` reply.
+ */
+export interface HistoryIndexReply {
+  index: HistoryIndexStatus
+  /**
+   * The `history_index` type tag.
+   */
+  type: 'history_index'
+  [k: string]: unknown
+}
+/**
+ * The state of the search index when a reply was read.
+ */
+export interface HistoryIndexStatus {
+  /**
+   * True when the index reflected every committed message change at read time.
+   */
+  caught_up: boolean
+  /**
+   * Increases on every rebuild. Search cursors from another epoch expire.
+   */
+  epoch: number
+  /**
+   * Set after the last index update failed. The indexer retries on its own.
+   */
+  last_error: string | null
+  /**
+   * Recorded message changes the index has not applied yet.
+   */
+  pending_changes: number
+  /**
+   * True while the index is being rebuilt from durable history; search
+   * results cover only the messages indexed so far.
+   */
+  rebuilding: boolean
+  [k: string]: unknown
+}
+/**
+ * `history.index.status`: how far the search index lags durable history.
+ */
+export interface HistoryIndexStatusRequest {
+  op: 'history.index.status'
+}
+/**
+ * The `history.list` reply.
+ */
+export interface HistoryList {
+  conversations: HistoryConversation[]
+  /**
+   * Null when the listing has finished. A conversation updated while the
+   * caller pages may move ahead of the cursor; list again to see it.
+   */
+  next_cursor: string | null
+  /**
+   * The `history_list` type tag.
+   */
+  type: 'history_list'
+  [k: string]: unknown
+}
+/**
+ * `history.list`: one page of conversations across providers, most recently
+ * updated first.
+ */
+export interface HistoryListRequest {
+  /**
+   * The `next_cursor` of the previous page for the same filters.
+   */
+  cursor?: string | null
+  /**
+   * Page size, 1 to 100; the daemon uses 50 when it is absent.
+   */
+  limit?: number
+  op: 'history.list'
+  provider?: string | null
+  workspace_id?: string | null
+}
+/**
+ * One message that matched a search.
+ */
+export interface HistoryMatch {
+  /**
+   * A short excerpt of the current message text, or of its review feedback
+   * when only the feedback matched.
+   */
+  excerpt: string
+  has_review_feedback: boolean
+  kind: string
+  message_id: string
+  /**
+   * When the daemon first recorded this message, in milliseconds since the
+   * Unix epoch. Null for messages written before the index existed.
+   */
+  observed_at: number | null
+  provenance: HistoryProvenance
+  role: string
+  /**
+   * The message's position in its conversation.
+   */
+  sequence: number
+  [k: string]: unknown
+}
+/**
+ * The `history.search` reply.
+ */
+export interface HistorySearch {
+  index: HistoryIndexStatus
+  /**
+   * Null when no more indexed matches remain.
+   */
+  next_cursor: string | null
+  results: HistoryMatch[]
+  /**
+   * The `history_search` type tag.
+   */
+  type: 'history_search'
+  [k: string]: unknown
+}
+/**
+ * `history.search`: one page of indexed messages that contain every query term,
+ * newest indexed first, across every conversation and provider in the profile.
+ */
+export interface HistorySearchRequest {
+  conversation_id?: string | null
+  /**
+   * The `next_cursor` of the previous page for the same query and filters.
+   */
+  cursor?: string | null
+  /**
+   * Page size, 1 to 50; the daemon uses 20 when it is absent.
+   */
+  limit?: number
+  op: 'history.search'
+  /**
+   * A provider ID such as `codex` or `claude`.
+   */
+  provider?: string | null
+  /**
+   * 1 to 256 bytes. Whitespace separates terms; every term must match. A
+   * trailing `*` makes a term a prefix. Query operators are matched literally.
+   */
+  query: string
+  workspace_id?: string | null
 }
 /**
  * The reply to every `resources.*` operation.
@@ -5306,7 +5502,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -5449,6 +5645,10 @@ export interface RequestByOperation {
   "orchestration.child.get": ChildGetRequest
   "orchestration.child.send": ChildSendRequest
   "orchestration.child.wait": ChildWaitRequest
+  "history.search": HistorySearchRequest
+  "history.list": HistoryListRequest
+  "history.index.status": HistoryIndexStatusRequest
+  "history.index.rebuild": HistoryIndexRebuildRequest
   "resources.inspect": ResourcesInspectRequest
   "resources.claim.resolve": ResourcesClaimResolveRequest
   "resources.registry.accept": ResourcesRegistryAcceptRequest
@@ -5595,6 +5795,10 @@ export interface ResponseByOperation {
   "orchestration.child.get": ChildReply
   "orchestration.child.send": ChildMessageQueued
   "orchestration.child.wait": ChildWait
+  "history.search": HistorySearch
+  "history.list": HistoryList
+  "history.index.status": HistoryIndexReply
+  "history.index.rebuild": HistoryIndexReply
   "resources.inspect": HostResourcesState
   "resources.claim.resolve": HostResourcesState
   "resources.registry.accept": HostResourcesState

@@ -3786,6 +3786,371 @@
       ],
       "type": "object"
     },
+    "HistoryConversation": {
+      "description": "One conversation in the combined history.",
+      "properties": {
+        "message_count": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "provenance": {
+          "$ref": "#/$defs/HistoryProvenance"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "message_count",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "HistoryIndexRebuildRequest": {
+      "additionalProperties": false,
+      "description": "`history.index.rebuild`: discard the search index and rebuild it from\ndurable history. It applies only while the index is still at\n`expected_epoch`, so a repeated request does not restart a rebuild.",
+      "properties": {
+        "expected_epoch": {
+          "description": "The `epoch` from the status the caller last saw.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "history.index.rebuild"
+        }
+      },
+      "required": [
+        "op",
+        "expected_epoch"
+      ],
+      "type": "object"
+    },
+    "HistoryIndexReply": {
+      "description": "The `history.index.status` and `history.index.rebuild` reply.",
+      "properties": {
+        "index": {
+          "$ref": "#/$defs/HistoryIndexStatus"
+        },
+        "type": {
+          "description": "The `history_index` type tag.",
+          "enum": [
+            "history_index"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "index"
+      ],
+      "type": "object"
+    },
+    "HistoryIndexStatus": {
+      "description": "The state of the search index when a reply was read.",
+      "properties": {
+        "caught_up": {
+          "description": "True when the index reflected every committed message change at read time.",
+          "type": "boolean"
+        },
+        "epoch": {
+          "description": "Increases on every rebuild. Search cursors from another epoch expire.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_error": {
+          "description": "Set after the last index update failed. The indexer retries on its own.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pending_changes": {
+          "description": "Recorded message changes the index has not applied yet.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rebuilding": {
+          "description": "True while the index is being rebuilt from durable history; search\nresults cover only the messages indexed so far.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "epoch",
+        "rebuilding",
+        "pending_changes",
+        "caught_up",
+        "last_error"
+      ],
+      "type": "object"
+    },
+    "HistoryIndexStatusRequest": {
+      "additionalProperties": false,
+      "description": "`history.index.status`: how far the search index lags durable history.",
+      "properties": {
+        "op": {
+          "const": "history.index.status"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "HistoryList": {
+      "description": "The `history.list` reply.",
+      "properties": {
+        "conversations": {
+          "items": {
+            "$ref": "#/$defs/HistoryConversation"
+          },
+          "type": "array"
+        },
+        "next_cursor": {
+          "description": "Null when the listing has finished. A conversation updated while the\ncaller pages may move ahead of the cursor; list again to see it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `history_list` type tag.",
+          "enum": [
+            "history_list"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversations",
+        "next_cursor"
+      ],
+      "type": "object"
+    },
+    "HistoryListRequest": {
+      "additionalProperties": false,
+      "description": "`history.list`: one page of conversations across providers, most recently\nupdated first.",
+      "properties": {
+        "cursor": {
+          "description": "The `next_cursor` of the previous page for the same filters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Page size, 1 to 100; the daemon uses 50 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "history.list"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "HistoryMatch": {
+      "description": "One message that matched a search.",
+      "properties": {
+        "excerpt": {
+          "description": "A short excerpt of the current message text, or of its review feedback\nwhen only the feedback matched.",
+          "type": "string"
+        },
+        "has_review_feedback": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "observed_at": {
+          "description": "When the daemon first recorded this message, in milliseconds since the\nUnix epoch. Null for messages written before the index existed.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/HistoryProvenance"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sequence": {
+          "description": "The message's position in its conversation.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "message_id",
+        "role",
+        "kind",
+        "sequence",
+        "excerpt",
+        "has_review_feedback",
+        "observed_at",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "HistoryProvenance": {
+      "description": "Where a history item came from. ADE never implies that one provider's\nsession continues another's.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "conversation_title": {
+          "type": "string"
+        },
+        "conversation_updated_at": {
+          "description": "Milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "native_session_id": {
+          "description": "The provider's own session or thread ID, when the provider assigned one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "conversation_title",
+        "provider",
+        "workspace_id",
+        "account_id",
+        "native_session_id",
+        "conversation_updated_at"
+      ],
+      "type": "object"
+    },
+    "HistorySearch": {
+      "description": "The `history.search` reply.",
+      "properties": {
+        "index": {
+          "$ref": "#/$defs/HistoryIndexStatus"
+        },
+        "next_cursor": {
+          "description": "Null when no more indexed matches remain.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/HistoryMatch"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `history_search` type tag.",
+          "enum": [
+            "history_search"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "results",
+        "next_cursor",
+        "index"
+      ],
+      "type": "object"
+    },
+    "HistorySearchRequest": {
+      "additionalProperties": false,
+      "description": "`history.search`: one page of indexed messages that contain every query term,\nnewest indexed first, across every conversation and provider in the profile.",
+      "properties": {
+        "conversation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursor": {
+          "description": "The `next_cursor` of the previous page for the same query and filters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Page size, 1 to 50; the daemon uses 20 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "history.search"
+        },
+        "provider": {
+          "description": "A provider ID such as `codex` or `claude`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "description": "1 to 256 bytes. Whitespace separates terms; every term must match. A\ntrailing `*` makes a term a prefix. Query operators are matched literally.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "query"
+      ],
+      "type": "object"
+    },
     "HostResourcesState": {
       "description": "The reply to every `resources.*` operation.",
       "properties": {
@@ -12606,6 +12971,34 @@
       "request": "ChildWaitRequest",
       "response": "ChildWait",
       "tier": "query"
+    },
+    {
+      "domain": "history",
+      "name": "history.search",
+      "request": "HistorySearchRequest",
+      "response": "HistorySearch",
+      "tier": "query"
+    },
+    {
+      "domain": "history",
+      "name": "history.list",
+      "request": "HistoryListRequest",
+      "response": "HistoryList",
+      "tier": "query"
+    },
+    {
+      "domain": "history",
+      "name": "history.index.status",
+      "request": "HistoryIndexStatusRequest",
+      "response": "HistoryIndexReply",
+      "tier": "query"
+    },
+    {
+      "domain": "history",
+      "name": "history.index.rebuild",
+      "request": "HistoryIndexRebuildRequest",
+      "response": "HistoryIndexReply",
+      "tier": "idempotent_command"
     },
     {
       "domain": "resources",
