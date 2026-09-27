@@ -2,6 +2,12 @@ use ade_core::contract::conversations::Ack;
 use ade_core::contract::terminals::{
     TerminalRestartRequest, TerminalRetireRequest, TerminalStopRequest, runtime as terminal_runtime,
 };
+use ade_core::contract::services::{
+    ServiceProxy, ServiceProxyEnsureRequest, ServiceProxyInspectRequest, ServiceProxyRecovery,
+    ServiceProxyRecoveryInspectRequest, ServiceProxyRecoveryReset,
+    ServiceProxyRecoveryResetRequest, ServiceProxyRecoveryRetryRequest, ServiceProxyRemapRequest,
+    ServiceProxyRetireRequest, ServiceProxyRetired, ServiceProxyTarget, ServiceProxyTargetRequest,
+};
 use ade_daemon::{
     runtime::{self, Supervisor},
     sessions::Sessions,
@@ -39,6 +45,71 @@ fn decode_terminal_request<T: serde::de::DeserializeOwned>(request: &Value) -> a
 }
 fn error_response(error: impl Into<anyhow::Error>) -> Value {
     ade_core::error::error_envelope(error.into())
+}
+
+/// Older wording for absent proxy request fields.
+const SERVICE_NAME: (&str, &str) = ("name", "Missing service name");
+const PORT_VARIABLE: (&str, &str) = ("port_variable", "Missing port variable");
+const ROUTE_FIELDS: &[(&str, &str)] = &[
+    SERVICE_NAME,
+    PORT_VARIABLE,
+    ("expected_route_id", "Missing expected route ID"),
+    (
+        "expected_service_identity",
+        "Missing expected service identity",
+    ),
+    ("expected_target_port", "Missing expected target port"),
+    ("expected_proxy_port", "Missing expected proxy port"),
+];
+
+/// Decodes a daemon-level request into its typed contract. An absent field
+/// reads `Missing <field>` unless `messages` keeps an older wording for it.
+fn decode_request<T: serde::de::DeserializeOwned>(
+    request: &Value,
+    messages: &[(&str, &str)],
+) -> anyhow::Result<T> {
+    T::deserialize(request).map_err(|error| {
+        let text = error.to_string();
+        match text
+            .strip_prefix("missing field `")
+            .and_then(|rest| rest.split('`').next())
+        {
+            Some(field) => match messages.iter().find(|(name, _)| *name == field) {
+                Some((_, message)) => anyhow::anyhow!("{message}"),
+                None => anyhow::anyhow!("Missing {field}"),
+            },
+            None => anyhow::anyhow!("Invalid request: {text}"),
+        }
+    })
+}
+
+/// Forwards a runtime proxy reply once it matches its contract.
+fn runtime_reply<T: serde::de::DeserializeOwned + serde::Serialize>(
+    reply: Value,
+) -> anyhow::Result<Value> {
+    let typed: T = serde_json::from_value(reply)
+        .map_err(|error| anyhow::anyhow!("Runtime proxy reply failed its contract: {error}"))?;
+    Ok(serde_json::to_value(typed)?)
+}
+
+/// Checks the reviewed route a retire or retry must still match.
+fn expected_route<'a>(
+    route_id: &'a str,
+    identity: &'a str,
+    target_port: u64,
+    proxy_port: u64,
+) -> anyhow::Result<(&'a str, &'a str, u64, u64)> {
+    anyhow::ensure!(!route_id.is_empty(), "Missing expected route ID");
+    anyhow::ensure!(!identity.is_empty(), "Missing expected service identity");
+    anyhow::ensure!(
+        (1..=65535).contains(&target_port),
+        "Missing expected target port"
+    );
+    anyhow::ensure!(
+        (1..=65535).contains(&proxy_port),
+        "Missing expected proxy port"
+    );
+    Ok((route_id, identity, target_port, proxy_port))
 }
 const MAX_REQUEST: u64 = 12 * 1024 * 1024;
 const MAX_BROWSER_REPLY: u64 = 1024 * 1024;
@@ -691,17 +762,10 @@ impl Host {
         response
     }
 
-    fn proxy_service(&self, request: &Value) -> anyhow::Result<(String, String, String, Value)> {
-        let workspace = request["workspace_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
+    /// Reads the workspace's service list after checking that the service has
+    /// the port variable.
+    fn proxy_service(&self, workspace: &str, name: &str, variable: &str) -> anyhow::Result<Value> {
         self.sessions.ensure_workspace_bound(workspace)?;
-        let name = request["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
-        let variable = request["port_variable"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing port variable"))?;
         let listed = self
             .sessions
             .command(&json!({"op":"service.list","workspace_id":workspace}))?;
@@ -713,16 +777,46 @@ impl Host {
             service["ports"][variable].as_u64().is_some(),
             "Service has no configured port variable"
         );
-        Ok((
-            workspace.to_owned(),
-            name.to_owned(),
-            variable.to_owned(),
-            listed,
-        ))
+        Ok(listed)
     }
 
     fn proxy_ensure(&self, request: &Value) -> anyhow::Result<Value> {
-        let (workspace, name, variable, listed) = self.proxy_service(request)?;
+        let remap = request["op"] == "service.proxy.remap";
+        let (workspace, name, variable, expected) = if remap {
+            let remap: ServiceProxyRemapRequest = decode_request(
+                request,
+                &[
+                    SERVICE_NAME,
+                    PORT_VARIABLE,
+                    (
+                        "expected_service_identity",
+                        "Service identity changed; inspect it again",
+                    ),
+                    (
+                        "expected_target_port",
+                        "Service target port changed; inspect it again",
+                    ),
+                    ("expected_route_identity", "Missing expected route identity"),
+                    ("expected_route_port", "Missing expected route port"),
+                ],
+            )?;
+            (
+                remap.workspace_id,
+                remap.name,
+                remap.port_variable,
+                Some((
+                    remap.expected_service_identity,
+                    remap.expected_target_port,
+                    remap.expected_route_identity,
+                    remap.expected_route_port,
+                )),
+            )
+        } else {
+            let ensure: ServiceProxyEnsureRequest =
+                decode_request(request, &[SERVICE_NAME, PORT_VARIABLE])?;
+            (ensure.workspace_id, ensure.name, ensure.port_variable, None)
+        };
+        let listed = self.proxy_service(&workspace, &name, &variable)?;
         let service = listed["services"]
             .as_array()
             .unwrap()
@@ -734,128 +828,125 @@ impl Host {
             .filter(|id| !id.is_empty())
             .ok_or_else(|| anyhow::anyhow!("Service identity unavailable"))?;
         let target_port = service["ports"][&variable].as_u64().unwrap();
-        let remap = request["op"] == "service.proxy.remap";
-        let expected_route_identity = if remap {
-            anyhow::ensure!(
-                request["expected_service_identity"] == identity,
-                "Service identity changed; inspect it again"
-            );
-            anyhow::ensure!(
-                request["expected_target_port"] == target_port,
-                "Service target port changed; inspect it again"
-            );
-            request["expected_route_identity"]
-                .as_str()
-                .filter(|id| !id.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("Missing expected route identity"))?
-        } else {
-            ""
+        let (expected_route_identity, expected_route_port) = match &expected {
+            Some((service_identity, service_port, route_identity, route_port)) => {
+                anyhow::ensure!(
+                    service_identity == identity,
+                    "Service identity changed; inspect it again"
+                );
+                anyhow::ensure!(
+                    *service_port == target_port,
+                    "Service target port changed; inspect it again"
+                );
+                anyhow::ensure!(
+                    !route_identity.is_empty(),
+                    "Missing expected route identity"
+                );
+                anyhow::ensure!(
+                    (1..=65535).contains(route_port),
+                    "Missing expected route port"
+                );
+                (route_identity.as_str(), *route_port)
+            }
+            None => ("", 0),
         };
-        let expected_route_port = if remap {
-            request["expected_route_port"]
-                .as_u64()
-                .filter(|port| (1..=65535).contains(port))
-                .ok_or_else(|| anyhow::anyhow!("Missing expected route port"))?
-        } else {
-            0
-        };
-        self.runtime
-            .command(json!({"op":"proxy.ensure","workspace_id":workspace,
+        runtime_reply::<ServiceProxy>(self.runtime.command(
+            json!({"op":"proxy.ensure","workspace_id":workspace,
             "service_name":name,"port_variable":variable,"service_identity":identity,
             "target_port":target_port,"remap":remap,
             "expected_route_identity":expected_route_identity,
             "expected_route_port":expected_route_port,
-            "daemon_socket":self.socket}))
+            "daemon_socket":self.socket}),
+        )?)
     }
 
     fn proxy_inspect(&self, request: &Value) -> anyhow::Result<Value> {
-        let workspace = request["workspace_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
-        self.sessions.ensure_workspace_bound(workspace)?;
-        let name = request["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
-        let variable = request["port_variable"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing port variable"))?;
-        self.runtime
-            .command(json!({"op":"proxy.inspect","workspace_id":workspace,
-            "service_name":name,"port_variable":variable}))
+        let inspect: ServiceProxyInspectRequest =
+            decode_request(request, &[SERVICE_NAME, PORT_VARIABLE])?;
+        self.sessions
+            .ensure_workspace_bound(&inspect.workspace_id)?;
+        runtime_reply::<ServiceProxy>(self.runtime.command(
+            json!({"op":"proxy.inspect","workspace_id":inspect.workspace_id,
+            "service_name":inspect.name,"port_variable":inspect.port_variable}),
+        )?)
     }
 
     fn proxy_retire(&self, request: &Value) -> anyhow::Result<Value> {
-        let workspace = request["workspace_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
-        self.sessions.ensure_workspace_bound(workspace)?;
-        let name = request["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
-        let variable = request["port_variable"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing port variable"))?;
-        let route_id = request["expected_route_id"]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Missing expected route ID"))?;
-        let identity = request["expected_service_identity"]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Missing expected service identity"))?;
-        let target_port = request["expected_target_port"]
-            .as_u64()
-            .filter(|port| (1..=65535).contains(port))
-            .ok_or_else(|| anyhow::anyhow!("Missing expected target port"))?;
-        let proxy_port = request["expected_proxy_port"]
-            .as_u64()
-            .filter(|port| (1..=65535).contains(port))
-            .ok_or_else(|| anyhow::anyhow!("Missing expected proxy port"))?;
-        self.runtime
-            .command(json!({"op":"proxy.retire","workspace_id":workspace,
-            "service_name":name,"port_variable":variable,"expected_route_id":route_id,
+        let retire: ServiceProxyRetireRequest = decode_request(request, ROUTE_FIELDS)?;
+        self.sessions.ensure_workspace_bound(&retire.workspace_id)?;
+        let (route_id, identity, target_port, proxy_port) = expected_route(
+            &retire.expected_route_id,
+            &retire.expected_service_identity,
+            retire.expected_target_port,
+            retire.expected_proxy_port,
+        )?;
+        runtime_reply::<ServiceProxyRetired>(self.runtime.command(
+            json!({"op":"proxy.retire","workspace_id":retire.workspace_id,
+            "service_name":retire.name,"port_variable":retire.port_variable,"expected_route_id":route_id,
             "expected_service_identity":identity,"expected_target_port":target_port,
-            "expected_proxy_port":proxy_port}))
+            "expected_proxy_port":proxy_port}),
+        )?)
+    }
+
+    fn proxy_recovery_inspect(&self, request: &Value) -> anyhow::Result<Value> {
+        let ServiceProxyRecoveryInspectRequest {} = decode_request(request, &[])?;
+        runtime_reply::<ServiceProxyRecovery>(
+            self.runtime
+                .command(json!({"op":"proxy.recovery.inspect"}))?,
+        )
     }
 
     fn proxy_recovery_retry(&self, request: &Value) -> anyhow::Result<Value> {
-        let workspace = request["workspace_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
-        self.sessions.ensure_workspace_bound(workspace)?;
-        let name = request["name"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing service name"))?;
-        let variable = request["port_variable"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing port variable"))?;
-        let route_id = request["expected_route_id"]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Missing expected route ID"))?;
-        let identity = request["expected_service_identity"]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Missing expected service identity"))?;
-        let target_port = request["expected_target_port"]
-            .as_u64()
-            .filter(|port| (1..=65535).contains(port))
-            .ok_or_else(|| anyhow::anyhow!("Missing expected target port"))?;
-        let proxy_port = request["expected_proxy_port"]
-            .as_u64()
-            .filter(|port| (1..=65535).contains(port))
-            .ok_or_else(|| anyhow::anyhow!("Missing expected proxy port"))?;
-        self.runtime
-            .command(json!({"op":"proxy.recovery.retry","workspace_id":workspace,
-            "service_name":name,"port_variable":variable,"expected_route_id":route_id,
+        let retry: ServiceProxyRecoveryRetryRequest = decode_request(request, ROUTE_FIELDS)?;
+        self.sessions.ensure_workspace_bound(&retry.workspace_id)?;
+        let (route_id, identity, target_port, proxy_port) = expected_route(
+            &retry.expected_route_id,
+            &retry.expected_service_identity,
+            retry.expected_target_port,
+            retry.expected_proxy_port,
+        )?;
+        runtime_reply::<ServiceProxy>(self.runtime.command(
+            json!({"op":"proxy.recovery.retry","workspace_id":retry.workspace_id,
+            "service_name":retry.name,"port_variable":retry.port_variable,"expected_route_id":route_id,
             "expected_service_identity":identity,"expected_target_port":target_port,
-            "expected_proxy_port":proxy_port,"daemon_socket":self.socket}))
+            "expected_proxy_port":proxy_port,"daemon_socket":self.socket}),
+        )?)
+    }
+
+    fn proxy_recovery_reset(&self, request: &Value) -> anyhow::Result<Value> {
+        let reset: ServiceProxyRecoveryResetRequest = decode_request(
+            request,
+            &[(
+                "expected_registry_sha256",
+                "Missing expected registry SHA-256",
+            )],
+        )?;
+        runtime_reply::<ServiceProxyRecoveryReset>(
+            self.runtime.command(json!({"op":"proxy.recovery.reset",
+            "expected_registry_sha256":reset.expected_registry_sha256}))?,
+        )
     }
 
     fn proxy_target(&self, request: &Value) -> anyhow::Result<Value> {
-        let (workspace, name, variable, listed) = self.proxy_service(request)?;
+        const TARGET_CHANGED: &str = "Stable service proxy target changed; explicitly remap it";
+        let target: ServiceProxyTargetRequest = decode_request(
+            request,
+            &[
+                SERVICE_NAME,
+                PORT_VARIABLE,
+                ("expected_port", TARGET_CHANGED),
+                ("service_identity", TARGET_CHANGED),
+                ("connected_host", "Invalid connected proxy host"),
+            ],
+        )?;
+        let (workspace, name, variable) = (
+            target.workspace_id.as_str(),
+            target.name.as_str(),
+            target.port_variable.as_str(),
+        );
+        let listed = self.proxy_service(workspace, name, variable)?;
         anyhow::ensure!(
-            listed["states"][&name]["state"] == "running",
+            listed["states"][name]["state"] == "running",
             "Managed service is unavailable"
         );
         let service = listed["services"]
@@ -864,19 +955,17 @@ impl Host {
             .iter()
             .find(|item| item["name"] == name)
             .unwrap();
-        let port = service["ports"][&variable].as_u64().unwrap();
+        let port = service["ports"][variable].as_u64().unwrap();
         anyhow::ensure!(
-            request["expected_port"] == port && request["service_identity"] == service["identity"],
-            "Stable service proxy target changed; explicitly remap it"
+            target.expected_port == port && service["identity"] == target.service_identity,
+            TARGET_CHANGED
         );
-        let transfer = listed["states"][&name]["metrics"]["transfer_id"].clone();
-        let pid = listed["states"][&name]["metrics"]["shell_pid"].clone();
-        anyhow::ensure!(
-            transfer.is_string() && pid.is_number(),
-            "Service process identity unavailable"
-        );
-        let host = request["connected_host"]
-            .as_str()
+        let transfer = listed["states"][name]["metrics"]["transfer_id"].clone();
+        let pid = listed["states"][name]["metrics"]["shell_pid"].clone();
+        let (Some(transfer_id), Some(process)) = (transfer.as_str(), pid.as_u64()) else {
+            anyhow::bail!("Service process identity unavailable");
+        };
+        let host = Some(target.connected_host.as_str())
             .filter(|host| matches!(*host, "127.0.0.1" | "::1"))
             .ok_or_else(|| anyhow::anyhow!("Invalid connected proxy host"))?;
         let family = if host == "127.0.0.1" { "ipv4" } else { "ipv6" };
@@ -915,22 +1004,25 @@ impl Host {
             .sessions
             .command(&json!({"op":"service.list","workspace_id":workspace}))?;
         anyhow::ensure!(
-            current["states"][&name]["state"] == "running"
-                && current["states"][&name]["metrics"]["transfer_id"] == transfer
-                && current["states"][&name]["metrics"]["shell_pid"] == pid
+            current["states"][name]["state"] == "running"
+                && current["states"][name]["metrics"]["transfer_id"] == transfer
+                && current["states"][name]["metrics"]["shell_pid"] == pid
                 && current["services"]
                     .as_array()
                     .is_some_and(|items| items.iter().any(|item| {
                         item["name"] == name
                             && item["identity"] == service["identity"]
-                            && item["ports"][&variable] == port
+                            && item["ports"][variable] == port
                     })),
             "Managed service changed during proxy resolution"
         );
-        Ok(
-            json!({"type":"service_proxy_target","host":host,"port":port,
-            "transfer_id":transfer,"pid":pid}),
-        )
+        Ok(serde_json::to_value(ServiceProxyTarget {
+            tag: Default::default(),
+            host: host.to_owned(),
+            port,
+            transfer_id: transfer_id.to_owned(),
+            pid: process,
+        })?)
     }
 
     fn refresh_leases(&self) -> anyhow::Result<()> {
@@ -1278,12 +1370,11 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                 } else if op == "service.proxy.retire" {
                     host.proxy_retire(&request)
                 } else if op == "service.proxy.recovery.inspect" {
-                    host.runtime.command(json!({"op":"proxy.recovery.inspect"}))
+                    host.proxy_recovery_inspect(&request)
                 } else if op == "service.proxy.recovery.retry" {
                     host.proxy_recovery_retry(&request)
                 } else if op == "service.proxy.recovery.reset" {
-                    host.runtime.command(json!({"op":"proxy.recovery.reset",
-                        "expected_registry_sha256":request["expected_registry_sha256"]}))
+                    host.proxy_recovery_reset(&request)
                 } else if op == "service.proxy.target" {
                     host.proxy_target(&request)
                 } else if op == "terminal.stop" || op == "terminal.retire" {

@@ -112,10 +112,18 @@ fn queued() -> QueuedPrompt {
 #[test]
 fn every_operation_declares_a_tier_and_named_types() {
     let bundle = bundle();
+    // Each domain asserts its own operations; this test covers the first two.
+    let example = |spec: &&Value| {
+        matches!(
+            spec["domain"].as_str(),
+            Some("workspaces" | "conversations")
+        )
+    };
     let tiers: Vec<_> = bundle["operations"]
         .as_array()
         .unwrap()
         .iter()
+        .filter(example)
         .map(|spec| {
             (
                 spec["name"].as_str().unwrap(),
@@ -136,6 +144,7 @@ fn every_operation_declares_a_tier_and_named_types() {
         .as_array()
         .unwrap()
         .iter()
+        .filter(example)
         .map(|spec| spec["type"].as_str().unwrap())
         .collect();
     // Each domain module checks its own frames.

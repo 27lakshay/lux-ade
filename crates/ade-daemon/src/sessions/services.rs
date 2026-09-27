@@ -1,5 +1,28 @@
 //! Service health checks, listeners, peers and the `service.*` and `listener.list` operations.
 use super::*;
+use ade_core::contract::conversations::Ack;
+use ade_core::contract::services::{
+    ExecutionState, ListenerFamily, ListenerInventory, ListenerListRequest, ListenerOwnership,
+    ListenerRow, PortAssignment, PortObservation, Readiness, ReadinessBasis, ReadinessState,
+    ServiceChanged, ServiceConfigureRequest, ServiceExecution, ServiceHealthSample,
+    ServiceHealthSampleRequest, ServiceInspectRequest, ServiceInspection, ServiceList,
+    ServiceListRequest, ServiceRemoveRequest, ServiceReply, ServiceStartRequest,
+    ServiceStopRequest,
+};
+
+/// Decodes a service request and keeps the older wording for the named fields.
+fn decode_with<T: serde::de::DeserializeOwned>(
+    request: &Value,
+    messages: &[(&str, &str)],
+) -> Result<T> {
+    decode(request).map_err(|error| {
+        let text = error.to_string();
+        messages
+            .iter()
+            .find(|(field, _)| text == format!("Missing {field}"))
+            .map_or(error, |(_, message)| anyhow!("{message}"))
+    })
+}
 
 pub(super) struct HealthCheck {
     port_variable: String,
@@ -174,41 +197,52 @@ impl Drop for HealthSampleGuard<'_> {
 }
 impl Sessions {
     pub(super) fn service_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
-        let string = required_str(request);
         match request["op"].as_str().unwrap_or("") {
-            "service.start" => self.start_service(string("workspace_id")?, string("name")?),
-            "service.stop" => self.stop_service(string("workspace_id")?, string("name")?),
+            "service.start" => {
+                let start: ServiceStartRequest = decode(request)?;
+                reply(&self.start_service(
+                    non_empty("workspace_id", &start.workspace_id)?,
+                    non_empty("name", &start.name)?,
+                )?)
+            }
+            "service.stop" => {
+                let stop: ServiceStopRequest = decode(request)?;
+                reply(&self.stop_service(
+                    non_empty("workspace_id", &stop.workspace_id)?,
+                    non_empty("name", &stop.name)?,
+                )?)
+            }
             "service.health.sample" => {
-                self.sample_service_health(string("workspace_id")?, string("name")?)
+                let sample: ServiceHealthSampleRequest = decode(request)?;
+                reply(&self.sample_service_health(
+                    non_empty("workspace_id", &sample.workspace_id)?,
+                    non_empty("name", &sample.name)?,
+                )?)
             }
             "service.inspect" => {
-                let health_check = HealthCheck::parse(&request["health_check"])?;
-                let limit = if request["tail_bytes"].is_null() {
-                    8192
-                } else {
-                    request["tail_bytes"]
-                        .as_u64()
-                        .context("Invalid tail limit")?
-                };
+                let inspect: ServiceInspectRequest = decode(request)?;
+                let health_check =
+                    HealthCheck::parse(inspect.health_check.as_ref().unwrap_or(&Value::Null))?;
+                let limit = inspect.tail_bytes.unwrap_or(8192);
                 ensure!(
                     (1..=32768).contains(&limit),
                     "Tail limit must be 1 to 32768 bytes"
                 );
-                self.inspect_service(
-                    string("workspace_id")?,
-                    string("name")?,
+                reply(&self.inspect_service(
+                    non_empty("workspace_id", &inspect.workspace_id)?,
+                    non_empty("name", &inspect.name)?,
                     limit,
                     health_check.as_ref(),
-                )
+                )?)
             }
-            "listener.list" => self.list_listeners(),
+            "listener.list" => {
+                let ListenerListRequest {} = decode(request)?;
+                reply(&self.list_listeners()?)
+            }
             "service.list" => {
-                let services = self
-                    .data
-                    .lock()
-                    .unwrap()
-                    .store
-                    .services(string("workspace_id")?)?;
+                let list: ServiceListRequest = decode(request)?;
+                let workspace = non_empty("workspace_id", &list.workspace_id)?;
+                let services = self.data.lock().unwrap().store.services(workspace)?;
                 let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
                 let terminals = terminals["terminals"]
                     .as_array()
@@ -222,55 +256,62 @@ impl Sessions {
                                 .find(|t| t["workspace"]["terminal_id"] == *id)
                         });
                         let state = match &service.terminal_owner {
-                            None => "stopped",
+                            None => ExecutionState::Stopped,
                             Some(owner) if owner.runtime_instance != self.runtime.instance => {
-                                "unavailable"
+                                ExecutionState::Unavailable
                             }
                             Some(owner) => match terminal {
                                 Some(t) if t["metrics"]["transfer_id"] == owner.transfer_id => {
                                     if t["metrics"]["shell_running"] == true {
-                                        "running"
+                                        ExecutionState::Running
                                     } else {
-                                        "exited"
+                                        ExecutionState::Exited
                                     }
                                 }
-                                _ => "unavailable",
+                                _ => ExecutionState::Unavailable,
                             },
                         };
                         (
                             service.name.clone(),
-                            json!({"state":state,"metrics":terminal.map(|t| t["metrics"].clone())}),
+                            ServiceExecution {
+                                state,
+                                metrics: terminal.map(|t| t["metrics"].clone()),
+                            },
                         )
                     })
-                    .collect::<serde_json::Map<String, Value>>();
-                Ok(json!({"type":"services","services":services,"states":states}))
+                    .collect();
+                reply(&ServiceList {
+                    tag: Default::default(),
+                    services,
+                    states,
+                })
             }
             "service.configure" => {
-                let config = serde_json::from_value(request["config"].clone())?;
+                let configure: ServiceConfigureRequest =
+                    decode_with(request, &[("revision", "Missing service revision")])?;
+                let config = serde_json::from_value(configure.config)?;
                 let mut d = self.data.lock().unwrap();
                 ensure!(!d.draining, "Application daemon is restarting");
                 let service = d.store.configure_service(
-                    string("workspace_id")?,
-                    string("name")?,
-                    request["revision"]
-                        .as_i64()
-                        .context("Missing service revision")?,
+                    non_empty("workspace_id", &configure.workspace_id)?,
+                    non_empty("name", &configure.name)?,
+                    configure.revision,
                     config,
                 )?;
                 d.health_samples
                     .remove(&(service.workspace_id.clone(), service.name.clone()));
                 d.health_attempts
                     .remove(&(service.workspace_id.clone(), service.name.clone()));
-                Ok(json!({"type":"service", "service":service}))
+                reply(&ServiceReply::service(service))
             }
             "service.remove" => {
+                let remove: ServiceRemoveRequest =
+                    decode_with(request, &[("revision", "Missing service revision")])?;
                 let mut d = self.data.lock().unwrap();
                 ensure!(!d.draining, "Application daemon is restarting");
-                let workspace = string("workspace_id")?;
-                let name = string("name")?;
-                let revision = request["revision"]
-                    .as_i64()
-                    .context("Missing service revision")?;
+                let workspace = non_empty("workspace_id", &remove.workspace_id)?;
+                let name = non_empty("name", &remove.name)?;
+                let revision = remove.revision;
                 if let Some(service) = d
                     .store
                     .services(workspace)?
@@ -295,7 +336,7 @@ impl Sessions {
                 d.health_attempts
                     .remove(&(workspace.to_owned(), name.to_owned()));
                 self.catalog_changed(&mut d)?;
-                Ok(json!({"type":"ack"}))
+                reply(&Ack::default())
             }
             _ => bail!("Unknown session operation"),
         }
@@ -303,7 +344,7 @@ impl Sessions {
     pub(super) fn monitored_health(
         d: &Data,
         service: &ade_core::services::Service,
-        execution_state: &str,
+        execution_state: ExecutionState,
     ) -> Value {
         let Some(policy) = &service.config.health else {
             return json!({"state":"disabled"});
@@ -311,7 +352,7 @@ impl Sessions {
         let Some(owner) = &service.terminal_owner else {
             return json!({"state":"not_running"});
         };
-        if execution_state != "running" {
+        if execution_state != ExecutionState::Running {
             return json!({"state":"unknown","basis":"execution_unavailable"});
         }
         if d.stopping_services
@@ -348,7 +389,7 @@ impl Sessions {
         self: &Arc<Self>,
         workspace: &str,
         name: &str,
-    ) -> Result<Value> {
+    ) -> Result<ServiceHealthSample> {
         self.ensure_workspace_bound(workspace)?;
         let started_at = std::time::Instant::now();
         let service = {
@@ -379,18 +420,20 @@ impl Sessions {
         let policy = service.config.health.as_ref().unwrap();
         let inspection =
             self.inspect_service(workspace, name, 1, Some(&HealthCheck::from(policy)))?;
-        let result = inspection["health"].clone();
+        let result = inspection.health.clone().unwrap_or(Value::Null);
         let mut d = self.data.lock().unwrap();
         let current = d.store.service(workspace, name)?;
         if current != service
             || d.stopping_services
                 .contains(&(workspace.to_owned(), name.to_owned()))
         {
-            return Ok(json!({"type":"service_health_sample",
-                "health_monitor":{"state":"unknown","basis":"identity_changed"}}));
+            return Ok(ServiceHealthSample {
+                tag: Default::default(),
+                health_monitor: json!({"state":"unknown","basis":"identity_changed"}),
+            });
         }
         if let Some(owner) = &service.terminal_owner
-            && inspection["execution_state"] == "running"
+            && inspection.execution_state == ExecutionState::Running
         {
             let key = (workspace.to_owned(), name.to_owned());
             let superseded = d.health_samples.get(&key).is_some_and(|prior| {
@@ -412,10 +455,10 @@ impl Sessions {
                 );
             }
         }
-        Ok(
-            json!({"type":"service_health_sample","health_monitor":Self::monitored_health(
-            &d, &current, inspection["execution_state"].as_str().unwrap_or("unavailable"))}),
-        )
+        Ok(ServiceHealthSample {
+            tag: Default::default(),
+            health_monitor: Self::monitored_health(&d, &current, inspection.execution_state),
+        })
     }
 
     pub(super) fn sample_due_service_health(self: &Arc<Self>) -> Result<()> {
@@ -478,7 +521,7 @@ impl Sessions {
         name: &str,
         limit: u64,
         health_check: Option<&HealthCheck>,
-    ) -> Result<Value> {
+    ) -> Result<ServiceInspection> {
         let (service, peer_targets, mut peer_error) = {
             let d = self.data.lock().unwrap();
             let service = d.store.service(workspace, name)?;
@@ -516,10 +559,10 @@ impl Sessions {
             Ok(listed) => {
                 let metrics = &listed["states"][name]["metrics"];
                 (
-                    listed["states"][name]["state"]
-                        .as_str()
-                        .unwrap_or("unavailable")
-                        .to_owned(),
+                    <ExecutionState as serde::Deserialize>::deserialize(
+                        &listed["states"][name]["state"],
+                    )
+                    .unwrap_or(ExecutionState::Unavailable),
                     None,
                     if service.last_run_transfer_id.as_deref() == metrics["transfer_id"].as_str() {
                         metrics["durable_log_error"].as_str().map(str::to_owned)
@@ -528,56 +571,56 @@ impl Sessions {
                     },
                 )
             }
-            Err(error) => ("unavailable".to_owned(), Some(error.to_string()), None),
+            Err(error) => (ExecutionState::Unavailable, Some(error.to_string()), None),
         };
-        let observations = if state == "running" {
+        let running = state == ExecutionState::Running;
+        let observations = if running {
             Some(self.list_listeners())
         } else {
             None
         };
         let (readiness_state, observation_error) = match &observations {
             None => (
-                if state == "stopped" {
-                    "stopped"
-                } else if state == "exited" {
-                    "exited"
-                } else {
-                    "unknown"
+                match state {
+                    ExecutionState::Stopped => ReadinessState::Stopped,
+                    ExecutionState::Exited => ReadinessState::Exited,
+                    _ => ReadinessState::Unknown,
                 },
                 None,
             ),
             Some(Ok(inventory)) => {
-                let assignments = inventory["assignments"]
-                    .as_array()
-                    .context("Invalid listener inventory")?;
-                let ports = assignments
+                let ports = inventory
+                    .assignments
                     .iter()
-                    .filter(|item| {
-                        item["workspace_id"] == workspace && item["service_name"] == name
-                    })
-                    .filter_map(|item| item["observation"].as_str())
+                    .filter(|item| item.workspace_id == workspace && item.service_name == name)
+                    .map(|item| item.observation)
                     .collect::<Vec<_>>();
-                let readiness = match state.as_str() {
-                    "running" if ports.is_empty() => "unknown_no_port_check",
-                    "running"
-                        if ports
-                            .iter()
-                            .any(|item| *item == "observed_other" || *item == "contested") =>
-                    {
-                        "port_conflict"
-                    }
-                    "running" if ports.iter().all(|item| *item == "verified_managed") => {
-                        "tcp_listening"
-                    }
-                    "running" => "not_observed",
-                    _ => "unknown",
+                let readiness = if ports.is_empty() {
+                    ReadinessState::UnknownNoPortCheck
+                } else if ports.iter().any(|item| {
+                    matches!(
+                        item,
+                        PortObservation::ObservedOther | PortObservation::Contested
+                    )
+                }) {
+                    ReadinessState::PortConflict
+                } else if ports
+                    .iter()
+                    .all(|item| *item == PortObservation::VerifiedManaged)
+                {
+                    ReadinessState::TcpListening
+                } else {
+                    ReadinessState::NotObserved
                 };
                 (readiness, None)
             }
-            Some(Err(error)) => ("observation_unavailable", Some(error.to_string())),
+            Some(Err(error)) => (
+                ReadinessState::ObservationUnavailable,
+                Some(error.to_string()),
+            ),
         };
         let mut health = health_check.map(|check| {
-            let result = if state != "running" {
+            let result = if !running {
                 json!({"state":"not_running","basis":"execution_state"})
             } else if observations.as_ref().is_none_or(Result::is_err) {
                 json!({"state":"unknown","basis":"listener_observation_unavailable"})
@@ -585,15 +628,16 @@ impl Sessions {
                 let assignment = observations
                     .as_ref()
                     .and_then(|result| result.as_ref().ok())
-                    .and_then(|inventory| inventory["assignments"].as_array())
-                    .and_then(|assignments| {
-                        assignments.iter().find(|item| {
-                            item["workspace_id"] == workspace
-                                && item["service_name"] == name
-                                && item["variable"] == check.port_variable
+                    .and_then(|inventory| {
+                        inventory.assignments.iter().find(|item| {
+                            item.workspace_id == workspace
+                                && item.service_name == name
+                                && item.variable == check.port_variable
                         })
                     });
-                if assignment.is_none_or(|item| item["observation"] != "verified_managed") {
+                if assignment
+                    .is_none_or(|item| item.observation != PortObservation::VerifiedManaged)
+                {
                     json!({"state":"unknown","basis":"managed_listener_unverified"})
                 } else {
                     check.probe(service.ports[&check.port_variable])
@@ -639,7 +683,7 @@ impl Sessions {
         if let Some(error) = durable_capture_error {
             durable_logs["capture_error"] = json!(error);
         }
-        let still_running = if state == "running" && health_check.is_some() {
+        let still_running = if running && health_check.is_some() {
             self.command(&json!({"op":"service.list","workspace_id":workspace}))
                 .ok()
                 .is_some_and(|listed| listed["states"][name]["state"] == "running")
@@ -655,34 +699,38 @@ impl Sessions {
                 return true;
             }
             self.list_listeners().ok().is_some_and(|inventory| {
-                inventory["assignments"]
-                    .as_array()
-                    .is_some_and(|assignments| {
-                        assignments.iter().any(|item| {
-                            item["workspace_id"] == workspace
-                                && item["service_name"] == name
-                                && item["variable"] == check.port_variable
-                                && item["port"] == service.ports[&check.port_variable]
-                                && item["observation"] == "verified_managed"
-                        })
-                    })
+                inventory.assignments.iter().any(|item| {
+                    item.workspace_id == workspace
+                        && item.service_name == name
+                        && item.variable == check.port_variable
+                        && item.port == service.ports[&check.port_variable]
+                        && item.observation == PortObservation::VerifiedManaged
+                })
             })
         });
         let d = self.data.lock().unwrap();
         let current = d.store.service(workspace, name)?;
         if current != service {
-            let mut result = json!({"type":"service_inspection","service":current,
-                "execution_state":"unavailable","execution_error":"Service changed during inspection; refresh",
-                "readiness":{"state":"unknown","basis":"identity_changed",
-                    "application_ready":"unverified","observation_error":"Service changed during inspection; refresh"},
-                "logs":{"available":false,"reason":"service_changed_during_inspection"},
-                "durable_logs":{"available":false,"reason":"service_changed_during_inspection"},
-                "effective_peers":{},"peer_error":"Service changed during inspection; refresh"});
-            if health_check.is_some() {
-                result["health"] = json!({"state":"unknown","basis":"identity_changed"});
-            }
-            result["health_monitor"] = json!({"state":"unknown","basis":"identity_changed"});
-            return Ok(result);
+            const CHANGED: &str = "Service changed during inspection; refresh";
+            return Ok(ServiceInspection {
+                tag: Default::default(),
+                service: current,
+                execution_state: ExecutionState::Unavailable,
+                execution_error: Some(CHANGED.into()),
+                readiness: Readiness {
+                    state: ReadinessState::Unknown,
+                    basis: ReadinessBasis::IdentityChanged,
+                    application_ready: Default::default(),
+                    observation_error: Some(CHANGED.into()),
+                },
+                logs: json!({"available":false,"reason":"service_changed_during_inspection"}),
+                durable_logs: json!({"available":false,"reason":"service_changed_during_inspection"}),
+                effective_peers: BTreeMap::new(),
+                current_peer_endpoints: None,
+                peer_error: Some(CHANGED.into()),
+                health: health_check.map(|_| json!({"state":"unknown","basis":"identity_changed"})),
+                health_monitor: json!({"state":"unknown","basis":"identity_changed"}),
+            });
         }
         if peer_targets.iter().any(|target| {
             d.stopping_services
@@ -696,7 +744,7 @@ impl Sessions {
             current_peer_endpoints.clear();
             peer_error = Some("Peer service changed during inspection; refresh".into());
         }
-        let effective_peers = if state == "running" && service.terminal_owner.is_some() {
+        let effective_peers = if running && service.terminal_owner.is_some() {
             service.launch_peers.clone()
         } else {
             BTreeMap::new()
@@ -707,7 +755,7 @@ impl Sessions {
         {
             peer_error = Some("Peer endpoint changed since launch; restart this service".into());
         }
-        if state == "running" && health_check.is_some() {
+        if running && health_check.is_some() {
             let stopping = d
                 .stopping_services
                 .contains(&(workspace.to_owned(), name.to_owned()));
@@ -717,21 +765,33 @@ impl Sessions {
                 health = Some(json!({"state":"unknown","basis":"managed_listener_changed"}));
             }
         }
-        let mut result = json!({"type":"service_inspection","service":service,"execution_state":state,
-            "execution_error":execution_error,
-            "readiness":{"state":readiness_state,"basis":if state == "running" {"direct_process_tcp_listener"} else {"execution_state"},
-                "application_ready":"unverified","observation_error":observation_error},
-            "logs":logs,"durable_logs":durable_logs,
-            "effective_peers":effective_peers,"current_peer_endpoints":current_peer_endpoints,
-            "peer_error":peer_error});
-        if let Some(health) = health {
-            result["health"] = health;
-        }
-        result["health_monitor"] = Self::monitored_health(&d, &service, &state);
-        Ok(result)
+        let health_monitor = Self::monitored_health(&d, &service, state);
+        Ok(ServiceInspection {
+            tag: Default::default(),
+            service,
+            execution_state: state,
+            execution_error,
+            readiness: Readiness {
+                state: readiness_state,
+                basis: if running {
+                    ReadinessBasis::DirectProcessTcpListener
+                } else {
+                    ReadinessBasis::ExecutionState
+                },
+                application_ready: Default::default(),
+                observation_error,
+            },
+            logs,
+            durable_logs,
+            effective_peers,
+            current_peer_endpoints: Some(current_peer_endpoints),
+            peer_error,
+            health,
+            health_monitor,
+        })
     }
 
-    pub(super) fn list_listeners(&self) -> Result<Value> {
+    pub(super) fn list_listeners(&self) -> Result<ListenerInventory> {
         let services = {
             let d = self.data.lock().unwrap();
             let workspaces = d.store.catalog()?.workspaces;
@@ -793,13 +853,29 @@ impl Sessions {
             }
         }
         managed.retain(|_, (workspace, _)| !workspace.is_empty());
-        let listener_rows = observed.iter().map(|listener| {
-            let owner = managed.get(&listener.pid);
-            json!({"protocol":"tcp","address":listener.address,"port":listener.port,
-                "family":match listener.family { listeners::IpFamily::V4 => "ipv4", listeners::IpFamily::V6 => "ipv6" },
-                "pid":listener.pid,"ownership":if owner.is_some(){"managed_service"}else{"unknown"},
-                "workspace_id":owner.map(|value| &value.0),"service_name":owner.map(|value| &value.1)})
-        }).collect::<Vec<_>>();
+        let listener_rows = observed
+            .iter()
+            .map(|listener| {
+                let owner = managed.get(&listener.pid);
+                ListenerRow {
+                    protocol: Default::default(),
+                    address: listener.address.clone(),
+                    port: listener.port,
+                    family: match listener.family {
+                        listeners::IpFamily::V4 => ListenerFamily::Ipv4,
+                        listeners::IpFamily::V6 => ListenerFamily::Ipv6,
+                    },
+                    pid: listener.pid,
+                    ownership: if owner.is_some() {
+                        ListenerOwnership::ManagedService
+                    } else {
+                        ListenerOwnership::Unknown
+                    },
+                    workspace_id: owner.map(|value| value.0.clone()),
+                    service_name: owner.map(|value| value.1.clone()),
+                }
+            })
+            .collect();
         let assignments = services
             .iter()
             .flat_map(|service| {
@@ -816,20 +892,28 @@ impl Sessions {
                         }
                     }
                     let observation = match (own, other) {
-                        (true, false) => "verified_managed",
-                        (true, true) => "contested",
-                        (false, true) => "observed_other",
-                        (false, false) => "unobserved",
+                        (true, false) => PortObservation::VerifiedManaged,
+                        (true, true) => PortObservation::Contested,
+                        (false, true) => PortObservation::ObservedOther,
+                        (false, false) => PortObservation::Unobserved,
                     };
-                    json!({"workspace_id":service.workspace_id,"service_name":service.name,
-                    "variable":variable,"port":port,"observation":observation})
+                    PortAssignment {
+                        workspace_id: service.workspace_id.clone(),
+                        service_name: service.name.clone(),
+                        variable: variable.clone(),
+                        port: *port,
+                        observation,
+                    }
                 })
             })
-            .collect::<Vec<_>>();
-        Ok(
-            json!({"type":"listeners","scope":"local_host","coverage":"partial",
-            "listeners":listener_rows,"assignments":assignments}),
-        )
+            .collect();
+        Ok(ListenerInventory {
+            tag: Default::default(),
+            scope: Default::default(),
+            coverage: Default::default(),
+            listeners: listener_rows,
+            assignments,
+        })
     }
 
     pub(super) fn peer_targets(d: &Data, service: &Service) -> Result<Vec<PeerTarget>> {
@@ -937,7 +1021,7 @@ impl Sessions {
         Ok(resolved)
     }
 
-    pub(super) fn start_service(&self, workspace: &str, name: &str) -> Result<Value> {
+    pub(super) fn start_service(&self, workspace: &str, name: &str) -> Result<ServiceReply> {
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
         d.store.ensure_workspace_bound(workspace)?;
@@ -965,10 +1049,12 @@ impl Sessions {
                 terminal["metrics"]["shell_running"] == true,
                 "Service exited; stop the prior run before restarting"
             );
-            return Ok(
-                json!({"type":"service","service":before,"terminal_id":owner.terminal_id,
-                "metrics":terminal["metrics"],"effective_peers":before.launch_peers}),
-            );
+            return Ok(ServiceReply {
+                terminal_id: Some(owner.terminal_id.clone()),
+                metrics: Some(terminal["metrics"].clone()),
+                effective_peers: Some(before.launch_peers.clone()),
+                ..ServiceReply::service(before.clone())
+            });
         }
         let targets = Self::peer_targets(&d, &before)?;
         let peer_endpoints = self.resolve_peer_targets(&targets)?;
@@ -1003,22 +1089,22 @@ impl Sessions {
             result["metrics"]["transfer_id"] == owner.transfer_id,
             "Service launch returned another transfer identity"
         );
-        self.publish(
-            &mut d,
-            json!({"type":"service_changed","service":service,"metrics":result["metrics"]}),
-        );
-        Ok(
-            json!({"type":"service","service":service,"terminal_id":owner.terminal_id,
-                "metrics":result["metrics"],"effective_peers":peer_endpoints}),
-        )
+        let changed = self.service_changed(&d, &service, Some(result["metrics"].clone()));
+        self.publish(&mut d, changed);
+        Ok(ServiceReply {
+            terminal_id: Some(owner.terminal_id),
+            metrics: Some(result["metrics"].clone()),
+            effective_peers: Some(peer_endpoints),
+            ..ServiceReply::service(service)
+        })
     }
-    pub(super) fn stop_service(&self, workspace: &str, name: &str) -> Result<Value> {
+    pub(super) fn stop_service(&self, workspace: &str, name: &str) -> Result<ServiceReply> {
         let owner = {
             let mut d = self.data.lock().unwrap();
             ensure!(!d.draining, "Application daemon is restarting");
             let service = d.store.service(workspace, name)?;
             let Some(owner) = service.terminal_owner else {
-                return Ok(json!({"type":"service","service":service}));
+                return Ok(ServiceReply::service(service));
             };
             ensure!(
                 d.stopping_services
@@ -1070,7 +1156,7 @@ impl Sessions {
         );
         let current = d.store.service(workspace, name)?;
         if current.terminal_owner.is_none() {
-            return Ok(json!({"type":"service","service":current}));
+            return Ok(ServiceReply::service(current));
         }
         let service = d.store.release_service(workspace, name, &owner)?;
         d.health_samples
@@ -1078,7 +1164,19 @@ impl Sessions {
         d.health_attempts
             .remove(&(workspace.to_owned(), name.to_owned()));
         d.terminal_leases.remove(&owner.terminal_id);
-        self.publish(&mut d, json!({"type":"service_changed","service":service}));
-        Ok(json!({"type":"service","service":service}))
+        let changed = self.service_changed(&d, &service, None);
+        self.publish(&mut d, changed);
+        Ok(ServiceReply::service(service))
+    }
+
+    /// The `service_changed` frame; [`Sessions::publish`] stamps its revision.
+    fn service_changed(&self, d: &Data, service: &Service, metrics: Option<Value>) -> Value {
+        json!(ServiceChanged {
+            tag: Default::default(),
+            service: service.clone(),
+            metrics,
+            boot_id: self.boot_id.clone(),
+            revision: d.revision,
+        })
     }
 }

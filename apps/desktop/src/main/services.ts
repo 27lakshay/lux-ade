@@ -1,9 +1,14 @@
 import { ipcMain } from 'electron'
-import { requestDaemon } from '@ade/client'
+import { decodeDailyUseResponse, requestDaemon, type DailyUseOperation } from '@ade/client'
 import { getClient, getClientGeneration, getSocket, isSwitching } from './profile-connection'
 import { validId } from './validation'
 
-const serviceOps = new Set(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'service.proxy.retire', 'service.proxy.recovery.inspect', 'service.proxy.recovery.retry', 'service.proxy.recovery.reset', 'listener.list'])
+const serviceOps = new Set<string>(['service.list', 'service.inspect', 'service.configure', 'service.start', 'service.stop', 'service.remove', 'service.proxy.ensure', 'service.proxy.inspect', 'service.proxy.remap', 'service.proxy.retire', 'service.proxy.recovery.inspect', 'service.proxy.recovery.retry', 'service.proxy.recovery.reset', 'listener.list'])
+/** Checks a service or listener reply against its contract. */
+function serviceReply(op: string, response: unknown): unknown {
+  try { return decodeDailyUseResponse(op as DailyUseOperation, response) }
+  catch (error) { throw new Error(`Daemon ${op} reply failed its contract: ${String(error)}`) }
+}
 const scriptOps = new Set(['script.list', 'script.runs', 'script.start', 'script.inspect', 'script.stop', 'script.retire'])
 export function registerServiceIpc(): void {
   ipcMain.handle('ade:script-request', async (_event, op: unknown, fields: unknown) => {
@@ -67,7 +72,7 @@ export function registerServiceIpc(): void {
       if (Object.keys(args).length) throw new Error('Listener inventory does not accept fields')
       const result = await requestDaemon(endpoint, op, {})
       if (generation !== getClientGeneration() || getSocket() !== endpoint) throw new Error('Profile changed while observing listeners')
-      return result
+      return serviceReply(op, result)
     }
     if (op === 'service.proxy.recovery.inspect' || op === 'service.proxy.recovery.reset') {
       const request: Record<string, unknown> = {}
@@ -86,7 +91,7 @@ export function registerServiceIpc(): void {
       if (generation !== getClientGeneration() || getSocket() !== endpoint) {
         throw new Error('Profile changed while URL recovery completed; inspect the original profile before retrying')
       }
-      return result
+      return serviceReply(op, result)
     }
     if (!validId(args.workspace_id) || !state.catalog?.workspaces.some((item) => item.id === args.workspace_id)) {
       throw new Error('Workspace is unavailable in this profile')
@@ -147,6 +152,6 @@ export function registerServiceIpc(): void {
     if (generation !== getClientGeneration() || getSocket() !== endpoint) {
       throw new Error('Profile changed while the service request completed; inspect the original profile before retrying')
     }
-    return result
+    return serviceReply(op, result)
   })
 }
