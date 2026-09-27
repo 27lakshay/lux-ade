@@ -143,10 +143,12 @@ test('a kept activity cursor catches up exactly after a restart, and a search cu
     await waitForIdle(profile, conversationId)
   }
   await waitForMessage(profile, conversationId, turnReply.codex)
-  const seen = await profile.call('activity.list', { limit: 200 })
-  const cursor = Math.max(...seen.activities.map((activity) => activity.sequence))
-  await expect.poll(async () => (await profile.call('history.search', { query: 'capybara', limit: 1 })).results.length)
-    .toBe(1)
+  // The cursor a client keeps is the feed's latest sequence.
+  const cursor = (await profile.call('activity.list', { limit: 1 })).latest_sequence
+  // Indexing runs behind the turns: wait until every capybara prompt is
+  // searchable, so the one-result page is sure to have a next cursor.
+  await expect.poll(async () => (await profile.call('history.search', { query: 'capybara', limit: 50 })).results.length)
+    .toBe(3)
   const page = await profile.call('history.search', { query: 'capybara', limit: 1 })
   expect(page.next_cursor).toBeTruthy()
 
@@ -154,12 +156,17 @@ test('a kept activity cursor catches up exactly after a restart, and a search cu
   // The activity cursor is still valid on the new daemon and returns only what came after it.
   await send(profile, conversationId, prompts.turn)
   await waitForIdle(profile, conversationId)
-  const caughtUp = await profile.call('activity.list', { after: cursor })
+  const caughtUp = await profile.call('activity.list', { after: cursor, limit: 200 })
+  expect(caughtUp.next_cursor ?? null).toBeNull()
   expect(caughtUp.activities.length).toBeGreaterThan(0)
   expect(caughtUp.activities.every((activity) => activity.sequence > cursor)).toBe(true)
+  // Activity can still be recorded after the turn goes idle, so compare over
+  // the range the catch-up page covered: it holds exactly the rows there.
+  const through = Math.max(...caughtUp.activities.map((activity) => activity.sequence))
   const all = await profile.call('activity.list', { limit: 200 })
   expect(caughtUp.activities.map((activity) => activity.id).sort())
-    .toEqual(all.activities.filter((activity) => activity.sequence > cursor).map((activity) => activity.id).sort())
+    .toEqual(all.activities.filter((activity) => activity.sequence > cursor && activity.sequence <= through)
+      .map((activity) => activity.id).sort())
 
   // The search cursor still pages on the same epoch after the restart ...
   const second = await profile.call('history.search', { query: 'capybara', limit: 1, cursor: page.next_cursor! })

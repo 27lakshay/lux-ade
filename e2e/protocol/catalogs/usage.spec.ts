@@ -153,11 +153,22 @@ test('refuses malformed usage queries instead of answering partially', async ({ 
 })
 
 // F030 also asks that exhaustion never silently switch account or model. The
-// mocks cannot report an exhausted limit that blocks a turn, and no ADE
-// behaviour reacts to a `rejected` limit status yet, so that half is unproven.
-test.fixme('an exhausted limit is shown and does not switch account or model', async ({ profile }) => {
+// Claude mock's `usage-exhausted` prompt reports a `rejected` five-hour limit.
+// The Codex path with managed accounts is providers/quota.spec.ts.
+test('an exhausted Claude limit is shown and does not switch account or model', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'claude')
+  const before = (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
   await turn(profile, conversationId, 'usage-exhausted')
-  const limits = await call(profile, 'usage.limits', { provider: 'claude' })
-  expect(limits.windows[0].status).toBe('rejected')
+  await expect.poll(async () => (await call(profile, 'usage.limits', { provider: 'claude' })).windows[0]?.status)
+    .toBe('rejected')
+  await expect.poll(async () => (await call(profile, 'provider.quota', { provider: 'claude' })).entries
+    .some((entry: { exhausted: boolean }) => entry.exhausted)).toBe(true)
+
+  // The next turn still runs on the Conversation's own account and model.
+  await turn(profile, conversationId, 'hello')
+  const after = (await profile.call('conversation.get', { conversation_id: conversationId })).conversation
+  expect(after.account_id).toBe(before.account_id)
+  expect(after.provider).toBe('claude')
+  expect(after.provider_config).toEqual(before.provider_config)
+  expect((await profile.call('account.switch.list', { conversation_id: conversationId })).switches).toEqual([])
 })

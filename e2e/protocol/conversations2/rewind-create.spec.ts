@@ -3,8 +3,7 @@
 // a retry reads the recorded outcome and never restores twice, also after a
 // lost reply and a daemon crash; a different payload conflicts. A
 // Conversation rewind has no handler, so it records no receipt at all.
-// conversation.create is declared an effect command but takes no operation
-// ID, so a retry cannot be recognised (gap, fixme below).
+// conversation.create replays under its operation ID, also after a crash.
 import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile,
   type ScratchRepo } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
@@ -73,17 +72,27 @@ test('R002: a Conversation rewind reports its limitation and records no receipt'
     .toMatchObject({ outcome: 'acknowledged' })
 })
 
-// Gap: conversation.create is declared an effect command, but its request has
-// no operation ID. A create whose reply is lost cannot be retried safely: the
-// retry makes a second Conversation. Closing it needs an operation_id field
-// on ConversationCreateRequest and a receipt in the daemon.
-test.fixme('R002: a conversation.create retried under the same operation ID makes one Conversation', async ({ profile }) => {
+test('R002: a conversation.create retried under the same operation ID makes one Conversation', async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const request = { op: 'conversation.create', operation_id: 'create-once', workspace_id: workspace.id, provider: 'codex' }
   await sendAndLoseReply(profile, request)
+  // Retry until the lost attempt has settled: while it runs the retry reads
+  // "still running". A kill before settlement is envelope.spec.ts's case.
+  let first: { conversation: { id: string } } | undefined
+  await expect.poll(async () => {
+    try {
+      first = await profile.rpc(request) as { conversation: { id: string } }
+      return 'settled'
+    } catch (error) {
+      if (/still running/.test(String(error))) return 'running'
+      throw error
+    }
+  }).toBe('settled')
   await profile.restartDaemon('kill')
-  const first = await profile.rpc(request) as { conversation: { id: string } }
   const second = await profile.rpc(request) as { conversation: { id: string } }
-  expect(second.conversation.id).toBe(first.conversation.id)
+  expect(second.conversation.id).toBe(first!.conversation.id)
   await expect(profile.rpc({ ...request, provider: 'claude' })).rejects.toThrow(/different request/)
+  const { catalog } = await profile.call('catalog.get', {})
+  expect(catalog.conversations.filter((item) => item.workspace_id === workspace.id).map((item) => item.id))
+    .toEqual([first!.conversation.id])
 })
