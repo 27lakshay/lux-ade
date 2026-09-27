@@ -123,15 +123,15 @@ fn every_operation_declares_a_tier_and_named_types() {
             )
         })
         .collect();
-    assert_eq!(
-        tiers,
-        [
-            ("catalog.get", "query"),
-            ("conversation.get", "query"),
-            ("agent.send", "effect_command"),
-            ("agent.answer", "effect_command"),
-        ]
-    );
+    // Each domain module checks its own operations' tiers.
+    for expected in [
+        ("catalog.get", "query"),
+        ("conversation.get", "query"),
+        ("agent.send", "effect_command"),
+        ("agent.answer", "effect_command"),
+    ] {
+        assert!(tiers.contains(&expected), "{expected:?}");
+    }
     let kinds: Vec<_> = bundle["frames"]
         .as_array()
         .unwrap()

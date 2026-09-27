@@ -1,18 +1,6 @@
 use super::*;
 
-#[derive(Clone, Serialize)]
-pub struct SendIntent {
-    pub request_id: String,
-    pub conversation_id: String,
-    pub window_id: String,
-    pub draft_revision: i64,
-    pub draft_text: String,
-    pub text: String,
-    pub attachments: Vec<Attachment>,
-    pub state: String,
-    pub review_anchor: Option<serde_json::Value>,
-    pub review_feedback: Option<serde_json::Value>,
-}
+pub use ade_core::contract::conversations::SendIntent;
 
 fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
     let stored: Option<serde_json::Value> = row

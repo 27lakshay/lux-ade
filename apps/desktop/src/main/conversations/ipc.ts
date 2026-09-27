@@ -8,7 +8,7 @@ import { activeReviewContext, assertReviewContext, reviewBatchPrompt, reviewProm
 import { SendJournal } from '../send-journal'
 import { validId } from '../validation'
 import { selectedWorkspaces } from '../workspaces'
-import { dispatchSend, draftKey, drafts, e2ePauseAfterSendJournal, flushDraft, journal, journalIdentity, journalRecord,
+import { daemon, dispatchSend, draftKey, drafts, e2ePauseAfterSendJournal, flushDraft, journal, journalIdentity, journalRecord,
   loadDraft, pendingSend, scheduleDraft, type SendIntent } from './send-pipeline'
 
 function sendTransferRequest(event: Electron.IpcMainInvokeEvent, id: unknown, location: unknown,
@@ -47,7 +47,7 @@ export function registerConversationIpc(): void {
       if (started.type !== 'profile_started' || typeof started.socket !== 'string' ||
         !isAbsolute(started.socket)) throw new Error('Restored profile daemon is unavailable')
       return await journal().importProfile(request.location, sourceId, request.profile.id, started.socket,
-        (record) => requestDaemon(started.socket as string, 'draft.send.get', {
+        (record) => daemon(started.socket as string, 'draft.send.get', {
           conversation_id: record.conversationId, window_id: record.windowId }))
     } finally { setSwitching(false) }
   })
@@ -126,7 +126,7 @@ export function registerConversationIpc(): void {
         || !available.some((item) => item && typeof item === 'object' && 'id' in item && item.id === args.provider)
         || typeof args.title !== 'string' || args.title.length > 256
         || (args.account_id !== undefined && !validId(args.account_id))) throw new Error('Invalid conversation creation')
-      const result = await requestDaemon(endpoint, op, { workspace_id: args.workspace_id, provider: args.provider,
+      const result = await daemon(endpoint, op, { workspace_id: args.workspace_id, provider: args.provider as string,
         title: args.title, ...(args.account_id === undefined ? {} : { account_id: args.account_id }) })
       if (getClientGeneration() !== generation || getSocket() !== endpoint) throw new Error('Profile changed during conversation creation')
       return result

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { formatReviewFeedback, requestDaemon, type ReviewFeedback } from '@ade/client'
-import { CliError, jsonObject, namedOptions, object, required, type CommandResult } from '../shared.js'
+import { CliError, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
+import { decodeReply, type Fields } from './conversations.js'
 
 export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git status and revision tokens
   git diff WORKSPACE_ID PATH [--staged]  Read a file diff and its preview token
@@ -80,20 +81,22 @@ async function sendReviewFeedback(socketPath: string, conversationId: string,
   // A request gets its own durable draft owner, separate from every GUI window.
   const windowId = `cli-review-${createHash('sha256').update(conversationId).update('\0')
     .update(requestId).digest('hex')}`
-  const owner = { conversation_id: conversationId, window_id: windowId }
-  const current = await requestDaemon(socketPath, 'draft.get', owner)
-  const draft = object(current.draft)
+  const owner: Fields<'draft.get'> = { conversation_id: conversationId, window_id: windowId }
+  const { draft } = decodeReply('draft.get', await requestDaemon(socketPath, 'draft.get', owner))
   if (draft.revision === 0) {
-    await requestDaemon(socketPath, 'draft.save', { ...owner, text, revision: 1 })
+    const save: Fields<'draft.save'> = { ...owner, text, revision: 1 }
+    decodeReply('draft.save', await requestDaemon(socketPath, 'draft.save', save))
   }
-  await requestDaemon(socketPath, 'draft.send.prepare', {
+  const prepare: Fields<'draft.send.prepare'> = {
     ...owner, request_id: requestId, draft_text: text, revision: 1,
     text, review_feedback: feedback,
-  })
+  }
+  decodeReply('draft.send.prepare', await requestDaemon(socketPath, 'draft.send.prepare', prepare))
   const response = await requestDaemon(socketPath, 'agent.send_review', {
     conversation_id: conversationId, request_id: requestId, text, review_feedback: feedback,
   })
-  await requestDaemon(socketPath, 'draft.send.complete', { ...owner, request_id: requestId })
+  const complete: Fields<'draft.send.complete'> = { ...owner, request_id: requestId }
+  decodeReply('draft.send.complete', await requestDaemon(socketPath, 'draft.send.complete', complete))
   return { ...response, request_id: requestId }
 }
 

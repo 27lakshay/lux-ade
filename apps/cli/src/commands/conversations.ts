@@ -1,8 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import { link, open, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { DaemonRequestError, requestDaemon } from '@ade/client'
+import { DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation,
+  type DailyUseRequest, type DailyUseResponse } from '@ade/client'
 import { catalog, CliError, jsonObject, object, required, type CommandResult } from '../shared.js'
+
+/** A typed request body: the operation's contract without its `op`. */
+export type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
+
+/** Check a daemon reply against its contract; a mismatch is a protocol error. */
+export function decodeReply<O extends DailyUseOperation>(op: O, response: unknown): DailyUseResponse<O> {
+  try { return decodeDailyUseResponse(op, response) as DailyUseResponse<O> }
+  catch (error) { throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`) }
+}
 
 export const conversationUsage = `  conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
@@ -124,11 +134,12 @@ export async function runConversationCommand(socketPath: string, area: string | 
     if (positionals[2]?.startsWith('account_') && flag < 0) {
       throw new CliError('usage', 'Use --account ID to select an account; the third positional value is a title.')
     }
-    return requestDaemon(socketPath, 'conversation.create', {
+    const fields: Fields<'conversation.create'> = {
       workspace_id: required(positionals[0], 'WORKSPACE_ID'), provider: positionals[1] ?? 'codex',
       title: positionals[2] ?? 'New Conversation',
       ...(flag >= 0 ? { account_id: rest[flag + 1] } : {}),
-    })
+    }
+    return decodeReply('conversation.create', await requestDaemon(socketPath, 'conversation.create', fields))
   }
   if (area === 'conversation' && action === 'send') {
     if (rest.length !== 2 && (rest.length !== 4 || rest[2] !== '--request-id')) {
