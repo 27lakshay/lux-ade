@@ -19,4 +19,11 @@ Copyright: <holder line from the source LICENSE>
 
 -->
 
-No third-party code has been adapted yet.
+## Orca (MIT)
+
+Source: https://github.com/stablyai/orca at `b7a4fee7`
+Copyright: Copyright (c) 2026 Lovecast Inc.
+
+| ADE file | Source path | Changes |
+|---|---|---|
+| `crates/ade-daemon/src/observability/redact.rs` | `src/main/observability/redactor.ts` | Ported to Rust: key-family blocklist, labeled key-value rule, provider-key fingerprints with tagged replacements, URL userinfo stripping |

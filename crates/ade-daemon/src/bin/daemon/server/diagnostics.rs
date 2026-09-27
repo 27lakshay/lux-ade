@@ -149,7 +149,7 @@ impl Host {
             None
         } else {
             self.runtime
-                .agent(json!({"op": "agent.list"}))
+                .agent(ade_core::runtime_protocol::AgentOp::List)
                 .ok()
                 .and_then(|value| serde_json::from_value::<AgentList>(value).ok())
         };
