@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { emit, handle, listen } from './ipc'
 import { openTerminalConnection, type TerminalConnection } from '@ade/client'
 import { getClient, getSocket } from './profile-connection'
 import { validId } from './validation'
@@ -17,7 +17,7 @@ export function closeAll(): void {
   terminals.clear()
 }
 export function registerTerminalIpc(): void {
-  ipcMain.handle('ade:terminal-attach', (event, connectionId: unknown, workspaceId: unknown, terminalId: unknown) => {
+  handle('ade:terminal-attach', (event, connectionId: unknown, workspaceId: unknown, terminalId: unknown) => {
     if (!validId(connectionId) || !validId(workspaceId) || !validId(terminalId))
       throw new Error('Invalid terminal identity')
     const socket = getSocket()
@@ -43,22 +43,22 @@ export function registerTerminalIpc(): void {
       workspaceId,
       terminalId,
       (frame) => {
-        if (!event.sender.isDestroyed()) event.sender.send('ade:terminal-frame', connectionId, frame)
+        emit(event.sender, 'ade:terminal-frame', connectionId, frame)
       },
       (reason) => {
         terminals.delete(key)
-        if (!event.sender.isDestroyed()) event.sender.send('ade:terminal-close', connectionId, reason)
+        emit(event.sender, 'ade:terminal-close', connectionId, reason)
       },
     )
     terminals.set(key, terminal)
     return true
   })
-  ipcMain.on('ade:terminal-input', (event, connectionId: unknown, data: unknown) => {
+  listen('ade:terminal-input', (event, connectionId: unknown, data: unknown) => {
     if (validId(connectionId) && typeof data === 'string' && Buffer.byteLength(data) <= 64 * 1024) {
       terminals.get(terminalKey(event.sender.id, connectionId))?.input(data)
     }
   })
-  ipcMain.on('ade:terminal-binary', (event, connectionId: unknown, bytes: unknown) => {
+  listen('ade:terminal-binary', (event, connectionId: unknown, bytes: unknown) => {
     if (
       validId(connectionId) &&
       Array.isArray(bytes) &&
@@ -68,7 +68,7 @@ export function registerTerminalIpc(): void {
       terminals.get(terminalKey(event.sender.id, connectionId))?.binary(bytes)
     }
   })
-  ipcMain.on(
+  listen(
     'ade:terminal-resize',
     (event, connectionId: unknown, cols: unknown, rows: unknown, widthPx: unknown, heightPx: unknown) => {
       if (validId(connectionId) && [cols, rows, widthPx, heightPx].every((value) => Number.isInteger(value))) {
@@ -79,7 +79,7 @@ export function registerTerminalIpc(): void {
       }
     },
   )
-  ipcMain.on('ade:terminal-detach', (event, connectionId: unknown) => {
+  listen('ade:terminal-detach', (event, connectionId: unknown) => {
     if (!validId(connectionId)) return
     const key = terminalKey(event.sender.id, connectionId)
     terminals.get(key)?.detach()

@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session } from 'electron'
+import { app, BrowserWindow, dialog, nativeTheme, session } from 'electron'
+import { broadcast, handle, listen, registerAppWindow } from './ipc'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { browserQuitGuard, closeBrowserWindow, registerBrowserIpc, setBrowserProfile } from './browser'
@@ -18,7 +19,6 @@ import { registerFileIpc } from './files'
 import { watchActivity } from './notifications'
 import { GitJournal } from './git-journal'
 import {
-  broadcast,
   fixedSocket,
   getBrowserOwner,
   getClient,
@@ -58,9 +58,9 @@ startCrashReporter()
 startDevStateServer()
 registerBrowserIpc(selectProfile)
 
-ipcMain.handle('ade:app-version', () => app.getVersion())
+handle('ade:app-version', () => app.getVersion())
 // The renderer's theme drives the native appearance, which picks the vibrancy material.
-ipcMain.on('ade:theme', (_event, theme: unknown) => {
+listen('ade:theme', (_event, theme: unknown) => {
   if (theme === 'dark' || theme === 'light') nativeTheme.themeSource = theme
 })
 registerProfileIpc()
@@ -119,6 +119,7 @@ function openMainWindow(): void {
     },
   })
   windowIds.set(window.webContents.id, singleWindowId)
+  registerAppWindow(window.webContents)
   logWindowConsole(window.webContents, 'window')
   recoverRendererFailures(window)
   let readyForClose = false

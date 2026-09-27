@@ -1,13 +1,12 @@
-import { ipcRenderer } from 'electron'
-import type { ProfilesBridge } from '../renderer/src/host/profiles'
-import { subscribe } from './subscribe'
+import { invoke, subscribe } from './ipc'
+import type { ProfilesBridge } from '../shared/bridge/profiles'
 
 export const profiles: ProfilesBridge = {
-  getState: () => ipcRenderer.invoke('ade:profile-state'),
-  list: () => ipcRenderer.invoke('ade:profile-list'),
-  create: (name) => ipcRenderer.invoke('ade:profile-create', name),
-  select: (id) => ipcRenderer.invoke('ade:profile-select', id),
+  getState: () => invoke('ade:profile-state'),
+  list: () => invoke('ade:profile-list'),
+  create: (name) => invoke('ade:profile-create', name),
+  select: (id) => invoke('ade:profile-select', id),
   onState: (listener) => subscribe('ade:profile-state-changed', listener),
-  getClientState: () => ipcRenderer.invoke('ade:client-state'),
+  getClientState: () => invoke('ade:client-state'),
   onClientState: (listener) => subscribe('ade:client-state-changed', listener),
 }

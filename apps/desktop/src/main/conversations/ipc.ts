@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow } from 'electron'
+import { handle } from '../ipc'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { dailyUseCommand, requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
@@ -91,7 +92,7 @@ const conversationOps = new Set([
   'draft.flush',
 ])
 export function registerConversationIpc(): void {
-  ipcMain.handle('ade:send-journal-export', async (event, id: unknown, destination: unknown) => {
+  handle('ade:send-journal-export', async (event, id: unknown, destination: unknown) => {
     if (getStartupProfileSelection()) await getStartupProfileSelection()
     const request = sendTransferRequest(event, id, destination, true)
     setSwitching(true)
@@ -101,7 +102,7 @@ export function registerConversationIpc(): void {
       setSwitching(false)
     }
   })
-  ipcMain.handle('ade:send-journal-import', async (event, bundle: unknown, sourceId: unknown, targetId: unknown) => {
+  handle('ade:send-journal-import', async (event, bundle: unknown, sourceId: unknown, targetId: unknown) => {
     if (getStartupProfileSelection()) await getStartupProfileSelection()
     const request = sendTransferRequest(event, targetId, bundle, false)
     if (typeof sourceId !== 'string' || !/^[0-9a-f-]{36}$/.test(sourceId)) {
@@ -126,7 +127,7 @@ export function registerConversationIpc(): void {
   // Pending prompts: the journal's unadmitted and restore-held records, plus, while
   // the profile daemon is reachable, every send it still holds for this window.
   // While it is unreachable only the journal can answer.
-  ipcMain.handle('ade:pending-sends', async (event) => {
+  handle('ade:pending-sends', async (event) => {
     const pending = (await journal().list()).map((record) => ({
       profileId: record.profileId,
       conversationId: record.conversationId,
@@ -158,7 +159,7 @@ export function registerConversationIpc(): void {
     }
     return pending
   })
-  ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
+  handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
     if (
       typeof op !== 'string' ||
       !conversationOps.has(op) ||

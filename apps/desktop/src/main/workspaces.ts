@@ -1,4 +1,5 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { BrowserWindow, dialog } from 'electron'
+import { handle } from './ipc'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { dailyUseCommand } from '@ade/client'
@@ -29,8 +30,8 @@ async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> 
   return dailyUseCommand(endpoint, { op: 'workspace.open', path: folder })
 }
 export function registerWorkspaceIpc(): void {
-  ipcMain.handle('ade:workspace-open', (_event, folder: unknown) => openWorkspace(folder))
-  ipcMain.handle('ade:workspace-choose', async (event) => {
+  handle('ade:workspace-open', (_event, folder: unknown) => openWorkspace(folder))
+  handle('ade:workspace-choose', async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options: Electron.OpenDialogOptions = {
       title: 'Open workspace',
@@ -41,7 +42,7 @@ export function registerWorkspaceIpc(): void {
     if (result.canceled || !result.filePaths[0]) return null
     return openWorkspace(result.filePaths[0])
   })
-  ipcMain.handle('ade:restore-bindings', async () => {
+  handle('ade:restore-bindings', async () => {
     if (getStartupProfileSelection()) await getStartupProfileSelection()
     const endpoint = getSocket()
     const generation = getClientGeneration()
@@ -67,7 +68,7 @@ export function registerWorkspaceIpc(): void {
       workspaces: workspaces.workspaces,
     }
   })
-  ipcMain.handle(
+  handle(
     'ade:restore-binding',
     async (_event, expectedProfile: unknown, kind: unknown, id: unknown, folder: unknown) => {
       if (getStartupProfileSelection()) await getStartupProfileSelection()
@@ -111,7 +112,7 @@ export function registerWorkspaceIpc(): void {
       }
     },
   )
-  ipcMain.handle('ade:restore-choose-folder', async (event) => {
+  handle('ade:restore-choose-folder', async (event) => {
     if (getStartupProfileSelection()) await getStartupProfileSelection()
     const endpoint = getSocket()
     const generation = getClientGeneration()
@@ -128,7 +129,7 @@ export function registerWorkspaceIpc(): void {
       throw new Error('Profile changed while choosing a replacement folder')
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle('ade:workspace-select', async (event, workspaceId: unknown, conversationId: unknown) => {
+  handle('ade:workspace-select', async (event, workspaceId: unknown, conversationId: unknown) => {
     if (!validId(workspaceId) || (conversationId !== null && !validId(conversationId))) {
       throw new Error('Invalid selected workspace or conversation')
     }

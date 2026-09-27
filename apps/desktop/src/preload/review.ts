@@ -1,9 +1,8 @@
-import { ipcRenderer } from 'electron'
-import type { ReviewBridge } from '../renderer/src/host/review'
+import { invoke } from './ipc'
+import type { ReviewBridge } from '../shared/bridge/review'
 
 export const review: ReviewBridge = {
-  request: (op, fields) => ipcRenderer.invoke('ade:review-request', op, fields),
-  readGitJournal: (workspaceId) => ipcRenderer.invoke('ade:git-journal-read', workspaceId),
-  acknowledgeGitJournal: (workspaceId, requestId, kind) =>
-    ipcRenderer.invoke('ade:git-journal-ack', workspaceId, requestId, kind),
+  request: (op, fields) => invoke('ade:review-request', op, fields),
+  readGitJournal: (workspaceId) => invoke('ade:git-journal-read', workspaceId),
+  acknowledgeGitJournal: (workspaceId, requestId, kind) => invoke('ade:git-journal-ack', workspaceId, requestId, kind),
 }

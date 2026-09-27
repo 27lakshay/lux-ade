@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handle } from './ipc'
 import {
   DaemonRequestError,
   dailyUseCommand,
@@ -296,7 +296,7 @@ export async function reviewBatchPrompt(
 }
 
 export function registerReviewIpc(): void {
-  ipcMain.handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
+  handle('ade:review-request', async (event, op: unknown, fields: unknown) => {
     if (
       typeof op !== 'string' ||
       ![
@@ -475,7 +475,7 @@ export function registerReviewIpc(): void {
   // that still needs the person, and `archived` lists acknowledged interrupted
   // ones. The local outbox supplies only unadmitted records; the daemon supplies
   // everything it admitted.
-  ipcMain.handle('ade:git-journal-read', async (event, workspaceId: unknown) => {
+  handle('ade:git-journal-read', async (event, workspaceId: unknown) => {
     const context = activeReviewContext(event.sender.id, workspaceId)
     const workspace = workspaceId as string
     const profileId = journalProfileId(context.endpoint)
@@ -503,7 +503,7 @@ export function registerReviewIpc(): void {
         .map((entry) => ({ intent: daemonIntent(entry), acknowledged_at: entry.acknowledged_at })),
     }
   })
-  ipcMain.handle('ade:git-journal-ack', async (event, workspaceId: unknown, requestId: unknown, kind: unknown) => {
+  handle('ade:git-journal-ack', async (event, workspaceId: unknown, requestId: unknown, kind: unknown) => {
     const context = activeReviewContext(event.sender.id, workspaceId)
     if (
       typeof requestId !== 'string' ||

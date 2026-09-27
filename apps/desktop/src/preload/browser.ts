@@ -1,20 +1,19 @@
-import { ipcRenderer } from 'electron'
-import type { BrowserBridge } from '../renderer/src/host/browser'
-import { subscribe } from './subscribe'
+import { invoke, subscribe } from './ipc'
+import type { BrowserBridge } from '../shared/bridge/browser'
 
 export const browser: BrowserBridge = {
-  list: () => ipcRenderer.invoke('ade:browser-list'),
-  open: (url) => ipcRenderer.invoke('ade:browser-open', url),
-  select: (id) => ipcRenderer.invoke('ade:browser-select', id),
-  newTab: () => ipcRenderer.invoke('ade:browser-new'),
-  navigate: (id, url) => ipcRenderer.invoke('ade:browser-navigate', id, url),
-  history: (id, direction) => ipcRenderer.invoke('ade:browser-history', id, direction),
-  close: (id) => ipcRenderer.invoke('ade:browser-close', id),
-  bounds: (id, rect) => ipcRenderer.invoke('ade:browser-bounds', id, rect),
-  hide: () => ipcRenderer.invoke('ade:browser-hide'),
+  list: () => invoke('ade:browser-list'),
+  open: (url) => invoke('ade:browser-open', url),
+  select: (id) => invoke('ade:browser-select', id),
+  newTab: () => invoke('ade:browser-new'),
+  navigate: (id, url) => invoke('ade:browser-navigate', id, url),
+  history: (id, direction) => invoke('ade:browser-history', id, direction),
+  close: (id) => invoke('ade:browser-close', id),
+  bounds: (id, rect) => invoke('ade:browser-bounds', id, rect),
+  hide: () => invoke('ade:browser-hide'),
   onState: (listener) => subscribe('ade:browser-state', listener),
   onLeaseLost: (listener) => subscribe('ade:browser-lease-lost', listener),
-  adoptSession: (profileId) => ipcRenderer.invoke('ade:browser-adopt', profileId),
-  captureProfile: (profileId, destination) => ipcRenderer.invoke('ade:browser-backup-capture', profileId, destination),
-  restoreProfile: (bundle, profileId) => ipcRenderer.invoke('ade:browser-backup-restore', bundle, profileId),
+  adoptSession: (profileId) => invoke('ade:browser-adopt', profileId),
+  captureProfile: (profileId, destination) => invoke('ade:browser-backup-capture', profileId, destination),
+  restoreProfile: (bundle, profileId) => invoke('ade:browser-backup-restore', bundle, profileId),
 }

@@ -1,10 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, session, WebContentsView } from 'electron'
+import { app, BrowserWindow, dialog, session, WebContentsView } from 'electron'
+import { emit, handle } from './ipc'
+import type { InvokeChannel } from '../shared/ipc'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { cp, link, lstat, mkdir, open, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import {
   getProfileState,
+  type ProfileState,
   getStartupProfileSelection,
   isSwitching,
   managedProfiles,
@@ -167,7 +170,7 @@ async function acquireBrowserLease(id: string, directory: string): Promise<Brows
         state.views.clear()
       }
       for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send('ade:browser-lease-lost', id)
+        if (!window.isDestroyed()) emit(window.webContents, 'ade:browser-lease-lost', id)
       }
     })
     return lease
@@ -547,7 +550,7 @@ const snapshot = (id: string): { profileId: string; selectedId: string | null; t
 const publish = (id: string): void => {
   const value = snapshot(id)
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('ade:browser-state', value)
+    if (!window.isDestroyed()) emit(window.webContents, 'ade:browser-state', value)
   }
 }
 async function stateFor(id: string): Promise<ProfileTabs> {
@@ -648,8 +651,11 @@ function current(event: Electron.IpcMainInvokeEvent): { id: string; window: Brow
   if (capturingProfiles.has(activeProfile)) throw new Error('Browser capture is in progress')
   return { id: activeProfile, window }
 }
-function guardedBrowserHandle(channel: string, handler: Parameters<typeof ipcMain.handle>[1]): void {
-  ipcMain.handle(channel, async (event, ...args) => {
+type Handler<C extends InvokeChannel> = Parameters<typeof handle<C>>[1]
+function guardedBrowserHandle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
+  // The cast only restates that awaiting the handler's result keeps its type, which TypeScript
+  // cannot prove for a generic channel.
+  handle(channel, (async (event, ...args) => {
     const id = activeProfile
     if (id && capturingProfiles.has(id)) throw new Error('Browser capture is in progress')
     if (id) browserOperations.set(id, (browserOperations.get(id) ?? 0) + 1)
@@ -662,7 +668,7 @@ function guardedBrowserHandle(channel: string, handler: Parameters<typeof ipcMai
         else browserOperations.delete(id)
       }
     }
-  })
+  }) as Handler<C>)
 }
 async function waitForBrowserOperations(id: string): Promise<void> {
   const until = Date.now() + 10_000
@@ -1855,7 +1861,7 @@ function browserBackupRequest(
   return { profile, location }
 }
 // selectProfile arrives as a parameter because profiles.ts imports this module.
-export function registerBrowserIpc(selectProfile: (id: string, updateDefault: boolean) => Promise<unknown>): void {
+export function registerBrowserIpc(selectProfile: (id: string, updateDefault: boolean) => Promise<ProfileState>): void {
   guardedBrowserHandle('ade:browser-list', async (event) => {
     const { id } = current(event)
     await stateFor(id)
@@ -1939,7 +1945,7 @@ export function registerBrowserIpc(selectProfile: (id: string, updateDefault: bo
   guardedBrowserHandle('ade:browser-hide', (event) => {
     detach(owner(event))
   })
-  ipcMain.handle('ade:browser-adopt', async (event, id: unknown) => {
+  handle('ade:browser-adopt', async (event, id: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || window.isDestroyed() || event.senderFrame !== window.webContents.mainFrame)
       throw new Error('Browser adoption is unavailable')
@@ -1952,7 +1958,7 @@ export function registerBrowserIpc(selectProfile: (id: string, updateDefault: bo
     await adoptUnownedBrowserStorage(id, profile.home)
     return selectProfile(id, true)
   })
-  ipcMain.handle('ade:browser-backup-capture', async (event, id: unknown, destination: unknown) => {
+  handle('ade:browser-backup-capture', async (event, id: unknown, destination: unknown) => {
     if (getStartupProfileSelection()) await getStartupProfileSelection()
     const request = browserBackupRequest(event, id, destination, true)
     setSwitching(true)
@@ -1962,7 +1968,7 @@ export function registerBrowserIpc(selectProfile: (id: string, updateDefault: bo
       setSwitching(false)
     }
   })
-  ipcMain.handle('ade:browser-backup-restore', async (event, bundle: unknown, id: unknown) => {
+  handle('ade:browser-backup-restore', async (event, bundle: unknown, id: unknown) => {
     if (getStartupProfileSelection()) await getStartupProfileSelection()
     const request = browserBackupRequest(event, id, bundle, false)
     setSwitching(true)

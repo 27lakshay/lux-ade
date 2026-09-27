@@ -1,4 +1,4 @@
-import type { ProfileState } from '../types'
+import type { ProfileState } from './types'
 
 export type BrowserTab = {
   id: string

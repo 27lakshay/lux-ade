@@ -1,4 +1,4 @@
-import type { Frame } from '../types'
+import type { Frame } from './types'
 
 /** `window.adeHost.review`: the main-process `review` module and its git intent journal. */
 export interface ReviewBridge {

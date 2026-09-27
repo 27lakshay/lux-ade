@@ -1,5 +1,5 @@
 import type { FeedFrame } from '@ade/client'
-import type { Frame, PendingSend } from '../types'
+import type { Frame, PendingSend } from './types'
 
 type DraftError = { conversationId: string; message: string }
 

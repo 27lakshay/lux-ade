@@ -1,5 +1,5 @@
 import type { ClientState } from '@ade/client'
-import type { ProfileState } from '../types'
+import type { ProfileState } from './types'
 
 /** `window.adeHost.profiles`: the main-process `profiles` module and the profile connection. */
 export interface ProfilesBridge {

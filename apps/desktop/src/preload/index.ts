@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge } from 'electron'
 import { browser } from './browser'
 import { conversations } from './conversations'
 import { files } from './files'
@@ -7,8 +7,9 @@ import { review } from './review'
 import { services } from './services'
 import { terminal } from './terminal'
 import { workspaces } from './workspaces'
-import { subscribe } from './subscribe'
-import { isAppCommand, type AppCommand } from '../shared/app-commands'
+import { invoke, send, subscribe } from './ipc'
+import { isAppCommand } from '../shared/app-commands'
+import type { AdeHost } from '../shared/bridge'
 
 // Flat names the existing E2E specs still call through `window.evaluate`. The
 // renderer and its `Window.adeHost` type use only the domain namespaces. Remove
@@ -29,14 +30,14 @@ const e2eAliases = {
 }
 /* oxlint-enable typescript/unbound-method */
 
-contextBridge.exposeInMainWorld('adeHost', {
-  getAppVersion: (): Promise<string> => ipcRenderer.invoke('ade:app-version'),
+const adeHost: AdeHost = {
+  getAppVersion: () => invoke('ade:app-version'),
   // The window's vibrancy material follows the native appearance, so the renderer's theme has to
   // reach the main process.
-  setTheme: (theme: 'dark' | 'light'): void => ipcRenderer.send('ade:theme', theme),
+  setTheme: (theme) => send('ade:theme', theme),
   // Commands from the native menu (src/shared/app-commands.ts).
-  onCommand: (listener: (command: AppCommand) => void): (() => void) =>
-    subscribe<unknown>('ade:command', (command) => {
+  onCommand: (listener) =>
+    subscribe('ade:command', (command) => {
       if (isAppCommand(command)) listener(command)
     }),
   profiles,
@@ -47,5 +48,6 @@ contextBridge.exposeInMainWorld('adeHost', {
   files,
   browser,
   terminal,
-  ...e2eAliases,
-})
+}
+
+contextBridge.exposeInMainWorld('adeHost', { ...adeHost, ...e2eAliases })

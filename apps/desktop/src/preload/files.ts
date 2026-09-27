@@ -1,6 +1,6 @@
-import { ipcRenderer } from 'electron'
-import type { FilesBridge } from '../renderer/src/host/files'
+import { invoke } from './ipc'
+import type { FilesBridge } from '../shared/bridge/files'
 
 export const files: FilesBridge = {
-  request: (op, fields) => ipcRenderer.invoke('ade:file-request', op, fields),
+  request: (op, fields) => invoke('ade:file-request', op, fields),
 }

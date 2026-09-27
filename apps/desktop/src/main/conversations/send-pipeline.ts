@@ -15,6 +15,7 @@ import {
   type ReviewFeedback,
 } from '@ade/client'
 import { decideSendRecovery, findPendingSend } from '@ade/client/outbox'
+import { emit } from '../ipc'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
 import { reviewNote, sameReviewAnchor, sameReviewFeedback } from '../review'
 import type { SendJournal, SendJournalIdentity, SendJournalRecord } from '../send-journal'
@@ -304,7 +305,7 @@ export async function persistentWindowId(): Promise<string> {
 function publishDraftError(entry: DraftEntry, message: string): void {
   const window = BrowserWindow.getAllWindows().find((item) => item.webContents.id === entry.senderId)
   if (window && !window.isDestroyed())
-    window.webContents.send('ade:draft-error', { conversationId: entry.conversationId, message })
+    emit(window.webContents, 'ade:draft-error', { conversationId: entry.conversationId, message })
 }
 
 export function flushDraft(entry: DraftEntry): Promise<void> {

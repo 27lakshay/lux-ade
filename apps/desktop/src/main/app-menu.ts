@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron'
+import { emit } from './ipc'
 import type { AppCommand } from '../shared/app-commands'
 import { exportDiagnostics } from './diagnostics'
 
@@ -8,7 +9,7 @@ import { exportDiagnostics } from './diagnostics'
 
 const send = (command: AppCommand) => () => {
   const window = BrowserWindow.getFocusedWindow()
-  if (window && !window.isDestroyed()) window.webContents.send('ade:command', command)
+  if (window && !window.isDestroyed()) emit(window.webContents, 'ade:command', command)
 }
 
 const item = (label: string, accelerator: string, command: AppCommand): MenuItemConstructorOptions => ({

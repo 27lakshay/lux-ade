@@ -1,13 +1,13 @@
 // Profile switching: starts a profile daemon through the launcher, attaches the
 // connection in profile-connection.ts and serves the profile IPC channels.
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow } from 'electron'
+import { broadcast, handle } from './ipc'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { AdeClient } from '@ade/client'
 import { setBrowserProfile } from './browser'
 import { BrowserOwner } from './browser-owner'
 import {
-  broadcast,
   getBrowserOwner,
   getClient,
   getClientGeneration,
@@ -137,10 +137,10 @@ export async function selectProfile(id: string, updateDefault: boolean): Promise
   }
 }
 export function registerProfileIpc(): void {
-  ipcMain.handle('ade:client-state', () => getClient().getState())
-  ipcMain.handle('ade:profile-state', () => getProfileState())
-  ipcMain.handle('ade:profile-list', () => refreshProfiles())
-  ipcMain.handle('ade:profile-create', async (_event, name: unknown) => {
+  handle('ade:client-state', () => getClient().getState())
+  handle('ade:profile-state', () => getProfileState())
+  handle('ade:profile-list', () => refreshProfiles())
+  handle('ade:profile-create', async (_event, name: unknown) => {
     if (!managedProfiles) throw new Error('The socket is fixed by ADE_SOCKET')
     if (isSwitching()) throw new Error('A profile operation is already in progress')
     if (typeof name !== 'string' || !name.trim() || name.length > 80)
@@ -148,7 +148,7 @@ export function registerProfileIpc(): void {
     await launcher('create', name.trim())
     return refreshProfiles()
   })
-  ipcMain.handle('ade:profile-select', async (_event, id: unknown) => {
+  handle('ade:profile-select', async (_event, id: unknown) => {
     if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid profile ID')
     if (getStartupProfileSelection()) await getStartupProfileSelection()
     return selectProfile(id, true)

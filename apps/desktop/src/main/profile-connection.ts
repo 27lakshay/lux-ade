@@ -1,13 +1,14 @@
 // The active profile daemon connection: endpoint, client, generation, switching
 // and profile state. Other main-process modules read it through the accessors
 // below, because importers cannot reassign this module's bindings.
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { AdeClient } from '@ade/client'
 import type { BrowserOwner } from './browser-owner'
+import { broadcast } from './ipc'
 
 export type Profile = { id: string; name: string; selected: boolean; home: string }
 export type ProfileState = {
@@ -78,12 +79,6 @@ export function journalProfileId(endpoint: string): string {
     throw new Error('Active profile changed before prompt recovery was recorded')
   return profileState.activeId
 }
-export function broadcast(channel: string, value: unknown): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, value)
-  }
-}
-
 export function publishProfile(update: Partial<ProfileState>): ProfileState {
   profileState = { ...profileState, ...update }
   broadcast('ade:profile-state-changed', profileState)

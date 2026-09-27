@@ -19,6 +19,7 @@
       { "name": "desktop-main", "patterns": ["apps/desktop/src/main/**"] },
       { "name": "desktop-preload", "patterns": ["apps/desktop/src/preload/**"] },
       { "name": "desktop-renderer", "patterns": ["apps/desktop/src/renderer/**"] },
+      { "name": "desktop-shared", "patterns": ["apps/desktop/src/shared/**"] },
       { "name": "cli", "patterns": ["apps/cli/**"] },
       { "name": "sdk", "patterns": ["packages/client/**"] },
       { "name": "contracts", "patterns": ["packages/contracts/**"] },
@@ -26,9 +27,11 @@
       { "name": "plugin-host", "patterns": ["packages/plugin-host/**"] }
     ],
     "rules": [
-      { "from": "desktop-main", "allow": ["sdk", "contracts"] },
-      { "from": "desktop-preload", "allow": ["terminal"], "allowTypeOnly": ["desktop-renderer", "sdk", "contracts"] },
-      { "from": "desktop-renderer", "allow": ["terminal"], "allowTypeOnly": ["sdk", "contracts"] },
+      { "from": "desktop-main", "allow": ["desktop-shared", "sdk", "contracts"] },
+      { "from": "desktop-preload", "allow": ["desktop-shared", "terminal"], "allowTypeOnly": ["sdk", "contracts"] },
+      { "from": "desktop-renderer", "allow": ["desktop-shared", "terminal"], "allowTypeOnly": ["sdk", "contracts"] },
+      // Code every process loads: the IPC contract, bridge types, commands, the content policy.
+      { "from": "desktop-shared", "allow": [], "allowTypeOnly": ["sdk", "contracts", "terminal"] },
       { "from": "cli", "allow": ["sdk", "contracts"] },
       { "from": "sdk", "allow": ["contracts"] },
       { "from": "terminal", "allow": [] },

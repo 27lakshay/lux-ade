@@ -96,6 +96,30 @@
       }
     },
     {
+      // IPC goes through the typed helpers, which check the contract (src/shared/ipc.ts) and the sender.
+      "files": ["apps/desktop/src/main/**", "apps/desktop/src/preload/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "importNames": ["ipcMain", "ipcRenderer"],
+                "message": "Use handle/listen/emit/broadcast from src/main/ipc.ts or invoke/send/subscribe from src/preload/ipc.ts, and add the channel to src/shared/ipc.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/desktop/src/main/ipc.ts", "apps/desktop/src/preload/ipc.ts"],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
       "files": ["apps/desktop/src/renderer/**"],
       "rules": {
         "no-restricted-imports": [

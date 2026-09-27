@@ -1,7 +1,7 @@
-import { ipcRenderer } from 'electron'
-import type { ServicesBridge } from '../renderer/src/host/services'
+import { invoke } from './ipc'
+import type { ServicesBridge } from '../shared/bridge/services'
 
 export const services: ServicesBridge = {
-  request: (op, fields) => ipcRenderer.invoke('ade:service-request', op, fields),
-  requestScript: (op, fields) => ipcRenderer.invoke('ade:script-request', op, fields),
+  request: (op, fields) => invoke('ade:service-request', op, fields),
+  requestScript: (op, fields) => invoke('ade:script-request', op, fields),
 }

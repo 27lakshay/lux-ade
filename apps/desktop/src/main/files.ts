@@ -1,11 +1,11 @@
-import { ipcMain } from 'electron'
+import { handle } from './ipc'
 import { dailyUseCommand, type DailyUseRequest } from '@ade/client'
 import { activeReviewContext, assertReviewContext, reviewPath } from './review'
 
 type FileOp = 'file.list' | 'file.search' | 'file.preview'
 const fileOps = new Set<string>(['file.list', 'file.search', 'file.preview'])
 export function registerFileIpc(): void {
-  ipcMain.handle('ade:file-request', async (event, op: unknown, fields: unknown) => {
+  handle('ade:file-request', async (event, op: unknown, fields: unknown) => {
     if (typeof op !== 'string' || !fileOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
       throw new Error('Invalid file request')
     }
