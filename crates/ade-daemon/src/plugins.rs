@@ -1065,7 +1065,15 @@ impl Core {
                 ],
             )?;
         }
-        settings_reply(&state.db, &request.plugin_id)
+        let reply = settings_reply(&state.db, &request.plugin_id)?;
+        drop(state);
+        // The next host start, including a crash restart, activates with the
+        // new value. Without a live backend activation there is nothing to
+        // refresh; the next launch spec reads the database.
+        if let Ok(spec) = self.launch_spec(&request.plugin_id) {
+            self.hosts.refresh(&spec);
+        }
+        Ok(reply)
     }
 }
 
