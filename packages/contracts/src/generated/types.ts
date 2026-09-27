@@ -508,9 +508,12 @@ export type ContractDefinition =
   | RepositoryTransport
   | ResourceClaim
   | ResourceKind
+  | ResourceKind2
   | ResourceMode
   | ResourceRule
   | ResourcesClaimResolveRequest
+  | ResourcesDeviceHoldRequest
+  | ResourcesDeviceReleaseRequest
   | ResourcesInspectRequest
   | ResourcesRegistryAcceptRequest
   | RestartPrepared
@@ -1136,7 +1139,7 @@ export type PreviewTransport = 'direct' | 'ssh_forward'
 /**
  * The kinds of work that carry an execution host.
  */
-export type ResourceKind = 'workspace' | 'conversation' | 'terminal' | 'service'
+export type ResourceKind2 = 'workspace' | 'conversation' | 'terminal' | 'service'
 /**
  * What this daemon can prove about a host being able to take new work.
  */
@@ -1478,6 +1481,10 @@ export type RepositoryPublishStep = 'initialize' | 'commit' | 'add_remote' | 'pu
  * Whether publish may run.
  */
 export type RepositoryPublishVerdict = ('ready' | 'blocked') | 'needs_initial_commit'
+/**
+ * What a claim is on.
+ */
+export type ResourceKind = 'checkout' | 'port' | 'device'
 /**
  * What a retention candidate is.
  */
@@ -5137,7 +5144,7 @@ export interface HostCapabilities {
   /**
    * The resource kinds a placement may target on this host.
    */
-  resources: ResourceKind[]
+  resources: ResourceKind2[]
   [k: string]: unknown
 }
 /**
@@ -6143,10 +6150,24 @@ export interface HostResourcesState {
 export interface ResourceClaim {
   created_at: number
   device: string
+  /**
+   * The claimed device, for a device claim.
+   */
+  device_id?: string | null
   generation: string
+  /**
+   * Who inside the owning profile holds the claim: a service run
+   * (`service:<workspace>/<name>#<identity>`) or a device hold's run.
+   */
+  holder?: string | null
   host_id: string
   id: string
   inode: string
+  /**
+   * The listener PID a port claim was bound to once ADE verified that the
+   * service's own process tree listens on the port.
+   */
+  listener_pid?: number | null
   /**
    * Whether this daemon incarnation owns the claim.
    */
@@ -6164,15 +6185,25 @@ export interface ResourceClaim {
   owner_pid: number
   owner_profile: string
   /**
-   * The canonical path when the claim was taken; informational only.
+   * For a checkout, the canonical path when the claim was taken
+   * (informational only). For a port, `tcp:<port>`; for a device, its
+   * device ID. `resources.claim.resolve` confirms this value.
    */
   path: string
   phase: ClaimPhase
+  /**
+   * The claimed TCP port, for a port claim.
+   */
+  port?: number | null
   purpose: ClaimPurpose
   /**
    * Why the claim is quarantined.
    */
   reason: string | null
+  /**
+   * What a claim is on.
+   */
+  resource: 'checkout' | 'port' | 'device'
   state: ClaimState
   /**
    * For a reservation of a path that does not exist yet: its folded final
@@ -6743,7 +6774,7 @@ export interface Placement {
 export interface PlacementCheckRequest {
   host: ExecutionHost
   op: 'placement.check'
-  resource: ResourceKind
+  resource: ResourceKind2
   /**
    * For anything but a workspace: the workspace the work belongs to. Its
    * host must be `host`.
@@ -6768,7 +6799,7 @@ export interface PlacementDecision {
    * which must be connected to this host at that moment.
    */
   requires_remote_transport: boolean
-  resource: ResourceKind
+  resource: ResourceKind2
   /**
    * The `placement_decision` type tag.
    */
@@ -8245,12 +8276,42 @@ export interface ResourcesClaimResolveRequest {
   operation_id: string
 }
 /**
+ * `resources.device.hold`: claim a simulator or emulator exclusively for one
+ * run of this profile. Repeating the hold with the same `holder` returns the
+ * same claim. Other profiles' device effects and holds, and other runs'
+ * holds, are refused while it is held; this profile's own device effects are
+ * admitted.
+ */
+export interface ResourcesDeviceHoldRequest {
+  /**
+   * An ADE device ID from `device.list`, such as `ios-sim:<udid>`.
+   */
+  device_id: string
+  /**
+   * The caller's run identity, 1 to 128 printable ASCII characters.
+   */
+  holder: string
+  op: 'resources.device.hold'
+}
+/**
+ * `resources.device.release`: end this daemon's hold for `holder` on the
+ * device. Releasing a hold that is already gone converges. A quarantined hold
+ * is refused and needs `resources.claim.resolve`.
+ */
+export interface ResourcesDeviceReleaseRequest {
+  device_id: string
+  holder: string
+  op: 'resources.device.release'
+}
+/**
  * `resources.inspect`: read the registry status and its claims. With `path`,
- * only claims on that path, inside it, or containing it are listed.
+ * only checkout claims on that path, inside it, or containing it are listed.
+ * With `resource`, only claims of that kind are listed.
  */
 export interface ResourcesInspectRequest {
   op: 'resources.inspect'
   path?: string | null
+  resource?: ResourceKind | null
 }
 /**
  * `resources.registry.accept`: bind this profile to the registry currently
@@ -10737,7 +10798,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -10914,6 +10975,8 @@ export interface RequestByOperation {
   "resources.inspect": ResourcesInspectRequest
   "resources.claim.resolve": ResourcesClaimResolveRequest
   "resources.registry.accept": ResourcesRegistryAcceptRequest
+  "resources.device.hold": ResourcesDeviceHoldRequest
+  "resources.device.release": ResourcesDeviceReleaseRequest
   "checkpoint.create": CheckpointCreateRequest
   "checkpoint.list": CheckpointListRequest
   "checkpoint.restore.preview": CheckpointRestorePreviewRequest
@@ -11151,6 +11214,8 @@ export interface ResponseByOperation {
   "resources.inspect": HostResourcesState
   "resources.claim.resolve": HostResourcesState
   "resources.registry.accept": HostResourcesState
+  "resources.device.hold": HostResourcesState
+  "resources.device.release": HostResourcesState
   "checkpoint.create": CheckpointCreated
   "checkpoint.list": CheckpointList
   "checkpoint.restore.preview": CheckpointRestorePreview

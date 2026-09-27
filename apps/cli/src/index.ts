@@ -12,6 +12,7 @@ import { conversationUsage, runConversationCommand } from './commands/conversati
 import { conversationControlUsage, runConversationControlCommand } from './commands/conversation-controls.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { deviceUsage, runDeviceCommand } from './commands/devices.js'
+import { resourcesUsage, runResourcesCommand } from './commands/resources.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { repositoryUsage, runRepositoryCommand } from './commands/repository.js'
 import { placementUsage, runPlacementCommand } from './commands/placement.js'
@@ -107,6 +108,7 @@ const usage = [
   remoteConnectUsage,
   retentionUsage,
   deviceUsage,
+  resourcesUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -250,6 +252,7 @@ const commandAreas = [
   runDiagnosticsCommand,
   runRetentionCommand,
   runDeviceCommand,
+  runResourcesCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {

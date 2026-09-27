@@ -927,6 +927,39 @@ impl Sessions {
                 })
             })
             .collect();
+        // Bind each launched port claim to the listener verified in its run's
+        // own process tree. A port someone else also holds is left unbound.
+        for service in &services {
+            let owner = Some((service.workspace_id.clone(), service.name.clone()));
+            for port in service.ports.values() {
+                let mut own = observed
+                    .iter()
+                    .filter(|item| item.port == *port)
+                    .map(|item| {
+                        (
+                            owner_of.get(&item.pid).cloned().flatten() == owner,
+                            item.pid,
+                        )
+                    });
+                let first = own.next();
+                if let Some((true, pid)) = first
+                    && own.all(|(mine, _)| mine)
+                {
+                    let holder = crate::host_resources::service_holder(
+                        &service.workspace_id,
+                        &service.name,
+                        &service.identity,
+                    );
+                    if let Err(error) = self
+                        .worktrees
+                        .host_resources()
+                        .bind_listener(&holder, *port, pid)
+                    {
+                        eprintln!("Port claim {holder} tcp:{port} was not bound: {error}");
+                    }
+                }
+            }
+        }
         Ok(ListenerInventory {
             tag: Default::default(),
             scope: Default::default(),
@@ -934,6 +967,27 @@ impl Sessions {
             listeners: listener_rows,
             assignments,
         })
+    }
+
+    /// After a verified stop, releases the run's port claims when no
+    /// listener is left on the port, and quarantines them otherwise. A
+    /// registry failure leaves the claims in place, still conflicting.
+    fn settle_service_ports(&self, holder: &str) {
+        let listening: Option<Vec<u16>> = listeners::observe()
+            .ok()
+            .map(|rows| rows.iter().map(|row| row.port).collect());
+        let result = self
+            .worktrees
+            .host_resources()
+            .settle_holder(holder, |claim| match &claim.resource {
+                crate::host_resources::Resource::Port { port } => Some(
+                    crate::host_resources::settle_port_after_stop(*port, listening.as_deref()),
+                ),
+                _ => None,
+            });
+        if let Err(error) = result {
+            eprintln!("Port claims of {holder} were not settled after stop: {error}");
+        }
     }
 
     pub(super) fn peer_targets(d: &Data, service: &Service) -> Result<Vec<PeerTarget>> {
@@ -1097,6 +1151,16 @@ impl Sessions {
                 })?;
             }
         }
+        // Reserve the ports host-wide before launch, so another profile's run
+        // cannot launch onto them. The catalogue shows no run and the probe
+        // found them free, which retires this service's own quarantined claims.
+        let holder = crate::host_resources::service_holder(workspace, name, &before.identity);
+        let mut ports = crate::host_resources::PortReservation::reserve(
+            self.worktrees.host_resources(),
+            before.ports.values().copied(),
+            &holder,
+            true,
+        )?;
         let service =
             d.store
                 .reserve_service(workspace, name, &self.runtime.instance, &peer_endpoints)?;
@@ -1113,12 +1177,14 @@ impl Sessions {
         self.catalog_changed(&mut d)?;
         let launch = service.launch(&w.root, &peer_endpoints)?;
         w.terminal_id = owner.terminal_id.clone();
+        ports.dispatch()?;
         let result = self.runtime.command(TerminalCommand::Launch {
             workspace: w,
             terminal_key: Some(owner.terminal_id.clone()),
             launch,
             session_subscribers: self.subscribers.load(Ordering::Relaxed),
         })?;
+        ports.launched();
         ensure!(
             result["metrics"]["transfer_id"] == owner.transfer_id,
             "Service launch returned another transfer identity"
@@ -1133,10 +1199,11 @@ impl Sessions {
         })
     }
     pub(super) fn stop_service(&self, workspace: &str, name: &str) -> Result<ServiceReply> {
-        let owner = {
+        let (owner, holder) = {
             let mut d = self.data.lock().unwrap();
             ensure!(!d.draining, "Application daemon is restarting");
             let service = d.store.service(workspace, name)?;
+            let holder = crate::host_resources::service_holder(workspace, name, &service.identity);
             let Some(owner) = service.terminal_owner else {
                 return Ok(ServiceReply::service(service));
             };
@@ -1145,7 +1212,7 @@ impl Sessions {
                     .insert((workspace.to_owned(), name.to_owned())),
                 "Service stop is already in progress"
             );
-            owner
+            (owner, holder)
         };
         let _stop_guard = ServiceStopGuard {
             sessions: self,
@@ -1186,6 +1253,7 @@ impl Sessions {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        self.settle_service_ports(&holder);
         let mut d = self.data.lock().unwrap();
         ensure!(
             !d.draining,
