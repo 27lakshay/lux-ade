@@ -67,12 +67,24 @@ export type ContractDefinition =
   | QueueEnqueueRequest
   | QueuePauseRequest
   | QueuedPrompt
+  | RepositoryAck
+  | RepositoryRebindCatalog
+  | RepositoryRebindEntry
+  | RepositoryRebindListRequest
+  | RepositoryRebindRequest
+  | RepositoryRecord
   | SendIntent
   | SendIntentPrepared
   | SendIntentState
   | TerminalOwner
   | WindowCloseRequest
   | WindowSaveRequest
+  | WorkspaceAck
+  | WorkspaceOpenRequest
+  | WorkspaceRebindCatalog
+  | WorkspaceRebindEntry
+  | WorkspaceRebindListRequest
+  | WorkspaceRebindRequest
   | WorkspaceRecord
 
 /**
@@ -885,6 +897,65 @@ export interface QueuePauseRequest {
   paused: boolean
 }
 /**
+ * The `repository.rebind` reply.
+ */
+export interface RepositoryAck {
+  repository: RepositoryRecord
+  /**
+   * The `ack` type tag.
+   */
+  type: 'ack'
+  [k: string]: unknown
+}
+/**
+ * A saved repository as the daemon stores it.
+ */
+export interface RepositoryRecord {
+  id: string
+  needs_rebind: boolean
+  /**
+   * The Git common directory.
+   */
+  root: string
+  worktree_lifecycle_needs_rebind: boolean
+  [k: string]: unknown
+}
+/**
+ * The `repository.rebind.list` reply.
+ */
+export interface RepositoryRebindCatalog {
+  repositories: RepositoryRebindEntry[]
+  /**
+   * The `repository_rebind_catalog` type tag.
+   */
+  type: 'repository_rebind_catalog'
+  [k: string]: unknown
+}
+/**
+ * One restored repository. `rebindable` says a saved physical identity exists.
+ */
+export interface RepositoryRebindEntry {
+  id: string
+  needs_rebind: boolean
+  rebindable: boolean
+  root: string
+  [k: string]: unknown
+}
+/**
+ * `repository.rebind.list`: restored repositories and whether each needs a path.
+ */
+export interface RepositoryRebindListRequest {
+  op: 'repository.rebind.list'
+}
+/**
+ * `repository.rebind`: bind a restored Git repository to a verified checkout.
+ */
+export interface RepositoryRebindRequest {
+  op: 'repository.rebind'
+  path: string
+  repository_id: string
+}
+/**
  * A prompt recorded before dispatch, with the draft it came from.
  */
 export interface SendIntent {
@@ -952,11 +1023,73 @@ export interface WindowSaveRequest {
    */
   window: unknown
 }
+/**
+ * The `workspace.open` and `workspace.rebind` reply.
+ */
+export interface WorkspaceAck {
+  /**
+   * The `ack` type tag.
+   */
+  type: 'ack'
+  workspace: WorkspaceRecord
+  [k: string]: unknown
+}
+/**
+ * `workspace.open`: register a folder, or return the workspace already at it.
+ */
+export interface WorkspaceOpenRequest {
+  op: 'workspace.open'
+  /**
+   * The folder to open; the daemon canonicalizes it.
+   */
+  path: string
+}
+/**
+ * The `workspace.rebind.list` reply.
+ */
+export interface WorkspaceRebindCatalog {
+  /**
+   * The `workspace_rebind_catalog` type tag.
+   */
+  type: 'workspace_rebind_catalog'
+  workspaces: WorkspaceRebindEntry[]
+  [k: string]: unknown
+}
+/**
+ * One restored workspace. `rebindable` says a saved physical identity exists.
+ */
+export interface WorkspaceRebindEntry {
+  id: string
+  name: string
+  needs_rebind: boolean
+  rebindable: boolean
+  root: string
+  [k: string]: unknown
+}
+/**
+ * `workspace.rebind.list`: restored workspaces and whether each needs a path.
+ */
+export interface WorkspaceRebindListRequest {
+  op: 'workspace.rebind.list'
+}
+/**
+ * `workspace.rebind`: bind a restored workspace to a verified directory.
+ */
+export interface WorkspaceRebindRequest {
+  op: 'workspace.rebind'
+  path: string
+  workspace_id: string
+}
 
-export type Operation = "catalog.get" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
+  "workspace.open": WorkspaceOpenRequest
+  "workspace.rebind.list": WorkspaceRebindListRequest
+  "workspace.rebind": WorkspaceRebindRequest
+  "repository.rebind.list": RepositoryRebindListRequest
+  "repository.rebind": RepositoryRebindRequest
   "conversation.get": ConversationGetRequest
   "agent.send": AgentSendRequest
   "agent.answer": AgentAnswerRequest
@@ -994,6 +1127,11 @@ export interface RequestByOperation {
 
 export interface ResponseByOperation {
   "catalog.get": CatalogFrame
+  "workspace.open": WorkspaceAck
+  "workspace.rebind.list": WorkspaceRebindCatalog
+  "workspace.rebind": WorkspaceAck
+  "repository.rebind.list": RepositoryRebindCatalog
+  "repository.rebind": RepositoryAck
   "conversation.get": ConversationSnapshot
   "agent.send": Ack
   "agent.answer": Ack

@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { requestDaemon } from '@ade/client'
+import { dailyUseCommand, requestDaemon } from '@ade/client'
 import { getClient, getClientGeneration, getProfileState, getSocket, getStartupProfileSelection, isRestoringBinding,
   isSwitching, managedProfiles, setRestoringBinding } from './profile-connection'
 import { validId } from './validation'
@@ -13,7 +13,7 @@ async function openWorkspace(folder: unknown): Promise<Record<string, unknown>> 
   if (!(await stat(folder)).isDirectory()) throw new Error('The selected path is not a folder')
   const endpoint = getSocket()
   if (getClient().getState().status !== 'connected' || !endpoint) throw new Error('Profile daemon is unavailable')
-  return requestDaemon(endpoint, 'workspace.open', { path: folder })
+  return dailyUseCommand(endpoint, { op: 'workspace.open', path: folder })
 }
 export function registerWorkspaceIpc(): void {
   ipcMain.handle('ade:workspace-open', (_event, folder: unknown) => openWorkspace(folder))
@@ -33,8 +33,8 @@ export function registerWorkspaceIpc(): void {
     if (!endpoint || isSwitching() || getClient().getState().status !== 'connected') throw new Error('Profile daemon is unavailable')
     const [lifecycle, repositories, workspaces] = await Promise.all([
       requestDaemon(endpoint, 'worktree.rebind.list'),
-      requestDaemon(endpoint, 'repository.rebind.list'),
-      requestDaemon(endpoint, 'workspace.rebind.list'),
+      dailyUseCommand(endpoint, { op: 'repository.rebind.list' }),
+      dailyUseCommand(endpoint, { op: 'workspace.rebind.list' }),
     ])
     if (getSocket() !== endpoint || getClientGeneration() !== generation || isSwitching()) throw new Error('Profile changed while loading recovery state')
     if (!Array.isArray(lifecycle.repositories) || !Array.isArray(repositories.repositories) ||
@@ -63,9 +63,11 @@ export function registerWorkspaceIpc(): void {
       if (getSocket() !== endpoint || getClientGeneration() !== generation || getProfileState().activeId !== (managedProfiles ? activeProfile : null)) {
         throw new Error('Profile changed while checking the replacement folder')
       }
-      const op = kind === 'worktree' ? 'worktree.rebind' : kind === 'repository' ? 'repository.rebind' : 'workspace.rebind'
-      const field = kind === 'workspace' ? 'workspace_id' : 'repository_id'
-      const result = await requestDaemon(endpoint, op, { [field]: id, path: folder })
+      const result = kind === 'worktree'
+        ? await requestDaemon(endpoint, 'worktree.rebind', { repository_id: id, path: folder })
+        : kind === 'repository'
+          ? await dailyUseCommand(endpoint, { op: 'repository.rebind', repository_id: id, path: folder })
+          : await dailyUseCommand(endpoint, { op: 'workspace.rebind', workspace_id: id, path: folder })
       if (getSocket() !== endpoint || getClientGeneration() !== generation) throw new Error('Profile changed during workspace recovery')
       return result
     } finally { setRestoringBinding(false) }

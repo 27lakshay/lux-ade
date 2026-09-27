@@ -1,6 +1,10 @@
 //! Workspace binding, rebind operations, the catalog and the restore fence.
 use super::*;
-use ade_core::contract::workspaces::{CatalogFrame, CatalogGetRequest};
+use ade_core::contract::workspaces::{
+    CatalogFrame, CatalogGetRequest, RepositoryAck, RepositoryRebindCatalog, RepositoryRebindEntry,
+    RepositoryRebindListRequest, RepositoryRebindRequest, WorkspaceAck, WorkspaceOpenRequest,
+    WorkspaceRebindCatalog, WorkspaceRebindListRequest, WorkspaceRebindRequest,
+};
 
 #[derive(PartialEq, Eq)]
 pub(super) struct SelectedBinding {
@@ -65,7 +69,6 @@ pub(super) fn selected_binding(path: &str, require_git: bool) -> Result<Selected
 }
 impl Sessions {
     pub(super) fn workspace_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
-        let string = required_str(request);
         match request["op"].as_str().unwrap_or("") {
             "catalog.get" => {
                 let CatalogGetRequest {} = decode(request)?;
@@ -79,10 +82,15 @@ impl Sessions {
                 })
             }
             "workspace.rebind.list" => {
+                let WorkspaceRebindListRequest {} = decode(request)?;
                 let workspaces = self.data.lock().unwrap().store.rebind_workspaces()?;
-                Ok(json!({"type":"workspace_rebind_catalog","workspaces":workspaces}))
+                reply(&WorkspaceRebindCatalog {
+                    tag: Default::default(),
+                    workspaces,
+                })
             }
             "repository.rebind.list" => {
+                let RepositoryRebindListRequest {} = decode(request)?;
                 let repositories = self
                     .data
                     .lock()
@@ -90,21 +98,34 @@ impl Sessions {
                     .store
                     .rebind_repositories()?
                     .into_iter()
-                    .map(|(id, root, needs_rebind, rebindable)| {
-                        json!({"id":id,"root":root,"needs_rebind":needs_rebind,"rebindable":rebindable})
-                    })
-                    .collect::<Vec<_>>();
-                Ok(json!({"type":"repository_rebind_catalog","repositories":repositories}))
+                    .map(
+                        |(id, root, needs_rebind, rebindable)| RepositoryRebindEntry {
+                            id,
+                            root,
+                            needs_rebind,
+                            rebindable,
+                        },
+                    )
+                    .collect();
+                reply(&RepositoryRebindCatalog {
+                    tag: Default::default(),
+                    repositories,
+                })
             }
             "workspace.open" => {
-                Ok(json!({"type":"ack","workspace":self.open_workspace(string("path")?)?}))
+                let open: WorkspaceOpenRequest = decode(request)?;
+                reply(&WorkspaceAck {
+                    tag: Default::default(),
+                    workspace: self.open_workspace(non_empty("path", &open.path)?)?,
+                })
             }
             "repository.rebind" => {
                 ensure!(
                     !self.worktrees.has_pending_rebind()?,
                     "Rebind restored Git lifecycle repositories first"
                 );
-                let selected = string("path")?;
+                let rebind: RepositoryRebindRequest = decode(request)?;
+                let selected = non_empty("path", &rebind.path)?;
                 let binding = selected_binding(selected, true)?;
                 let common = binding
                     .common
@@ -113,7 +134,7 @@ impl Sessions {
                 let common_identity = binding
                     .common_identity
                     .context("Git common directory is unavailable")?;
-                let repository_id = string("repository_id")?;
+                let repository_id = non_empty("repository_id", &rebind.repository_id)?;
                 let saved = self.data.lock().unwrap().store.repository(repository_id)?;
                 let source_identity = self
                     .data
@@ -148,14 +169,18 @@ impl Sessions {
                 self.catalog_changed(&mut d)?;
                 drop(d);
                 self.release_restore_fence_if_bound()?;
-                Ok(json!({"type":"ack","repository":repository}))
+                reply(&RepositoryAck {
+                    tag: Default::default(),
+                    repository: repository.into(),
+                })
             }
             "workspace.rebind" => {
                 ensure!(
                     !self.worktrees.has_pending_rebind()?,
                     "Rebind restored Git lifecycle repositories first"
                 );
-                let selected = string("path")?;
+                let rebind: WorkspaceRebindRequest = decode(request)?;
+                let selected = non_empty("path", &rebind.path)?;
                 let binding = selected_binding(selected, false)?;
                 let mut d = self.data.lock().unwrap();
                 let checked = selected_binding(selected, false)?;
@@ -165,7 +190,7 @@ impl Sessions {
                 );
                 e2e_rebind_exit("before_workspace_commit");
                 let workspace = d.store.rebind_workspace(
-                    string("workspace_id")?,
+                    non_empty("workspace_id", &rebind.workspace_id)?,
                     &binding.root,
                     binding.common.as_deref(),
                     binding.root_identity,
@@ -174,7 +199,10 @@ impl Sessions {
                 self.catalog_changed(&mut d)?;
                 drop(d);
                 self.release_restore_fence_if_bound()?;
-                Ok(json!({"type":"ack","workspace":workspace}))
+                reply(&WorkspaceAck {
+                    tag: Default::default(),
+                    workspace,
+                })
             }
             _ => bail!("Unknown session operation"),
         }
