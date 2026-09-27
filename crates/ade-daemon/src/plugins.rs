@@ -183,6 +183,14 @@ impl Plugins {
         self.0.command(request)
     }
 
+    /// `plugin.uninstall` that also ends the provider leases of `releasable`
+    /// idle sessions, inside the uninstall's own transaction once it is
+    /// admitted and every refusal check passed. A refused uninstall keeps them.
+    pub fn uninstall_releasing(&self, request: &Value, releasable: &[String]) -> Result<Value> {
+        let result = decode(request).and_then(|request| self.0.uninstall(request, releasable));
+        Ok(result.unwrap_or_else(envelope))
+    }
+
     /// The hook dispatcher's view of the backend hosts (F058).
     pub fn hook_host(&self) -> Box<dyn crate::hooks::HookHost> {
         Box::new(HookHost(self.0.clone()))
@@ -359,7 +367,7 @@ impl Core {
             "plugin.list" => self.list(decode(request)?),
             "plugin.inspect" => self.inspect(decode(request)?),
             "plugin.install" => self.install(decode(request)?),
-            "plugin.uninstall" => self.uninstall(decode(request)?),
+            "plugin.uninstall" => self.uninstall(decode(request)?, &[]),
             "plugin.enable" => self.enable(decode(request)?),
             "plugin.disable" => self.disable(decode(request)?),
             "plugin.record.get" => self.record_get(decode(request)?),
@@ -874,13 +882,13 @@ impl Core {
         Ok(response)
     }
 
-    fn uninstall(&self, request: PluginUninstallRequest) -> Result<Value> {
+    fn uninstall(&self, request: PluginUninstallRequest, releasable: &[String]) -> Result<Value> {
         let payload = serde_json::to_value(&request)?;
         let operation_id = request.operation_id.clone();
         if let Some(stored) = self.admit("plugin.uninstall", &operation_id, &payload)? {
             return Ok(stored);
         }
-        match self.commit_uninstall(&request) {
+        match self.commit_uninstall(&request, releasable) {
             Ok(reply) => {
                 self.state.lock().unwrap().inflight.remove(&operation_id);
                 // Past the commit point; a leftover directory is removed on the next open.
@@ -893,7 +901,11 @@ impl Core {
         }
     }
 
-    fn commit_uninstall(&self, request: &PluginUninstallRequest) -> Result<Value> {
+    fn commit_uninstall(
+        &self,
+        request: &PluginUninstallRequest,
+        releasable: &[String],
+    ) -> Result<Value> {
         let mut state = self.state.lock().unwrap();
         let id = &request.plugin_id;
         // A plugin uninstalled earlier without a purge may still hold data;
@@ -922,13 +934,18 @@ impl Core {
                 format!("Plugin {id} is enabled; disable it before uninstalling")
             )
         );
-        let leases = reload::lease_count(&state.db, id)?;
+        let leased = reload::leased_sessions(&state.db, id)?;
         // A disabled plugin gains no new drain, so the set can only shrink.
         let draining = self.hosts.draining(id).len();
-        if let Some(message) = dev::uninstall_refusal(id, leases, draining) {
-            return Err(coded("conflict", message).into());
-        }
+        let released = dev::uninstall_plan(id, &leased, releasable, draining)
+            .map_err(|message| coded("conflict", message))?;
         let tx = state.db.transaction()?;
+        for session in &released {
+            tx.execute(
+                "DELETE FROM plugin_provider_leases WHERE plugin_id=?1 AND session_id=?2",
+                params![id, session],
+            )?;
+        }
         tx.execute("DELETE FROM plugins WHERE id=?1", [id])?;
         tx.execute("DELETE FROM plugin_generations WHERE plugin_id=?1", [id])?;
         tx.execute("DELETE FROM plugin_dev WHERE plugin_id=?1", [id])?;

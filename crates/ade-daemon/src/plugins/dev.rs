@@ -167,6 +167,26 @@ pub fn uninstall_refusal(plugin_id: &str, provider_leases: u32, draining: usize)
     }
 }
 
+/// Which provider leases an admitted uninstall ends, or why it is refused.
+/// `releasable` names the idle Conversations the caller lets go; any other
+/// lease still blocks. Nothing is released unless the whole uninstall
+/// passes, so a refused uninstall leaves every session on its generation.
+pub fn uninstall_plan(
+    plugin_id: &str,
+    leased: &[String],
+    releasable: &[String],
+    draining: usize,
+) -> Result<Vec<String>, String> {
+    let blocking = leased
+        .iter()
+        .filter(|session| !releasable.contains(session))
+        .count() as u32;
+    match uninstall_refusal(plugin_id, blocking, draining) {
+        Some(message) => Err(message),
+        None => Ok(leased.to_vec()),
+    }
+}
+
 /// The data schema never moves below what is stored: code rollback does not
 /// roll data back. It may rise only while no provider session leases the
 /// plugin, since those sessions run older code against the same records.
@@ -320,6 +340,19 @@ mod tests {
         assert!(uninstall_refusal("a.b", 2, 1).is_some_and(|m| m.contains("lease")));
         assert!(uninstall_refusal("a.b", 1, 0).is_some());
         assert_eq!(uninstall_refusal("a.b", 0, 0), None);
+    }
+
+    /// An idle Conversation leases generation 1 of a disabled plugin while
+    /// a superseded host still drains. The uninstall is refused and must
+    /// release nothing, so the Conversation later resumes on generation 1.
+    #[test]
+    fn a_refused_uninstall_releases_no_idle_lease() {
+        let idle = vec!["c1".to_owned()];
+        assert!(uninstall_plan("a.b", &idle, &idle, 1).is_err_and(|m| m.contains("draining")));
+        assert_eq!(uninstall_plan("a.b", &idle, &idle, 0), Ok(idle.clone()));
+        let other = vec!["c1".to_owned(), "c2".to_owned()];
+        assert!(uninstall_plan("a.b", &other, &idle, 0).is_err_and(|m| m.contains("1 provider")));
+        assert_eq!(uninstall_plan("a.b", &[], &[], 0), Ok(vec![]));
     }
 
     #[test]

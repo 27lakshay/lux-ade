@@ -98,6 +98,16 @@ pub fn resolve_account(
     })
 }
 
+/// A child on an adapter or plugin provider runs on the agent's own login,
+/// so it may carry no managed account, inherited or chosen.
+pub fn registered_account(provider: &str, registered: bool, account: Option<&str>) -> Result<()> {
+    ensure!(
+        !registered || account.is_none(),
+        "{provider} uses the agent's own login; ADE manages no accounts for it"
+    );
+    Ok(())
+}
+
 /// The new child's depth, if the parent may delegate another child.
 pub fn child_depth(parent_depth: u32, existing_children: usize) -> Result<u32> {
     ensure!(
@@ -311,6 +321,15 @@ mod tests {
             terminal_owned: false,
             pending_requests: Vec::new(),
         }
+    }
+
+    /// A delegated child on a plugin provider takes no managed account; a
+    /// bundled child may.
+    #[test]
+    fn a_registered_child_carries_no_account() {
+        assert!(registered_account("plugin:a.b", true, None).is_ok());
+        assert!(registered_account("plugin:a.b", true, Some("acct")).is_err());
+        assert!(registered_account("claude", false, Some("acct")).is_ok());
     }
 
     #[test]
