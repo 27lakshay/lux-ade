@@ -38,11 +38,13 @@ import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
 import { closeAll as closeAllTerminals, closeSenderTerminals, registerTerminalIpc } from './terminals'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
+import { appUrl, registerAppScheme, serveAppScheme } from './app-protocol'
 import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
 
 let singleWindowId = ''
 enableRemoteDebugging()
+registerAppScheme()
 if (process.env.ADE_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.ADE_E2E_USER_DATA_DIR)
 }
@@ -177,16 +179,13 @@ function openMainWindow(): void {
     return { action: 'deny' }
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  void window.loadURL(appUrl())
 }
 
 app
   .whenReady()
   .then(async () => {
+    serveAppScheme(session.defaultSession)
     if (process.env.ADE_E2E_HIDE_WINDOW === '1' && process.platform === 'darwin') {
       app.setActivationPolicy('accessory')
       app.dock?.hide()

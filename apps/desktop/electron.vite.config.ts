@@ -3,6 +3,7 @@ import type { Plugin } from 'vite'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
+import { contentSecurityPolicy } from './src/shared/content-security-policy'
 
 // Development-only renderer helpers, injected ahead of the app's entry by the dev server and never
 // built into the app. See docs/agents/desktop-debugging.md.
@@ -20,12 +21,19 @@ function devHelpers(): Plugin {
     apply: 'serve',
     transformIndexHtml(html) {
       const scripts = helpers.map((path) => `<script type="module" src="${path}"></script>`).join('\n    ')
-      let result = html.replace('<script type="module" src="./src/main.tsx">', `${scripts}\n    $&`)
-      // The DevTools backend talks to the standalone app over a WebSocket.
-      if (process.env.ADE_REACT_DEVTOOLS === '1') {
-        result = result.replace("default-src 'self';", "default-src 'self'; connect-src 'self' ws://localhost:8097;")
-      }
-      return result
+      return html.replace('<script type="module" src="./src/main.tsx">', `${scripts}\n    $&`)
+    },
+  }
+}
+
+// Writes the content security policy into index.html. Development adds only the DevTools socket.
+function contentSecurityPolicyMeta(): Plugin {
+  return {
+    name: 'ade-content-security-policy',
+    transformIndexHtml(_html, context) {
+      const devtools = context.server && process.env.ADE_REACT_DEVTOOLS === '1'
+      const policy = contentSecurityPolicy(devtools ? { 'connect-src': ['ws://localhost:8097'] } : {}, true)
+      return [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head' }]
     },
   }
 }
@@ -45,6 +53,12 @@ export default defineConfig({
   },
   renderer: {
     // React Compiler through Babel: the stable compiler. plugin-react's Rust port is experimental.
-    plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss(), devHelpers()],
+    plugins: [
+      react(),
+      babel({ presets: [reactCompilerPreset()] }),
+      tailwindcss(),
+      devHelpers(),
+      contentSecurityPolicyMeta(),
+    ],
   },
 })
