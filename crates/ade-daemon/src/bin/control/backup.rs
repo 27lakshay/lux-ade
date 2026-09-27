@@ -324,6 +324,28 @@ fn test_pause(name: &str) -> Result<Option<Pause>> {
         read("ADE_E2E_BACKUP_PAUSE_RELEASE").as_deref(),
     )
 }
+/// Pages per online-backup step. A step of `-1` copies the whole database
+/// under one read transaction, so writes from the daemon cannot restart it
+/// part-way. Only an armed test pause copies one page at a time, so the copy
+/// is still unfinished when the pause holds.
+fn step_pages(pause_armed: bool) -> i32 {
+    if pause_armed { 1 } else { -1 }
+}
+/// The time allowed for one online SQLite copy. It grows with the size of the
+/// database, so a large profile is not refused by a fixed limit.
+fn backup_deadline(bytes: u64) -> Duration {
+    const BASE_SECS: u64 = 30;
+    // A conservative 8 MiB per second, far below local disk throughput.
+    const BYTES_PER_SEC: u64 = 8 * 1024 * 1024;
+    Duration::from_secs(BASE_SECS.saturating_add(bytes.div_ceil(BYTES_PER_SEC)))
+}
+/// The bytes a SQLite database holds on disk, counting its write-ahead log.
+fn stored_bytes(path: &Path) -> u64 {
+    let size = |path: &Path| fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    size(path).saturating_add(size(Path::new(&wal)))
+}
 fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
     let expected = coverage::store(name)
         .filter(|store| store.kind != Kind::Directory)
@@ -335,12 +357,9 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
         let mut pause = test_pause(name)?;
         {
             let copy = Backup::new(&reader, &mut writer)?;
-            let deadline = Instant::now() + Duration::from_secs(30);
-            // One page per step while a pause is armed, so the copy is still
-            // unfinished when it holds.
-            let pages = if pause.is_some() { 1 } else { 128 };
+            let deadline = Instant::now() + backup_deadline(stored_bytes(source));
             loop {
-                let step = copy.step(pages)?;
+                let step = copy.step(step_pages(pause.is_some()))?;
                 if step == StepResult::More
                     && copy.progress().remaining > 0
                     && let Some(hold) = pause.take()
@@ -349,7 +368,13 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
                 }
                 match step {
                     StepResult::Done => break,
-                    StepResult::More | StepResult::Busy | StepResult::Locked => {
+                    // Only the armed test pause copies in parts; the next step
+                    // copies the rest at once.
+                    StepResult::More => {
+                        ensure!(Instant::now() < deadline, "Online backup timed out");
+                    }
+                    // A writer holds a lock the copy needs; wait briefly.
+                    StepResult::Busy | StepResult::Locked => {
                         ensure!(Instant::now() < deadline, "Online backup timed out");
                         thread::sleep(Duration::from_millis(25));
                     }
@@ -750,6 +775,47 @@ fn interrupt(record: &mut Value, now_ms: i64) {
         record["finished_at"] = json!(now_ms);
     }
 }
+/// Pauses a restored Conversation's prompt queue when prompts wait in it. The
+/// source profile may send the same prompts, so the restored daemon sends none
+/// until the user continues the queue.
+fn hold_queue(record: &mut Value, queued: bool) {
+    if !queued {
+        return;
+    }
+    record["queue_paused"] = json!(true);
+    if record["error"].is_null() {
+        record["error"] = json!(
+            "Prompt queue paused: this profile was restored from a backup, and the source profile may also send these prompts. Review them before continuing the queue."
+        );
+    }
+}
+/// Clears a restored service's run reservation. The run belongs to the source
+/// profile's runtime, which the restored profile never owned, so the restored
+/// service starts stopped.
+fn release_service(record: &mut Value) {
+    if let Some(fields) = record.as_object_mut() {
+        fields.insert("terminal_owner".into(), Value::Null);
+        fields.remove("launch_peers");
+    }
+}
+fn release_services(db: &Connection) -> Result<()> {
+    let mut query = db.prepare("SELECT rowid,data FROM services")?;
+    let rows = query
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(query);
+    for (row, data) in rows {
+        let mut record: Value = serde_json::from_str(&data)?;
+        release_service(&mut record);
+        db.execute(
+            "UPDATE services SET data=?1 WHERE rowid=?2",
+            params![record.to_string(), row],
+        )?;
+    }
+    Ok(())
+}
 fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
     let core = data.join("sessions.sqlite");
     // A format-2 bundle still holds the history index; drop it here too, so
@@ -764,6 +830,31 @@ fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
         "UPDATE send_intents SET restore_hold=1 WHERE state IN ('pending','rejected')",
         [],
     )?;
+    // The restored profile never owned the source profile's runtime. Its
+    // incarnations and process records would make the restored daemon treat
+    // the source's live processes as its own and quarantine their leases.
+    let present = tables(&tx)?;
+    for table in [
+        "runtime_incarnations",
+        "runtime_attempt_records",
+        "runtime_recovery_reports",
+    ] {
+        if present.iter().any(|name| name == table) {
+            tx.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+    }
+    let queued: std::collections::HashSet<String> = {
+        let mut query = tx
+            .prepare("SELECT DISTINCT conversation_id FROM queued_prompts WHERE status='queued'")?;
+        query
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    rewrite(&tx, "conversations", |id, record| {
+        hold_queue(record, queued.contains(id));
+        Ok(())
+    })?;
+    release_services(&tx)?;
     for table in ["repositories", "workspaces"] {
         rewrite(&tx, table, |_id, record| {
             record["needs_rebind"] = json!(true);
@@ -1384,6 +1475,51 @@ mod tests {
         assert!(!armed(true, Some("1"), "sessions.sqlite", None, None).unwrap());
         assert!(armed(true, Some("1"), "sessions.sqlite", s, None).is_err());
         assert!(armed(true, Some("1"), "sessions.sqlite", Some("rel"), r).is_err());
+    }
+
+    #[test]
+    fn online_copy_takes_the_whole_database_in_one_step_with_a_size_bound_deadline() {
+        assert_eq!(step_pages(false), -1);
+        assert_eq!(step_pages(true), 1);
+        assert_eq!(backup_deadline(0), Duration::from_secs(30));
+        // A 1 GiB profile timed out under the fixed 30 s limit.
+        let large = backup_deadline(1024 * 1024 * 1024);
+        assert_eq!(large, Duration::from_secs(30 + 128));
+        assert!(backup_deadline(u64::MAX) > large);
+    }
+
+    #[test]
+    fn restore_pauses_only_queues_that_hold_prompts() {
+        let mut child = json!({"id":"c1","status":"idle","queue_paused":false,"error":null});
+        hold_queue(&mut child, true);
+        assert_eq!(child["queue_paused"], true);
+        assert!(
+            child["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("Prompt queue paused:")
+        );
+        let mut failed = json!({"queue_paused":false,"error":"Provider failed"});
+        hold_queue(&mut failed, true);
+        assert_eq!(failed["queue_paused"], true);
+        assert_eq!(failed["error"], "Provider failed");
+        let mut empty = json!({"queue_paused":false,"error":null});
+        hold_queue(&mut empty, false);
+        assert_eq!(empty, json!({"queue_paused":false,"error":null}));
+    }
+
+    #[test]
+    fn restored_service_does_not_keep_the_source_runtime_run() {
+        let mut running = json!({
+            "name":"web",
+            "terminal_id":"service-web",
+            "terminal_owner":{"terminal_id":"service-web","transfer_id":"t1","runtime_instance":"source"},
+            "launch_peers":{"API_URL":"http://api"},
+        });
+        release_service(&mut running);
+        assert!(running["terminal_owner"].is_null());
+        assert!(running.get("launch_peers").is_none());
+        assert_eq!(running["terminal_id"], "service-web");
     }
 
     #[test]
