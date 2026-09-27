@@ -110,8 +110,6 @@ impl Sessions {
     fn readiness(self: &Arc<Self>, request: ProviderReadinessRequest) -> Result<Value> {
         let provider = non_empty("provider", &request.provider)?;
         let record = caps::record(provider)?;
-        let mut checks = caps::installation(provider)?;
-        let installed = checks.iter().all(|c| c.state != CheckState::Failed);
         let mut version = None;
         let account_id = request.account_id.filter(|id| !id.is_empty());
         let account = match account_id.as_deref() {
@@ -125,6 +123,8 @@ impl Sessions {
                 Some(account)
             }
         };
+        let mut checks = caps::installation(provider, account.is_some())?;
+        let installed = checks.iter().all(|c| c.state != CheckState::Failed);
         let inspection = match &account {
             Some(account) if installed && account.state != "disabled" => Some(
                 self.account_command(&json!({"op": "account.inspect", "account_id": account.id}))

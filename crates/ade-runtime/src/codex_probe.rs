@@ -247,8 +247,8 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         Ok(value) => value,
         Err(_) => {
             return result(
-                "incompatible",
-                "Codex version check failed or timed out",
+                "unavailable",
+                "Codex version check failed or timed out; retry",
                 None,
             );
         }
@@ -303,8 +303,8 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         Ok(value) => value,
         Err(_) => {
             return result(
-                "incompatible",
-                "Codex account read failed or timed out",
+                "unavailable",
+                "Codex account read failed or timed out; retry",
                 Some(version),
             );
         }

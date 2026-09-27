@@ -7368,6 +7368,10 @@
         "op": {
           "const": "conversation.create"
         },
+        "preset": {
+          "description": "A saved preset whose provider, model and permission mode the\nConversation uses. Refused when the provider's current capabilities\nconflict with it; never combined with `provider_config`. A preset\ncarries no account, so it never changes `account_id`.",
+          "type": "string"
+        },
         "provider": {
           "description": "Provider ID; defaults to `codex`.",
           "type": "string"

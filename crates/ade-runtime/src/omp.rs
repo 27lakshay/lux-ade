@@ -226,10 +226,12 @@ pub const INSTALLATION: &[crate::capabilities::Executable] = &[
         check: "runtime:bun",
         env: "ADE_BUN_BIN",
         default: Some("bun"),
+        used_by: crate::capabilities::UsedBy::Every,
     },
     crate::capabilities::Executable {
         check: "executable:omp",
         env: "ADE_OMP_BIN",
         default: None,
+        used_by: crate::capabilities::UsedBy::Every,
     },
 ];

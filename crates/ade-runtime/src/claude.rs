@@ -248,10 +248,12 @@ pub const INSTALLATION: &[crate::capabilities::Executable] = &[
         check: "executable:claude",
         env: "ADE_CLAUDE_BIN",
         default: Some("claude"),
+        used_by: crate::capabilities::UsedBy::Every,
     },
     crate::capabilities::Executable {
         check: "runtime:node",
         env: "ADE_NODE_BIN",
         default: Some("node"),
+        used_by: crate::capabilities::UsedBy::Every,
     },
 ];

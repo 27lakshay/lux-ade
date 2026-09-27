@@ -189,8 +189,8 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         Ok(output) => output,
         Err(_) => {
             return result(
-                "incompatible",
-                "Claude Code version check failed or timed out",
+                "unavailable",
+                "Claude Code version check failed or timed out; retry",
                 None,
             );
         }
@@ -222,8 +222,8 @@ pub fn inspect(account: &AccountExecution) -> Inspection {
         Ok(output) => output,
         Err(_) => {
             return result(
-                "incompatible",
-                "Claude Code auth status failed or timed out",
+                "unavailable",
+                "Claude Code auth status failed or timed out; retry",
                 Some(version),
             );
         }
