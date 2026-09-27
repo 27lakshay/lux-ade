@@ -1,4 +1,5 @@
 import {
+  call,
   dailyUseCommand,
   openTerminalConnection,
   type TerminalConnection,
@@ -20,6 +21,8 @@ export const terminalUsage = `  terminal list                         List works
                                         Stop the selected terminal shell
   terminal retire WORKSPACE_ID TERMINAL_ID
                                         Remove a stopped terminal from the workspace
+  terminal restart WORKSPACE_ID TERMINAL_ID
+                                        Start a new shell in an exited terminal
 `
 
 function integer(value: string | undefined, label: string): number {
@@ -266,7 +269,15 @@ export async function runTerminalCommand(socketPath: string, area: string | unde
     const workspaceId = required(rest[0], 'WORKSPACE_ID')
     const terminalId = required(rest[1], 'TERMINAL_ID')
     await terminalTarget(socketPath, workspaceId, terminalId)
-    return dailyUseCommand(socketPath, { op: `terminal.${action}`, workspace_id: workspaceId, terminal_id: terminalId })
+    const op = action === 'stop' ? 'terminal.stop' : 'terminal.retire'
+    return dailyUseCommand(socketPath, { op, workspace_id: workspaceId, terminal_id: terminalId })
+  }
+  if (area === 'terminal' && action === 'restart') {
+    if (rest.length !== 2) throw new CliError('usage', 'terminal restart requires WORKSPACE_ID TERMINAL_ID.')
+    const workspaceId = required(rest[0], 'WORKSPACE_ID')
+    const terminalId = required(rest[1], 'TERMINAL_ID')
+    await terminalTarget(socketPath, workspaceId, terminalId)
+    return call(socketPath, 'terminal.restart', { workspace_id: workspaceId, terminal_id: terminalId })
   }
   if (area === 'terminal' && ['inspect', 'send', 'resize'].includes(action ?? '')) {
     const workspaceId = required(rest[0], 'WORKSPACE_ID')

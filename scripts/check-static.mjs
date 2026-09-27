@@ -15,13 +15,15 @@ const steps = [
   // The committed packages/contracts must match the Rust contract types.
   ['contract check', ['pnpm', 'contract:check']],
   ['architecture', ['python3', 'scripts/check_architecture.py']],
+  // Every contract operation has a CLI command or a written exemption, and an SDK validator.
+  ['api parity', ['node', 'scripts/api-parity.mjs']],
   // Dependent packages typecheck against the SDK's built declarations.
   ['sdk build', ['pnpm', 'build:sdk']],
   ['typecheck', ['pnpm', 'typecheck']],
   ['fallow', ['pnpm', 'deadcode']],
   ['js build', ['pnpm', 'build']],
   // In-process tests of pure TypeScript cores, beside their modules.
-  ['js pure tests', ['node', '--test', 'packages/*/src/**/*.test.mjs', 'apps/*/src/**/*.test.mjs']],
+  ['js pure tests', ['node', '--test', 'packages/*/src/**/*.test.mjs', 'apps/*/src/**/*.test.mjs', 'scripts/*.test.mjs']],
   ['clippy', [...cargo, 'clippy', '--locked', '--workspace', ...features, '--all-targets', '--', '-D', 'warnings']],
   ['legacy rust tests', [...cargo, 'nextest', 'run', '--locked', '--workspace', ...features, '--profile', 'ci']],
 ]

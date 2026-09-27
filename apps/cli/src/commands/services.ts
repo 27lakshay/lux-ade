@@ -6,6 +6,9 @@ export const serviceUsage = `  service list WORKSPACE_ID             List manage
                                         Save a service recipe; revision defaults to 0
   service start WORKSPACE_ID NAME       Launch a configured service
   service stop WORKSPACE_ID NAME        Stop and reap a managed service
+  service remove WORKSPACE_ID NAME REVISION
+                                        Delete a stopped service at the revision you last saw
+  service health WORKSPACE_ID NAME      Probe the service's configured health policy now
   service inspect WORKSPACE_ID NAME [TAIL_BYTES]
                                         Read execution, listener evidence and bounded output
   service url WORKSPACE_ID NAME PORT_VARIABLE
@@ -149,6 +152,18 @@ export async function runServiceCommand(socketPath: string, area: string | undef
     return serviceRequest(socketPath, 'service.configure', {
       workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
       config: jsonObject(rest[2], 'JSON_CONFIG'), revision: revision(rest[3]),
+    })
+  }
+  if (area === 'service' && action === 'remove') {
+    if (rest.length !== 3) throw new CliError('usage', 'service remove requires WORKSPACE_ID NAME REVISION.')
+    return serviceRequest(socketPath, 'service.remove', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'), revision: revision(rest[2]),
+    })
+  }
+  if (area === 'service' && action === 'health') {
+    if (rest.length !== 2) throw new CliError('usage', 'service health requires WORKSPACE_ID NAME.')
+    return serviceRequest(socketPath, 'service.health.sample', {
+      workspace_id: required(rest[0], 'WORKSPACE_ID'), name: required(rest[1], 'NAME'),
     })
   }
   if (area === 'service' && (action === 'start' || action === 'stop')) {

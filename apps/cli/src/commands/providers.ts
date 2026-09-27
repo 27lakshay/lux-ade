@@ -1,7 +1,8 @@
 import { dailyUseCommand } from '@ade/client'
 import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
 
-export const providerUsage = `  provider capabilities [PROVIDER]      Show what each provider offers and what ADE can select;
+export const providerUsage = `  provider list                         List the providers this build supports
+  provider capabilities [PROVIDER]      Show what each provider offers and what ADE can select;
                                         native_only and unknown are never treated as supported
   provider readiness PROVIDER [--account ID]
                                         Check the executables, and with an account its version,
@@ -29,6 +30,10 @@ function revision(value: string): number {
 
 async function runProvider(socketPath: string, action: string | undefined,
   rest: string[]): Promise<CommandResult | undefined> {
+  if (action === 'list') {
+    if (rest.length) throw new CliError('usage', 'provider list does not accept arguments.')
+    return dailyUseCommand(socketPath, { op: 'provider.list' })
+  }
   if (action === 'capabilities') {
     if (rest.length > 1) throw new CliError('usage', 'provider capabilities accepts at most one PROVIDER.')
     return dailyUseCommand(socketPath, { op: 'provider.capabilities', ...(rest[0] ? { provider: rest[0] } : {}) })

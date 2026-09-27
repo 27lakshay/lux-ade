@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test src/sync.test.mjs src/outbox.test.mjs src/remote-state.test.mjs src/placement.test.mjs"
+    "test": "tsc && node --test src/sync.test.mjs src/outbox.test.mjs src/remote-state.test.mjs src/placement.test.mjs src/call.test.mjs"
   },
   "dependencies": {
     "@ade/contracts": "workspace:*"
