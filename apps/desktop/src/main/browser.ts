@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { cp, link, lstat, mkdir, open, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
-import { getBrowserOwner, getProfileState, getStartupProfileSelection, isSwitching, managedProfiles, setBrowserOwner,
+import { getProfileState, getStartupProfileSelection, isSwitching, managedProfiles,
   setSwitching, type Profile } from './profile-connection'
 import type { QuitGuard } from './quit-guards'
 import { reconcileBrowserEffect, type BrowserIntent } from './browser-reconcile'
@@ -963,12 +963,10 @@ async function flushBrowserSessions(): Promise<void> {
   await Promise.all([...profiles.values()].map((state) => state.writes))
   await Promise.all([...profilePaths.keys()].map(flushProfileSession))
 }
-/** Holds the quit until browser sessions are saved and the browser owner is closed. */
+/** Holds the quit until browser sessions are saved. The browser owner closes in quit teardown. */
 export const browserQuitGuard: QuitGuard = () => async () => {
   try {
     await flushBrowserSessions()
-    await getBrowserOwner()?.close()
-    setBrowserOwner(null)
     return true
   } catch (error) {
     if (process.env.ADE_E2E_USER_DATA_DIR || process.env.ADE_E2E_HIDE_WINDOW === '1') {

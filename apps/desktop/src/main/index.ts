@@ -14,7 +14,7 @@ import { broadcast, fixedSocket, getBrowserOwner, getClient, managedProfiles, pu
   setBrowserOwner, setStartupProfileSelection, setUnsubscribeClient, setUnsubscribeFeed,
   stopClient } from './profile-connection'
 import { registerProfileIpc, selectProfile } from './profiles'
-import { holdQuit, registerQuitGuard } from './quit-guards'
+import { finishQuit, holdQuit, registerQuitGuard, registerQuitTeardown } from './quit-guards'
 import { registerReviewIpc, setGitJournal } from './review'
 import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
@@ -39,6 +39,16 @@ registerTerminalIpc()
 // Order matters: drafts are saved before browser sessions are flushed.
 registerQuitGuard(draftQuitGuard)
 registerQuitGuard(browserQuitGuard)
+// Teardown waits for will-quit: a window's close handler can still cancel the quit.
+registerQuitTeardown(async () => {
+  const owner = getBrowserOwner()
+  setBrowserOwner(null)
+  await owner?.close()
+})
+registerQuitTeardown(() => {
+  closeAllTerminals()
+  stopClient()
+})
 
 function openMainWindow(): void {
   const window = new BrowserWindow({
@@ -163,10 +173,9 @@ app.whenReady().then(async () => {
 let quitRequested = false
 app.on('before-quit', (event) => {
   quitRequested = true
-  if (holdQuit(event)) return
-  closeAllTerminals()
-  stopClient()
+  holdQuit(event)
 })
+app.on('will-quit', finishQuit)
 
 app.on('window-all-closed', () => {
   if (quitRequested || process.platform !== 'darwin') app.quit()
