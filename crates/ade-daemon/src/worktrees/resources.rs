@@ -122,6 +122,15 @@ pub fn may_apply(phase: Option<WorktreePhase>) -> Result<()> {
     }
 }
 
+/// Whether a link just created stays: only when `git check-ignore` in the
+/// tree exited 0 for it. Git treats a symbolic link as a file, so a
+/// directory-only pattern such as `node_modules/` ignores the primary's
+/// directory but not a link to it; an unignored link would leave the tree
+/// dirty and block its cleanup.
+pub fn link_kept(check_ignore_exit: Option<i64>) -> bool {
+    check_ignore_exit == Some(0)
+}
+
 /// Whether a measured copy fits the limits.
 pub fn copy_fits(bytes: u64, entries: u64) -> bool {
     bytes <= MAX_COPY_BYTES && entries <= MAX_COPY_ENTRIES
@@ -219,6 +228,15 @@ pub fn copy_new(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_link_stays_only_when_git_ignores_it_in_the_tree() {
+        assert!(link_kept(Some(0)));
+        // Not ignored (a directory-only pattern), or Git could not say.
+        assert!(!link_kept(Some(1)));
+        assert!(!link_kept(Some(128)));
+        assert!(!link_kept(None));
+    }
 
     fn rule(path: &str, mode: ResourceMode) -> ResourceRule {
         ResourceRule {

@@ -683,31 +683,15 @@ impl Worktrees {
         let in_base: Vec<String> = in_base.into_iter().map(|(_, path)| path).collect();
         // Reset only paths Git knows, in `base` or in the index, so an
         // untracked file never reaches a pathspec that matches nothing.
-        let mut known: Vec<String> = self
-            .git_ok(
-                repo,
-                lock,
-                source,
-                &[
-                    "ls-files",
-                    "-z",
-                    "--cached",
-                    "--pathspec-from-file=-",
-                    "--pathspec-file-nul",
-                ],
-                &literal,
-                Some(nul_list(paths)),
-            )?
-            .split('\0')
-            .filter(|path| !path.is_empty())
-            .map(str::to_owned)
-            .collect();
-        let missing: Vec<String> = in_base
-            .iter()
-            .filter(|path| !known.contains(path))
-            .cloned()
-            .collect();
-        known.extend(missing);
+        let index = self.git_ok(
+            repo,
+            lock,
+            source,
+            &["ls-files", "-z", "--cached"],
+            &[],
+            None,
+        )?;
+        let known = carry::known_paths(&index, paths, &in_base);
         if !known.is_empty() {
             self.git_ok(
                 repo,
@@ -756,7 +740,16 @@ impl Worktrees {
             &[],
             None,
         )?;
-        Ok(self.carry_snapshot(repo, lock, source, base, paths)? == base_tree)
+        // A snapshot refuses a pathspec that matches nothing, so the read-back
+        // names only paths still on disk or in `base`; a deleted addition is
+        // already where `base` has it: absent.
+        let remaining = carry::readback_paths(paths, &in_base, |path| {
+            std::fs::symlink_metadata(source.join(path)).is_ok()
+        });
+        if remaining.is_empty() {
+            return Ok(true);
+        }
+        Ok(self.carry_snapshot(repo, lock, source, base, &remaining)? == base_tree)
     }
 
     /// Fetches a creation source into its own ref and returns the commit.
@@ -957,7 +950,30 @@ impl Worktrees {
                     Plan::Link => (|| -> Result<ResourceOutcome> {
                         self.make_parent(tree, &destination)?;
                         std::os::unix::fs::symlink(&source, &destination)?;
-                        Ok(ResourceOutcome::Linked)
+                        // Git sees a link as a file, so a directory-only
+                        // pattern such as `node_modules/` does not ignore
+                        // it. An unignored link would make the tree dirty
+                        // and block its cleanup, so it is taken back.
+                        let link_ignored = self
+                            .git_at(
+                                repo,
+                                lock,
+                                tree,
+                                &["check-ignore", "-q", "--", &rule.path],
+                                &[],
+                                None,
+                            )
+                            .ok()
+                            .and_then(|output| output["exit_code"].as_i64());
+                        if resources::link_kept(link_ignored) {
+                            return Ok(ResourceOutcome::Linked);
+                        }
+                        std::fs::remove_file(&destination)?;
+                        result.error = Some(format!(
+                            "Git does not ignore a link at {}; ignore it without a trailing slash to link it",
+                            rule.path
+                        ));
+                        Ok(ResourceOutcome::NotIgnored)
                     })(),
                 };
                 match outcome {

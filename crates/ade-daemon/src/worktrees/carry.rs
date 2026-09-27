@@ -344,6 +344,45 @@ pub fn parse_name_status(text: &str) -> Result<Vec<(char, String)>> {
         .collect()
 }
 
+/// The carried paths Git knows, so a reset never names a path that matches
+/// nothing: those in the index (`index` is `git ls-files -z --cached`
+/// output) and those in `base`, in `paths` order then `in_base` order,
+/// without repeats. `git ls-files` has no `--pathspec-from-file`, so the
+/// whole index is listed and filtered here.
+pub fn known_paths(index: &str, paths: &[String], in_base: &[String]) -> Vec<String> {
+    let indexed: std::collections::HashSet<&str> =
+        index.split('\0').filter(|path| !path.is_empty()).collect();
+    let mut known: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let candidates = paths
+        .iter()
+        .filter(|path| indexed.contains(path.as_str()))
+        .chain(in_base);
+    for path in candidates {
+        if seen.insert(path.as_str()) {
+            known.push(path.clone());
+        }
+    }
+    known
+}
+
+/// The carried paths a cleanup read-back snapshots: those present in the
+/// source (`present`) or in `base`. A carried addition the cleanup deleted
+/// is neither, and naming it would fail the snapshot on a pathspec that
+/// matches nothing. An empty result means every carried path is absent from
+/// both, which is exactly `base` for those paths.
+pub fn readback_paths(
+    paths: &[String],
+    in_base: &[String],
+    present: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|path| in_base.contains(path) || present(path))
+        .cloned()
+        .collect()
+}
+
 /// A tree may receive a carry when it is ready or has no recorded phase
 /// (adopted). Setup, teardown and failed phases refuse.
 pub fn may_receive(phase: Option<WorktreePhase>) -> Result<()> {
@@ -558,6 +597,42 @@ mod tests {
         assert!(parse_merge(Some(128), "").is_err());
         assert!(parse_merge(None, &tree).is_err());
         assert!(object_id(&tree) && !object_id("HEAD"));
+    }
+
+    #[test]
+    fn source_cleanup_resets_only_indexed_or_base_paths_once() {
+        let owned = |items: &[&str]| {
+            items
+                .iter()
+                .map(|item| (*item).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let index = "a.txt\0b dir/x\0staged-new\0keep\0";
+        let paths = owned(&["a.txt", "untracked", "staged-new", "b dir/x"]);
+        let in_base = owned(&["a.txt", "deleted"]);
+        assert_eq!(
+            known_paths(index, &paths, &in_base),
+            owned(&["a.txt", "staged-new", "b dir/x", "deleted"])
+        );
+        assert!(known_paths("", &owned(&["untracked"]), &[]).is_empty());
+    }
+
+    #[test]
+    fn the_cleanup_read_back_skips_additions_that_are_gone() {
+        let owned = |items: &[&str]| {
+            items
+                .iter()
+                .map(|item| (*item).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let paths = owned(&["modified", "deleted", "added-gone", "added-back"]);
+        let in_base = owned(&["modified", "deleted"]);
+        assert_eq!(
+            readback_paths(&paths, &in_base, |path| path == "added-back"
+                || path == "modified"),
+            owned(&["modified", "deleted", "added-back"])
+        );
+        assert!(readback_paths(&owned(&["added-gone"]), &[], |_| false).is_empty());
     }
 
     #[test]
