@@ -10,6 +10,7 @@ import { conversationUsage, runConversationCommand } from './commands/conversati
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
+import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
 import { historyUsage, runHistoryCommand } from './commands/history.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
@@ -73,6 +74,7 @@ const usage = [
   gitUsage,
   listenerUsage,
   mcpUsage,
+  remoteUsage,
   skillUsage,
   pluginUsage,
   orchestrationUsage,
@@ -202,6 +204,7 @@ const commandAreas = [
   runGitCommand,
   runListenerCommand,
   runMcpCommand,
+  runRemoteCommand,
   runSkillCommand,
   runPluginCommand,
   runOrchestrationCommand,

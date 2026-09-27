@@ -151,6 +151,13 @@ export const operations = {
   "resources.inspect": { tier: "query", domain: "resources", request: "ResourcesInspectRequest", response: "HostResourcesState" },
   "resources.claim.resolve": { tier: "effect_command", domain: "resources", request: "ResourcesClaimResolveRequest", response: "HostResourcesState" },
   "resources.registry.accept": { tier: "effect_command", domain: "resources", request: "ResourcesRegistryAcceptRequest", response: "HostResourcesState" },
+  "remote.host.list": { tier: "query", domain: "remote", request: "RemoteHostListRequest", response: "RemoteHosts" },
+  "remote.host.add": { tier: "idempotent_command", domain: "remote", request: "RemoteHostAddRequest", response: "RemoteHostReply" },
+  "remote.host.remove": { tier: "idempotent_command", domain: "remote", request: "RemoteHostRemoveRequest", response: "RemoteHostRemoved" },
+  "remote.host.probe": { tier: "query", domain: "remote", request: "RemoteHostProbeRequest", response: "RemoteHostProbe" },
+  "remote.host.pair": { tier: "idempotent_command", domain: "remote", request: "RemotePairRequest", response: "RemotePairingReply" },
+  "remote.host.revoke": { tier: "idempotent_command", domain: "remote", request: "RemoteRevokeRequest", response: "RemotePairingReply" },
+  "remote.host.start": { tier: "effect_command", domain: "remote", request: "RemoteHostStartRequest", response: "RemoteHostStart" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

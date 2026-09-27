@@ -1312,6 +1312,56 @@
       ],
       "type": "object"
     },
+    "BackendCompatibility": {
+      "description": "Whether the remote ADE backend can serve this daemon.",
+      "properties": {
+        "application_protocol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "compatible": {
+          "type": "boolean"
+        },
+        "control_path": {
+          "description": "The `ade-control` the probe found; null when none was found.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "incompatible": {
+          "description": "Each version or platform mismatch, stated exactly.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "missing": {
+          "description": "Each artifact or capability the host lacks, stated exactly.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "runtime_protocol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "compatible",
+        "control_path",
+        "application_protocol",
+        "runtime_protocol",
+        "missing",
+        "incompatible"
+      ],
+      "type": "object"
+    },
     "BranchPolicy": {
       "description": "What `worktree.remove` does with the removed tree's branch.",
       "oneOf": [
@@ -6271,6 +6321,13 @@
       ],
       "type": "string"
     },
+    "PairingState": {
+      "enum": [
+        "active",
+        "revoked"
+      ],
+      "type": "string"
+    },
     "PeerEndpoint": {
       "additionalProperties": false,
       "properties": {
@@ -7900,6 +7957,500 @@
         "host_id",
         "state",
         "reason"
+      ],
+      "type": "object"
+    },
+    "RemoteDaemon": {
+      "description": "The remote daemon's identity as its `hello` reported it.",
+      "properties": {
+        "application_protocol": {
+          "type": "string"
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "build_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "runtime_protocol": {
+          "type": "string"
+        },
+        "socket": {
+          "description": "The daemon's socket path on the remote host.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id",
+        "socket",
+        "boot_id",
+        "pid",
+        "build_id",
+        "application_protocol",
+        "runtime_protocol"
+      ],
+      "type": "object"
+    },
+    "RemoteHost": {
+      "description": "One registered remote host.",
+      "properties": {
+        "backend_path": {
+          "description": "Absolute path of `ade-control` on the remote host; null uses its `PATH`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "host_key_fingerprint": {
+          "description": "The pinned key's OpenSSH SHA-256 fingerprint, `SHA256:...`.",
+          "type": "string"
+        },
+        "host_key_type": {
+          "description": "The pinned host key algorithm, such as `ssh-ed25519`.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "pairing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RemotePairing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The active pairing, or else the most recent revoked one; null when never paired."
+        },
+        "remote_profile_id": {
+          "description": "The remote profile to start; null uses the remote host's selected profile.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ssh_target": {
+          "description": "What `ssh` is given: an alias from the user's SSH config or `user@host`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_id",
+        "label",
+        "ssh_target",
+        "host_key_type",
+        "host_key_fingerprint",
+        "backend_path",
+        "remote_profile_id",
+        "created_at_ms",
+        "pairing"
+      ],
+      "type": "object"
+    },
+    "RemoteHostAddRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.add`: verify and record a host.",
+      "properties": {
+        "backend_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_fingerprint": {
+          "description": "The host key fingerprint obtained out of band, `SHA256:...`.",
+          "type": "string"
+        },
+        "host_id": {
+          "description": "Lowercase letters, digits and `-`, at most 64 characters.",
+          "type": "string"
+        },
+        "host_public_key": {
+          "description": "The host's public key line. Required when the target is reached through\na proxy; otherwise the daemon reads the keys with `ssh-keyscan`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "remote.host.add"
+        },
+        "remote_profile_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ssh_target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "host_id",
+        "ssh_target",
+        "expected_fingerprint"
+      ],
+      "type": "object"
+    },
+    "RemoteHostListRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.list`: every registered host, in ID order.",
+      "properties": {
+        "op": {
+          "const": "remote.host.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "RemoteHostProbe": {
+      "description": "The `remote.host.probe` reply. It is only returned after the host\npresented the pinned key.",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/BackendCompatibility"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "host_key_fingerprint": {
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/RemotePlatform"
+        },
+        "type": {
+          "description": "The `remote_host_probe` type tag.",
+          "enum": [
+            "remote_host_probe"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host_id",
+        "host_key_fingerprint",
+        "platform",
+        "backend"
+      ],
+      "type": "object"
+    },
+    "RemoteHostProbeRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.probe`: check the host key and the remote backend.",
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "remote.host.probe"
+        }
+      },
+      "required": [
+        "op",
+        "host_id"
+      ],
+      "type": "object"
+    },
+    "RemoteHostRemoveRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.remove`: forget a host that has no active pairing.",
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "remote.host.remove"
+        }
+      },
+      "required": [
+        "op",
+        "host_id"
+      ],
+      "type": "object"
+    },
+    "RemoteHostRemoved": {
+      "description": "The `remote.host.remove` reply. `removed` is false when no host existed.",
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "removed": {
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `remote_host_removed` type tag.",
+          "enum": [
+            "remote_host_removed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host_id",
+        "removed"
+      ],
+      "type": "object"
+    },
+    "RemoteHostReply": {
+      "description": "The `remote.host.add` reply.",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/RemoteHost"
+        },
+        "type": {
+          "description": "The `remote_host` type tag.",
+          "enum": [
+            "remote_host"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host"
+      ],
+      "type": "object"
+    },
+    "RemoteHostStart": {
+      "description": "The `remote.host.start` reply.",
+      "properties": {
+        "daemon": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RemoteDaemon"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/StartOutcome"
+        },
+        "type": {
+          "description": "The `remote_host_start` type tag.",
+          "enum": [
+            "remote_host_start"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "host_id",
+        "outcome",
+        "detail",
+        "daemon"
+      ],
+      "type": "object"
+    },
+    "RemoteHostStartRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.start`: start or attach the remote profile daemon.",
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "remote.host.start"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "host_id"
+      ],
+      "type": "object"
+    },
+    "RemoteHosts": {
+      "description": "The `remote.host.list` reply.",
+      "properties": {
+        "hosts": {
+          "items": {
+            "$ref": "#/$defs/RemoteHost"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `remote_hosts` type tag.",
+          "enum": [
+            "remote_hosts"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "hosts"
+      ],
+      "type": "object"
+    },
+    "RemotePairRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.pair`: record an explicit pairing and its token reference.",
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "remote.host.pair"
+        },
+        "token_reference": {
+          "$ref": "#/$defs/TokenReference"
+        }
+      },
+      "required": [
+        "op",
+        "host_id",
+        "token_reference"
+      ],
+      "type": "object"
+    },
+    "RemotePairing": {
+      "description": "One pairing between this profile and a remote host.",
+      "properties": {
+        "paired_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "pairing_id": {
+          "type": "string"
+        },
+        "revoked_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/PairingState"
+        },
+        "token_reference": {
+          "$ref": "#/$defs/TokenReference"
+        }
+      },
+      "required": [
+        "pairing_id",
+        "state",
+        "token_reference",
+        "paired_at_ms",
+        "revoked_at_ms"
+      ],
+      "type": "object"
+    },
+    "RemotePairingReply": {
+      "description": "The `remote.host.pair` and `remote.host.revoke` reply.",
+      "properties": {
+        "enforcement": {
+          "description": "Where revocation takes effect. `local_profile`: this profile refuses to\nstart or attach the host; the remote backend does not yet check tokens.",
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "pairing": {
+          "$ref": "#/$defs/RemotePairing"
+        },
+        "type": {
+          "description": "The `remote_pairing` type tag.",
+          "enum": [
+            "remote_pairing"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host_id",
+        "pairing",
+        "enforcement"
+      ],
+      "type": "object"
+    },
+    "RemotePlatform": {
+      "description": "The remote operating system and machine, from `uname`.",
+      "properties": {
+        "arch": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch"
+      ],
+      "type": "object"
+    },
+    "RemoteRevokeRequest": {
+      "additionalProperties": false,
+      "description": "`remote.host.revoke`: invalidate one pairing.",
+      "properties": {
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "remote.host.revoke"
+        },
+        "pairing_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "host_id",
+        "pairing_id"
       ],
       "type": "object"
     },
@@ -11800,6 +12351,25 @@
       ],
       "type": "object"
     },
+    "StartOutcome": {
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "The remote daemon answered with compatible protocols.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Nothing was started, or the running daemon is incompatible and was left alone.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "The attempt may or may not have started the daemon; probe before retrying.",
+          "type": "string"
+        }
+      ]
+    },
     "TerminalCreateRequest": {
       "additionalProperties": false,
       "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID; `request_id` is accepted as\nits older name. Without one, every call creates a new terminal.",
@@ -11975,6 +12545,50 @@
         "terminal_id"
       ],
       "type": "object"
+    },
+    "TokenReference": {
+      "description": "Where the pairing token lives. The daemon stores the reference only.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The name of an environment variable in the daemon's environment.",
+          "properties": {
+            "env": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "env"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A macOS Keychain generic password.",
+          "properties": {
+            "keychain": {
+              "additionalProperties": false,
+              "properties": {
+                "account": {
+                  "type": "string"
+                },
+                "service": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "service",
+                "account"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "keychain"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "WindowCloseRequest": {
       "additionalProperties": false,
@@ -13962,6 +14576,55 @@
       "name": "resources.registry.accept",
       "request": "ResourcesRegistryAcceptRequest",
       "response": "HostResourcesState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.list",
+      "request": "RemoteHostListRequest",
+      "response": "RemoteHosts",
+      "tier": "query"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.add",
+      "request": "RemoteHostAddRequest",
+      "response": "RemoteHostReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.remove",
+      "request": "RemoteHostRemoveRequest",
+      "response": "RemoteHostRemoved",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.probe",
+      "request": "RemoteHostProbeRequest",
+      "response": "RemoteHostProbe",
+      "tier": "query"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.pair",
+      "request": "RemotePairRequest",
+      "response": "RemotePairingReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.revoke",
+      "request": "RemoteRevokeRequest",
+      "response": "RemotePairingReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "remote",
+      "name": "remote.host.start",
+      "request": "RemoteHostStartRequest",
+      "response": "RemoteHostStart",
       "tier": "effect_command"
     }
   ]
