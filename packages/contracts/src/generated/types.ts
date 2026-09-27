@@ -336,11 +336,24 @@ export type ContractDefinition =
   | RemotePlatform
   | RemoteRevokeRequest
   | RepositoryAck
+  | RepositoryCloneOutcome
+  | RepositoryCloneRequest
+  | RepositoryCloned
+  | RepositoryCoverage
+  | RepositoryCoverageRequest
+  | RepositoryPublishOutcome
+  | RepositoryPublishPreview
+  | RepositoryPublishPreviewRequest
+  | RepositoryPublishRequest
+  | RepositoryPublishStep
+  | RepositoryPublishVerdict
+  | RepositoryPublished
   | RepositoryRebindCatalog
   | RepositoryRebindEntry
   | RepositoryRebindListRequest
   | RepositoryRebindRequest
   | RepositoryRecord
+  | RepositoryTransport
   | ResourceClaim
   | ResourcesClaimResolveRequest
   | ResourcesInspectRequest
@@ -476,6 +489,7 @@ export type ContractDefinition =
   | TerminalRetireRequest
   | TerminalStopRequest
   | TokenReference
+  | TransportCoverage
   | UsageCostMeasure
   | UsageGroup
   | UsageGroupBy
@@ -1041,6 +1055,27 @@ export type TokenReference =
       }
     }
 export type StartOutcome = 'running' | 'failed' | 'unknown'
+/**
+ * How a clone ended.
+ */
+export type RepositoryCloneOutcome = 'registered' | 'cloned_not_registered'
+/**
+ * A way of naming a Git remote.
+ */
+export type RepositoryTransport =
+  ('https' | 'ssh' | 'file') | 'scp_like' | 'http' | 'git_daemon' | 'remote_helper' | 'local_path'
+/**
+ * How a publish ended.
+ */
+export type RepositoryPublishOutcome = 'published' | 'not_pushed'
+/**
+ * One step `repository.publish` takes, in order.
+ */
+export type RepositoryPublishStep = 'initialize' | 'commit' | 'add_remote' | 'push' | 'verify'
+/**
+ * Whether publish may run.
+ */
+export type RepositoryPublishVerdict = ('ready' | 'blocked') | 'needs_initial_commit'
 /**
  * What a retention candidate is.
  */
@@ -5587,6 +5622,214 @@ export interface RepositoryRecord {
   [k: string]: unknown
 }
 /**
+ * `repository.clone`: clone `url` into a new folder and register it as a project.
+ */
+export interface RepositoryCloneRequest {
+  /**
+   * The branch to check out; the remote's default branch when absent.
+   */
+  branch?: string | null
+  /**
+   * The absolute path of the folder to create. Its parent must exist and the
+   * path itself must not; ADE never clones into an existing path.
+   */
+  destination: string
+  op: 'repository.clone'
+  operation_id: string
+  /**
+   * An `https://`, `ssh://`, `user@host:path` or `file://` URL without a password.
+   */
+  url: string
+}
+/**
+ * The `repository.clone` reply.
+ */
+export interface RepositoryCloned {
+  /**
+   * The checked-out branch; absent when HEAD is detached.
+   */
+  branch: string | null
+  /**
+   * The canonical path of the new clone.
+   */
+  destination: string
+  /**
+   * The checked-out commit; absent when the remote repository is empty.
+   */
+  head: string | null
+  outcome: RepositoryCloneOutcome
+  registration_error: string | null
+  /**
+   * The `repository_cloned` type tag.
+   */
+  type: 'repository_cloned'
+  url: string
+  /**
+   * The registered project; absent when `outcome` is `cloned_not_registered`.
+   */
+  workspace: WorkspaceRecord | null
+  [k: string]: unknown
+}
+/**
+ * The `repository.coverage` reply: ordinary Git only, with named coverage (D08).
+ */
+export interface RepositoryCoverage {
+  /**
+   * How authentication happens.
+   */
+  credentials: string
+  /**
+   * Work ADE does not do for clone or publish.
+   */
+  excluded: string[]
+  /**
+   * Always false: no forge API is called.
+   */
+  forge_apis: boolean
+  transports: TransportCoverage[]
+  /**
+   * The `repository_coverage` type tag.
+   */
+  type: 'repository_coverage'
+  [k: string]: unknown
+}
+/**
+ * Whether ADE accepts one transport, and why.
+ */
+export interface TransportCoverage {
+  example: string
+  note: string
+  supported: boolean
+  transport: RepositoryTransport
+  [k: string]: unknown
+}
+/**
+ * `repository.coverage`: the transports and forge behaviour ADE supports (D08).
+ */
+export interface RepositoryCoverageRequest {
+  op: 'repository.coverage'
+}
+/**
+ * The `repository.publish.preview` reply.
+ */
+export interface RepositoryPublishPreview {
+  blocked_reasons: string[]
+  /**
+   * The branch that would be pushed.
+   */
+  branch: string | null
+  /**
+   * The canonical folder.
+   */
+  path: string
+  remote: string
+  /**
+   * The steps publish would take, in order.
+   */
+  steps: RepositoryPublishStep[]
+  /**
+   * The `repository_publish_preview` type tag.
+   */
+  type: 'repository_publish_preview'
+  /**
+   * Uncommitted changes that publish would leave out of the push.
+   */
+  uncommitted_changes: boolean
+  verdict: RepositoryPublishVerdict
+  [k: string]: unknown
+}
+/**
+ * `repository.publish.preview`: what `repository.publish` would do, or why it refuses.
+ */
+export interface RepositoryPublishPreviewRequest {
+  /**
+   * Allows an initial commit of every non-ignored file when the repository
+   * has no commits yet.
+   */
+  create_initial_commit?: boolean
+  /**
+   * The branch a new repository starts on; `main` when absent. Ignored when
+   * the folder already has a current branch.
+   */
+  initial_branch?: string | null
+  op: 'repository.publish.preview'
+  /**
+   * The folder to publish; it must be a Git repository's top level or not
+   * belong to any repository.
+   */
+  path: string
+  /**
+   * The remote to add or reuse; `origin` when absent.
+   */
+  remote?: string | null
+  url: string
+}
+/**
+ * `repository.publish`: initialise if needed, add the remote and push the current branch.
+ */
+export interface RepositoryPublishRequest {
+  /**
+   * One line of at most 200 characters; `Initial commit` when absent.
+   */
+  commit_message?: string | null
+  /**
+   * Required when the repository has no commits: stage every non-ignored
+   * file and commit it with `commit_message`. Git's own author identity is used.
+   */
+  create_initial_commit?: boolean
+  initial_branch?: string | null
+  op: 'repository.publish'
+  operation_id: string
+  path: string
+  remote?: string | null
+  /**
+   * An `https://`, `ssh://`, `user@host:path` or `file://` URL without a
+   * password. The remote repository must already exist; ADE does not create it.
+   */
+  url: string
+}
+/**
+ * The `repository.publish` reply.
+ */
+export interface RepositoryPublished {
+  branch: string
+  /**
+   * The local commit that was, or would have been, pushed.
+   */
+  commit: string | null
+  failed_step: RepositoryPublishStep | null
+  failure: string | null
+  /**
+   * The initial commit this publish recorded.
+   */
+  initial_commit: string | null
+  /**
+   * This publish ran `git init`.
+   */
+  initialized: boolean
+  outcome: RepositoryPublishOutcome
+  path: string
+  /**
+   * The remote branch was read back at `commit`.
+   */
+  pushed: boolean
+  remote: string
+  /**
+   * This publish added the remote.
+   */
+  remote_added: boolean
+  /**
+   * The `repository_published` type tag.
+   */
+  type: 'repository_published'
+  /**
+   * Uncommitted changes that were not part of the push.
+   */
+  uncommitted_changes: boolean
+  url: string
+  [k: string]: unknown
+}
+/**
  * The `repository.rebind.list` reply.
  */
 export interface RepositoryRebindCatalog {
@@ -8053,7 +8296,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8239,6 +8482,10 @@ export interface RequestByOperation {
   "browser.recording.start": BrowserRecordingStartRequest
   "browser.recording.stop": BrowserRecordingStopRequest
   "browser.recording.get": BrowserRecordingGetRequest
+  "repository.coverage": RepositoryCoverageRequest
+  "repository.clone": RepositoryCloneRequest
+  "repository.publish.preview": RepositoryPublishPreviewRequest
+  "repository.publish": RepositoryPublishRequest
 }
 
 export interface ResponseByOperation {
@@ -8425,6 +8672,10 @@ export interface ResponseByOperation {
   "browser.recording.start": BrowserRecording
   "browser.recording.stop": BrowserRecording
   "browser.recording.get": BrowserRecording
+  "repository.coverage": RepositoryCoverage
+  "repository.clone": RepositoryCloned
+  "repository.publish.preview": RepositoryPublishPreview
+  "repository.publish": RepositoryPublished
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

@@ -10,6 +10,7 @@ import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
+import { repositoryUsage, runRepositoryCommand } from './commands/repository.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { remoteConnectUsage, runRemoteConnectCommand } from './commands/remote-connect.js'
@@ -83,6 +84,7 @@ const usage = [
   serviceUsage,
   gitUsage,
   checkpointUsage,
+  repositoryUsage,
   listenerUsage,
   mcpUsage,
   remoteUsage,
@@ -220,6 +222,7 @@ const commandAreas = [
   runServiceCommand,
   runGitCommand,
   runCheckpointCommand,
+  runRepositoryCommand,
   runListenerCommand,
   runMcpCommand,
   runRemoteCommand,
