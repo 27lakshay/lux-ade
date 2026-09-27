@@ -9,6 +9,22 @@ files:
   - package.json
 asar: true
 npmRebuild: false
+# Electron fuses, flipped in the packaged binary. Two stay on because the app needs them:
+# runAsNode lets the packaged Electron binary run ADE's bundled Node tooling (the CLI and provider
+# workers, with ELECTRON_RUN_AS_NODE); enableNodeCliInspectArguments lets Playwright drive the
+# packaged app in e2e/packaged. Revisit both when the release build gets its own Node and a separate
+# test flavour.
+electronFuses:
+  runAsNode: true
+  enableNodeCliInspectArguments: true
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+  # Flipping fuses invalidates the binary's signature; an unsigned Apple Silicon build needs a fresh
+  # ad-hoc one to launch.
+  resetAdHocDarwinSignature: true
 mac:
   target: dir
   identity: null
