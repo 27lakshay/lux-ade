@@ -1932,6 +1932,575 @@
       ],
       "type": "object"
     },
+    "CheckpointArea": {
+      "description": "Which snapshot a change belongs to.",
+      "enum": [
+        "worktree",
+        "index"
+      ],
+      "type": "string"
+    },
+    "CheckpointChangeKind": {
+      "description": "How restoring one path changes it.",
+      "oneOf": [
+        {
+          "enum": [
+            "added",
+            "modified",
+            "deleted"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "type_changed",
+          "description": "The file type or mode changes, such as a file becoming a symbolic link.",
+          "type": "string"
+        }
+      ]
+    },
+    "CheckpointCoverage": {
+      "description": "What a checkpoint holds and what it leaves out.",
+      "properties": {
+        "files": {
+          "description": "Files in the working-tree snapshot, including symbolic links. Binary\nfiles are stored byte for byte.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ignored_entries": {
+          "description": "Ignored entries left out. An ignored directory counts once.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "not_covered": {
+          "description": "The categories this checkpoint never covers.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "submodules": {
+          "description": "Submodules and nested repositories, recorded by commit only; their\ncontents are not captured.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "symlinks": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "untracked_files": {
+          "description": "Untracked, non-ignored files included in the snapshot.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "files",
+        "untracked_files",
+        "symlinks",
+        "submodules",
+        "ignored_entries",
+        "not_covered"
+      ],
+      "type": "object"
+    },
+    "CheckpointCreateRequest": {
+      "additionalProperties": false,
+      "description": "`checkpoint.create`: record the workspace's working tree and index.",
+      "properties": {
+        "label": {
+          "description": "A short note shown in lists; at most 200 characters on one line.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "checkpoint.create"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "CheckpointCreated": {
+      "properties": {
+        "checkpoint": {
+          "$ref": "#/$defs/CheckpointSummary"
+        },
+        "type": {
+          "description": "The `checkpoint_created` type tag.",
+          "enum": [
+            "checkpoint_created"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "checkpoint"
+      ],
+      "type": "object"
+    },
+    "CheckpointDeleteRequest": {
+      "additionalProperties": false,
+      "description": "`checkpoint.delete`: remove a checkpoint's ref. Its objects become\nunreachable and Git's own garbage collection reclaims them later.",
+      "properties": {
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "expected_commit": {
+          "description": "The checkpoint's `commit`; delete refuses when the ref points elsewhere.",
+          "type": "string"
+        },
+        "op": {
+          "const": "checkpoint.delete"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "workspace_id",
+        "checkpoint_id",
+        "expected_commit"
+      ],
+      "type": "object"
+    },
+    "CheckpointDeleted": {
+      "properties": {
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "ref_name": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `checkpoint_deleted` type tag.",
+          "enum": [
+            "checkpoint_deleted"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "checkpoint_id",
+        "ref_name"
+      ],
+      "type": "object"
+    },
+    "CheckpointKind": {
+      "description": "Why a checkpoint exists.",
+      "oneOf": [
+        {
+          "const": "manual",
+          "description": "Requested through `checkpoint.create`.",
+          "type": "string"
+        },
+        {
+          "const": "safety",
+          "description": "Saved automatically by `checkpoint.restore` before it changed anything.",
+          "type": "string"
+        }
+      ]
+    },
+    "CheckpointList": {
+      "properties": {
+        "checkpoints": {
+          "description": "Newest first.",
+          "items": {
+            "$ref": "#/$defs/CheckpointSummary"
+          },
+          "type": "array"
+        },
+        "problems": {
+          "description": "Refs under the workspace's namespace that do not parse as checkpoints.",
+          "items": {
+            "$ref": "#/$defs/CheckpointProblem"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `checkpoints` type tag.",
+          "enum": [
+            "checkpoints"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "checkpoints",
+        "problems"
+      ],
+      "type": "object"
+    },
+    "CheckpointListRequest": {
+      "additionalProperties": false,
+      "description": "`checkpoint.list`: the workspace's checkpoints, newest first.",
+      "properties": {
+        "op": {
+          "const": "checkpoint.list"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "CheckpointPathChange": {
+      "description": "One path a restore changes, relative to the workspace root.",
+      "properties": {
+        "area": {
+          "$ref": "#/$defs/CheckpointArea"
+        },
+        "kind": {
+          "$ref": "#/$defs/CheckpointChangeKind"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "area",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "CheckpointProblem": {
+      "description": "A checkpoint ref that ADE cannot read as a checkpoint.",
+      "properties": {
+        "problem": {
+          "type": "string"
+        },
+        "ref_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref_name",
+        "problem"
+      ],
+      "type": "object"
+    },
+    "CheckpointRestoreOutcome": {
+      "description": "How a restore ended.",
+      "oneOf": [
+        {
+          "const": "unchanged",
+          "description": "Nothing needed to change.",
+          "type": "string"
+        },
+        {
+          "const": "restored",
+          "description": "The working tree and index were written and verified against the checkpoint.",
+          "type": "string"
+        },
+        {
+          "const": "partial",
+          "description": "Some writes happened but the result does not match the checkpoint;\n`problems` says what. The safety checkpoint holds the prior state.",
+          "type": "string"
+        }
+      ]
+    },
+    "CheckpointRestorePreview": {
+      "properties": {
+        "blocked_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/CheckpointPathChange"
+          },
+          "type": "array"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/CheckpointSummary"
+        },
+        "head_changed": {
+          "description": "HEAD moved since the checkpoint. Restore keeps the current HEAD.",
+          "type": "boolean"
+        },
+        "ignored_overwritten": {
+          "description": "Paths the checkpoint would write over ignored or excluded files on disk.\nRestore refuses while any exist, because no checkpoint covers them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "state_token": {
+          "description": "Pass as `expected_state` to `checkpoint.restore`.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The `checkpoint_restore_preview` type tag.",
+          "enum": [
+            "checkpoint_restore_preview"
+          ],
+          "type": "string"
+        },
+        "uncommitted_overwritten": {
+          "description": "Changed paths whose current content differs from HEAD. The safety\ncheckpoint keeps them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "verdict": {
+          "$ref": "#/$defs/CheckpointRestoreVerdict"
+        }
+      },
+      "required": [
+        "type",
+        "checkpoint",
+        "verdict",
+        "state_token",
+        "changes",
+        "uncommitted_overwritten",
+        "ignored_overwritten",
+        "head_changed",
+        "blocked_reasons"
+      ],
+      "type": "object"
+    },
+    "CheckpointRestorePreviewRequest": {
+      "additionalProperties": false,
+      "description": "`checkpoint.restore.preview`: what a restore would change, and whether it may run.",
+      "properties": {
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "checkpoint.restore.preview"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "checkpoint_id"
+      ],
+      "type": "object"
+    },
+    "CheckpointRestoreRequest": {
+      "additionalProperties": false,
+      "description": "`checkpoint.restore`: make the working tree and index match a checkpoint.",
+      "properties": {
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "confirm_overwrite": {
+          "default": false,
+          "description": "Required when the preview listed `uncommitted_overwritten` paths.",
+          "type": "boolean"
+        },
+        "expected_state": {
+          "description": "The `state_token` from `checkpoint.restore.preview`. Restore refuses when\nthe workspace or the checkpoint changed since that preview.",
+          "type": "string"
+        },
+        "op": {
+          "const": "checkpoint.restore"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "workspace_id",
+        "checkpoint_id",
+        "expected_state"
+      ],
+      "type": "object"
+    },
+    "CheckpointRestoreVerdict": {
+      "description": "Whether a restore may run now.",
+      "oneOf": [
+        {
+          "const": "unchanged",
+          "description": "The workspace already matches the checkpoint.",
+          "type": "string"
+        },
+        {
+          "const": "ready",
+          "description": "Restore may run with this preview's `state_token`.",
+          "type": "string"
+        },
+        {
+          "const": "needs_confirmation",
+          "description": "Restore replaces uncommitted work; it needs `confirm_overwrite`.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Restore refuses; `blocked_reasons` says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "CheckpointRestored": {
+      "properties": {
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/CheckpointPathChange"
+          },
+          "type": "array"
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CheckpointRestoreOutcome"
+        },
+        "problems": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "safety_checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckpointSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The state saved before any write; absent when nothing changed."
+        },
+        "type": {
+          "description": "The `checkpoint_restored` type tag.",
+          "enum": [
+            "checkpoint_restored"
+          ],
+          "type": "string"
+        },
+        "verified": {
+          "description": "Whether a fresh snapshot after the restore matched the checkpoint.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "checkpoint_id",
+        "outcome",
+        "safety_checkpoint",
+        "changes",
+        "verified",
+        "problems"
+      ],
+      "type": "object"
+    },
+    "CheckpointSummary": {
+      "description": "One checkpoint as Git records it.",
+      "properties": {
+        "branch": {
+          "description": "The branch HEAD named; absent when detached or unborn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "commit": {
+          "description": "The checkpoint commit.",
+          "type": "string"
+        },
+        "coverage": {
+          "$ref": "#/$defs/CheckpointCoverage"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "head": {
+          "description": "HEAD when the checkpoint was made; absent on an unborn branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index_tree": {
+          "description": "The tree of the index snapshot.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/CheckpointKind"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ref_name": {
+          "description": "The private ref that keeps the checkpoint.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        },
+        "worktree_tree": {
+          "description": "The tree of the working-tree snapshot.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "checkpoint_id",
+        "workspace_id",
+        "kind",
+        "ref_name",
+        "commit",
+        "worktree_tree",
+        "index_tree",
+        "head",
+        "branch",
+        "created_at",
+        "coverage"
+      ],
+      "type": "object"
+    },
     "ChildDelegated": {
       "description": "The `orchestration.delegate` reply: the child is admitted and its task is\nqueued. It says nothing about completion; wait for that.",
       "properties": {
@@ -14505,6 +15074,41 @@
       "name": "resources.registry.accept",
       "request": "ResourcesRegistryAcceptRequest",
       "response": "HostResourcesState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "checkpoints",
+      "name": "checkpoint.create",
+      "request": "CheckpointCreateRequest",
+      "response": "CheckpointCreated",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "checkpoints",
+      "name": "checkpoint.list",
+      "request": "CheckpointListRequest",
+      "response": "CheckpointList",
+      "tier": "query"
+    },
+    {
+      "domain": "checkpoints",
+      "name": "checkpoint.restore.preview",
+      "request": "CheckpointRestorePreviewRequest",
+      "response": "CheckpointRestorePreview",
+      "tier": "query"
+    },
+    {
+      "domain": "checkpoints",
+      "name": "checkpoint.restore",
+      "request": "CheckpointRestoreRequest",
+      "response": "CheckpointRestored",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "checkpoints",
+      "name": "checkpoint.delete",
+      "request": "CheckpointDeleteRequest",
+      "response": "CheckpointDeleted",
       "tier": "effect_command"
     }
   ]
