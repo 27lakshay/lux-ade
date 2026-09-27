@@ -36,12 +36,14 @@ export type ContractDefinition =
   | AttachmentReclaimPreviewReply
   | AttachmentReclaimPreviewRequest
   | AttachmentReply
+  | BranchPolicy
   | CatalogFrame
   | CatalogGetRequest
   | Catalogue
   | ChildTranscriptPage
   | ClaudeIdentity
   | CodexIdentity
+  | Config
   | Conversation
   | ConversationChanged
   | ConversationCreateRequest
@@ -141,6 +143,7 @@ export type ContractDefinition =
   | ServiceReply
   | ServiceStartRequest
   | ServiceStopRequest
+  | SetupState
   | TerminalCreateRequest
   | TerminalCreated
   | TerminalOperation
@@ -158,6 +161,29 @@ export type ContractDefinition =
   | WorkspaceRebindListRequest
   | WorkspaceRebindRequest
   | WorkspaceRecord
+  | WorktreeAdoptRequest
+  | WorktreeConfigInput
+  | WorktreeConfigureRequest
+  | WorktreeGetRequest
+  | WorktreeItem
+  | WorktreeOperation
+  | WorktreeOperationReply
+  | WorktreeOperationRequest
+  | WorktreeOperationStatus
+  | WorktreeRebindCandidate
+  | WorktreeRebindCatalog
+  | WorktreeRebindListRequest
+  | WorktreeRebindRequest
+  | WorktreeRefreshRequest
+  | WorktreeRemoveRequest
+  | WorktreeRepository
+  | WorktreeRepositoryRequest
+  | WorktreeState
+  | WorktreeSwitchRequest
+/**
+ * What `worktree.remove` does with the removed tree's branch.
+ */
+export type BranchPolicy = 'keep' | 'merged'
 /**
  * Whether a service's recorded run is live in the current runtime.
  */
@@ -188,6 +214,14 @@ export type RecoveryStatus = 'healthy' | 'degraded' | 'corrupt'
  * What one diff line is.
  */
 export type ReviewDiffRowKind = 'hunk' | 'context' | 'added' | 'removed' | 'meta'
+/**
+ * Whether a tree is ready for an Agent, from its latest `worktree.switch`.
+ */
+export type SetupState = 'ready' | 'preparing' | 'interrupted' | 'failed'
+/**
+ * A lifecycle operation's status in its ledger.
+ */
+export type WorktreeOperationStatus = ('running' | 'succeeded' | 'failed') | 'partial' | 'interrupted'
 
 /**
  * Profile-owned account metadata. Credentials remain with the native provider.
@@ -746,6 +780,19 @@ export interface ChildTranscriptPage {
    */
   type: 'child_transcript'
   [k: string]: unknown
+}
+/**
+ * A repository's stored lifecycle configuration.
+ */
+export interface Config {
+  /**
+   * Parent directory for new trees; the repository's parent when absent.
+   */
+  directory: string | null
+  /**
+   * Git command timeout in seconds.
+   */
+  timeout_seconds: number
 }
 /**
  * The `conversation_changed` feed frame.
@@ -2154,8 +2201,276 @@ export interface WorkspaceRebindRequest {
   path: string
   workspace_id: string
 }
+/**
+ * `worktree.adopt`: take ADE removal authority over an existing linked tree.
+ */
+export interface WorktreeAdoptRequest {
+  /**
+   * Must equal the canonical form of `path`. Optional in Rust only so a
+   * missing value keeps the daemon's own error message.
+   */
+  confirm_path: string
+  op: 'worktree.adopt'
+  path: string
+  repository_id: string
+}
+/**
+ * The configuration a caller sends. Absent fields take their defaults; the
+ * stored form is [`Config`].
+ */
+export interface WorktreeConfigInput {
+  /**
+   * Parent directory for new trees; the repository's parent when absent.
+   */
+  directory?: string | null
+  /**
+   * Git command timeout; the daemon accepts 5 to 300.
+   */
+  timeout_seconds?: number
+}
+/**
+ * `worktree.configure`: replace a repository's lifecycle configuration.
+ */
+export interface WorktreeConfigureRequest {
+  config: WorktreeConfigInput
+  op: 'worktree.configure'
+  repository_id: string
+}
+/**
+ * `worktree.get`: read a registered repository's lifecycle state.
+ */
+export interface WorktreeGetRequest {
+  op: 'worktree.get'
+  repository_id: string
+}
+/**
+ * One entry of `git worktree list`, with ADE's ownership and setup state.
+ */
+export interface WorktreeItem {
+  /**
+   * Whether ADE holds removal authority over this tree.
+   */
+  ade_owned: boolean
+  bare?: boolean | null
+  branch?: string | null
+  detached?: boolean | null
+  lock_reason?: string | null
+  locked?: boolean | null
+  path: string
+  prunable?: boolean | null
+  setup_state: SetupState
+  [k: string]: unknown
+}
+/**
+ * One lifecycle operation from the ledger. The daemon stores this shape.
+ */
+export interface WorktreeOperation {
+  binding_generation: number
+  code?: string | null
+  error: string | null
+  finished_at: number | null
+  /**
+   * The caller's operation ID.
+   */
+  id: string
+  recovery?: string | null
+  repository_id: string
+  /**
+   * The request as the caller sent it, including `op`.
+   */
+  request: unknown
+  /**
+   * Command output and its `value`; `null` until the command runs.
+   * `worktree_state` omits `stdout` and `stderr`.
+   */
+  result: unknown
+  started_at: number
+  status: WorktreeOperationStatus
+  worktree_path: string | null
+  [k: string]: unknown
+}
+/**
+ * The `worktree.operation` reply.
+ */
+export interface WorktreeOperationReply {
+  operation: WorktreeOperation
+  /**
+   * The `worktree_operation` type tag.
+   */
+  type: 'worktree_operation'
+  [k: string]: unknown
+}
+/**
+ * `worktree.operation`: read one lifecycle operation receipt in full.
+ */
+export interface WorktreeOperationRequest {
+  op: 'worktree.operation'
+  /**
+   * The operation's ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  repository_id: string
+}
+/**
+ * One lifecycle repository in the rebind catalog.
+ */
+export interface WorktreeRebindCandidate {
+  binding_generation: number
+  common_dir: string
+  id: string
+  needs_rebind: boolean
+  /**
+   * Whether the saved source identity survives, so a rebind can be verified.
+   */
+  rebindable: boolean
+  root: string
+  [k: string]: unknown
+}
+/**
+ * The `worktree.rebind.list` reply.
+ */
+export interface WorktreeRebindCatalog {
+  repositories: WorktreeRebindCandidate[]
+  /**
+   * The `worktree_rebind_catalog` type tag.
+   */
+  type: 'worktree_rebind_catalog'
+  [k: string]: unknown
+}
+/**
+ * `worktree.rebind.list`: list lifecycle repositories and whether each needs a rebind.
+ */
+export interface WorktreeRebindListRequest {
+  op: 'worktree.rebind.list'
+}
+/**
+ * `worktree.rebind`: bind a restored lifecycle repository to a verified checkout.
+ */
+export interface WorktreeRebindRequest {
+  op: 'worktree.rebind'
+  path: string
+  repository_id: string
+}
+/**
+ * `worktree.refresh`: re-read the Git worktree listing under the repository lock.
+ */
+export interface WorktreeRefreshRequest {
+  op: 'worktree.refresh'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  repository_id: string
+}
+/**
+ * `worktree.remove`: remove a clean ADE-owned linked tree.
+ */
+export interface WorktreeRemoveRequest {
+  confirm_path?: string | null
+  /**
+   * Branch policy; the daemon uses `keep` when it is absent. The daemon
+   * reads the raw string so an unknown policy keeps its own error message.
+   */
+  delete_branch?: BranchPolicy | null
+  /**
+   * Forced removal is unavailable; `true` is rejected.
+   */
+  force?: boolean | null
+  op: 'worktree.remove'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  path: string
+  repository_id: string
+}
+/**
+ * A registered lifecycle repository. Device and inode identities are decimal strings.
+ */
+export interface WorktreeRepository {
+  binding_generation: number
+  common_device: string | null
+  common_dir: string
+  common_inode: string | null
+  config: Config
+  id: string
+  needs_rebind: boolean
+  refreshed_at: number | null
+  /**
+   * The primary checkout, where lifecycle commands run.
+   */
+  root: string
+  root_device: string | null
+  root_inode: string | null
+  source_common_device: string | null
+  /**
+   * The common directory before the first rebind.
+   */
+  source_common_dir: string | null
+  source_common_inode: string | null
+  source_root_device: string | null
+  source_root_inode: string | null
+  [k: string]: unknown
+}
+/**
+ * `worktree.repository`: register the Git repository containing `path`, or
+ * return the one already registered for its common directory.
+ */
+export interface WorktreeRepositoryRequest {
+  op: 'worktree.repository'
+  path: string
+}
+/**
+ * A repository's lifecycle state: the reply to every command except
+ * `worktree.operation` and `worktree.rebind.list`.
+ */
+export interface WorktreeState {
+  /**
+   * Whether a lifecycle or review operation holds the repository.
+   */
+  busy: boolean
+  /**
+   * The newest 100 operations, newest first, without command output.
+   */
+  operations: WorktreeOperation[]
+  repository: WorktreeRepository
+  /**
+   * The `worktree_state` type tag.
+   */
+  type: 'worktree_state'
+  /**
+   * The cached Git listing, primary checkout first.
+   */
+  worktrees: WorktreeItem[]
+  [k: string]: unknown
+}
+/**
+ * `worktree.switch`: check out `target` in a linked tree, creating the branch
+ * when `create` is true.
+ */
+export interface WorktreeSwitchRequest {
+  /**
+   * Start point for a new branch; the daemon uses `HEAD` when it is absent.
+   */
+  base?: string | null
+  create?: boolean | null
+  op: 'worktree.switch'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  /**
+   * Absolute path for a new tree, directly inside the configured directory.
+   */
+  path?: string | null
+  repository_id: string
+  /**
+   * A branch name, or the path of an existing linked tree.
+   */
+  target: string
+}
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.feedback.search"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -2228,6 +2543,16 @@ export interface RequestByOperation {
   "review.commit": ReviewCommitRequest
   "review.operation": ReviewOperationRequest
   "review.feedback.search": ReviewFeedbackSearchRequest
+  "worktree.repository": WorktreeRepositoryRequest
+  "worktree.get": WorktreeGetRequest
+  "worktree.switch": WorktreeSwitchRequest
+  "worktree.adopt": WorktreeAdoptRequest
+  "worktree.remove": WorktreeRemoveRequest
+  "worktree.refresh": WorktreeRefreshRequest
+  "worktree.configure": WorktreeConfigureRequest
+  "worktree.operation": WorktreeOperationRequest
+  "worktree.rebind": WorktreeRebindRequest
+  "worktree.rebind.list": WorktreeRebindListRequest
 }
 
 export interface ResponseByOperation {
@@ -2301,6 +2626,16 @@ export interface ResponseByOperation {
   "review.commit": ReviewOperationReply
   "review.operation": ReviewOperationReply
   "review.feedback.search": ReviewFeedbackSearch
+  "worktree.repository": WorktreeState
+  "worktree.get": WorktreeState
+  "worktree.switch": WorktreeState
+  "worktree.adopt": WorktreeState
+  "worktree.remove": WorktreeState
+  "worktree.refresh": WorktreeState
+  "worktree.configure": WorktreeState
+  "worktree.operation": WorktreeOperationReply
+  "worktree.rebind": WorktreeState
+  "worktree.rebind.list": WorktreeRebindCatalog
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged

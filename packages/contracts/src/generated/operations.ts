@@ -72,6 +72,16 @@ export const operations = {
   "review.commit": { tier: "effect_command", domain: "review", request: "ReviewCommitRequest", response: "ReviewOperationReply" },
   "review.operation": { tier: "query", domain: "review", request: "ReviewOperationRequest", response: "ReviewOperationReply" },
   "review.feedback.search": { tier: "query", domain: "review", request: "ReviewFeedbackSearchRequest", response: "ReviewFeedbackSearch" },
+  "worktree.repository": { tier: "idempotent_command", domain: "worktrees", request: "WorktreeRepositoryRequest", response: "WorktreeState" },
+  "worktree.get": { tier: "query", domain: "worktrees", request: "WorktreeGetRequest", response: "WorktreeState" },
+  "worktree.switch": { tier: "effect_command", domain: "worktrees", request: "WorktreeSwitchRequest", response: "WorktreeState" },
+  "worktree.adopt": { tier: "effect_command", domain: "worktrees", request: "WorktreeAdoptRequest", response: "WorktreeState" },
+  "worktree.remove": { tier: "effect_command", domain: "worktrees", request: "WorktreeRemoveRequest", response: "WorktreeState" },
+  "worktree.refresh": { tier: "effect_command", domain: "worktrees", request: "WorktreeRefreshRequest", response: "WorktreeState" },
+  "worktree.configure": { tier: "idempotent_command", domain: "worktrees", request: "WorktreeConfigureRequest", response: "WorktreeState" },
+  "worktree.operation": { tier: "query", domain: "worktrees", request: "WorktreeOperationRequest", response: "WorktreeOperationReply" },
+  "worktree.rebind": { tier: "idempotent_command", domain: "worktrees", request: "WorktreeRebindRequest", response: "WorktreeState" },
+  "worktree.rebind.list": { tier: "query", domain: "worktrees", request: "WorktreeRebindListRequest", response: "WorktreeRebindCatalog" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

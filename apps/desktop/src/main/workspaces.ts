@@ -32,7 +32,7 @@ export function registerWorkspaceIpc(): void {
     const generation = getClientGeneration()
     if (!endpoint || isSwitching() || getClient().getState().status !== 'connected') throw new Error('Profile daemon is unavailable')
     const [lifecycle, repositories, workspaces] = await Promise.all([
-      requestDaemon(endpoint, 'worktree.rebind.list'),
+      dailyUseCommand(endpoint, { op: 'worktree.rebind.list' }),
       dailyUseCommand(endpoint, { op: 'repository.rebind.list' }),
       dailyUseCommand(endpoint, { op: 'workspace.rebind.list' }),
     ])
@@ -64,7 +64,7 @@ export function registerWorkspaceIpc(): void {
         throw new Error('Profile changed while checking the replacement folder')
       }
       const result = kind === 'worktree'
-        ? await requestDaemon(endpoint, 'worktree.rebind', { repository_id: id, path: folder })
+        ? await dailyUseCommand(endpoint, { op: 'worktree.rebind', repository_id: id, path: folder })
         : kind === 'repository'
           ? await dailyUseCommand(endpoint, { op: 'repository.rebind', repository_id: id, path: folder })
           : await dailyUseCommand(endpoint, { op: 'workspace.rebind', workspace_id: id, path: folder })

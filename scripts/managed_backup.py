@@ -41,7 +41,7 @@ LIMITATIONS = [
 DATABASES = {
     "sessions.sqlite": (1, 17),
     "sessions.review.sqlite3": (0, 0),
-    "sessions.worktrees/lifecycle.sqlite3": (1, 3),
+    "sessions.worktrees/lifecycle.sqlite3": (1, 4),
 }
 MANIFESTS = {
     "sessions.worktrees/empty.toml": 1024 * 1024,
@@ -405,7 +405,10 @@ def restore(backup, target):
                     connection.execute("UPDATE repositories SET data=? WHERE id=?",
                         (json.dumps(record, separators=(",", ":")), repository_id))
                 connection.execute("DELETE FROM owned")
-                for operation_id, encoded in connection.execute("SELECT id,data FROM operations").fetchall():
+                # Schema 4 renamed the lifecycle ledger to jobs; operations now holds receipts.
+                version = connection.execute("PRAGMA user_version").fetchone()[0]
+                ledger = "jobs" if version >= 4 else "operations"
+                for operation_id, encoded in connection.execute(f"SELECT id,data FROM {ledger}").fetchall():
                     record = strict_json(encoded)
                     if record.get("status") == "running":
                         record["status"] = "interrupted"
@@ -413,7 +416,7 @@ def restore(backup, target):
                         record["code"] = "restored_without_runtime_owner"
                         record["recovery"] = "inspect_repository_before_retry"
                         record["finished_at"] = int(time.time() * 1000)
-                        connection.execute("UPDATE operations SET data=? WHERE id=?",
+                        connection.execute(f"UPDATE {ledger} SET data=? WHERE id=?",
                             (json.dumps(record, separators=(",", ":")), operation_id))
                 connection.commit()
             finally:

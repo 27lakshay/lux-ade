@@ -1,10 +1,19 @@
 //! Git worktree lifecycle operations. No shell aliases, editor launch, or provisioning policy.
 //! Commands run off the client/Conversation path; intent survives daemon failure.
 use crate::model::{new_id, now_ms};
+use crate::receipts::{self, Admission, Status};
+use ade_core::contract::worktrees::{
+    WorktreeAdoptRequest, WorktreeConfigureRequest, WorktreeGetRequest, WorktreeItem,
+    WorktreeOperation as Operation, WorktreeOperationReply, WorktreeOperationRequest,
+    WorktreeOperationStatus as JobStatus, WorktreeRebindCandidate, WorktreeRebindCatalog,
+    WorktreeRebindListRequest, WorktreeRebindRequest, WorktreeRefreshRequest,
+    WorktreeRemoveRequest, WorktreeRepository, WorktreeRepositoryRequest, WorktreeState,
+    WorktreeSwitchRequest,
+};
 use ade_core::error::LifecycleFailure;
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use rusqlite::{Connection, OptionalExtension, params};
-use serde::{Deserialize, Serialize};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -56,32 +65,164 @@ struct Repository {
     cache: Value,
     refreshed_at: Option<i64>,
 }
-#[derive(Clone, Serialize, Deserialize)]
-struct Operation {
-    id: String,
-    repository_id: String,
-    #[serde(default)]
-    binding_generation: i64,
-    request: Value,
-    #[serde(default)]
-    worktree_path: Option<String>,
-    status: String,
-    result: Value,
-    error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    recovery: Option<String>,
-    started_at: i64,
-    finished_at: Option<i64>,
-}
-impl Operation {
-    fn failure(&mut self, error: anyhow::Error) {
-        let envelope = ade_core::error::error_envelope(error);
-        self.error = envelope["message"].as_str().map(str::to_owned);
-        self.code = envelope["code"].as_str().map(str::to_owned);
-        self.recovery = envelope["recovery"].as_str().map(str::to_owned);
+impl Repository {
+    /// The repository as `worktree_state` reports it, without its cached listing.
+    fn contract(&self) -> WorktreeRepository {
+        WorktreeRepository {
+            id: self.id.clone(),
+            root: self.root.clone(),
+            common_dir: self.common_dir.clone(),
+            source_common_dir: self.source_common_dir.clone(),
+            root_device: self.root_device.clone(),
+            root_inode: self.root_inode.clone(),
+            source_root_device: self.source_root_device.clone(),
+            source_root_inode: self.source_root_inode.clone(),
+            common_device: self.common_device.clone(),
+            common_inode: self.common_inode.clone(),
+            source_common_device: self.source_common_device.clone(),
+            source_common_inode: self.source_common_inode.clone(),
+            needs_rebind: self.needs_rebind,
+            binding_generation: self.binding_generation,
+            config: self.config.clone(),
+            refreshed_at: self.refreshed_at,
+        }
     }
+}
+
+/// The lifecycle operation ledger. Schema 4 renamed it from `operations`,
+/// which now holds the shared effect receipts of [`crate::receipts`].
+const LEDGER: &str = "jobs";
+
+fn record_failure(job: &mut Operation, error: anyhow::Error) {
+    let envelope = ade_core::error::error_envelope(error);
+    job.error = envelope["message"].as_str().map(str::to_owned);
+    job.code = envelope["code"].as_str().map(str::to_owned);
+    job.recovery = envelope["recovery"].as_str().map(str::to_owned);
+}
+
+/// Decodes a request into its typed contract. An absent field keeps the
+/// `Missing or invalid <field>` wording of [`field`].
+fn decode<T: DeserializeOwned>(request: &Value) -> Result<T> {
+    T::deserialize(request).map_err(|error| {
+        let text = error.to_string();
+        match text
+            .strip_prefix("missing field `")
+            .and_then(|rest| rest.split('`').next())
+        {
+            // `request_id` is the wording existing callers know for the operation ID.
+            Some("operation_id") => anyhow!("Missing or invalid request_id"),
+            Some(field) => anyhow!("Missing or invalid {field}"),
+            None => anyhow!(text),
+        }
+    })
+}
+
+/// Applies the string limits of [`field`] to a decoded value.
+fn valid<'a>(key: &str, value: &'a str) -> Result<&'a str> {
+    ensure!(
+        !value.is_empty() && value.len() <= 4096 && !value.contains('\0'),
+        "Missing or invalid {key}"
+    );
+    Ok(value)
+}
+
+fn reply<T: Serialize>(value: &T) -> Result<Value> {
+    Ok(serde_json::to_value(value)?)
+}
+
+/// A lifecycle effect command. Each carries a caller-owned operation ID whose
+/// receipt lives in the lifecycle database's `operations` table.
+enum Effect {
+    Switch(WorktreeSwitchRequest),
+    Remove(WorktreeRemoveRequest),
+    Refresh(WorktreeRefreshRequest),
+}
+
+impl Effect {
+    fn decode(op: &str, request: &Value) -> Result<Self> {
+        Ok(match op {
+            "worktree.switch" => Self::Switch(decode(request)?),
+            "worktree.remove" => Self::Remove(decode(request)?),
+            "worktree.refresh" => Self::Refresh(decode(request)?),
+            _ => bail!("Unknown worktree operation"),
+        })
+    }
+    fn repository_id(&self) -> &str {
+        match self {
+            Self::Switch(request) => &request.repository_id,
+            Self::Remove(request) => &request.repository_id,
+            Self::Refresh(request) => &request.repository_id,
+        }
+    }
+    fn operation_id(&self) -> &str {
+        match self {
+            Self::Switch(request) => &request.operation_id,
+            Self::Remove(request) => &request.operation_id,
+            Self::Refresh(request) => &request.operation_id,
+        }
+    }
+    /// The canonical payload the receipt fingerprints. `request_id` and
+    /// `operation_id` both decode to `operation_id`, which the fingerprint drops.
+    fn payload(&self) -> Result<Value> {
+        Ok(match self {
+            Self::Switch(request) => serde_json::to_value(request)?,
+            Self::Remove(request) => serde_json::to_value(request)?,
+            Self::Refresh(request) => serde_json::to_value(request)?,
+        })
+    }
+}
+
+/// Checks an operation ID against its receipt without keeping a new one.
+fn probe(db: &Connection, id: &str, op: &str, payload: &Value) -> Result<Admission> {
+    let tx = Transaction::new_unchecked(db, TransactionBehavior::Deferred)?;
+    // Dropping the transaction rolls back the receipt `begin` adds for a new ID.
+    receipts::begin(&tx, id, op, payload, None, now_ms())
+}
+
+/// The receipt state that matches a ledger status.
+fn receipt_status(status: JobStatus) -> Status {
+    match status {
+        JobStatus::Running => Status::Dispatched,
+        JobStatus::Interrupted => Status::Unknown,
+        JobStatus::Succeeded | JobStatus::Partial | JobStatus::Failed => Status::Settled,
+    }
+}
+
+/// Brings a ledger row's receipt up to date. A row written before schema 4 has
+/// no receipt; it gets one fingerprinted from its stored request, dated from
+/// the row's start, so the same ID and parameters still replay and different
+/// parameters still conflict.
+fn reconcile_receipt(db: &Connection, job: &Operation) -> Result<()> {
+    let stored: Option<String> = db
+        .query_row(
+            "SELECT status FROM operations WHERE id=?1",
+            [&job.id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let current = match stored.as_deref() {
+        None => {
+            let op = job.request["op"].as_str().unwrap_or("");
+            let payload = Effect::decode(op, &job.request)
+                .and_then(|effect| effect.payload())
+                .unwrap_or_else(|_| job.request.clone());
+            receipts::begin(db, &job.id, op, &payload, None, job.started_at)?;
+            Status::Accepted
+        }
+        Some("expired") => return Ok(()),
+        Some(status) => Status::parse(status)?,
+    };
+    let target = receipt_status(job.status);
+    if current != target && current.may_become(target) {
+        receipts::settle(
+            db,
+            &job.id,
+            target,
+            None,
+            job.finished_at.unwrap_or(job.started_at),
+        )?;
+    }
+    Ok(())
 }
 struct Data {
     db: Connection,
@@ -131,15 +272,15 @@ fn setup_state(
     path: &str,
 ) -> Result<&'static str> {
     let receipt: Option<String> = db.query_row(
-        "SELECT data FROM operations WHERE json_extract(data,'$.repository_id')=?1 AND COALESCE(json_extract(data,'$.binding_generation'),0)=?2 AND json_extract(data,'$.request.op')='worktree.switch' AND (json_extract(data,'$.request.target')=?3 OR json_extract(data,'$.request.target')=?4 OR json_extract(data,'$.worktree_path')=?4) ORDER BY rowid DESC LIMIT 1",
+        "SELECT data FROM jobs WHERE json_extract(data,'$.repository_id')=?1 AND COALESCE(json_extract(data,'$.binding_generation'),0)=?2 AND json_extract(data,'$.request.op')='worktree.switch' AND (json_extract(data,'$.request.target')=?3 OR json_extract(data,'$.request.target')=?4 OR json_extract(data,'$.worktree_path')=?4) ORDER BY rowid DESC LIMIT 1",
         params![repository, binding_generation, branch, path], |row| row.get(0),
     ).optional()?;
     Ok(match receipt {
-        Some(row) => match serde_json::from_str::<Operation>(&row)?.status.as_str() {
-            "succeeded" => "ready",
-            "running" => "preparing",
-            "interrupted" => "interrupted",
-            _ => "failed",
+        Some(row) => match serde_json::from_str::<Operation>(&row)?.status {
+            JobStatus::Succeeded => "ready",
+            JobStatus::Running => "preparing",
+            JobStatus::Interrupted => "interrupted",
+            JobStatus::Partial | JobStatus::Failed => "failed",
         },
         // Existing external checkouts have no lux-ade setup obligation until a
         // lifecycle operation is requested for them.
@@ -451,12 +592,12 @@ impl Worktrees {
         let db = Connection::open(directory.join("lifecycle.sqlite3"))?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=3).contains(&version),
+            (0..=4).contains(&version),
             "Unsupported lifecycle database version {version}"
         );
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
-        db.execute_batch("CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS owned(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS owned(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
         if version < 2 {
             let tx = rusqlite::Transaction::new_unchecked(
                 &db,
@@ -509,19 +650,34 @@ impl Worktrees {
             tx.pragma_update(None, "user_version", 3)?;
             tx.commit()?;
         }
-        let pending: Vec<String> = db
-            .prepare("SELECT data FROM operations")?
+        if version < 4 {
+            // The ledger keeps its rows and rowids under a new name; the shared
+            // receipt table takes the `operations` name. Receipts for the kept
+            // rows are backfilled below.
+            let tx = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,data TEXT NOT NULL);ALTER TABLE operations RENAME TO jobs;")?;
+            receipts::ensure(&tx)?;
+            tx.pragma_update(None, "user_version", 4)?;
+            tx.commit()?;
+        }
+        receipts::ensure(&db)?;
+        let tx = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
+        let pending: Vec<String> = tx
+            .prepare("SELECT data FROM jobs ORDER BY rowid")?
             .query_map([], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         for row in pending {
             let mut op: Operation = serde_json::from_str(&row)?;
-            if op.status == "running" {
-                op.status = "interrupted".into();
-                op.failure(LifecycleFailure::LifecycleOutcomeUnknown.into());
+            if op.status == JobStatus::Running {
+                op.status = JobStatus::Interrupted;
+                record_failure(&mut op, LifecycleFailure::LifecycleOutcomeUnknown.into());
                 op.finished_at = Some(now_ms());
-                put(&db, "operations", &op.id, &op)?;
+                put(&tx, LEDGER, &op.id, &op)?;
             }
+            reconcile_receipt(&tx, &op)?;
         }
+        receipts::prune(&tx, now_ms())?;
+        tx.commit()?;
         Ok(Arc::new(Self {
             data: Mutex::new(Data {
                 db,
@@ -722,19 +878,19 @@ impl Worktrees {
     fn snapshot(&self, id: &str) -> Result<Value> {
         let d = self.data.lock().unwrap();
         let r: Repository = read_json(&d.db, "repositories", id)?;
-        let operations: Vec<Value> = d.db
-            .prepare("SELECT data FROM operations WHERE json_extract(data, '$.repository_id')=?1 ORDER BY rowid DESC LIMIT 100")?
+        let operations: Vec<Operation> = d.db
+            .prepare("SELECT data FROM jobs WHERE json_extract(data, '$.repository_id')=?1 ORDER BY rowid DESC LIMIT 100")?
             .query_map([id], |row| row.get::<_, String>(0))?
             .map(|row| {
-                let mut value: Value = serde_json::from_str(&row?)?;
-                if let Some(result) = value["result"].as_object_mut() {
+                let mut operation: Operation = serde_json::from_str(&row?)?;
+                if let Some(result) = operation.result.as_object_mut() {
                     result.remove("stdout");
                     result.remove("stderr");
                 }
-                if let Some(error) = value["error"].as_str() {
-                    value["error"] = json!(error.chars().take(4096).collect::<String>());
+                if let Some(error) = &mut operation.error {
+                    *error = error.chars().take(4096).collect();
                 }
-                Ok(value)
+                Ok(operation)
             })
             .collect::<Result<_>>()?;
         let mut cache = r.cache.clone();
@@ -769,11 +925,15 @@ impl Worktrees {
                 }
             }
         }
-        let mut repository = json!(r);
-        repository.as_object_mut().unwrap().remove("cache");
-        Ok(
-            json!({"type":"worktree_state","repository":repository,"worktrees":cache,"busy":d.busy.contains(id),"operations":operations.into_iter().filter(|o|o["repository_id"]==id).collect::<Vec<_>>()}),
-        )
+        let worktrees: Vec<WorktreeItem> =
+            serde_json::from_value(cache).context("Cached worktree listing is invalid")?;
+        reply(&WorktreeState {
+            tag: Default::default(),
+            repository: r.contract(),
+            worktrees,
+            busy: d.busy.contains(id),
+            operations,
+        })
     }
     pub fn has_pending_rebind(&self) -> Result<bool> {
         let d = self.data.lock().unwrap();
@@ -1013,200 +1173,244 @@ impl Worktrees {
                 && repository.source_root_inode.is_some()
                 && repository.source_common_device.is_some()
                 && repository.source_common_inode.is_some();
-            repositories.push(json!({"id":repository.id,"root":repository.root,
-                "common_dir":repository.common_dir,
-                "needs_rebind":repository.needs_rebind || !repository_binding_matches(&repository),
-                "rebindable":rebindable,
-                "binding_generation":repository.binding_generation}));
+            repositories.push(WorktreeRebindCandidate {
+                needs_rebind: repository.needs_rebind || !repository_binding_matches(&repository),
+                rebindable,
+                binding_generation: repository.binding_generation,
+                id: repository.id,
+                root: repository.root,
+                common_dir: repository.common_dir,
+            });
         }
-        Ok(json!({"type":"worktree_rebind_catalog","repositories":repositories}))
+        reply(&WorktreeRebindCatalog {
+            tag: Default::default(),
+            repositories,
+        })
     }
     pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let op = field(request, "op")?;
         if op == "worktree.rebind.list" {
+            let WorktreeRebindListRequest {} = decode(request)?;
             return self.rebind_catalog();
         }
         if op == "worktree.rebind" {
-            return self
-                .rebind_repository(field(request, "repository_id")?, field(request, "path")?);
+            let rebind: WorktreeRebindRequest = decode(request)?;
+            return self.rebind_repository(
+                valid("repository_id", &rebind.repository_id)?,
+                valid("path", &rebind.path)?,
+            );
         }
         if op != "worktree.operation" && self.has_pending_rebind()? {
             return Err(ade_core::error::NeedsRebind.into());
         }
-        if op == "worktree.repository" {
-            let path = std::fs::canonicalize(field(request, "path")?)?;
-            let path = path.to_str().context("Path must be UTF-8")?;
-            let common = git(
-                path,
-                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            )?;
-            let common = std::fs::canonicalize(common)?
-                .to_string_lossy()
-                .into_owned();
-            // Always invoke lifecycle commands from the primary checkout, even
-            // when the window that opened this repository belongs to a linked tree.
-            let listing = git(path, &["worktree", "list", "--porcelain", "-z"])?;
-            let root = listing
-                .split('\0')
-                .find_map(|line| line.strip_prefix("worktree "))
-                .context("Repository has no primary worktree")?
-                .to_owned();
-            ensure!(
-                Path::new(&root).is_dir(),
-                "Primary checkout directory is unavailable"
-            );
-            let d = self.data.lock().unwrap();
-            let rows: Vec<String> =
-                d.db.prepare("SELECT data FROM repositories")?
-                    .query_map([], |r| r.get(0))?
-                    .collect::<rusqlite::Result<_>>()?;
-            for row in rows {
-                let mut r: Repository = serde_json::from_str(&row)?;
-                if r.common_dir == common {
-                    ensure!(repository_binding_matches(&r), ade_core::error::NeedsRebind);
-                    if !d.busy.contains(&r.id) {
-                        r.root = root.clone();
-                        put(&d.db, "repositories", &r.id, &r)?;
-                    }
-                    drop(d);
-                    return self.snapshot(&r.id);
-                }
+        match op {
+            "worktree.repository" => {
+                let register: WorktreeRepositoryRequest = decode(request)?;
+                self.register(valid("path", &register.path)?)
             }
-            let r = Repository {
-                id: new_id("repository"),
-                root_device: Some(identity(&root)?.0),
-                root_inode: Some(identity(&root)?.1),
-                source_root_device: Some(identity(&root)?.0),
-                source_root_inode: Some(identity(&root)?.1),
-                common_device: Some(identity(&common)?.0),
-                common_inode: Some(identity(&common)?.1),
-                source_common_device: Some(identity(&common)?.0),
-                source_common_inode: Some(identity(&common)?.1),
-                root,
-                common_dir: common,
-                source_common_dir: None,
-                config: Config::default(),
-                needs_rebind: false,
-                binding_generation: 0,
-                cache: json!([]),
-                refreshed_at: None,
-            };
-            put(&d.db, "repositories", &r.id, &r)?;
-            drop(d);
-            return self.snapshot(&r.id);
-        }
-        let id = field(request, "repository_id")?;
-        if op == "worktree.operation" {
-            let d = self.data.lock().unwrap();
-            let operation: Operation =
-                read_json(&d.db, "operations", field(request, "request_id")?)?;
-            ensure!(
-                operation.repository_id == id,
-                "Operation belongs to another repository"
-            );
-            return Ok(json!({"type":"worktree_operation","operation":operation}));
-        }
-        if op == "worktree.get" {
-            return self.snapshot(id);
-        }
-        if op == "worktree.configure" {
-            let config: Config = serde_json::from_value(request["config"].clone())?;
-            ensure!(
-                (5..=300).contains(&config.timeout_seconds),
-                "Timeout must be 5–300 seconds"
-            );
-            if let Some(directory) = &config.directory {
+            "worktree.operation" => {
+                let lookup: WorktreeOperationRequest = decode(request)?;
+                let id = valid("repository_id", &lookup.repository_id)?;
+                let d = self.data.lock().unwrap();
+                let operation: Operation =
+                    read_json(&d.db, LEDGER, valid("operation_id", &lookup.operation_id)?)?;
                 ensure!(
-                    Path::new(directory).is_absolute() && Path::new(directory).is_dir(),
-                    "Worktree directory must be an existing absolute directory"
+                    operation.repository_id == id,
+                    "Operation belongs to another repository"
                 );
+                reply(&WorktreeOperationReply {
+                    tag: Default::default(),
+                    operation,
+                })
             }
-            let d = self.data.lock().unwrap();
-            ensure!(
-                !d.busy.contains(id),
-                "Repository lifecycle operation is running"
-            );
-            let mut r: Repository = read_json(&d.db, "repositories", id)?;
-            r.config = config;
-            put(&d.db, "repositories", id, &r)?;
-            drop(d);
-            return self.snapshot(id);
+            "worktree.get" => {
+                let get: WorktreeGetRequest = decode(request)?;
+                self.snapshot(valid("repository_id", &get.repository_id)?)
+            }
+            "worktree.configure" => {
+                let configure: WorktreeConfigureRequest = decode(request)?;
+                self.configure(
+                    valid("repository_id", &configure.repository_id)?,
+                    configure.config.into(),
+                )
+            }
+            "worktree.adopt" => {
+                let adopt: WorktreeAdoptRequest = decode(request)?;
+                self.adopt(
+                    valid("repository_id", &adopt.repository_id)?,
+                    valid("path", &adopt.path)?,
+                    adopt.confirm_path.as_deref(),
+                )
+            }
+            _ => self.start(op, request),
         }
-        if op == "worktree.adopt" {
-            let path = std::fs::canonicalize(field(request, "path")?)?;
-            let text = path.to_str().context("Path must be UTF-8")?;
-            ensure!(
-                request["confirm_path"].as_str() == Some(text),
-                "Adoption requires confirm_path matching the full path"
-            );
-            let repo: Repository = read_json(&self.data.lock().unwrap().db, "repositories", id)?;
-            ensure!(
-                repository_binding_matches(&repo),
-                ade_core::error::NeedsRebind
-            );
-            ensure!(
-                path != Path::new(&repo.root),
-                "The primary checkout cannot be adopted"
-            );
-            let lock = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .mode(0o600)
-                .open(self.directory.join(format!("{id}.lock")))?;
-            ensure!(
-                unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-                "Repository lifecycle operation is running"
-            );
-            let listing = self.list(&repo, &lock)?;
-            ensure!(
-                listing
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|item| item["path"].as_str() == Some(text) && item["prunable"] != true),
-                "Selected path is not an available linked worktree"
-            );
-            let common = std::fs::canonicalize(git(
-                text,
-                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            )?)?;
-            ensure!(
-                common == Path::new(&repo.common_dir),
-                "Worktree belongs to another repository"
-            );
-            let physical = identity(text)?;
-            let d = self.data.lock().unwrap();
-            ensure!(
-                !d.busy.contains(id) && !d.leases.keys().any(|held| held.starts_with(&path)),
-                "Worktree has active ADE work"
-            );
-            ensure!(
-                d.db.query_row("SELECT 1 FROM owned WHERE id=?1", [text], |_| Ok(()))
-                    .optional()?
-                    .is_none(),
-                "Worktree already has ADE removal authority"
-            );
-            ensure!(identity(text)? == physical, ade_core::error::NeedsRebind);
-            claim_worktree(&d.db, id, text, true)?;
-            drop(d);
-            return self.snapshot(id);
-        }
+    }
+    fn register(&self, path: &str) -> Result<Value> {
+        let path = std::fs::canonicalize(path)?;
+        let path = path.to_str().context("Path must be UTF-8")?;
+        let common = git(
+            path,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        let common = std::fs::canonicalize(common)?
+            .to_string_lossy()
+            .into_owned();
+        // Always invoke lifecycle commands from the primary checkout, even
+        // when the window that opened this repository belongs to a linked tree.
+        let listing = git(path, &["worktree", "list", "--porcelain", "-z"])?;
+        let root = listing
+            .split('\0')
+            .find_map(|line| line.strip_prefix("worktree "))
+            .context("Repository has no primary worktree")?
+            .to_owned();
         ensure!(
-            ["worktree.refresh", "worktree.switch", "worktree.remove"].contains(&op),
-            "Unknown worktree operation"
+            Path::new(&root).is_dir(),
+            "Primary checkout directory is unavailable"
         );
-        let request_id = field(request, "request_id")?;
-        ensure!(request_id.len() <= 256, "Request ID too long");
-        let mut d = self.data.lock().unwrap();
-        if let Ok(existing) = read_json::<Operation>(&d.db, "operations", request_id) {
+        let d = self.data.lock().unwrap();
+        let rows: Vec<String> =
+            d.db.prepare("SELECT data FROM repositories")?
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+        for row in rows {
+            let mut r: Repository = serde_json::from_str(&row)?;
+            if r.common_dir == common {
+                ensure!(repository_binding_matches(&r), ade_core::error::NeedsRebind);
+                if !d.busy.contains(&r.id) {
+                    r.root = root.clone();
+                    put(&d.db, "repositories", &r.id, &r)?;
+                }
+                drop(d);
+                return self.snapshot(&r.id);
+            }
+        }
+        let r = Repository {
+            id: new_id("repository"),
+            root_device: Some(identity(&root)?.0),
+            root_inode: Some(identity(&root)?.1),
+            source_root_device: Some(identity(&root)?.0),
+            source_root_inode: Some(identity(&root)?.1),
+            common_device: Some(identity(&common)?.0),
+            common_inode: Some(identity(&common)?.1),
+            source_common_device: Some(identity(&common)?.0),
+            source_common_inode: Some(identity(&common)?.1),
+            root,
+            common_dir: common,
+            source_common_dir: None,
+            config: Config::default(),
+            needs_rebind: false,
+            binding_generation: 0,
+            cache: json!([]),
+            refreshed_at: None,
+        };
+        put(&d.db, "repositories", &r.id, &r)?;
+        drop(d);
+        self.snapshot(&r.id)
+    }
+    fn configure(&self, id: &str, config: Config) -> Result<Value> {
+        ensure!(
+            (5..=300).contains(&config.timeout_seconds),
+            "Timeout must be 5–300 seconds"
+        );
+        if let Some(directory) = &config.directory {
             ensure!(
-                existing.request == *request,
-                "Request ID was already used for different parameters"
+                Path::new(directory).is_absolute() && Path::new(directory).is_dir(),
+                "Worktree directory must be an existing absolute directory"
             );
-            drop(d);
-            return self.snapshot(id);
+        }
+        let d = self.data.lock().unwrap();
+        ensure!(
+            !d.busy.contains(id),
+            "Repository lifecycle operation is running"
+        );
+        let mut r: Repository = read_json(&d.db, "repositories", id)?;
+        r.config = config;
+        put(&d.db, "repositories", id, &r)?;
+        drop(d);
+        self.snapshot(id)
+    }
+    fn adopt(&self, id: &str, path: &str, confirm_path: Option<&str>) -> Result<Value> {
+        let path = std::fs::canonicalize(path)?;
+        let text = path.to_str().context("Path must be UTF-8")?;
+        ensure!(
+            confirm_path == Some(text),
+            "Adoption requires confirm_path matching the full path"
+        );
+        let repo: Repository = read_json(&self.data.lock().unwrap().db, "repositories", id)?;
+        ensure!(
+            repository_binding_matches(&repo),
+            ade_core::error::NeedsRebind
+        );
+        ensure!(
+            path != Path::new(&repo.root),
+            "The primary checkout cannot be adopted"
+        );
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(self.directory.join(format!("{id}.lock")))?;
+        ensure!(
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+            "Repository lifecycle operation is running"
+        );
+        let listing = self.list(&repo, &lock)?;
+        ensure!(
+            listing
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["path"].as_str() == Some(text) && item["prunable"] != true),
+            "Selected path is not an available linked worktree"
+        );
+        let common = std::fs::canonicalize(git(
+            text,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?)?;
+        ensure!(
+            common == Path::new(&repo.common_dir),
+            "Worktree belongs to another repository"
+        );
+        let physical = identity(text)?;
+        let d = self.data.lock().unwrap();
+        ensure!(
+            !d.busy.contains(id) && !d.leases.keys().any(|held| held.starts_with(&path)),
+            "Worktree has active ADE work"
+        );
+        ensure!(
+            d.db.query_row("SELECT 1 FROM owned WHERE id=?1", [text], |_| Ok(()))
+                .optional()?
+                .is_none(),
+            "Worktree already has ADE removal authority"
+        );
+        ensure!(identity(text)? == physical, ade_core::error::NeedsRebind);
+        claim_worktree(&d.db, id, text, true)?;
+        drop(d);
+        self.snapshot(id)
+    }
+    /// Admits `worktree.switch`, `worktree.remove` or `worktree.refresh` and
+    /// runs it on a supervised worker thread. The receipt, checked first,
+    /// replays a known operation ID with the same parameters and rejects one
+    /// reused with different parameters.
+    fn start(self: &Arc<Self>, op: &str, request: &Value) -> Result<Value> {
+        let effect = Effect::decode(op, request)?;
+        let id = valid("repository_id", effect.repository_id())?;
+        let operation_id = valid("operation_id", effect.operation_id())?;
+        ensure!(operation_id.len() <= 256, "Request ID too long");
+        let payload = effect.payload()?;
+        let mut d = self.data.lock().unwrap();
+        match probe(&d.db, operation_id, op, &payload)? {
+            Admission::New => {}
+            Admission::Replay(_) => {
+                drop(d);
+                return self.snapshot(id);
+            }
+            Admission::Conflict => bail!("Request ID was already used for different parameters"),
+            Admission::Expired => {
+                bail!("Request ID is past its 30-day receipt retention; use a new request ID")
+            }
         }
         let repo: Repository = read_json(&d.db, "repositories", id)?;
         ensure!(
@@ -1216,55 +1420,52 @@ impl Worktrees {
         ensure!(d.busy.len() < 8, "Too many lifecycle operations");
         let mut remove_path = None;
         let mut remove_identity = None;
-        if op == "worktree.switch" {
-            let target = field(request, "target")?;
-            ensure!(!target.starts_with('-'), "Target cannot begin with '-'");
-            if request["base"].is_string() {
-                ensure!(!field(request, "base")?.starts_with('-'), "Invalid base");
+        match &effect {
+            Effect::Switch(switch) => {
+                let target = valid("target", &switch.target)?;
+                ensure!(!target.starts_with('-'), "Target cannot begin with '-'");
+                if let Some(base) = &switch.base {
+                    ensure!(!valid("base", base)?.starts_with('-'), "Invalid base");
+                }
             }
-        }
-        if op == "worktree.remove" {
-            ensure!(
-                request["force"] != true,
-                "Forced worktree removal is unavailable"
-            );
-            let path = std::fs::canonicalize(field(request, "path")?)?;
-            let text = path.to_str().context("Path must be UTF-8")?;
-            let owner: Option<String> =
-                d.db.query_row("SELECT data FROM owned WHERE id=?1", [text], |r| r.get(0))
-                    .optional()?;
-            let ownership: Value = serde_json::from_str(&owner.context(
-                "This external worktree has no ADE removal authority; explicitly adopt it first.",
-            )?)?;
-            ensure!(
-                ownership["repository_id"] == id
-                    && std::fs::read_to_string(ownership["marker"].as_str().unwrap_or(""))
-                        .ok()
-                        .as_deref()
-                        == ownership["token"].as_str(),
-                "Worktree removal authority changed; refresh and inspect before retrying"
-            );
-            ensure!(
-                path != Path::new(&repo.root),
-                "Cannot remove the repository command directory; open the main checkout first"
-            );
-            ensure!(
-                !d.leases.keys().any(|p| p.starts_with(&path)),
-                "Worktree has an active terminal or Agent. Exit its shell and disconnect its Agents before removal."
-            );
-            if request["force"].as_bool() == Some(true) {
+            Effect::Remove(remove) => {
                 ensure!(
-                    request["confirm_path"].as_str() == Some(text),
-                    "Forced removal requires confirm_path matching the full path"
+                    remove.force != Some(true),
+                    "Forced worktree removal is unavailable"
                 );
+                let path = std::fs::canonicalize(valid("path", &remove.path)?)?;
+                let text = path.to_str().context("Path must be UTF-8")?;
+                let owner: Option<String> =
+                    d.db.query_row("SELECT data FROM owned WHERE id=?1", [text], |r| r.get(0))
+                        .optional()?;
+                let ownership: Value = serde_json::from_str(&owner.context(
+                    "This external worktree has no ADE removal authority; explicitly adopt it first.",
+                )?)?;
+                ensure!(
+                    ownership["repository_id"] == id
+                        && std::fs::read_to_string(ownership["marker"].as_str().unwrap_or(""))
+                            .ok()
+                            .as_deref()
+                            == ownership["token"].as_str(),
+                    "Worktree removal authority changed; refresh and inspect before retrying"
+                );
+                ensure!(
+                    path != Path::new(&repo.root),
+                    "Cannot remove the repository command directory; open the main checkout first"
+                );
+                ensure!(
+                    !d.leases.keys().any(|p| p.starts_with(&path)),
+                    "Worktree has an active terminal or Agent. Exit its shell and disconnect its Agents before removal."
+                );
+                let policy = remove.delete_branch.as_deref().unwrap_or("keep");
+                ensure!(
+                    ["keep", "merged"].contains(&policy),
+                    "Branch policy must be keep or merged"
+                );
+                remove_identity = Some(identity(text)?);
+                remove_path = Some(path);
             }
-            let policy = request["delete_branch"].as_str().unwrap_or("keep");
-            ensure!(
-                ["keep", "merged"].contains(&policy),
-                "Branch policy must be keep or merged"
-            );
-            remove_identity = Some(identity(text)?);
-            remove_path = Some(path);
+            Effect::Refresh(_) => {}
         }
         // A supervisor retains the lock if this daemon dies. Its Git child does not
         // inherit the descriptor, so background Git helpers cannot strand it.
@@ -1282,14 +1483,14 @@ impl Worktrees {
             bail!("A previous Git lifecycle command still holds the repository lock");
         }
         let job = Operation {
-            id: request_id.into(),
+            id: operation_id.into(),
             repository_id: id.into(),
             binding_generation: repo.binding_generation,
             request: request.clone(),
             worktree_path: remove_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
-            status: "running".into(),
+            status: JobStatus::Running,
             result: Value::Null,
             error: None,
             code: None,
@@ -1297,7 +1498,19 @@ impl Worktrees {
             started_at: now_ms(),
             finished_at: None,
         };
-        if let Err(error) = put(&d.db, "operations", &job.id, &job) {
+        // The receipt and the ledger row commit in one transaction.
+        if let Err(error) = (|| -> Result<()> {
+            let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
+            ensure!(
+                receipts::begin(&tx, &job.id, op, &payload, None, job.started_at)?
+                    == Admission::New,
+                "Request ID was already used for different parameters"
+            );
+            put(&tx, LEDGER, &job.id, &job)?;
+            receipts::settle(&tx, &job.id, Status::Dispatched, None, job.started_at)?;
+            tx.commit()?;
+            Ok(())
+        })() {
             if let Some(p) = &remove_path {
                 d.removing.remove(p);
             }
@@ -1342,7 +1555,7 @@ impl Worktrees {
                 })
             {
                 job.worktree_path = Some(field(item, "path")?.into());
-                put(&self.data.lock().unwrap().db, "operations", &job.id, &job)?;
+                put(&self.data.lock().unwrap().db, LEDGER, &job.id, &job)?;
             }
             let mut removed_branch = None;
             let args = if job.request["op"] == "worktree.switch" {
@@ -1534,15 +1747,14 @@ impl Worktrees {
                     .is_some_and(|items| items.iter().any(|item| item["path"] == path))
             });
         job.status = if result.is_ok() {
-            "succeeded"
+            JobStatus::Succeeded
         } else if partial {
-            "partial"
+            JobStatus::Partial
         } else {
-            "failed"
-        }
-        .into();
+            JobStatus::Failed
+        };
         if let Err(error) = result {
-            job.failure(error);
+            record_failure(&mut job, error);
         }
         job.finished_at = Some(now_ms());
         // Successful daemon completion releases the inherited lock explicitly;
@@ -1551,9 +1763,15 @@ impl Worktrees {
             libc::flock(lock.as_raw_fd(), libc::LOCK_UN);
         }
         let mut d = self.data.lock().unwrap();
-        if let Err(e) = put(&d.db, "repositories", &repo.id, &repo)
-            .and_then(|_| put(&d.db, "operations", &job.id, &job))
-        {
+        // The repository, the ledger row and the settled receipt commit together.
+        if let Err(e) = (|| -> Result<()> {
+            let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
+            put(&tx, "repositories", &repo.id, &repo)?;
+            put(&tx, LEDGER, &job.id, &job)?;
+            reconcile_receipt(&tx, &job)?;
+            tx.commit()?;
+            Ok(())
+        })() {
             eprintln!("Could not persist worktree completion: {e}");
         }
         d.busy.remove(&repo.id);
@@ -1683,15 +1901,15 @@ mod safe_lifecycle_error_tests {
             .unwrap()
             .db
             .execute(
-                "INSERT INTO operations(id,data) VALUES(?1,?2)",
+                "INSERT INTO jobs(id,data) VALUES(?1,?2)",
                 params!["old-operation", legacy.to_string()],
             )
             .unwrap();
         drop(hub);
         let hub = Worktrees::open(&directory).unwrap();
         let receipt: Operation =
-            read_json(&hub.data.lock().unwrap().db, "operations", "old-operation").unwrap();
-        assert_eq!(receipt.status, "interrupted");
+            read_json(&hub.data.lock().unwrap().db, LEDGER, "old-operation").unwrap();
+        assert_eq!(receipt.status, JobStatus::Interrupted);
         assert_eq!(receipt.code.as_deref(), Some("lifecycle_outcome_unknown"));
         assert_eq!(
             receipt.recovery.as_deref(),

@@ -53,45 +53,48 @@ export async function runWorkspaceCommand(socketPath: string, area: string | und
   }
   if (area === 'worktree' && action === 'rebind') {
     if (rest.length !== 2) throw new CliError('usage', 'worktree rebind requires REPOSITORY_ID PATH.')
-    return requestDaemon(socketPath, 'worktree.rebind', {
-      repository_id: required(rest[0], 'REPOSITORY_ID'), path: required(rest[1], 'PATH'),
+    return dailyUseCommand(socketPath, {
+      op: 'worktree.rebind', repository_id: required(rest[0], 'REPOSITORY_ID'), path: required(rest[1], 'PATH'),
     })
   }
   if (area === 'worktree' && action === 'rebind-list') {
     if (rest.length) throw new CliError('usage', 'worktree rebind-list does not accept arguments.')
-    return requestDaemon(socketPath, 'worktree.rebind.list')
+    return dailyUseCommand(socketPath, { op: 'worktree.rebind.list' })
   }
   if (area === 'worktree' && action === 'register') {
     if (rest.length !== 1) throw new CliError('usage', 'worktree register requires PATH.')
-    return requestDaemon(socketPath, 'worktree.repository', { path: rest[0] })
+    return dailyUseCommand(socketPath, { op: 'worktree.repository', path: rest[0] })
   }
   if (area === 'worktree' && action === 'list') {
     if (rest.length !== 1) throw new CliError('usage', 'worktree list requires REPOSITORY_ID.')
-    return requestDaemon(socketPath, 'worktree.get', { repository_id: rest[0] })
+    return dailyUseCommand(socketPath, { op: 'worktree.get', repository_id: rest[0] })
   }
   if (area === 'worktree' && action === 'operation') {
     if (rest.length !== 2) throw new CliError('usage', 'worktree operation requires REPOSITORY_ID REQUEST_ID.')
-    return requestDaemon(socketPath, 'worktree.operation', {
-      repository_id: required(rest[0], 'REPOSITORY_ID'), request_id: required(rest[1], 'REQUEST_ID'),
+    return dailyUseCommand(socketPath, {
+      op: 'worktree.operation', repository_id: required(rest[0], 'REPOSITORY_ID'),
+      operation_id: required(rest[1], 'REQUEST_ID'),
     })
   }
   if (area === 'worktree' && action === 'create') {
     const { positionals, requestId } = worktreeMutationArgs(rest, 'create')
-    const response = await requestDaemon(socketPath, 'worktree.switch', {
-      repository_id: positionals[0], target: positionals[1], base: positionals[2],
-      ...(positionals[3] ? { path: positionals[3] } : {}), create: true, request_id: requestId,
+    const response = await dailyUseCommand(socketPath, {
+      op: 'worktree.switch', repository_id: positionals[0], target: positionals[1], base: positionals[2],
+      ...(positionals[3] ? { path: positionals[3] } : {}), create: true, operation_id: requestId,
     })
     return { ...response, request_id: requestId }
   }
   if (area === 'worktree' && action === 'adopt') {
     if (rest.length !== 3) throw new CliError('usage', 'worktree adopt requires REPOSITORY_ID PATH CONFIRM_PATH.')
-    return requestDaemon(socketPath, 'worktree.adopt', { repository_id: rest[0], path: rest[1], confirm_path: rest[2] })
+    return dailyUseCommand(socketPath, {
+      op: 'worktree.adopt', repository_id: rest[0], path: rest[1], confirm_path: rest[2],
+    })
   }
   if (area === 'worktree' && action === 'remove') {
     const { positionals, requestId } = worktreeMutationArgs(rest, 'remove')
-    const response = await requestDaemon(socketPath, 'worktree.remove', {
-      repository_id: positionals[0], path: positionals[1],
-      delete_branch: positionals[2] ? 'merged' : 'keep', request_id: requestId,
+    const response = await dailyUseCommand(socketPath, {
+      op: 'worktree.remove', repository_id: positionals[0], path: positionals[1],
+      delete_branch: positionals[2] ? 'merged' : 'keep', operation_id: requestId,
     })
     return { ...response, request_id: requestId }
   }
