@@ -58,6 +58,10 @@ export type ContractDefinition =
   | CatalogGetRequest
   | Catalogue
   | ChildTranscriptPage
+  | ClaimMode
+  | ClaimPhase
+  | ClaimPurpose
+  | ClaimState
   | ClaudeIdentity
   | CodexIdentity
   | Config
@@ -93,6 +97,7 @@ export type ContractDefinition =
   | HealthCheckRequest
   | HealthPolicy
   | HelloRequest
+  | HostResourcesState
   | Inspection
   | ListenerFamily
   | ListenerInventory
@@ -122,12 +127,19 @@ export type ContractDefinition =
   | ReadinessBasis
   | ReadinessState
   | RecoveryStatus
+  | RegistryScope
+  | RegistryState
+  | RegistryStatus
   | RepositoryAck
   | RepositoryRebindCatalog
   | RepositoryRebindEntry
   | RepositoryRebindListRequest
   | RepositoryRebindRequest
   | RepositoryRecord
+  | ResourceClaim
+  | ResourcesClaimResolveRequest
+  | ResourcesInspectRequest
+  | ResourcesRegistryAcceptRequest
   | RestartPrepared
   | ReviewCommitRequest
   | ReviewDiff
@@ -251,6 +263,16 @@ export type BranchPolicy = 'keep' | 'merged'
  */
 export type BrowserOperationState = 'accepted' | 'unknown' | 'completed'
 /**
+ * Shared use admits other shared use; an exclusive lifecycle claim admits nothing.
+ */
+export type ClaimMode = 'shared' | 'exclusive'
+/**
+ * Operation phases, persisted before each step.
+ */
+export type ClaimPhase = 'reserved' | 'dispatched' | 'bound' | 'active'
+export type ClaimPurpose = 'use' | 'create' | 'remove'
+export type ClaimState = 'active' | 'quarantined'
+/**
  * Whether a service's recorded run is live in the current runtime.
  */
 export type ExecutionState = 'running' | 'exited' | 'stopped' | 'unavailable'
@@ -266,6 +288,7 @@ export type PreviewKind = 'text' | 'image' | 'unsupported'
  * Where a Git mutation stands.
  */
 export type GitOperationStatus = ('running' | 'succeeded' | 'failed') | 'interrupted'
+export type RegistryState = 'ready' | 'blocked'
 export type ListenerFamily = 'ipv4' | 'ipv6'
 export type PortObservation = 'verified_managed' | 'contested' | 'observed_other' | 'unobserved'
 export type ListenerOwnership = 'managed_service' | 'unknown'
@@ -308,6 +331,7 @@ export type ReadinessState =
     )
   | 'bound_unassigned_port'
 export type RecoveryStatus = 'healthy' | 'degraded' | 'corrupt'
+export type RegistryScope = 'host' | 'profile'
 /**
  * What one diff line is.
  */
@@ -1569,6 +1593,93 @@ export interface HelloRequest {
   op: 'hello'
 }
 /**
+ * The reply to every `resources.*` operation.
+ */
+export interface HostResourcesState {
+  claims: ResourceClaim[]
+  /**
+   * This daemon's incarnation; claims from earlier incarnations of the same
+   * profile are listed with `mine: false`.
+   */
+  incarnation: string
+  /**
+   * The profile this daemon claims for.
+   */
+  profile: string
+  registry: RegistryStatus
+  /**
+   * The `host_resources` type tag.
+   */
+  type: 'host_resources'
+  [k: string]: unknown
+}
+/**
+ * One physical resource claim.
+ */
+export interface ResourceClaim {
+  created_at: number
+  device: string
+  generation: string
+  host_id: string
+  id: string
+  inode: string
+  /**
+   * Whether this daemon incarnation owns the claim.
+   */
+  mine: boolean
+  mode: ClaimMode
+  operation_id: string | null
+  owner_incarnation: string
+  /**
+   * Whether the owning incarnation still holds its liveness lock.
+   */
+  owner_live: boolean
+  /**
+   * Diagnostic only; a missing PID never clears a claim.
+   */
+  owner_pid: number
+  owner_profile: string
+  /**
+   * The canonical path when the claim was taken; informational only.
+   */
+  path: string
+  phase: ClaimPhase
+  purpose: ClaimPurpose
+  /**
+   * Why the claim is quarantined.
+   */
+  reason: string | null
+  state: ClaimState
+  /**
+   * For a reservation of a path that does not exist yet: its folded final
+   * name. The identity fields then describe the parent directory.
+   */
+  unborn_name: string | null
+  updated_at: number
+  [k: string]: unknown
+}
+/**
+ * Where the registry lives and whether it admits new claims.
+ */
+export interface RegistryStatus {
+  /**
+   * `None` until the registry has been opened successfully.
+   */
+  host_id: string | null
+  path: string
+  /**
+   * Why the registry is blocked; absent when it is ready.
+   */
+  reason: string | null
+  /**
+   * `host` when every profile shares the registry; `profile` when this
+   * daemon runs outside a managed profile and coordinates with nobody.
+   */
+  scope: 'host' | 'profile'
+  state: RegistryState
+  [k: string]: unknown
+}
+/**
  * The `listener.list` reply.
  */
 export interface ListenerInventory {
@@ -1809,6 +1920,47 @@ export interface RepositoryRebindRequest {
   op: 'repository.rebind'
   path: string
   repository_id: string
+}
+/**
+ * `resources.claim.resolve`: release one quarantined claim after the caller
+ * has reconciled the resource outside ADE. Active claims cannot be resolved.
+ */
+export interface ResourcesClaimResolveRequest {
+  claim_id: string
+  /**
+   * Must equal the claim's recorded `path`.
+   */
+  confirm_path: string
+  op: 'resources.claim.resolve'
+  /**
+   * Caller-owned operation ID.
+   */
+  operation_id: string
+}
+/**
+ * `resources.inspect`: read the registry status and its claims. With `path`,
+ * only claims on that path, inside it, or containing it are listed.
+ */
+export interface ResourcesInspectRequest {
+  op: 'resources.inspect'
+  path?: string | null
+}
+/**
+ * `resources.registry.accept`: bind this profile to the registry currently
+ * on disk after it was replaced, went missing or became unreadable. An
+ * unreadable file is moved aside, never deleted. Owners recorded only in the
+ * lost registry are forgotten, which is why the caller must confirm.
+ */
+export interface ResourcesRegistryAcceptRequest {
+  /**
+   * Must equal `registry.path` from `resources.inspect`.
+   */
+  confirm_registry: string
+  op: 'resources.registry.accept'
+  /**
+   * Caller-owned operation ID.
+   */
+  operation_id: string
 }
 /**
  * The `runtime.prepare_restart` reply.
@@ -3334,7 +3486,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -3443,6 +3595,9 @@ export interface RequestByOperation {
   "browser.navigate": BrowserNavigateRequest
   "browser.close": BrowserCloseRequest
   "browser.operation": BrowserOperationRequest
+  "resources.inspect": ResourcesInspectRequest
+  "resources.claim.resolve": ResourcesClaimResolveRequest
+  "resources.registry.accept": ResourcesRegistryAcceptRequest
 }
 
 export interface ResponseByOperation {
@@ -3552,6 +3707,9 @@ export interface ResponseByOperation {
   "browser.navigate": BrowserMutation
   "browser.close": BrowserMutation
   "browser.operation": BrowserOperation
+  "resources.inspect": HostResourcesState
+  "resources.claim.resolve": HostResourcesState
+  "resources.registry.accept": HostResourcesState
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged

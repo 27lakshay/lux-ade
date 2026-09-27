@@ -55,6 +55,17 @@ pub struct NeedsRebind;
 #[error("Restored prompt is held until its source outcome is reconciled")]
 pub struct RestoredSendHeld;
 
+/// Another claim on the same physical resource refuses this one. The message
+/// names the conflicting claim, its purpose and its owning profile.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct HostResourceConflict(pub String);
+
+/// The host resource registry cannot admit claims until explicit recovery.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct HostResourcesUnavailable(pub String);
+
 /// Categories carry no raw provider payload. Recovery is advice, never an
 /// authorization to replay a mutation whose outcome might be unknown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
@@ -283,6 +294,14 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),
             "code":"needs_rebind","recovery":"rebind_workspace"});
+    }
+    if let Some(conflict) = error.downcast_ref::<HostResourceConflict>() {
+        return serde_json::json!({"type":"error","message":conflict.to_string(),
+            "code":"host_resource_conflict","recovery":"inspect_host_resources"});
+    }
+    if let Some(unavailable) = error.downcast_ref::<HostResourcesUnavailable>() {
+        return serde_json::json!({"type":"error","message":unavailable.to_string(),
+            "code":"host_resources_unavailable","recovery":"recover_host_resources"});
     }
     if let Some(failure) = error.downcast_ref::<LifecycleFailure>() {
         return serde_json::json!({"type":"error","message":failure.to_string(),"code":failure,"recovery":failure.recovery()});

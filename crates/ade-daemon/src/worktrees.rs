@@ -1,7 +1,12 @@
 //! Git worktree lifecycle operations. No shell aliases, editor launch, or provisioning policy.
 //! Commands run off the client/Conversation path; intent survives daemon failure.
+use crate::host_resources::{self, HostResources, Settlement, Target};
 use crate::model::{new_id, now_ms};
 use crate::receipts::{self, Admission, Status};
+use ade_core::contract::resources::{
+    ClaimMode, ClaimPurpose, ResourcesClaimResolveRequest, ResourcesInspectRequest,
+    ResourcesRegistryAcceptRequest,
+};
 use ade_core::contract::worktrees::{
     WorktreeAdoptRequest, WorktreeConfigureRequest, WorktreeGetRequest, WorktreeItem,
     WorktreeOperation as Operation, WorktreeOperationReply, WorktreeOperationRequest,
@@ -10,7 +15,7 @@ use ade_core::contract::worktrees::{
     WorktreeRemoveRequest, WorktreeRepository, WorktreeRepositoryRequest, WorktreeState,
     WorktreeSwitchRequest,
 };
-use ade_core::error::LifecycleFailure;
+use ade_core::error::{HostResourcesUnavailable, LifecycleFailure};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -228,6 +233,9 @@ struct Data {
     db: Connection,
     busy: HashSet<String>,
     leases: HashMap<PathBuf, usize>,
+    /// The host shared-use claim behind each leased path; `None` while the
+    /// host registry is blocked and cannot record it.
+    host_claims: HashMap<PathBuf, Option<String>>,
     removing: HashSet<PathBuf>,
 }
 fn identity(path: &str) -> Result<(String, String)> {
@@ -291,6 +299,9 @@ pub struct Worktrees {
     data: Mutex<Data>,
     directory: PathBuf,
     worker: PathBuf,
+    /// Claims shared with every profile's daemon on this host. Lock order:
+    /// `data`, then the registry.
+    resources: HostResources,
 }
 pub struct Lease {
     hub: Arc<Worktrees>,
@@ -303,6 +314,9 @@ impl Drop for Lease {
             *n -= 1;
             if *n == 0 {
                 d.leases.remove(&self.path);
+                if let Some(Some(claim)) = d.host_claims.remove(&self.path) {
+                    self.hub.resources.settle(&claim, Settlement::Release);
+                }
             }
         }
     }
@@ -678,15 +692,27 @@ impl Worktrees {
         }
         receipts::prune(&tx, now_ms())?;
         tx.commit()?;
+        let location = host_resources::locate(
+            std::env::var_os("ADE_HOST_RESOURCES_HOME")
+                .map(PathBuf::from)
+                .as_deref(),
+            std::env::var_os("ADE_RUNTIME_HOME")
+                .map(PathBuf::from)
+                .as_deref(),
+            directory,
+        );
+        let resources = HostResources::open(location, &db)?;
         Ok(Arc::new(Self {
             data: Mutex::new(Data {
                 db,
                 busy: HashSet::new(),
                 leases: HashMap::new(),
+                host_claims: HashMap::new(),
                 removing: HashSet::new(),
             }),
             directory: directory.into(),
             worker: std::env::current_exe()?,
+            resources,
         }))
     }
     pub fn active_operations(&self) -> usize {
@@ -763,11 +789,83 @@ impl Worktrees {
                 );
             }
         }
+        if !d.leases.contains_key(&path) {
+            let claim = self.use_claim(&path)?;
+            d.host_claims.insert(path.clone(), claim);
+        }
         *d.leases.entry(path.clone()).or_default() += 1;
         Ok(Lease {
             hub: self.clone(),
             path,
         })
+    }
+    /// Takes the host shared-use claim for a leased path. Another profile's
+    /// lifecycle claim refuses the lease. A blocked registry admits the lease
+    /// without a record so existing work can continue; lifecycle commands stay
+    /// refused until the registry is recovered.
+    fn use_claim(&self, path: &Path) -> Result<Option<String>> {
+        match self.resources.acquire(
+            Target::Existing(path),
+            ClaimMode::Shared,
+            ClaimPurpose::Use,
+            None,
+        ) {
+            Ok(id) => Ok(Some(id)),
+            Err(error) if error.downcast_ref::<HostResourcesUnavailable>().is_some() => {
+                eprintln!(
+                    "Lease on {} is not recorded host-wide: {error}",
+                    path.display()
+                );
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+    /// `resources.*` operations: inspect claims, resolve a quarantined claim,
+    /// accept a replaced registry.
+    pub fn resources_command(&self, request: &Value) -> Result<Value> {
+        match field(request, "op")? {
+            "resources.inspect" => {
+                let inspect: ResourcesInspectRequest = decode(request)?;
+                if let Some(path) = &inspect.path {
+                    valid("path", path)?;
+                }
+                reply(&self.resources.inspect(inspect.path.as_deref())?)
+            }
+            "resources.claim.resolve" => {
+                let resolve: ResourcesClaimResolveRequest = decode(request)?;
+                ensure!(
+                    valid("operation_id", &resolve.operation_id)?.len() <= 256,
+                    "Operation ID too long"
+                );
+                valid("claim_id", &resolve.claim_id)?;
+                valid("confirm_path", &resolve.confirm_path)?;
+                self.resources.resolve_claim(&resolve)
+            }
+            "resources.registry.accept" => {
+                let accept: ResourcesRegistryAcceptRequest = decode(request)?;
+                ensure!(
+                    valid("operation_id", &accept.operation_id)?.len() <= 256,
+                    "Operation ID too long"
+                );
+                valid("confirm_registry", &accept.confirm_registry)?;
+                let mut d = self.data.lock().unwrap();
+                if self.resources.accept(&d.db, &accept)? {
+                    // Claims taken before recovery live in the old registry.
+                    let paths: Vec<PathBuf> = d.leases.keys().cloned().collect();
+                    for path in paths {
+                        let claim = self.use_claim(&path).unwrap_or_else(|error| {
+                            eprintln!("Lease on {} was not re-claimed: {error}", path.display());
+                            None
+                        });
+                        d.host_claims.insert(path, claim);
+                    }
+                }
+                drop(d);
+                reply(&self.resources.inspect(None)?)
+            }
+            _ => bail!("Unknown resources operation"),
+        }
     }
     /// Review and lifecycle operations share this admission gate and crash-safe flock.
     pub(crate) fn review_guard(self: &Arc<Self>, root: &str) -> Result<ReviewGuard> {
@@ -1467,6 +1565,22 @@ impl Worktrees {
             }
             Effect::Refresh(_) => {}
         }
+        // The exclusive removal claim refuses use by any profile before the
+        // lifecycle command receives the path.
+        let remove_claim = match &remove_path {
+            Some(path) => Some(self.resources.acquire(
+                Target::Existing(path),
+                ClaimMode::Exclusive,
+                ClaimPurpose::Remove,
+                Some(operation_id),
+            )?),
+            None => None,
+        };
+        let release_claim = || {
+            if let Some(claim) = &remove_claim {
+                self.resources.settle(claim, Settlement::Release);
+            }
+        };
         // A supervisor retains the lock if this daemon dies. Its Git child does not
         // inherit the descriptor, so background Git helpers cannot strand it.
         let lock = OpenOptions::new()
@@ -1480,6 +1594,7 @@ impl Worktrees {
             if let Some(p) = &remove_path {
                 d.removing.remove(p);
             }
+            release_claim();
             bail!("A previous Git lifecycle command still holds the repository lock");
         }
         let job = Operation {
@@ -1514,6 +1629,7 @@ impl Worktrees {
             if let Some(p) = &remove_path {
                 d.removing.remove(p);
             }
+            release_claim();
             return Err(error);
         }
         if let Some(path) = &remove_path {
@@ -1523,7 +1639,7 @@ impl Worktrees {
         drop(d);
         let hub = self.clone();
         std::thread::spawn(move || {
-            hub.execute(repo, job, lock, remove_path, remove_identity);
+            hub.execute(repo, job, lock, remove_path, remove_identity, remove_claim);
         });
         self.snapshot(id)
     }
@@ -1534,7 +1650,13 @@ impl Worktrees {
         lock: File,
         remove_path: Option<PathBuf>,
         remove_identity: Option<(String, String)>,
+        remove_claim: Option<String>,
     ) {
+        // The lifecycle claim, whether the command received the effect, and
+        // whether the checkout state was read back after the command exited.
+        let mut claim = remove_claim;
+        let mut dispatched = false;
+        let mut observed = false;
         let result = (|| -> Result<()> {
             // Recheck after admission and immediately before Git receives
             // the directory. A later external rename remains detectable on the
@@ -1579,6 +1701,13 @@ impl Worktrees {
                     return Ok(());
                 }
                 let path = creation_path(&repo, &job.request)?;
+                // Reserve the unborn path host-wide before it is created.
+                claim = Some(self.resources.acquire(
+                    Target::Unborn(&path),
+                    ClaimMode::Exclusive,
+                    ClaimPurpose::Create,
+                    Some(&job.id),
+                )?);
                 job.worktree_path = Some(path.to_string_lossy().into_owned());
                 let mut a = vec!["worktree".into(), "add".into()];
                 if job.request["create"] == true {
@@ -1668,9 +1797,32 @@ impl Worktrees {
                     .env("ADE_EXPECT_REMOVE_DEV", device)
                     .env("ADE_EXPECT_REMOVE_INO", inode);
             }
+            // The phase commits before the command starts; a failed commit stops here.
+            if let Some(claim) = &claim {
+                self.resources.dispatch(claim)?;
+                dispatched = true;
+            }
             let output = run(command, repo.config.timeout_seconds, Some(&lock));
             // A failed or timed-out Git command is not a rollback. Inspect actual state.
             let after = self.list(&repo, &lock);
+            let exited = match &output {
+                Ok(_) => true,
+                // The command never started, so it had no effect.
+                Err(error) => {
+                    error.downcast_ref::<LifecycleFailure>()
+                        == Some(&LifecycleFailure::LifecycleUnavailable)
+                }
+            };
+            observed = exited
+                && after.as_ref().is_ok_and(|listing| {
+                    remove_path.is_some()
+                        || created_settled(
+                            self,
+                            claim.as_deref(),
+                            listing,
+                            job.worktree_path.as_deref(),
+                        )
+                });
             if let Ok(after) = &after {
                 repo.cache = after.clone();
                 repo.refreshed_at = Some(now_ms());
@@ -1737,6 +1889,12 @@ impl Worktrees {
             }
             Ok(())
         })();
+        if let Some(claim) = &claim {
+            self.resources.settle(
+                claim,
+                host_resources::settle_lifecycle(dispatched, observed),
+            );
+        }
         let partial = result.is_err()
             && job.request["op"] == "worktree.remove"
             && job.result["branch_deletion"].is_object()
@@ -1779,6 +1937,30 @@ impl Worktrees {
             d.removing.remove(&path);
         }
     }
+}
+
+/// Whether a creation's outcome is known from the listing: the reserved path
+/// is absent, or it is a listed worktree now bound to its created identity.
+fn created_settled(
+    hub: &Worktrees,
+    claim: Option<&str>,
+    listing: &Value,
+    path: Option<&str>,
+) -> bool {
+    let (Some(claim), Some(path)) = (claim, path) else {
+        return true;
+    };
+    if std::fs::symlink_metadata(path).is_err() {
+        return true;
+    }
+    listing
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item["path"] == path))
+        && hub
+            .resources
+            .bind_created(claim, Path::new(path))
+            .inspect_err(|error| eprintln!("Created worktree could not be bound: {error}"))
+            .is_ok()
 }
 
 /// Internal subprocess entry point. Keep the inherited flock only in this
