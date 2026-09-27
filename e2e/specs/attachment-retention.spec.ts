@@ -233,7 +233,7 @@ test('a backend snapshot remains valid while attachment reclaim runs', async () 
     const snapshot = await create
     expect(JSON.parse(snapshot.stdout)).toMatchObject({ type: 'managed_backup', operation: 'create',
       manifest: { scope: 'backend-snapshot-only', entries: expect.arrayContaining([
-        expect.objectContaining({ path: 'sessions.sqlite', schema: 16 }),
+        expect.objectContaining({ path: 'sessions.sqlite', schema: 17 }),
       ]) } })
     expect(reclaimed).toMatchObject({ reclaimed_payload_bytes: freeAttachment.size })
     const inspected = await execFileAsync('python3', ['scripts/managed_backup.py', 'inspect', '--backup', backup],
