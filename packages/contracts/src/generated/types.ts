@@ -35,6 +35,7 @@ export type ContractDefinition =
   | AdapterKind
   | AdapterList
   | AdapterListRequest
+  | AdapterPin
   | AdapterProbe
   | AdapterProbeRequest
   | AdapterProbed
@@ -2352,6 +2353,15 @@ export interface AdapterListRequest {
   op: 'adapter.list'
 }
 /**
+ * The adapter definition one run launches. A conversation starts on one
+ * definition revision; a run carries that definition so the runtime never
+ * reads the profile's store, and a later edit never changes a running agent.
+ */
+export interface AdapterPin {
+  definition: AdapterDefinition
+  revision: number
+}
+/**
  * `adapter.probe`: check the executable and record its capabilities.
  */
 export interface AdapterProbeRequest {
@@ -2523,6 +2533,11 @@ export interface AgentRunSpec {
    * The pinned account execution context, or null for ambient credentials.
    */
   account: unknown
+  /**
+   * The generic adapter definition an `adapter:` run launches, pinned by
+   * revision; absent for every other provider.
+   */
+  adapter?: AdapterPin | null
   conversation: string
   provider: string
   root: string

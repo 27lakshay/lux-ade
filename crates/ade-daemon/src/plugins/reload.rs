@@ -88,15 +88,6 @@ struct Committed {
     has_backend: bool,
 }
 
-/// What a provider session runs: the generation it leases and that
-/// generation's artifact.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProviderLease {
-    pub generation: u64,
-    pub artifact_path: String,
-    pub entry: String,
-}
-
 fn origin_name(origin: PluginGenerationOrigin) -> &'static str {
     match origin {
         PluginGenerationOrigin::Enable => "enable",
@@ -671,7 +662,7 @@ impl Plugins {
     /// returns the lease the session already holds. The session keeps that
     /// generation and its artifact until [`Plugins::release_provider`], even
     /// across reloads and daemon restarts.
-    pub fn lease_provider(&self, plugin_id: &str, session_id: &str) -> Result<ProviderLease> {
+    pub fn lease_provider(&self, plugin_id: &str, session_id: &str) -> Result<ProviderWorker> {
         ensure!(
             (1..=MAX_SESSION_ID).contains(&session_id.len()),
             coded("invalid_request", "session_id must be 1 to 256 bytes")
@@ -690,39 +681,50 @@ impl Plugins {
                     format!("Plugin {plugin_id} declares no provider entry point"),
                 )
             })?;
-        let held: Option<(i64, String)> = state
+        let worker =
+            |generation: i64, version, artifact_digest, artifact_path, entry| ProviderWorker {
+                provider: ade_runtime::provider::registry::plugin_provider_id(plugin_id),
+                pin: ProviderWorkerPin {
+                    plugin_id: plugin_id.to_owned(),
+                    version,
+                    artifact_digest,
+                    activation_generation: generation.max(0) as u64,
+                },
+                artifact_path,
+                entry,
+            };
+        let held: Option<(i64, String, String, String)> = state
             .db
             .query_row(
-                "SELECT l.generation,g.artifact_path FROM plugin_provider_leases l
+                "SELECT l.generation,g.version,g.artifact_digest,g.artifact_path FROM plugin_provider_leases l
                  JOIN plugin_generations g ON g.plugin_id=l.plugin_id AND g.generation=l.generation
                  WHERE l.plugin_id=?1 AND l.session_id=?2",
                 params![plugin_id, session_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        if let Some((generation, artifact_path)) = held {
+        if let Some((generation, version, digest, artifact_path)) = held {
             // The leased generation's own manifest decides its entry; the
             // installed one may be newer.
             let entry = artifact_entry(Path::new(&artifact_path)).unwrap_or(entry);
-            return Ok(ProviderLease {
-                generation: generation.max(0) as u64,
-                artifact_path,
-                entry,
-            });
+            return Ok(worker(generation, version, digest, artifact_path, entry));
         }
         let live = state
             .live
             .get(plugin_id)
             .ok_or_else(|| not_enabled(plugin_id))?;
+        let generation = live.activation.generation as i64;
         state.db.execute(
             "INSERT INTO plugin_provider_leases(plugin_id,session_id,generation,leased_at) VALUES(?1,?2,?3,?4)",
-            params![plugin_id, session_id, live.activation.generation as i64, now_ms()],
+            params![plugin_id, session_id, generation, now_ms()],
         )?;
-        Ok(ProviderLease {
-            generation: live.activation.generation,
-            artifact_path: plugin.detail.artifact_path,
+        Ok(worker(
+            generation,
+            plugin.detail.summary.version,
+            plugin.detail.artifact_digest,
+            plugin.detail.artifact_path,
             entry,
-        })
+        ))
     }
 
     /// Ends a provider session's lease. Returns whether it held one. A

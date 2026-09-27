@@ -15,7 +15,52 @@ use std::{path::Path, sync::Mutex, time::Duration};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS provider_adapters(id TEXT PRIMARY KEY, definition TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision >= 1), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, probe TEXT);
+CREATE TABLE IF NOT EXISTS adapter_conversation_pins(conversation_id TEXT PRIMARY KEY, adapter_id TEXT NOT NULL, revision INTEGER NOT NULL, adapter_created_at INTEGER NOT NULL);
 ";
+
+/// Which definition a conversation's adapter was when it pinned it: the
+/// revision, and the creation time that tells a removed and re-added adapter
+/// apart from the one the conversation started on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pinned {
+    pub revision: u64,
+    pub created_at: i64,
+}
+
+/// What a launch does with a conversation's adapter pin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PinDecision {
+    /// The stored definition is the one the conversation pinned.
+    Keep,
+    /// Nothing native exists yet, so the conversation moves to the current
+    /// definition.
+    Repin,
+    /// A native session exists on another definition: fail closed rather than
+    /// resume it with a different agent command.
+    Refuse(String),
+}
+
+/// Decides whether a run may launch the stored definition `current` for a
+/// conversation pinned to `pinned`. `session_started` is whether the
+/// conversation already has a native session.
+pub fn pin_decision(
+    adapter_id: &str,
+    pinned: Option<Pinned>,
+    current: Pinned,
+    session_started: bool,
+) -> PinDecision {
+    match pinned {
+        Some(pinned) if pinned == current => PinDecision::Keep,
+        _ if !session_started => PinDecision::Repin,
+        Some(pinned) if pinned.created_at == current.created_at => PinDecision::Refuse(format!(
+            "Adapter {adapter_id} changed from revision {} to {} after this conversation started; ADE does not resume a session with a different adapter definition. Start a new conversation",
+            pinned.revision, current.revision
+        )),
+        _ => PinDecision::Refuse(format!(
+            "Adapter {adapter_id} was removed and defined again after this conversation started; ADE does not resume a session with a different adapter definition. Start a new conversation"
+        )),
+    }
+}
 
 pub struct Adapters {
     db: Mutex<Connection>,
@@ -113,6 +158,24 @@ fn record(row: Row) -> AdapterRecord {
     }
 }
 
+/// The descriptor a ready adapter publishes: the registry entry's, with the
+/// capabilities its probe discovered.
+fn descriptor(record: &AdapterRecord) -> ade_core::provider::Descriptor {
+    use ade_runtime::provider::registry::{AdapterEntry, ProviderEntry};
+    let mut descriptor = AdapterEntry {
+        definition: record.definition.clone(),
+    }
+    .descriptor();
+    if let Some(AdapterProbe {
+        outcome: ProbeOutcome::Ready { capabilities, .. },
+        ..
+    }) = &record.probe
+    {
+        descriptor.capabilities = capabilities.clone();
+    }
+    descriptor
+}
+
 fn check_id(id: &str) -> Result<()> {
     ensure!(
         !id.is_empty() && id.len() <= 40,
@@ -165,6 +228,96 @@ impl Adapters {
                 Ok((serde_json::from_str(&definition)?, u64::try_from(revision)?))
             })
             .collect()
+    }
+
+    /// The registry descriptor of adapter `id`, for validating a new
+    /// conversation. Only a ready adapter takes new conversations.
+    pub fn descriptor_for_new(&self, id: &str) -> Result<ade_core::provider::Descriptor> {
+        check_id(id)?;
+        let row = read(&self.db.lock().unwrap(), id)?
+            .with_context(|| format!("No adapter has ID {id}; define it with adapter.put first"))?;
+        let record = record(row);
+        ensure!(
+            record.readiness == AdapterReadiness::Ready,
+            "Adapter {id} is {:?}, not ready; probe it with adapter.probe first",
+            record.readiness
+        );
+        Ok(descriptor(&record))
+    }
+
+    /// Descriptors of the adapters that are ready now, by ID.
+    pub fn ready_descriptors(&self) -> Result<Vec<ade_core::provider::Descriptor>> {
+        let rows: Vec<Row> = {
+            let db = self.db.lock().unwrap();
+            let mut statement = db.prepare("SELECT id FROM provider_adapters ORDER BY id")?;
+            let ids: Vec<String> = statement
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            ids.iter()
+                .filter_map(|id| read(&db, id).transpose())
+                .collect::<Result<_>>()?
+        };
+        Ok(rows
+            .into_iter()
+            .map(record)
+            .filter(|record| record.readiness == AdapterReadiness::Ready)
+            .map(|record| descriptor(&record))
+            .collect())
+    }
+
+    /// Pins a new conversation to adapter `id`'s current definition.
+    pub fn pin(&self, conversation_id: &str, id: &str) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        let row = read(&db, id)?.with_context(|| format!("Adapter {id} was removed"))?;
+        db.execute(
+            "INSERT OR REPLACE INTO adapter_conversation_pins(conversation_id, adapter_id, revision, adapter_created_at) VALUES(?1, ?2, ?3, ?4)",
+            params![conversation_id, id, row.revision as i64, row.created_at],
+        )?;
+        Ok(())
+    }
+
+    /// The definition a run of `conversation_id` launches, decided by
+    /// [`pin_decision`]. A removed adapter launches nothing; the
+    /// conversation's history stays readable.
+    pub fn launch_pin(
+        &self,
+        conversation_id: &str,
+        id: &str,
+        session_started: bool,
+    ) -> Result<AdapterPin> {
+        let db = self.db.lock().unwrap();
+        let row = read(&db, id)?.with_context(|| {
+            format!("Adapter {id} was removed; this conversation's history stays readable, but it cannot run")
+        })?;
+        let pinned = db
+            .query_row(
+                "SELECT revision, adapter_created_at FROM adapter_conversation_pins WHERE conversation_id=?1 AND adapter_id=?2",
+                params![conversation_id, id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .optional()?
+            .map(|(revision, created_at)| Pinned {
+                revision: revision.max(0) as u64,
+                created_at,
+            });
+        let current = Pinned {
+            revision: row.revision,
+            created_at: row.created_at,
+        };
+        match pin_decision(id, pinned, current, session_started) {
+            PinDecision::Keep => {}
+            PinDecision::Repin => {
+                db.execute(
+                    "INSERT OR REPLACE INTO adapter_conversation_pins(conversation_id, adapter_id, revision, adapter_created_at) VALUES(?1, ?2, ?3, ?4)",
+                    params![conversation_id, id, row.revision as i64, row.created_at],
+                )?;
+            }
+            PinDecision::Refuse(reason) => return Err(anyhow!(reason)),
+        }
+        Ok(AdapterPin {
+            revision: row.revision,
+            definition: row.definition,
+        })
     }
 
     fn list(&self) -> Result<Value> {
@@ -339,6 +492,37 @@ mod tests {
                 ProbeOutcome::Failed { error: "no".into() }
             },
         }
+    }
+
+    #[test]
+    fn a_started_session_never_moves_to_another_definition() {
+        let at = |revision, created_at| Pinned {
+            revision,
+            created_at,
+        };
+        assert_eq!(
+            pin_decision("a", Some(at(1, 5)), at(1, 5), true),
+            PinDecision::Keep
+        );
+        // Nothing native yet: the conversation follows the current definition.
+        assert_eq!(
+            pin_decision("a", Some(at(1, 5)), at(2, 5), false),
+            PinDecision::Repin
+        );
+        assert_eq!(pin_decision("a", None, at(1, 5), false), PinDecision::Repin);
+        // Edited, or removed and defined again, after the session started.
+        assert!(matches!(
+            pin_decision("a", Some(at(1, 5)), at(2, 5), true),
+            PinDecision::Refuse(reason) if reason.contains("revision 1 to 2")
+        ));
+        assert!(matches!(
+            pin_decision("a", Some(at(1, 5)), at(1, 9), true),
+            PinDecision::Refuse(reason) if reason.contains("defined again")
+        ));
+        assert!(matches!(
+            pin_decision("a", None, at(1, 5), true),
+            PinDecision::Refuse(_)
+        ));
     }
 
     #[test]

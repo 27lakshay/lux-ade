@@ -59,11 +59,9 @@ test('a provider plugin registers only under its own plugin: ID, and a provider-
     .rejects.toMatchObject({ code: 'invalid_request' })
 })
 
-// Gap (F023): `conversation.create` validates the provider against the static
-// catalogue in ade-core, so `plugin:<id>` is refused, and `sessions/agents.rs`
-// launches every run with `worker: None`. No turn can reach a provider worker
-// through the protocol yet. See .scratch/ade-v1/evidence/phase2-provider-plugins.md, Open.
-test.fixme('a turn runs on a provider plugin and its history stays readable after the plugin is disabled', async ({ ade, profile }) => {
+// Conversations run on `plugin:` providers through the provider registry; see
+// also e2e/protocol/adapters/plugin-providers.spec.ts.
+test('a turn runs on a provider plugin and its history stays readable after the plugin is disabled', async ({ ade, profile }) => {
   const { pluginId } = await installAndEnable(profile, await stagePlugin(ade.root, 'provider'))
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const { conversation } = await profile.call('conversation.create', { workspace_id: workspace.id, provider: `plugin:${pluginId}` })
@@ -75,10 +73,10 @@ test.fixme('a turn runs on a provider plugin and its history stays readable afte
   expect(snapshot.messages.map((message) => (message as { text?: string }).text)).toEqual(expect.arrayContaining(['hello', 'Hello plugin']))
 })
 
-// Gap (F023): same as above; the worker crash path (run ends with an exit
-// event, the turn is not redispatched) is unreachable until a conversation can
-// run on a plugin provider.
-test.fixme('a provider worker that crashes mid-turn ends the run without redispatching the turn', async ({ ade, profile }) => {
+// This worker dies on its first input, before its handshake; the run ends in
+// an error and nothing is redispatched. A crash in the middle of a turn is in
+// e2e/protocol/adapters/plugin-providers.spec.ts.
+test('a provider worker that crashes mid-turn ends the run without redispatching the turn', async ({ ade, profile }) => {
   const source = await stagePlugin(ade.root, 'provider')
   await writeFile(join(source, 'worker.mjs'), 'process.stdin.once("data", () => process.exit(9))\n')
   const { pluginId } = await installAndEnable(profile, source)
@@ -86,5 +84,5 @@ test.fixme('a provider worker that crashes mid-turn ends the run without redispa
   const { conversation } = await profile.call('conversation.create', { workspace_id: workspace.id, provider: `plugin:${pluginId}` })
   await send(profile, conversation.id, 'hello')
   await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversation.id })).conversation.status)
-    .toMatch(/failed|idle|exited/)
+    .toMatch(/^(error|failed|exited)$/)
 })

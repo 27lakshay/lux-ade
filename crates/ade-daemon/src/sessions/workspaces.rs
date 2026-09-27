@@ -72,11 +72,12 @@ impl Sessions {
         match request["op"].as_str().unwrap_or("") {
             "catalog.get" => {
                 let CatalogGetRequest {} = decode(request)?;
+                self.discover_plugin_providers();
                 let (catalog, revision) = self.live_catalog()?;
                 reply(&CatalogFrame {
                     tag: Default::default(),
                     catalog,
-                    providers: provider::descriptors().to_vec(),
+                    providers: self.provider_descriptors(),
                     boot_id: self.boot_id.clone(),
                     revision,
                 })
@@ -267,7 +268,7 @@ impl Sessions {
         let catalog = d.store.catalog()?;
         self.publish(
             d,
-            json!({"type":"catalog","catalog":catalog,"providers":provider::descriptors()}),
+            json!({"type":"catalog","catalog":catalog,"providers":self.provider_descriptors()}),
         );
         Ok(())
     }

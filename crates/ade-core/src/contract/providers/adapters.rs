@@ -148,6 +148,16 @@ pub struct AdapterProbe {
     pub outcome: ProbeOutcome,
 }
 
+/// The adapter definition one run launches. A conversation starts on one
+/// definition revision; a run carries that definition so the runtime never
+/// reads the profile's store, and a later edit never changes a running agent.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AdapterPin {
+    pub revision: u64,
+    pub definition: AdapterDefinition,
+}
+
 /// Whether an adapter may be trusted to have the probed capabilities now.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]

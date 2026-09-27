@@ -38,13 +38,42 @@ pub struct Spec {
     /// so their wire shape is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker: Option<ade_core::contract::providers::ProviderWorker>,
+    /// The adapter definition an `adapter:` run launches, pinned by revision.
+    /// Absent for every other provider, so their wire shape is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<ade_core::contract::providers::adapters::AdapterPin>,
 }
 /// Starts the provider a run names. A plugin provider must arrive with the
-/// worker pin its session leases; every provider goes through a registry
-/// entry, bundled ones through [`provider::registry::bundled`].
+/// worker pin its session leases, and an adapter with its pinned definition;
+/// every provider goes through a registry entry, bundled ones through
+/// [`provider::registry::bundled`].
 fn launch(spec: &Spec, events: mpsc::SyncSender<Event>) -> Result<Arc<dyn Provider>> {
-    use provider::registry::{ProviderEntry, Registry};
+    use provider::registry::{AdapterEntry, ProviderEntry, Registry};
     use provider::worker::{WorkerEntry, is_plugin_provider};
+    let is_adapter = spec.provider.starts_with(crate::adapters::PROVIDER_PREFIX);
+    ensure!(
+        spec.adapter.is_some() == is_adapter,
+        "Adapter provider {} needs exactly its pinned definition",
+        spec.provider
+    );
+    ensure!(
+        spec.worker.is_none() || spec.adapter.is_none(),
+        "A run launches one provider"
+    );
+    if let Some(pin) = &spec.adapter {
+        let mut registry = Registry::default();
+        registry.register(
+            &spec.provider,
+            ade_core::contract::providers::ProviderOrigin::Adapter {
+                adapter_id: pin.definition.id.clone(),
+                revision: pin.revision,
+            },
+            Arc::new(AdapterEntry {
+                definition: pin.definition.clone(),
+            }) as Arc<dyn ProviderEntry>,
+        )?;
+        return registry.launch(&spec.provider, &spec.root, spec.account.as_ref(), events);
+    }
     match &spec.worker {
         None => {
             ensure!(
@@ -713,6 +742,7 @@ mod tests {
                     root: "/tmp".into(),
                     account: None,
                     worker: None,
+                    adapter: None,
                 },
                 adapter: fake.clone(),
                 journal: Mutex::new(Journal::new()),

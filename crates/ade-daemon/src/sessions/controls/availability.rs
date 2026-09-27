@@ -60,6 +60,22 @@ pub fn native(provider: &str, control: ConversationControl) -> Result<&'static s
         ("opencode", RewindConversation) => {
             missing("ADE's OpenCode adapter does not call OpenCode's revert yet")
         }
+        (adapter, control) if adapter.starts_with("adapter:") => match control {
+            Steer => missing(
+                "Generic ACP and custom executable adapters have no native steer path; ACP v1 has no steer method",
+            ),
+            Compact => missing(
+                "Generic adapters cannot compact: ACP v1 has no compaction method, and a custom executable has none",
+            ),
+            _ => missing("Generic adapters cannot resume at an earlier message"),
+        },
+        (plugin, control) if plugin.starts_with("plugin:") => match control {
+            Steer => missing(
+                "ADE does not admit steering for provider plugin workers yet; their handshake is not checked before admission",
+            ),
+            Compact => missing("The provider worker protocol v1 has no compaction method"),
+            _ => missing("The provider worker protocol v1 cannot resume at an earlier message"),
+        },
         (other, _) => Err(format!("Unknown provider {other}")),
     }
 }
@@ -178,6 +194,15 @@ mod tests {
         }
         let unknown = decide(&facts("gemini", "running"), Steer);
         assert_eq!(unknown.reason.as_deref(), Some("Unknown provider gemini"));
+        // Adapters and plugin workers name their own limitation, not an unknown provider.
+        for provider in ["adapter:my-agent", "plugin:e2e.agent"] {
+            for control in [Steer, Compact, RewindConversation] {
+                let decided = decide(&facts(provider, "running"), control);
+                assert!(!decided.available);
+                assert!(!decided.reason.unwrap().starts_with("Unknown provider"));
+            }
+            assert!(decide(&facts(provider, "ready"), RewindFiles).available);
+        }
     }
 
     #[test]

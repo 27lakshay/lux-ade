@@ -27,9 +27,9 @@ const methods = {
     return { session, history }
   },
   send: (params) => {
-    const turn = `turn-${++turns}`
-    const user = { id: `${turn}-user`, client_id: params.message_id ?? null, turn, role: 'user', kind: 'message', text: params.text, status: 'completed' }
-    const reply = { id: `${turn}-assistant`, client_id: null, turn, role: 'assistant', kind: 'message', text: 'Hello plugin', status: 'completed' }
+    const turn = `turn-${process.pid}-${++turns}`
+    const user = { id: params.message_id ?? `${turn}-user`, client_id: params.submission ?? null, turn, role: 'user', kind: 'text', text: params.text, status: 'completed' }
+    const reply = { id: `${turn}-assistant`, client_id: null, turn, role: 'assistant', kind: 'text', text: 'Hello plugin', status: 'completed' }
     history.push(user, reply)
     setImmediate(() => {
       event({ type: 'submitted', submission: params.submission, turn })

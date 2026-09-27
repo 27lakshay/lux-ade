@@ -83,6 +83,29 @@ impl Store {
         account_id: Option<&str>,
     ) -> Result<Conversation> {
         provider_config.validate(provider)?;
+        self.insert_conversation(workspace_id, title, provider, provider_config, account_id)
+    }
+    /// Creates a Conversation on a provider outside the static catalogue: a
+    /// generic adapter or a plugin provider, validated against the descriptor
+    /// its registry entry publishes. Such providers manage no accounts.
+    pub fn create_registered(
+        &self,
+        workspace_id: &str,
+        title: &str,
+        descriptor: &crate::provider::Descriptor,
+        provider_config: crate::provider::Config,
+    ) -> Result<Conversation> {
+        provider_config.validate_against(descriptor)?;
+        self.insert_conversation(workspace_id, title, &descriptor.id, provider_config, None)
+    }
+    fn insert_conversation(
+        &self,
+        workspace_id: &str,
+        title: &str,
+        provider: &str,
+        provider_config: crate::provider::Config,
+        account_id: Option<&str>,
+    ) -> Result<Conversation> {
         if let Some(id) = account_id {
             let account = self.account(id)?;
             ensure!(
