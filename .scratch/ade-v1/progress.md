@@ -1200,3 +1200,14 @@ accepted rows.
 **Newly accepted (3):** F081, R004 and F043; R006 was already accepted in
 round 3. The register now holds 79 accepted rows.
 
+**Final fixes, merged at `e3362bd`** (810 in-process tests; the full protocol suite passes:
+826 specs in 11.8 minutes at 2 workers, 14 skipped, no failures)
+
+- The file-rewind crash spec is deterministic. Debug-only pause points kill
+  the daemon before, between and after the restore's writes, and each outcome
+  is proven: read back once, or unknown and never re-run.
+- Agents report their tracked descendants from the runtime, and an escaped
+  agent descendant keeps its attempt quarantined after a runtime kill.
+- Terminal cleanup: no attachment is closed for lag any more, and the CLI's
+  complete-history resync path is proven.
+
