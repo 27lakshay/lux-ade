@@ -5,21 +5,52 @@ const SESSION_PROTOCOL = 'ade-sessions-v1'
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 const MAX_REQUEST_BYTES = 128 * 1024
 
-export type DaemonErrorCode = 'unavailable' | 'incompatible' | 'timeout' | 'protocol' | 'daemon' |
-  'invalid_request' | 'conflict' | 'outcome_unknown' | 'in_progress' | 'overloaded' | 'not_applied'
+/**
+ * The codes the client raises itself, and the general categories the daemon
+ * also uses. `daemon` names a daemon error frame that carried no code.
+ */
+export const categoryErrorCodes = ['unavailable', 'incompatible', 'timeout', 'protocol', 'daemon',
+  'invalid_request', 'conflict', 'outcome_unknown', 'in_progress', 'overloaded', 'not_applied'] as const
+
+/**
+ * The specific refusal codes the daemon sends today, each with a `recovery`
+ * hint. The daemon may add codes, so `DaemonErrorCode` stays open: a code this
+ * list lacks is kept exactly as the daemon sent it.
+ */
+export const daemonRefusalCodes = ['needs_rebind', 'host_resource_conflict', 'host_resources_unavailable',
+  'restored_send_held', 'lifecycle_command_failed', 'lifecycle_outcome_unknown', 'lifecycle_unavailable',
+  'lifecycle_invalid_output'] as const
+
+export type KnownDaemonErrorCode = typeof categoryErrorCodes[number] | typeof daemonRefusalCodes[number]
+// `string & {}` keeps completion for the known codes while admitting any other.
+export type DaemonErrorCode = KnownDaemonErrorCode | (string & {})
 export type RequestDelivery = 'not_sent' | 'unknown' | 'rejected'
 
 export class DaemonRequestError extends Error {
   /**
+   * `code` is the daemon's own code when its error frame carried one, and
+   * `recovery` is that frame's recovery hint, if it had one.
    * `replied` is true when the daemon itself sent this error as a reply frame,
    * so the connection carried a whole answer. It is false for a failure of the
    * connection (socket error, close, deadline) or of the client's own checks.
    */
   constructor(public readonly code: DaemonErrorCode, message: string,
-    public readonly delivery: RequestDelivery = 'not_sent', public readonly replied = false) {
+    public readonly delivery: RequestDelivery = 'not_sent', public readonly replied = false,
+    public readonly recovery?: string) {
     super(message)
     this.name = 'DaemonRequestError'
   }
+}
+
+const categories: ReadonlySet<string> = new Set(categoryErrorCodes)
+
+/**
+ * Whether the daemon answered with a specific refusal: an error frame with no
+ * code (`daemon`) or with a code outside the general categories. SDKs before
+ * codes were preserved reported all of these as `daemon`.
+ */
+export function isDaemonRefusal(error: DaemonRequestError): boolean {
+  return error.replied && (error.code === 'daemon' || !categories.has(error.code))
 }
 
 export interface RequestOptions {
@@ -64,12 +95,12 @@ export function requestDaemon(
     }
 
     function fail(code: DaemonErrorCode, message: string,
-      delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent', replied = false): void {
+      delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent', replied = false, recovery?: string): void {
       if (settled) return
       settled = true
       clearTimeout(timer)
       socket.destroy()
-      reject(new DaemonRequestError(code, message, delivery, replied))
+      reject(new DaemonRequestError(code, message, delivery, replied, recovery))
     }
 
     socket.on('connect', () => socket.write('{"op":"hello"}\n'))
@@ -90,12 +121,12 @@ export function requestDaemon(
         const response = frame as Record<string, unknown>
         if (typeof response.type !== 'string') return fail('protocol', 'Daemon response has no type.')
         if (response.type === 'error') {
-          const knownCodes: DaemonErrorCode[] = ['unavailable', 'invalid_request', 'conflict',
-            'outcome_unknown', 'in_progress', 'overloaded', 'not_applied']
-          const code = typeof response.code === 'string' && knownCodes.includes(response.code as DaemonErrorCode)
-            ? response.code as DaemonErrorCode : 'daemon'
+          // Keep the daemon's code and recovery hint as sent; only a frame with no code is `daemon`.
+          const code = typeof response.code === 'string' && response.code ? response.code : 'daemon'
+          const recovery = typeof response.recovery === 'string' && response.recovery ? response.recovery : undefined
           return fail(code, typeof response.message === 'string' ? response.message : 'Daemon rejected the request.',
-            phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown', true)
+            phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown', true,
+            recovery)
         }
         if (phase === 'hello') {
           if (response.type !== 'hello') return fail('protocol', 'Daemon did not provide a hello response.')

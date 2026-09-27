@@ -1,7 +1,7 @@
 // The daemon's whole reply frame, error frames included. `profile.rpc` rejects
-// an error frame with its message only, and the SDK maps codes it does not know
-// (such as `host_resource_conflict`) to `daemon`, so a spec that asserts the
-// daemon's typed error `code` and `recovery` reads the frame itself.
+// an error frame with its message only. The SDK keeps the frame's `code` and
+// `recovery` on `DaemonRequestError`; a spec reads the raw frame when it needs
+// the exact bytes the daemon sent, or fields the SDK does not carry.
 import { createConnection } from 'node:net'
 import { appendFile } from 'node:fs/promises'
 import { join } from 'node:path'

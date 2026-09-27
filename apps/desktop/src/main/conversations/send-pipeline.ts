@@ -2,7 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseRequest,
+import { DaemonRequestError, decodeDailyUseResponse, isDaemonRefusal, requestDaemon, type DailyUseOperation, type DailyUseRequest,
   type DailyUseResponse, type RequestOptions, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import { decideSendRecovery, findPendingSend } from '@ade/client/outbox'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
@@ -458,7 +458,7 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
         if (entry.send === null) throw settleError
       }
       if (!intent.admitted && error instanceof DaemonRequestError &&
-        (error.code === 'daemon' || error.code === 'invalid_request')) {
+        (isDaemonRefusal(error) || error.code === 'invalid_request')) {
         await journal().remove(journalIdentity(entry, intent))
         entry.send = null
         throw error

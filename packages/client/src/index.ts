@@ -11,8 +11,9 @@ export {
   type TerminalConnectionOptions,
   type TerminalFrame,
 } from './terminal.js'
-export { requestDaemon, DaemonRequestError, type DaemonErrorCode, type DaemonResponse,
-  type RequestDelivery, type RequestOptions } from './request.js'
+export { requestDaemon, DaemonRequestError, categoryErrorCodes, daemonRefusalCodes, isDaemonRefusal,
+  type DaemonErrorCode, type DaemonResponse, type KnownDaemonErrorCode, type RequestDelivery,
+  type RequestOptions } from './request.js'
 export { call, decodeCallReply, encodeCall, type CallRequest } from './call.js'
 export { isOperation, operations, type Operation, type Tier } from '@ade/contracts'
 export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'

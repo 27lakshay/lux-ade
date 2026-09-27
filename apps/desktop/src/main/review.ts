@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { DaemonRequestError, dailyUseCommand, formatReviewFeedback, type DailyUseRequest, type DailyUseResponse,
+import { DaemonRequestError, dailyUseCommand, formatReviewFeedback, isDaemonRefusal, type DailyUseRequest, type DailyUseResponse,
   type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import { decideGitAdmission, gitAdmitted, pendingGitOperation } from '@ade/client/outbox'
 import type { GitIntent, GitJournal } from './git-journal'
@@ -24,7 +24,7 @@ async function listGitOperations(endpoint: string, workspaceId: string,
 }
 function requestFailure(error: unknown): RequestFailure | null {
   return error instanceof DaemonRequestError
-    ? { code: error.code, delivery: error.delivery, message: error.message } : null
+    ? { code: error.code, delivery: error.delivery, message: error.message, refusal: isDaemonRefusal(error) } : null
 }
 /**
  * Release a Git mutation's local record when the daemon definitely refused it
