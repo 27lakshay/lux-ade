@@ -73,7 +73,8 @@ export async function runHookCommand(socketPath: string, area: string | undefine
     case 'inspect':
     case 'abandon': {
       const effect_id = one(parse(rest, []).positionals, `hook ${action} requires EFFECT_ID`)
-      return dailyUseCommand(socketPath, { op: `hook.delivery.${action}`, effect_id })
+      const op = action === 'inspect' ? 'hook.delivery.inspect' : 'hook.delivery.abandon'
+      return dailyUseCommand(socketPath, { op, effect_id })
     }
     case 'retry': {
       const parsed = parse(rest, ['--request-id'], ['--acknowledge-unknown'])

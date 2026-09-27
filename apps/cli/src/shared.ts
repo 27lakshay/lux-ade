@@ -44,6 +44,55 @@ export function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+/** Words split into positionals, `--name VALUE` options and bare `--flag`s; anything else is a usage error. */
+export interface ParsedWords {
+  positionals: string[]
+  options: Record<string, string>
+  flags: Set<string>
+}
+
+export function parseWords(words: string[], valueOptions: readonly string[], flagOptions: readonly string[],
+  command: string): ParsedWords {
+  const parsed: ParsedWords = { positionals: [], options: {}, flags: new Set() }
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index]
+    if (!word.startsWith('--')) { parsed.positionals.push(word); continue }
+    if (flagOptions.includes(word) && !parsed.flags.has(word)) { parsed.flags.add(word); continue }
+    const value = words[index + 1]
+    if (!valueOptions.includes(word) || parsed.options[word] !== undefined || !value || value.startsWith('--')) {
+      throw new CliError('usage', `Invalid ${command} option ${word}. Run ade --help for usage.`)
+    }
+    parsed.options[word] = value
+    index++
+  }
+  return parsed
+}
+
+/** Exactly `count` non-empty positionals, or a usage error naming the expected shape. */
+export function positionals(parsed: ParsedWords, count: number, usage: string): string[] {
+  if (parsed.positionals.length !== count || parsed.positionals.some((word) => !word)) {
+    throw new CliError('usage', `${usage}.`)
+  }
+  return parsed.positionals
+}
+
+/** A caller-owned request ID, retained by the caller and reused only to retry the same request. */
+export function requestIdOption(parsed: ParsedWords, command: string): string {
+  const id = parsed.options['--request-id']
+  if (!id || id.length > 256) {
+    throw new CliError('usage', `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`)
+  }
+  return id
+}
+
+export function boundedInteger(value: string, label: string, min: number, max: number): number {
+  const number = Number(value)
+  if (!/^-?[0-9]+$/.test(value) || !Number.isSafeInteger(number) || number < min || number > max) {
+    throw new CliError('usage', `${label} must be an integer from ${min} to ${max}.`)
+  }
+  return number
+}
+
 export async function catalog(socketPath: string): Promise<Record<string, unknown>> {
   const result = await requestDaemon(socketPath, 'catalog.get')
   return object(result.catalog)

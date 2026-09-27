@@ -32,7 +32,14 @@ import { hookUsage, runHookCommand } from './commands/hooks.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
 import { runWorktreeLifecycleCommand, worktreeLifecycleUsage } from './commands/worktrees.js'
-import { CliError, jsonObject, object, required, type CommandResult, type ErrorCode } from './shared.js'
+import { listOperations, requestUsage, runRequestCommand } from './commands/request.js'
+import { activityUsage, runActivityCommand } from './commands/activity.js'
+import { attachmentUsage, runAttachmentCommand } from './commands/attachments.js'
+import { fileUsage, runFileCommand } from './commands/files.js'
+import { queueUsage, runQueueCommand } from './commands/queue.js'
+import { resourceUsage, runResourceCommand } from './commands/resources.js'
+import { runRuntimeCommand, runtimeUsage } from './commands/runtime.js'
+import { CliError, object, type CommandResult, type ErrorCode } from './shared.js'
 
 const usageHeader = `ADE local command line
 
@@ -44,9 +51,6 @@ Usage: ade --profile ID COMMAND [arguments]
 Commands:
   profile list                          Discover managed profiles and their IDs
   status                                Inspect the selected profile daemon
-`
-
-const requestUsage = `  request OP [JSON_OBJECT]              Call another daemon command
 `
 
 const usageFooter = `
@@ -80,8 +84,12 @@ const usage = [
   usageHeader,
   workspaceUsage,
   worktreeLifecycleUsage,
+  resourceUsage,
+  fileUsage,
   conversationUsage,
   conversationControlUsage,
+  queueUsage,
+  attachmentUsage,
   historyUsage,
   importUsage,
   usageAnalyticsUsage,
@@ -104,6 +112,8 @@ const usage = [
   orchestrationUsage,
   runsUsage,
   diagnosticsUsage,
+  runtimeUsage,
+  activityUsage,
   remoteConnectUsage,
   retentionUsage,
   deviceUsage,
@@ -250,6 +260,13 @@ const commandAreas = [
   runDiagnosticsCommand,
   runRetentionCommand,
   runDeviceCommand,
+  runResourceCommand,
+  runFileCommand,
+  runQueueCommand,
+  runAttachmentCommand,
+  runRuntimeCommand,
+  runActivityCommand,
+  runRequestCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {
@@ -258,10 +275,6 @@ async function run(socketPath: string, words: string[]): Promise<CommandResult> 
   for (const command of commandAreas) {
     const result = await command(socketPath, area, action, rest)
     if (result !== undefined) return result
-  }
-  if (area === 'request') {
-    const op = required(action, 'OP')
-    return requestDaemon(socketPath, op, rest[0] ? jsonObject(rest[0], 'JSON_OBJECT') : {})
   }
   throw new CliError('usage', 'Unknown command or missing arguments. Run ade --help for usage.')
 }
@@ -278,6 +291,8 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify(await managedProfiles())}\n`)
       return
     }
+    const catalog = listOperations(words)
+    if (catalog) return void process.stdout.write(`${JSON.stringify(catalog)}\n`)
     if (words[0] === 'remote' && (words[1] === 'status' || words[1] === 'request')) {
       return void process.stdout.write(`${JSON.stringify(await runRemoteConnectCommand(words.slice(1)))}\n`)
     }

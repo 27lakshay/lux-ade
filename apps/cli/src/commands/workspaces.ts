@@ -3,10 +3,14 @@ import { catalog, CliError, required, type CommandResult } from '../shared.js'
 
 export const workspaceUsage = `  workspace list                        List registered workspaces
   workspace open PATH                   Register a repository or folder
+  workspace rebind-list                 List restored workspaces requiring a directory
   workspace rebind WORKSPACE_ID PATH    Bind a restored workspace to a verified directory
+  repository rebind-list                List restored Git repositories requiring a path
   repository rebind REPOSITORY_ID PATH  Bind a restored Git repository before its workspaces
   worktree register PATH                Register a Git repository lifecycle
   worktree list REPOSITORY_ID           Inspect linked trees and removal authority
+  worktree refresh REPOSITORY_ID --request-id ID
+                                        Re-read the Git worktree listing under the repository lock
   worktree create REPOSITORY_ID BRANCH BASE [PATH] --request-id ID
                                         Create a branch and linked tree
   worktree adopt REPOSITORY_ID PATH CONFIRM_PATH
@@ -56,6 +60,21 @@ export async function runWorkspaceCommand(socketPath: string, area: string | und
     return dailyUseCommand(socketPath, {
       op: 'worktree.rebind', repository_id: required(rest[0], 'REPOSITORY_ID'), path: required(rest[1], 'PATH'),
     })
+  }
+  if ((area === 'workspace' || area === 'repository') && action === 'rebind-list') {
+    if (rest.length) throw new CliError('usage', `${area} rebind-list does not accept arguments.`)
+    return area === 'workspace'
+      ? dailyUseCommand(socketPath, { op: 'workspace.rebind.list' })
+      : dailyUseCommand(socketPath, { op: 'repository.rebind.list' })
+  }
+  if (area === 'worktree' && action === 'refresh') {
+    if (rest.length !== 3 || rest[1] !== '--request-id' || !rest[2] || rest[2].startsWith('--') || rest[2].length > 256) {
+      throw new CliError('usage', 'worktree refresh requires REPOSITORY_ID --request-id ID.')
+    }
+    const response = await dailyUseCommand(socketPath, {
+      op: 'worktree.refresh', repository_id: required(rest[0], 'REPOSITORY_ID'), operation_id: rest[2],
+    })
+    return { ...response, request_id: rest[2] }
   }
   if (area === 'worktree' && action === 'rebind-list') {
     if (rest.length) throw new CliError('usage', 'worktree rebind-list does not accept arguments.')

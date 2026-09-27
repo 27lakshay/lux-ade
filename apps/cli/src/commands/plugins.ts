@@ -163,7 +163,9 @@ function host(socketPath: string, rest: string[]): Promise<CommandResult> {
   const [action, ...tail] = rest
   if (action !== 'status' && action !== 'restart') throw new CliError('usage', 'plugin host requires status or restart.')
   const [plugin_id] = count(options(tail, []), 1, `plugin host ${action} requires PLUGIN_ID`)
-  return dailyUseCommand(socketPath, { op: `plugin.host.${action}`, plugin_id })
+  return action === 'status'
+    ? dailyUseCommand(socketPath, { op: 'plugin.host.status', plugin_id })
+    : dailyUseCommand(socketPath, { op: 'plugin.host.restart', plugin_id })
 }
 
 export async function runPluginCommand(socketPath: string, area: string | undefined, action: string | undefined,
@@ -177,7 +179,8 @@ export async function runPluginCommand(socketPath: string, area: string | undefi
     case 'enable':
     case 'disable': {
       const [plugin_id] = count(options(rest, []), 1, `plugin ${action} requires PLUGIN_ID`)
-      return dailyUseCommand(socketPath, { op: `plugin.${action}`, plugin_id })
+      const op = ({ inspect: 'plugin.inspect', enable: 'plugin.enable', disable: 'plugin.disable' } as const)[action]
+      return dailyUseCommand(socketPath, { op, plugin_id })
     }
     case 'install':
       return install(socketPath, rest)

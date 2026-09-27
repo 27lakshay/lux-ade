@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { link, open, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation,
+import { call, DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation,
   type DailyUseRequest, type DailyUseResponse } from '@ade/client'
-import { catalog, CliError, jsonObject, object, required, type CommandResult } from '../shared.js'
+import { boundedInteger, catalog, CliError, jsonObject, object, parseWords, positionals, required,
+  type CommandResult } from '../shared.js'
 
 /** A typed request body: the operation's contract without its `op`. */
 export type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
@@ -22,6 +23,9 @@ export const conversationUsage = `  conversation list [WORKSPACE_ID]      List c
                                         Send a prompt; retain ID for safe lost-reply retries
   conversation cancel ID                Request cancellation of the active turn
   conversation resume ID                Reconnect or resume a stopped agent
+  conversation disconnect ID            Stop the conversation's idle agent
+  conversation child-transcript ID MESSAGE_ID CHILD_ID [--cursor CURSOR] [--offset 0..100000]
+                                        Read one page of a provider child agent's transcript
   conversation answer ID REQUEST_ID DECISION [ANSWERS_JSON]
                                         Answer a pending native request once; DECISION is accept, decline, cancel, or answer
                                         For questions, pass a JSON object of question IDs to text or text arrays
@@ -158,9 +162,19 @@ export async function runConversationCommand(socketPath: string, area: string | 
     const response = await requestDaemon(socketPath, 'agent.send', { conversation_id: conversationId, request_id: requestId, text })
     return { ...response, request_id: requestId }
   }
-  if (area === 'conversation' && (action === 'cancel' || action === 'resume')) {
+  if (area === 'conversation' && (action === 'cancel' || action === 'resume' || action === 'disconnect')) {
     if (rest.length !== 1) throw new CliError('usage', `conversation ${action} requires ID.`)
-    return requestDaemon(socketPath, `agent.${action}`, { conversation_id: required(rest[0], 'ID') })
+    const op = ({ cancel: 'agent.cancel', resume: 'agent.resume', disconnect: 'agent.disconnect' } as const)[action]
+    return requestDaemon(socketPath, op, { conversation_id: required(rest[0], 'ID') })
+  }
+  if (area === 'conversation' && action === 'child-transcript') {
+    const parsed = parseWords(rest, ['--cursor', '--offset'], [], 'conversation child-transcript')
+    const [conversation_id, message_id, child_id] = positionals(parsed, 3,
+      'conversation child-transcript requires ID MESSAGE_ID CHILD_ID')
+    const { '--cursor': cursor, '--offset': offset } = parsed.options
+    return call(socketPath, 'agent.child_transcript', { conversation_id, message_id, child_id,
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(offset === undefined ? {} : { offset: boundedInteger(offset, 'OFFSET', 0, 100_000) }) })
   }
   if (area === 'conversation' && action === 'answer') {
     if (rest.length < 3 || rest.length > 4) {

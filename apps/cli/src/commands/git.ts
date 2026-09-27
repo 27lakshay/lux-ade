@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { dailyUseCommand, formatReviewFeedback, requestDaemon, type DailyUseRequest,
+import { call, dailyUseCommand, formatReviewFeedback, requestDaemon, type DailyUseRequest,
   type ReviewFeedback } from '@ade/client'
-import { CliError, jsonObject, namedOptions, object, required, type CommandResult } from '../shared.js'
+import { boundedInteger, CliError, jsonObject, namedOptions, object, parseWords, positionals, required,
+  requestIdOption, type CommandResult } from '../shared.js'
 import { decodeReply, type Fields } from './conversations.js'
 
 export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git status and revision tokens
@@ -20,6 +21,12 @@ export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git
   git commit WORKSPACE_ID MESSAGE INDEX_TOKEN --request-id ID
                                         Commit the reviewed staged index
   git operation WORKSPACE_ID REQUEST_ID  Inspect a Git operation receipt
+  git hunk WORKSPACE_ID PATH DIFF_TOKEN HUNK --request-id ID [--unstage]
+                                        Stage, or with --unstage unstage, one hunk of a previewed diff
+  git operations WORKSPACE_ID [--all]   List running and unacknowledged interrupted Git mutations;
+                                        --all adds acknowledged ones
+  git acknowledge WORKSPACE_ID REQUEST_ID
+                                        Record that you saw an interrupted mutation; it never runs again
 `
 
 function reviewSearchLimit(value: string): number {
@@ -184,6 +191,26 @@ export async function runGitCommand(socketPath: string, area: string | undefined
     const feedback = reviewFeedback(rest[2])
     const requestId = required(rest[1], 'REQUEST_ID')
     return sendReviewFeedback(socketPath, required(rest[0], 'CONVERSATION_ID'), requestId, feedback)
+  }
+  if (area === 'git' && action === 'hunk') {
+    const parsed = parseWords(rest, ['--request-id'], ['--unstage'], 'git hunk')
+    const [workspace_id, path, token, hunk] = positionals(parsed, 4,
+      'git hunk requires WORKSPACE_ID PATH DIFF_TOKEN HUNK --request-id ID [--unstage]')
+    const operation_id = requestIdOption(parsed, 'git hunk')
+    const response = await call(socketPath, 'review.hunk', { workspace_id, operation_id, path, token,
+      hunk: boundedInteger(hunk, 'HUNK', 0, Number.MAX_SAFE_INTEGER), staged: parsed.flags.has('--unstage') })
+    return { ...response, workspace_id, request_id: operation_id }
+  }
+  if (area === 'git' && action === 'operations') {
+    const parsed = parseWords(rest, [], ['--all'], 'git operations')
+    const [workspace_id] = positionals(parsed, 1, 'git operations requires WORKSPACE_ID [--all]')
+    return call(socketPath, 'review.operation.list', { workspace_id,
+      ...(parsed.flags.has('--all') ? { include_acknowledged: true } : {}) })
+  }
+  if (area === 'git' && action === 'acknowledge') {
+    const [workspace_id, operation_id] = positionals(parseWords(rest, [], [], 'git acknowledge'), 2,
+      'git acknowledge requires WORKSPACE_ID REQUEST_ID')
+    return call(socketPath, 'review.operation.acknowledge', { workspace_id, operation_id })
   }
   if (area === 'git' && (action === 'stage' || action === 'unstage' || action === 'commit' || action === 'discard')) {
     const { workspaceId, value, token, requestId, diffToken } = gitMutationArgs(rest, action)
