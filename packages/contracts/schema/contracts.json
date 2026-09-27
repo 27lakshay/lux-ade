@@ -10747,6 +10747,473 @@
       ],
       "type": "object"
     },
+    "RepositoryCloneOutcome": {
+      "description": "How a clone ended.",
+      "oneOf": [
+        {
+          "const": "registered",
+          "description": "Cloned, verified and registered as a project.",
+          "type": "string"
+        },
+        {
+          "const": "cloned_not_registered",
+          "description": "Cloned and verified, but registration failed. The clone stays in\nplace; `workspace.open` on `destination` registers it.",
+          "type": "string"
+        }
+      ]
+    },
+    "RepositoryCloneRequest": {
+      "additionalProperties": false,
+      "description": "`repository.clone`: clone `url` into a new folder and register it as a project.",
+      "properties": {
+        "branch": {
+          "description": "The branch to check out; the remote's default branch when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "destination": {
+          "description": "The absolute path of the folder to create. Its parent must exist and the\npath itself must not; ADE never clones into an existing path.",
+          "type": "string"
+        },
+        "op": {
+          "const": "repository.clone"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "url": {
+          "description": "An `https://`, `ssh://`, `user@host:path` or `file://` URL without a password.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "url",
+        "destination"
+      ],
+      "type": "object"
+    },
+    "RepositoryCloned": {
+      "description": "The `repository.clone` reply.",
+      "properties": {
+        "branch": {
+          "description": "The checked-out branch; absent when HEAD is detached.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "destination": {
+          "description": "The canonical path of the new clone.",
+          "type": "string"
+        },
+        "head": {
+          "description": "The checked-out commit; absent when the remote repository is empty.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/RepositoryCloneOutcome"
+        },
+        "registration_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `repository_cloned` type tag.",
+          "enum": [
+            "repository_cloned"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkspaceRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The registered project; absent when `outcome` is `cloned_not_registered`."
+        }
+      },
+      "required": [
+        "type",
+        "outcome",
+        "url",
+        "destination",
+        "head",
+        "branch",
+        "workspace",
+        "registration_error"
+      ],
+      "type": "object"
+    },
+    "RepositoryCoverage": {
+      "description": "The `repository.coverage` reply: ordinary Git only, with named coverage (D08).",
+      "properties": {
+        "credentials": {
+          "description": "How authentication happens.",
+          "type": "string"
+        },
+        "excluded": {
+          "description": "Work ADE does not do for clone or publish.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forge_apis": {
+          "description": "Always false: no forge API is called.",
+          "type": "boolean"
+        },
+        "transports": {
+          "items": {
+            "$ref": "#/$defs/TransportCoverage"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `repository_coverage` type tag.",
+          "enum": [
+            "repository_coverage"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "transports",
+        "forge_apis",
+        "credentials",
+        "excluded"
+      ],
+      "type": "object"
+    },
+    "RepositoryCoverageRequest": {
+      "additionalProperties": false,
+      "description": "`repository.coverage`: the transports and forge behaviour ADE supports (D08).",
+      "properties": {
+        "op": {
+          "const": "repository.coverage"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "RepositoryPublishOutcome": {
+      "description": "How a publish ended.",
+      "oneOf": [
+        {
+          "const": "published",
+          "description": "Pushed, and the remote branch was read back at the pushed commit.",
+          "type": "string"
+        },
+        {
+          "const": "not_pushed",
+          "description": "Some local steps ran but nothing was confirmed on the remote. The\nfields say exactly which steps completed; `failed_step` says where it stopped.",
+          "type": "string"
+        }
+      ]
+    },
+    "RepositoryPublishPreview": {
+      "description": "The `repository.publish.preview` reply.",
+      "properties": {
+        "blocked_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "branch": {
+          "description": "The branch that would be pushed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The canonical folder.",
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "steps": {
+          "description": "The steps publish would take, in order.",
+          "items": {
+            "$ref": "#/$defs/RepositoryPublishStep"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `repository_publish_preview` type tag.",
+          "enum": [
+            "repository_publish_preview"
+          ],
+          "type": "string"
+        },
+        "uncommitted_changes": {
+          "description": "Uncommitted changes that publish would leave out of the push.",
+          "type": "boolean"
+        },
+        "verdict": {
+          "$ref": "#/$defs/RepositoryPublishVerdict"
+        }
+      },
+      "required": [
+        "type",
+        "verdict",
+        "path",
+        "remote",
+        "branch",
+        "steps",
+        "uncommitted_changes",
+        "blocked_reasons"
+      ],
+      "type": "object"
+    },
+    "RepositoryPublishPreviewRequest": {
+      "additionalProperties": false,
+      "description": "`repository.publish.preview`: what `repository.publish` would do, or why it refuses.",
+      "properties": {
+        "create_initial_commit": {
+          "default": false,
+          "description": "Allows an initial commit of every non-ignored file when the repository\nhas no commits yet.",
+          "type": "boolean"
+        },
+        "initial_branch": {
+          "description": "The branch a new repository starts on; `main` when absent. Ignored when\nthe folder already has a current branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "repository.publish.preview"
+        },
+        "path": {
+          "description": "The folder to publish; it must be a Git repository's top level or not\nbelong to any repository.",
+          "type": "string"
+        },
+        "remote": {
+          "description": "The remote to add or reuse; `origin` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "url"
+      ],
+      "type": "object"
+    },
+    "RepositoryPublishRequest": {
+      "additionalProperties": false,
+      "description": "`repository.publish`: initialise if needed, add the remote and push the current branch.",
+      "properties": {
+        "commit_message": {
+          "description": "One line of at most 200 characters; `Initial commit` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "create_initial_commit": {
+          "default": false,
+          "description": "Required when the repository has no commits: stage every non-ignored\nfile and commit it with `commit_message`. Git's own author identity is used.",
+          "type": "boolean"
+        },
+        "initial_branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "repository.publish"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "remote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "An `https://`, `ssh://`, `user@host:path` or `file://` URL without a\npassword. The remote repository must already exist; ADE does not create it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "path",
+        "url"
+      ],
+      "type": "object"
+    },
+    "RepositoryPublishStep": {
+      "description": "One step `repository.publish` takes, in order.",
+      "oneOf": [
+        {
+          "const": "initialize",
+          "description": "`git init` in a folder that is not a repository.",
+          "type": "string"
+        },
+        {
+          "const": "commit",
+          "description": "Stage every non-ignored file and record the first commit.",
+          "type": "string"
+        },
+        {
+          "const": "add_remote",
+          "description": "Add the remote; skipped when it already names the same URL.",
+          "type": "string"
+        },
+        {
+          "const": "push",
+          "description": "Push the current branch without force and set its upstream.",
+          "type": "string"
+        },
+        {
+          "const": "verify",
+          "description": "Read the remote branch back and compare it with the pushed commit.",
+          "type": "string"
+        }
+      ]
+    },
+    "RepositoryPublishVerdict": {
+      "description": "Whether publish may run.",
+      "oneOf": [
+        {
+          "enum": [
+            "ready",
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "needs_initial_commit",
+          "description": "The repository has no commits; pass `create_initial_commit`.",
+          "type": "string"
+        }
+      ]
+    },
+    "RepositoryPublished": {
+      "description": "The `repository.publish` reply.",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "commit": {
+          "description": "The local commit that was, or would have been, pushed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed_step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RepositoryPublishStep"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initial_commit": {
+          "description": "The initial commit this publish recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initialized": {
+          "description": "This publish ran `git init`.",
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/RepositoryPublishOutcome"
+        },
+        "path": {
+          "type": "string"
+        },
+        "pushed": {
+          "description": "The remote branch was read back at `commit`.",
+          "type": "boolean"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "remote_added": {
+          "description": "This publish added the remote.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `repository_published` type tag.",
+          "enum": [
+            "repository_published"
+          ],
+          "type": "string"
+        },
+        "uncommitted_changes": {
+          "description": "Uncommitted changes that were not part of the push.",
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "outcome",
+        "path",
+        "remote",
+        "url",
+        "branch",
+        "initialized",
+        "initial_commit",
+        "remote_added",
+        "commit",
+        "pushed",
+        "failed_step",
+        "failure",
+        "uncommitted_changes"
+      ],
+      "type": "object"
+    },
     "RepositoryRebindCatalog": {
       "description": "The `repository.rebind.list` reply.",
       "properties": {
@@ -10852,6 +11319,44 @@
         "worktree_lifecycle_needs_rebind"
       ],
       "type": "object"
+    },
+    "RepositoryTransport": {
+      "description": "A way of naming a Git remote.",
+      "oneOf": [
+        {
+          "enum": [
+            "https",
+            "ssh",
+            "file"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "scp_like",
+          "description": "`user@host:path`, which Git runs over SSH.",
+          "type": "string"
+        },
+        {
+          "const": "http",
+          "description": "Unencrypted `http://`; refused.",
+          "type": "string"
+        },
+        {
+          "const": "git_daemon",
+          "description": "The unauthenticated `git://` daemon protocol; refused.",
+          "type": "string"
+        },
+        {
+          "const": "remote_helper",
+          "description": "`<helper>::<address>` remote helpers, including `ext::`; refused.",
+          "type": "string"
+        },
+        {
+          "const": "local_path",
+          "description": "A bare local path; refused in favour of `file://`.",
+          "type": "string"
+        }
+      ]
     },
     "ResourceClaim": {
       "description": "One physical resource claim.",
@@ -15492,6 +15997,30 @@
         }
       ]
     },
+    "TransportCoverage": {
+      "description": "Whether ADE accepts one transport, and why.",
+      "properties": {
+        "example": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "supported": {
+          "type": "boolean"
+        },
+        "transport": {
+          "$ref": "#/$defs/RepositoryTransport"
+        }
+      },
+      "required": [
+        "transport",
+        "supported",
+        "example",
+        "note"
+      ],
+      "type": "object"
+    },
     "UsageCostMeasure": {
       "description": "A cost total over a group of turns.",
       "properties": {
@@ -19163,6 +19692,34 @@
       "request": "BrowserRecordingGetRequest",
       "response": "BrowserRecording",
       "tier": "query"
+    },
+    {
+      "domain": "repository",
+      "name": "repository.coverage",
+      "request": "RepositoryCoverageRequest",
+      "response": "RepositoryCoverage",
+      "tier": "query"
+    },
+    {
+      "domain": "repository",
+      "name": "repository.clone",
+      "request": "RepositoryCloneRequest",
+      "response": "RepositoryCloned",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "repository",
+      "name": "repository.publish.preview",
+      "request": "RepositoryPublishPreviewRequest",
+      "response": "RepositoryPublishPreview",
+      "tier": "query"
+    },
+    {
+      "domain": "repository",
+      "name": "repository.publish",
+      "request": "RepositoryPublishRequest",
+      "response": "RepositoryPublished",
+      "tier": "effect_command"
     }
   ]
 }

@@ -39,6 +39,7 @@ mod leases;
 mod mcp;
 mod orchestration;
 mod remote;
+mod repository;
 mod retention;
 mod services;
 mod skills;
@@ -727,6 +728,7 @@ impl Sessions {
             op if op.starts_with("mcp.") => self.mcp_command(request),
             op if op.starts_with("checkpoint.") => self.checkpoint_command(request),
             op if op.starts_with("remote.") => self.remote_command(request),
+            op if op.starts_with("repository.") => self.repository_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"
