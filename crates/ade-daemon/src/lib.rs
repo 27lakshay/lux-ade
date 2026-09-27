@@ -4,6 +4,7 @@ pub use ade_platform::bench;
 pub use ade_platform::diagnostics;
 pub use ade_runtime::{agent_runtime, provider, runtime};
 pub mod files;
+pub mod host_resources;
 pub mod listeners;
 pub mod receipts;
 pub mod review;

@@ -661,6 +661,9 @@ impl Sessions {
             | "repository.rebind"
             | "workspace.rebind" => self.workspace_command(request),
             "terminal.create" | "terminal.operation" => self.terminal_command(request),
+            "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" => {
+                self.worktrees.resources_command(request)
+            }
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"

@@ -1567,6 +1567,73 @@
       ],
       "type": "object"
     },
+    "ClaimMode": {
+      "description": "Shared use admits other shared use; an exclusive lifecycle claim admits nothing.",
+      "enum": [
+        "shared",
+        "exclusive"
+      ],
+      "type": "string"
+    },
+    "ClaimPhase": {
+      "description": "Operation phases, persisted before each step.",
+      "oneOf": [
+        {
+          "const": "reserved",
+          "description": "Reserved; no effect has started.",
+          "type": "string"
+        },
+        {
+          "const": "dispatched",
+          "description": "The effect was handed to Git; its outcome is not yet known.",
+          "type": "string"
+        },
+        {
+          "const": "bound",
+          "description": "A created path is bound to its filesystem identity.",
+          "type": "string"
+        },
+        {
+          "const": "active",
+          "description": "Shared use is in progress.",
+          "type": "string"
+        }
+      ]
+    },
+    "ClaimPurpose": {
+      "oneOf": [
+        {
+          "const": "use",
+          "description": "A terminal, Agent, service or script works in the checkout.",
+          "type": "string"
+        },
+        {
+          "const": "create",
+          "description": "ADE is creating a worktree at a reserved path.",
+          "type": "string"
+        },
+        {
+          "const": "remove",
+          "description": "ADE is removing a worktree.",
+          "type": "string"
+        }
+      ]
+    },
+    "ClaimState": {
+      "oneOf": [
+        {
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "quarantined",
+          "description": "Ownership or outcome is uncertain. The claim still conflicts until\nresource-specific reconciliation or explicit resolution.",
+          "type": "string"
+        }
+      ]
+    },
     "ClaudeIdentity": {
       "properties": {
         "api_provider": {
@@ -2763,6 +2830,43 @@
       ],
       "type": "object"
     },
+    "HostResourcesState": {
+      "description": "The reply to every `resources.*` operation.",
+      "properties": {
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/ResourceClaim"
+          },
+          "type": "array"
+        },
+        "incarnation": {
+          "description": "This daemon's incarnation; claims from earlier incarnations of the same\nprofile are listed with `mine: false`.",
+          "type": "string"
+        },
+        "profile": {
+          "description": "The profile this daemon claims for.",
+          "type": "string"
+        },
+        "registry": {
+          "$ref": "#/$defs/RegistryStatus"
+        },
+        "type": {
+          "description": "The `host_resources` type tag.",
+          "enum": [
+            "host_resources"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "registry",
+        "profile",
+        "incarnation",
+        "claims"
+      ],
+      "type": "object"
+    },
     "Inspection": {
       "description": "A provider's native readiness report for one account.",
       "properties": {
@@ -3491,6 +3595,65 @@
       ],
       "type": "string"
     },
+    "RegistryScope": {
+      "enum": [
+        "host",
+        "profile"
+      ],
+      "type": "string"
+    },
+    "RegistryState": {
+      "oneOf": [
+        {
+          "enum": [
+            "ready"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "New lifecycle claims are refused until explicit recovery.",
+          "type": "string"
+        }
+      ]
+    },
+    "RegistryStatus": {
+      "description": "Where the registry lives and whether it admits new claims.",
+      "properties": {
+        "host_id": {
+          "description": "`None` until the registry has been opened successfully.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the registry is blocked; absent when it is ready.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/RegistryScope",
+          "description": "`host` when every profile shares the registry; `profile` when this\ndaemon runs outside a managed profile and coordinates with nobody."
+        },
+        "state": {
+          "$ref": "#/$defs/RegistryState"
+        }
+      },
+      "required": [
+        "path",
+        "scope",
+        "host_id",
+        "state",
+        "reason"
+      ],
+      "type": "object"
+    },
     "RepositoryAck": {
       "description": "The `repository.rebind` reply.",
       "properties": {
@@ -3614,6 +3777,184 @@
         "root",
         "needs_rebind",
         "worktree_lifecycle_needs_rebind"
+      ],
+      "type": "object"
+    },
+    "ResourceClaim": {
+      "description": "One physical resource claim.",
+      "properties": {
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "device": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inode": {
+          "type": "string"
+        },
+        "mine": {
+          "description": "Whether this daemon incarnation owns the claim.",
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/ClaimMode"
+        },
+        "operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "owner_incarnation": {
+          "type": "string"
+        },
+        "owner_live": {
+          "description": "Whether the owning incarnation still holds its liveness lock.",
+          "type": "boolean"
+        },
+        "owner_pid": {
+          "description": "Diagnostic only; a missing PID never clears a claim.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner_profile": {
+          "type": "string"
+        },
+        "path": {
+          "description": "The canonical path when the claim was taken; informational only.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/ClaimPhase"
+        },
+        "purpose": {
+          "$ref": "#/$defs/ClaimPurpose"
+        },
+        "reason": {
+          "description": "Why the claim is quarantined.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ClaimState"
+        },
+        "unborn_name": {
+          "description": "For a reservation of a path that does not exist yet: its folded final\nname. The identity fields then describe the parent directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "host_id",
+        "path",
+        "device",
+        "inode",
+        "generation",
+        "unborn_name",
+        "mode",
+        "purpose",
+        "phase",
+        "state",
+        "owner_profile",
+        "owner_incarnation",
+        "owner_pid",
+        "owner_live",
+        "mine",
+        "operation_id",
+        "reason",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "ResourcesClaimResolveRequest": {
+      "additionalProperties": false,
+      "description": "`resources.claim.resolve`: release one quarantined claim after the caller\nhas reconciled the resource outside ADE. Active claims cannot be resolved.",
+      "properties": {
+        "claim_id": {
+          "type": "string"
+        },
+        "confirm_path": {
+          "description": "Must equal the claim's recorded `path`.",
+          "type": "string"
+        },
+        "op": {
+          "const": "resources.claim.resolve"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "claim_id",
+        "confirm_path"
+      ],
+      "type": "object"
+    },
+    "ResourcesInspectRequest": {
+      "additionalProperties": false,
+      "description": "`resources.inspect`: read the registry status and its claims. With `path`,\nonly claims on that path, inside it, or containing it are listed.",
+      "properties": {
+        "op": {
+          "const": "resources.inspect"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ResourcesRegistryAcceptRequest": {
+      "additionalProperties": false,
+      "description": "`resources.registry.accept`: bind this profile to the registry currently\non disk after it was replaced, went missing or became unreadable. An\nunreadable file is moved aside, never deleted. Owners recorded only in the\nlost registry are forgotten, which is why the caller must confirm.",
+      "properties": {
+        "confirm_registry": {
+          "description": "Must equal `registry.path` from `resources.inspect`.",
+          "type": "string"
+        },
+        "op": {
+          "const": "resources.registry.accept"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "confirm_registry"
       ],
       "type": "object"
     },
@@ -8052,6 +8393,27 @@
       "request": "BrowserOperationRequest",
       "response": "BrowserOperation",
       "tier": "query"
+    },
+    {
+      "domain": "resources",
+      "name": "resources.inspect",
+      "request": "ResourcesInspectRequest",
+      "response": "HostResourcesState",
+      "tier": "query"
+    },
+    {
+      "domain": "resources",
+      "name": "resources.claim.resolve",
+      "request": "ResourcesClaimResolveRequest",
+      "response": "HostResourcesState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "resources",
+      "name": "resources.registry.accept",
+      "request": "ResourcesRegistryAcceptRequest",
+      "response": "HostResourcesState",
+      "tier": "effect_command"
     }
   ]
 }
