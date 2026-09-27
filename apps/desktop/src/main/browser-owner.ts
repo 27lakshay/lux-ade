@@ -6,10 +6,11 @@ import { dailyUseCommand } from '@ade/client'
 import { mutateBrowserOwner, readBrowserOperation, readBrowserOwner, reconcileBrowserReceipts } from './browser'
 import { diagnosticsAttach, diagnosticsDetach, diagnosticsRead } from './browser-diagnostics'
 import { browserRecordingRequest, stopAllRecordings } from './browser-recording'
+import { captureDesignContext } from './browser-capture'
 
 const maxRequestBytes = 64 * 1024
 const browserTools = new Set(['browser.diagnostics.attach', 'browser.diagnostics.detach', 'browser.diagnostics.read',
-  'browser.recording.start', 'browser.recording.stop', 'browser.recording.get'])
+  'browser.recording.start', 'browser.recording.stop', 'browser.recording.get', 'browser.context.capture'])
 
 /** Maps a diagnostics or recording failure to its wire code; unprefixed failures are unavailable. */
 function toolErrorCode(error: unknown): string {
@@ -104,7 +105,7 @@ export class BrowserOwner {
       const mutation = { request_id: value.request_id, payload_fingerprint: value.payload_fingerprint }
       try {
         const result = await mutateBrowserOwner(this.browserProfileId, this.profileId, this.ownerId,
-          value.op, value.request_id, value.payload_fingerprint, value.tab_id, value.url)
+          value.op, value.request_id, value.payload_fingerprint, value.tab_id, value.url, value.partition_id)
         return { ...identity, ...mutation, ...result }
       } catch (error) {
         const message = String(error)
@@ -124,6 +125,9 @@ export class BrowserOwner {
   private tool(op: string, value: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (op === 'browser.diagnostics.attach') return diagnosticsAttach(this.browserProfileId, value.tab_id)
     if (op === 'browser.diagnostics.detach') return diagnosticsDetach(this.browserProfileId, value.tab_id)
+    if (op === 'browser.context.capture') {
+      return captureDesignContext(this.browserProfileId, value.tab_id, value.selector, value.screenshot)
+    }
     if (op === 'browser.diagnostics.read') {
       return diagnosticsRead(this.browserProfileId, value.tab_id, value.after, value.limit)
     }

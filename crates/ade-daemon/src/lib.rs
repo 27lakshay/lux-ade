@@ -5,6 +5,7 @@ pub use ade_platform::diagnostics;
 pub use ade_runtime::{agent_runtime, provider, runtime};
 pub mod capabilities;
 pub mod adapters;
+pub mod browser_library;
 pub mod checkpoints;
 pub mod files;
 pub mod history;
