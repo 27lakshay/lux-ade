@@ -10,8 +10,13 @@ export type DaemonErrorCode = 'unavailable' | 'incompatible' | 'timeout' | 'prot
 export type RequestDelivery = 'not_sent' | 'unknown' | 'rejected'
 
 export class DaemonRequestError extends Error {
+  /**
+   * `replied` is true when the daemon itself sent this error as a reply frame,
+   * so the connection carried a whole answer. It is false for a failure of the
+   * connection (socket error, close, deadline) or of the client's own checks.
+   */
   constructor(public readonly code: DaemonErrorCode, message: string,
-    public readonly delivery: RequestDelivery = 'not_sent') {
+    public readonly delivery: RequestDelivery = 'not_sent', public readonly replied = false) {
     super(message)
     this.name = 'DaemonRequestError'
   }
@@ -59,12 +64,12 @@ export function requestDaemon(
     }
 
     function fail(code: DaemonErrorCode, message: string,
-      delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent'): void {
+      delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent', replied = false): void {
       if (settled) return
       settled = true
       clearTimeout(timer)
       socket.destroy()
-      reject(new DaemonRequestError(code, message, delivery))
+      reject(new DaemonRequestError(code, message, delivery, replied))
     }
 
     socket.on('connect', () => socket.write('{"op":"hello"}\n'))
@@ -90,7 +95,7 @@ export function requestDaemon(
           const code = typeof response.code === 'string' && knownCodes.includes(response.code as DaemonErrorCode)
             ? response.code as DaemonErrorCode : 'daemon'
           return fail(code, typeof response.message === 'string' ? response.message : 'Daemon rejected the request.',
-            phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown')
+            phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown', true)
         }
         if (phase === 'hello') {
           if (response.type !== 'hello') return fail('protocol', 'Daemon did not provide a hello response.')

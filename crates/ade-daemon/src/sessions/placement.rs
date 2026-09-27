@@ -173,21 +173,15 @@ fn registered_pairing(
 
 /// The most recent settled `remote.host.start` result for a host.
 fn last_start(connection: &Connection, host_id: &str) -> Result<Option<decide::StartEvidence>> {
-    let row: Option<(String, i64)> = connection
-        .query_row(
-            "SELECT result,updated_at FROM operations WHERE op='remote.host.start' AND result IS NOT NULL AND json_extract(result,'$.host_id')=?1 ORDER BY updated_at DESC, rowid DESC LIMIT 1",
-            [host_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    row.map(|(result, at)| {
-        Ok(decide::StartEvidence {
-            reply: serde_json::from_str::<RemoteHostStart>(&result)
-                .with_context(|| format!("Stored start result for {host_id} is unreadable"))?,
-            settled_at_ms: at,
+    super::remote::last_start(connection, host_id)?
+        .map(|(result, at)| {
+            Ok(decide::StartEvidence {
+                reply: serde_json::from_str::<RemoteHostStart>(&result)
+                    .with_context(|| format!("Stored start result for {host_id} is unreadable"))?,
+                settled_at_ms: at,
+            })
         })
-    })
-    .transpose()
+        .transpose()
 }
 
 fn remote_entries(connection: &Connection) -> Result<Vec<ExecutionHostEntry>> {

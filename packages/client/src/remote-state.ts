@@ -370,6 +370,16 @@ export function admitRemoteRequest(state: RemoteState, target: RemoteTarget): Re
   return { admitted: true }
 }
 
+/**
+ * Whether a failed request proves the forward itself is gone. Only a
+ * connection failure with no reply frame does. A daemon's own `unavailable`
+ * reply (say, no browser owner on that host) arrived over a working link, so
+ * it must not tear the forward down or cut other requests in flight.
+ */
+export function requestLostLink(failure: { code: string; replied: boolean }): boolean {
+  return failure.code === 'unavailable' && !failure.replied
+}
+
 /** The status a client shows for a host. Link loss is `unknown`, never a local status. */
 export function remoteStatus(state: RemoteState): 'connected' | 'connecting' | 'unknown' | 'failed' | 'disconnected' {
   switch (state.phase) {
