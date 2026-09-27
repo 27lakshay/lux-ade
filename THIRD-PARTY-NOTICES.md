@@ -28,6 +28,7 @@ Copyright: Copyright (c) 2026 Lovecast Inc.
 |---|---|---|
 | `crates/ade-daemon/src/observability/redact.rs` | `src/main/observability/redactor.ts` | Ported to Rust: key-family blocklist, labeled key-value rule, provider-key fingerprints with tagged replacements, URL userinfo stripping |
 | `apps/desktop/src/main/browser-diagnostics-core.ts` | `src/main/observability/redactor.ts` | Adapted: labeled key-value rule, provider-key patterns, URL userinfo rule |
+| `crates/ade-daemon/src/devices.rs` | `src/main/emulator/simctl-simulator-devices.ts`, `src/main/emulator/android/adb-devices.ts`, `avd-manager.ts`, `android-sdk-discovery.ts`, `android-device-inventory.ts` | Ported to Rust: simctl JSON shape, `adb devices -l` grammar, AVD list filter, SDK root order |
 
 ## t3code (MIT)
 
@@ -38,3 +39,15 @@ Copyright: Copyright (c) 2026 T3 Tools Inc.
 |---|---|---|
 | `crates/ade-daemon/src/checkpoints.rs` | `apps/server/src/vcs/GitVcsDriver.ts` | Ported to Rust: checkpoint commit and restore through Git plumbing |
 | `crates/ade-daemon/src/usage/core.rs` | `apps/server/src/provider/Layers/CodexAdapter.ts`, `apps/server/src/provider/Layers/claudeUsageLimits.ts` | Ported to Rust: per-turn deltas of the Codex token total; units of Claude's rate-limit event |
+
+## Paseo (Apache-2.0)
+
+Source: https://github.com/getpaseo/paseo at `c356394`
+Copyright: Copyright (c) 2025-present Mohamed Boudra
+
+The files below were modified from the original. The Apache License 2.0 text
+must ship with any distribution that includes them.
+
+| ADE file | Source path | Changes |
+|---|---|---|
+| `crates/ade-runtime/src/terminal_ownership.rs` | `packages/server/src/terminal/terminal-size-ownership.ts` | Modified: ported to Rust; added input-driven transfer, ranked hand-off on detach and incarnation fencing |

@@ -86,7 +86,9 @@ impl Event {
             ActivityKind::TurnInterrupted => "interrupted",
             ActivityKind::TurnFailed => "failed",
             ActivityKind::OperationUnknown => "unknown",
-            ActivityKind::ApprovalRequested | ActivityKind::QuestionRequested => return None,
+            ActivityKind::ApprovalRequested
+            | ActivityKind::QuestionRequested
+            | ActivityKind::SnoozeEnded => return None,
         };
         Some(Self {
             kind: HookEvent::TurnSettled,

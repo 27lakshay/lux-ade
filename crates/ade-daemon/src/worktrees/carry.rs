@@ -232,6 +232,17 @@ pub fn may_clean(requested: bool, verified: bool, exact: bool) -> Result<(), Car
     }
 }
 
+/// Refuses source cleanup while any path has both staged and unstaged
+/// changes: the carry snapshot records only the working-tree version, so a
+/// reset would leave the staged version unreachable.
+pub fn index_intact(entries: &[StatusEntry]) -> Result<(), CarryKeepReason> {
+    if entries.iter().any(|entry| entry.staged && entry.unstaged) {
+        Err(CarryKeepReason::StagedAndUnstaged)
+    } else {
+        Ok(())
+    }
+}
+
 /// Whether the source still holds exactly the snapshot: the same `HEAD` and
 /// the same content for every carried path.
 pub fn source_unchanged(
@@ -468,6 +479,25 @@ mod tests {
             Err(CarryKeepReason::BaseDiffers)
         );
         assert_eq!(may_clean(true, true, true), Ok(()));
+    }
+
+    #[test]
+    fn cleanup_keeps_a_source_with_staged_and_unstaged_changes() {
+        let entry = |staged, unstaged| StatusEntry {
+            path: "a.txt".into(),
+            change: CarryChange::Modified,
+            staged,
+            unstaged,
+            submodule: false,
+        };
+        assert_eq!(
+            index_intact(&[entry(true, false), entry(false, true)]),
+            Ok(())
+        );
+        assert_eq!(
+            index_intact(&[entry(true, true)]),
+            Err(CarryKeepReason::StagedAndUnstaged)
+        );
         assert_eq!(source_unchanged("b", Some("b"), "t", Some("t")), Ok(()));
         for (head, tree) in [(Some("c"), Some("t")), (Some("b"), Some("u")), (None, None)] {
             assert_eq!(

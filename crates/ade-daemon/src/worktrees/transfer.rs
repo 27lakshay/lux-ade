@@ -571,8 +571,12 @@ impl Worktrees {
                     ),
                 ));
             }
-            match carry::may_clean(clean, record.verified, apply == CarryApply::Exact).and_then(
-                |()| {
+            match carry::may_clean(clean, record.verified, apply == CarryApply::Exact)
+                .and_then(|()| match self.status_of(&repo, &lock, &source) {
+                    Ok(entries) => carry::index_intact(&entries),
+                    Err(_) => Err(CarryKeepReason::SourceChanged),
+                })
+                .and_then(|()| {
                     let head_now = self.head_of(&repo, &lock, &source);
                     let snapshot_now = self
                         .carry_snapshot(&repo, &lock, &source, &base, &record.paths)
@@ -583,8 +587,7 @@ impl Worktrees {
                         &tree,
                         snapshot_now.as_deref(),
                     )
-                },
-            ) {
+                }) {
                 Err(reason) => record.source_reason = Some(reason),
                 Ok(()) => {
                     source_dispatched = true;
@@ -615,6 +618,8 @@ impl Worktrees {
                             (_, Some(CarryKeepReason::BaseDiffers)) =>
                                 "the target started from another commit",
                             (_, Some(CarryKeepReason::SourceChanged)) => "the source changed",
+                            (_, Some(CarryKeepReason::StagedAndUnstaged)) =>
+                                "a path has both staged and unstaged changes",
                             _ => "not verified",
                         }
                     ),

@@ -796,6 +796,9 @@ pub enum CarryKeepReason {
     BaseDiffers,
     /// The source changed after the snapshot.
     SourceChanged,
+    /// A source path has both staged and unstaged changes. The snapshot keeps
+    /// only the working-tree version, so cleaning would lose the staged one.
+    StagedAndUnstaged,
 }
 
 /// A carry operation's `result.carry`, written to the ledger as each step
