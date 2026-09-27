@@ -14,6 +14,14 @@
     "packages/contracts/schema/**",
     ".scratch/**",
     "target/**",
-    ".ade/**"
+    ".ade/**",
+    "apps/desktop/components.json",
+    ".agents/skills/shadcn/**",
+    ".agents/skills/motion/**",
+    "skills-lock.json",
+    "apps/desktop/src/renderer/src/components/ui/**",
+    "apps/desktop/src/renderer/src/hooks/**",
+    "apps/desktop/src/renderer/src/lib/utils.ts",
+    "apps/desktop/src/renderer/src/shadcn.css"
   ]
 }

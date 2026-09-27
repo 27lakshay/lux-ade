@@ -26,8 +26,12 @@ claiming a UI change works.
   not settled: change it only against an approved Pen design.
 - Colours come from `tokens.ts` (`applyTokens`); `styles.css` only maps them into Tailwind.
   `pnpm --dir apps/desktop check:contrast` reports the glass contrast floors.
-- `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI, unmodified. Build product
-  components from it; do not edit the kit files.
+- `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI (Nova preset, all
+  components), with `hooks/use-mobile.ts`, `lib/utils.ts` and its theme in `shadcn.css`. Keep the
+  kit files unmodified so `shadcn add` can update them; build product components from them
+  elsewhere. `shadcn.css` is not imported by the prototype shell yet: its variable names overlap the
+  prototype's tokens, and ADE's tokens get mapped onto it once the design system is settled in Pen.
+  Use the `shadcn` skill and the `shadcn` MCP server (`.mcp.json`); config is `components.json`.
 - Terminal output stays outside React state (xterm.js).
 - `?safeMode=1` in the window URL means main reloaded the window after a hang or crash
   (`src/main/renderer-recovery.ts`). Load no plugins in safe mode, and keep pending approvals and

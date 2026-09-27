@@ -6,6 +6,14 @@
     "apps/desktop/src/renderer/src/main.tsx",
     "apps/desktop/src/renderer/src/dev/*.ts"
   ],
+  // The stock shadcn/ui kit: installed whole, used piece by piece, so unused parts are expected.
+  "ignoreFindings": [
+    "apps/desktop/src/renderer/src/components/ui/**",
+    "apps/desktop/src/renderer/src/hooks/**",
+    "apps/desktop/src/renderer/src/lib/utils.ts"
+  ],
+  // Installed by shadcn for the calendar component's date picker.
+  "ignoreDependencies": ["date-fns"],
   "boundaries": {
     "zones": [
       { "name": "desktop-main", "patterns": ["apps/desktop/src/main/**"] },

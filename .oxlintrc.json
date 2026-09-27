@@ -79,6 +79,17 @@
       }
     },
     {
+      // The stock shadcn/ui kit stays unmodified so `shadcn add --overwrite` can update it. These
+      // rules report patterns in its upstream code.
+      "files": ["apps/desktop/src/renderer/src/components/ui/**", "apps/desktop/src/renderer/src/hooks/use-mobile.ts"],
+      "rules": {
+        "react/jsx-no-constructed-context-values": "off",
+        "react/set-state-in-effect": "off",
+        "react/no-object-type-as-default-prop": "off",
+        "typescript/no-import-type-side-effects": "off"
+      }
+    },
+    {
       "files": ["apps/desktop/src/main/**"],
       "rules": {
         "ade/electron-web-preferences": "error"

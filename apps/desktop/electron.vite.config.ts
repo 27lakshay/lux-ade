@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { defineConfig } from 'electron-vite'
 import type { Plugin } from 'vite'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
@@ -52,6 +53,8 @@ export default defineConfig({
     },
   },
   renderer: {
+    // `@/` is the renderer source root, as shadcn/ui expects (components.json).
+    resolve: { alias: { '@': resolve(import.meta.dirname, 'src/renderer/src') } },
     // React Compiler through Babel: the stable compiler. plugin-react's Rust port is experimental.
     plugins: [
       react(),

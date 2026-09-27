@@ -11,6 +11,10 @@
         "--no-performance-crux"
       ]
     },
+    "shadcn": {
+      "command": "pnpm",
+      "args": ["--dir", "apps/desktop", "exec", "shadcn", "mcp"]
+    },
     "motion": {
       "type": "http",
       "url": "https://mcp.motion.dev"
