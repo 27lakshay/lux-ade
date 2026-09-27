@@ -6,8 +6,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+mod drafts;
+pub use drafts::*;
+
 pub fn operations() -> Vec<OperationSpec> {
-    vec![
+    let mut operations = vec![
         OperationSpec::new::<ConversationGetRequest, ConversationSnapshot>(
             "conversation.get",
             Tier::Query,
@@ -102,7 +105,9 @@ pub fn operations() -> Vec<OperationSpec> {
             "conversation.snooze.list",
             Tier::Query,
         ),
-    ]
+    ];
+    operations.extend(drafts::operations());
+    operations
 }
 
 pub fn frames() -> Vec<FrameSpec> {
@@ -559,7 +564,7 @@ pub struct AttachmentReclaimPreview {
     pub created_at: i64,
     pub payload_bytes: i64,
     pub estimated_reusable_payload_bytes: i64,
-    /// `message`, `draft`, `queued_prompt`, `send_intent` or `already_discarded`.
+    /// `message`, `draft`, `queued_prompt`, `send_intent`, `draft_stash` or `already_discarded`.
     pub protected_by: Vec<String>,
     pub reclaimable: bool,
 }
@@ -925,6 +930,12 @@ mod tests {
             ("conversation.snooze", "idempotent_command"),
             ("conversation.unsnooze", "idempotent_command"),
             ("conversation.snooze.list", "query"),
+            ("draft.history.list", "query"),
+            ("draft.history.restore", "idempotent_command"),
+            ("draft.stash.save", "idempotent_command"),
+            ("draft.stash.list", "query"),
+            ("draft.stash.restore", "idempotent_command"),
+            ("draft.stash.drop", "idempotent_command"),
         ] {
             assert_eq!(tier(op), expected, "{op}");
         }
@@ -980,6 +991,76 @@ mod tests {
         );
         assert!(!validator("ConversationRewindRequest").is_valid(&json!({
             "op": "conversation.rewind", "operation_id": "o", "conversation_id": "c", "scope": "all",
+        })));
+    }
+
+    #[test]
+    fn draft_recall_and_stash_round_trip() {
+        let save: DraftStashSaveRequest = request(
+            "draft.stash.save",
+            json!({"op": "draft.stash.save", "conversation_id": "conversation_1",
+                "window_id": "window_1", "name": "later", "text": "half a prompt",
+                "attachments": [{"id": "attachment_1", "name": "notes.txt",
+                    "media_type": "text/plain", "size": 12}],
+                "context_nodes": [{"id": "n1", "kind": "file", "data": {"path": "src/a.rs"}}],
+                "expected_revision": 2}),
+        );
+        assert_eq!(save.context_nodes[0].kind, "file");
+        request::<DraftStashRestoreRequest>(
+            "draft.stash.restore",
+            json!({"op": "draft.stash.restore", "conversation_id": "conversation_1",
+                "window_id": "window_1", "name": "later", "stash_revision": 3,
+                "expected_revision": 4, "revision": 5}),
+        );
+        request::<DraftHistoryListRequest>(
+            "draft.history.list",
+            json!({"op": "draft.history.list", "conversation_id": "conversation_1",
+                "window_id": "window_1", "before": 9, "limit": 5}),
+        );
+        response(
+            "draft.stash.restore",
+            &DraftRestored {
+                tag: Default::default(),
+                outcome: DraftRestoreOutcome::Conflict,
+                draft: Draft {
+                    text: "newer".into(),
+                    revision: 7,
+                    attachments: vec![],
+                },
+                context_nodes: vec![],
+                displaced_entry_id: None,
+            },
+            json!({"type": "draft_restore", "outcome": "conflict",
+                "draft": {"text": "newer", "revision": 7}, "context_nodes": [],
+                "displaced_entry_id": null}),
+        );
+        response(
+            "draft.history.list",
+            &DraftHistoryList {
+                tag: Default::default(),
+                entries: vec![DraftHistoryEntry {
+                    id: 3,
+                    conversation_id: "conversation_1".into(),
+                    window_id: "window_1".into(),
+                    kind: DraftHistoryKind::Discarded,
+                    text: "old".into(),
+                    attachments: vec![attachment()],
+                    context_nodes: vec![],
+                    draft_revision: 2,
+                    recorded_at: 10,
+                }],
+                next_before: None,
+            },
+            json!({"type": "draft_history", "entries": [{"id": 3,
+                "conversation_id": "conversation_1", "window_id": "window_1",
+                "kind": "discarded", "text": "old", "attachments": [{"id": "attachment_1",
+                    "name": "notes.txt", "media_type": "text/plain", "size": 12}],
+                "context_nodes": [], "draft_revision": 2, "recorded_at": 10}],
+                "next_before": null}),
+        );
+        assert!(!validator("DraftStashRestoreRequest").is_valid(&json!({
+            "op": "draft.stash.restore", "conversation_id": "c", "window_id": "w",
+            "name": "n", "stash_revision": 1, "revision": 2,
         })));
     }
 

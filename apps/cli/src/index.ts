@@ -11,6 +11,7 @@ import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { conversationControlUsage, runConversationControlCommand } from './commands/conversation-controls.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
+import { draftUsage, runDraftCommand } from './commands/drafts.js'
 import { deviceUsage, runDeviceCommand } from './commands/devices.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { repositoryUsage, runRepositoryCommand } from './commands/repository.js'
@@ -82,6 +83,7 @@ const usage = [
   worktreeLifecycleUsage,
   conversationUsage,
   conversationControlUsage,
+  draftUsage,
   historyUsage,
   importUsage,
   usageAnalyticsUsage,
@@ -226,6 +228,7 @@ const commandAreas = [
   runWorktreeLifecycleCommand,
   runConversationCommand,
   runConversationControlCommand,
+  runDraftCommand,
   runHistoryCommand,
   runImportCommand,
   runUsageCommand,
