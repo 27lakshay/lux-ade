@@ -84,11 +84,16 @@ export type ContractDefinition =
   | BrowserTabReply
   | BrowserTabs
   | Caller
+  | Capability
+  | CapabilityChange
+  | CapabilityRecord
   | CarryBlocker
   | CarryChange
   | CatalogFrame
   | CatalogGetRequest
   | Catalogue
+  | CheckState
+  | CheckedPreset
   | CheckpointArea
   | CheckpointChangeKind
   | CheckpointCoverage
@@ -130,6 +135,7 @@ export type ContractDefinition =
   | CommittedFile
   | Config
   | Conversation
+  | ConversationCapabilities
   | ConversationChanged
   | ConversationCreateRequest
   | ConversationCreated
@@ -188,6 +194,7 @@ export type ContractDefinition =
   | FileSearchRequest
   | GitOperation
   | GitOperationStatus
+  | GrantCapabilities
   | GroupCompareRequest
   | GroupComparison
   | GroupGetRequest
@@ -256,6 +263,8 @@ export type ContractDefinition =
   | McpServerUpdateRequest
   | McpServers
   | Message
+  | ModelCapabilities
+  | ModelFormat
   | NotificationDeliveries
   | NotificationDelivery
   | NotificationDeliveryClaim
@@ -276,6 +285,7 @@ export type ContractDefinition =
   | PendingRequest
   | PendingSend
   | PendingSendList
+  | PermissionModeCapability
   | PluginActivation
   | PluginCommandContribution
   | PluginCommandInvokeRequest
@@ -323,9 +333,27 @@ export type ContractDefinition =
   | PluginUninstalled
   | PortAssignment
   | PortObservation
+  | Preset
+  | PresetConflict
+  | PresetDeleteRequest
+  | PresetDeleted
+  | PresetField
+  | PresetGetRequest
+  | PresetList
+  | PresetListRequest
+  | PresetSaveRequest
+  | PresetSaved
+  | PresetSettings
+  | PresetView
   | PreviewKind
   | Projected
+  | ProviderCapabilities
+  | ProviderCapabilitiesRequest
   | ProviderListRequest
+  | ProviderQuota
+  | ProviderQuotaRequest
+  | ProviderReadiness
+  | ProviderReadinessRequest
   | ProviderSelection
   | ProviderSupport
   | ProvidersReply
@@ -334,9 +362,14 @@ export type ContractDefinition =
   | QueueEnqueueRequest
   | QueuePauseRequest
   | QueuedPrompt
+  | QuotaEntry
+  | QuotaState
   | Readiness
   | ReadinessBasis
+  | ReadinessCheck
   | ReadinessState
+  | ReadinessState2
+  | ReasoningCapabilities
   | RecoveryStatus
   | RegistryScope
   | RegistryState
@@ -505,6 +538,7 @@ export type ContractDefinition =
   | SkillSourceKind
   | SkillSummary
   | StartOutcome
+  | Support
   | TerminalCreateRequest
   | TerminalCreated
   | TerminalOperation
@@ -651,6 +685,18 @@ export type Caller =
       [k: string]: unknown
     }
 /**
+ * How far ADE supports one provider capability.
+ */
+export type Support = 'supported' | 'native_only' | 'unsupported' | 'unknown'
+/**
+ * How the provider's capability record changed since a preset was saved.
+ */
+export type CapabilityChange = 'unchanged' | 'revised' | 'drifted' | 'downgraded'
+/**
+ * The shape a provider expects a model ID in.
+ */
+export type ModelFormat = 'native_id' | 'provider_qualified'
+/**
  * Why a carry cannot run as asked.
  */
 export type CarryBlocker =
@@ -666,6 +712,11 @@ export type CarryBlocker =
  * How a path differs from `HEAD` in the source tree.
  */
 export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | 'untracked') | 'unmerged'
+export type CheckState = 'passed' | 'failed' | 'skipped'
+/**
+ * The preset field a conflict concerns.
+ */
+export type PresetField = 'name' | 'provider' | 'model' | 'reasoning' | 'permission_mode'
 /**
  * Which snapshot a change belongs to.
  */
@@ -1101,6 +1152,18 @@ export type PluginSource =
       ref?: string | null
       url: string
     }
+export type QuotaState = 'reported' | 'not_reported' | 'unavailable'
+/**
+ * The overall readiness verdict.
+ */
+export type ReadinessState2 =
+  | ('missing_executable' | 'needs_authentication' | 'account_disabled')
+  | 'ready'
+  | 'installed_unchecked'
+  | 'incompatible'
+  | 'needs_verification'
+  | 'identity_changed'
+  | 'unavailable'
 export type ProxyAvailability = 'bound' | 'port_occupied'
 export type ReadinessBasis =
   ('execution_state' | 'identity_changed') | 'direct_process_tcp_listener' | 'process_tree_tcp_listener'
@@ -2328,6 +2391,264 @@ export interface BrowserTabs {
   [k: string]: unknown
 }
 /**
+ * One capability and why it has that support.
+ */
+export interface Capability {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * What an adapter declares about its provider.
+ */
+export interface CapabilityRecord {
+  /**
+   * The provider version or document the record was checked against.
+   */
+  checked_against: string
+  conversation: ConversationCapabilities
+  /**
+   * SHA-256 of this record with an empty fingerprint. A change without a
+   * new revision means the declaration drifted.
+   */
+  fingerprint: string
+  grants: GrantCapabilities
+  managed_accounts: Capability11
+  models: ModelCapabilities
+  name: string
+  permission_modes: PermissionModeCapability[]
+  provider: string
+  quota: Capability14
+  reasoning: ReasoningCapabilities
+  /**
+   * Raised by the adapter whenever the declared capabilities change.
+   */
+  revision: number
+  [k: string]: unknown
+}
+export interface ConversationCapabilities {
+  account_switch: Capability1
+  compaction: Capability2
+  fork: Capability3
+  import: Capability4
+  resume: Capability5
+  rewind: Capability6
+  steering: Capability7
+  [k: string]: unknown
+}
+/**
+ * Changing account inside one conversation.
+ */
+export interface Capability1 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Summarizing earlier context on request.
+ */
+export interface Capability2 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Branching a native session into a new one.
+ */
+export interface Capability3 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Importing native history that ADE did not create.
+ */
+export interface Capability4 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Reopening a native session after a restart.
+ */
+export interface Capability5 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Returning the conversation, and possibly files, to an earlier point.
+ */
+export interface Capability6 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Adding input to a running turn.
+ */
+export interface Capability7 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * How long an approval can last. ADE never widens a grant while mapping it.
+ */
+export interface GrantCapabilities {
+  once: Capability8
+  persistent: Capability9
+  session: Capability10
+  [k: string]: unknown
+}
+/**
+ * Approving one request only.
+ */
+export interface Capability8 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Approving similar requests in saved native settings.
+ */
+export interface Capability9 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Approving similar requests for the rest of the session.
+ */
+export interface Capability10 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Whether ADE can manage several accounts for this provider.
+ */
+export interface Capability11 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+export interface ModelCapabilities {
+  /**
+   * Aliases the provider documents. The provider resolves them; ADE does
+   * not know which model an alias means today.
+   */
+  aliases: string[]
+  discovery: Capability12
+  format: ModelFormat
+  selection: Capability13
+  [k: string]: unknown
+}
+/**
+ * Listing the models an account can use.
+ */
+export interface Capability12 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Choosing a model when a conversation starts.
+ */
+export interface Capability13 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * One permission mode and its meaning.
+ */
+export interface PermissionModeCapability {
+  description: string
+  /**
+   * The value a conversation's `permission_mode` takes.
+   */
+  id: string
+  support: Support
+  [k: string]: unknown
+}
+/**
+ * Whether the provider reports quota or rate-limit windows.
+ */
+export interface Capability14 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+export interface ReasoningCapabilities {
+  /**
+   * The provider's own level names, weakest first.
+   */
+  levels: string[]
+  selection: Capability15
+  /**
+   * True when the provider offers a different subset per model.
+   */
+  varies_by_model: boolean
+  [k: string]: unknown
+}
+/**
+ * Choosing a reasoning level when a conversation starts.
+ */
+export interface Capability15 {
+  /**
+   * The native mechanism, or what is missing.
+   */
+  note: string
+  support: Support
+  [k: string]: unknown
+}
+/**
  * The `catalog.get` reply and the `catalog` feed frame.
  */
 export interface CatalogFrame {
@@ -2402,6 +2723,54 @@ export interface Descriptor {
  */
 export interface CatalogGetRequest {
   op: 'catalog.get'
+}
+/**
+ * A preset checked against the current capability record.
+ */
+export interface CheckedPreset {
+  capability_change: CapabilityChange
+  /**
+   * Empty when the preset can be applied as saved.
+   */
+  conflicts: PresetConflict[]
+  preset: Preset
+  [k: string]: unknown
+}
+/**
+ * A setting the provider's current capabilities do not allow.
+ */
+export interface PresetConflict {
+  field: PresetField
+  message: string
+  [k: string]: unknown
+}
+/**
+ * A stored preset.
+ */
+export interface Preset {
+  capability_fingerprint: string
+  /**
+   * The capability record the settings were validated against when saved.
+   */
+  capability_revision: number
+  name: string
+  /**
+   * Starts at 1 and rises with each change.
+   */
+  revision: number
+  settings: PresetSettings
+  updated_at: number
+  [k: string]: unknown
+}
+/**
+ * A preset's launch settings.
+ */
+export interface PresetSettings {
+  model: string | null
+  permission_mode: string
+  provider: string
+  reasoning: string | null
+  [k: string]: unknown
 }
 /**
  * What a checkpoint holds and what it leaves out.
@@ -5686,10 +6055,277 @@ export interface PluginUninstalled {
   [k: string]: unknown
 }
 /**
+ * `preset.delete`: remove a preset at the revision the caller saw.
+ */
+export interface PresetDeleteRequest {
+  expected_revision: number
+  name: string
+  op: 'preset.delete'
+}
+/**
+ * The `preset.delete` reply.
+ */
+export interface PresetDeleted {
+  /**
+   * False when no preset had this name.
+   */
+  deleted: boolean
+  name: string
+  /**
+   * The `preset_deleted` type tag.
+   */
+  type: 'preset_deleted'
+  [k: string]: unknown
+}
+/**
+ * `preset.get`: one preset and its conflicts.
+ */
+export interface PresetGetRequest {
+  name: string
+  op: 'preset.get'
+}
+/**
+ * The `preset.list` reply.
+ */
+export interface PresetList {
+  presets: CheckedPreset[]
+  /**
+   * The `presets` type tag.
+   */
+  type: 'presets'
+  [k: string]: unknown
+}
+/**
+ * `preset.list`: every preset in the profile, by name.
+ */
+export interface PresetListRequest {
+  op: 'preset.list'
+}
+/**
+ * `preset.save`: create or replace a preset. The daemon refuses settings the
+ * provider's current capabilities do not allow.
+ */
+export interface PresetSaveRequest {
+  /**
+   * The revision being replaced. Absent to create a new preset.
+   */
+  expected_revision?: number | null
+  model?: string | null
+  /**
+   * Trimmed by the daemon; 1 to 80 characters without control characters.
+   */
+  name: string
+  op: 'preset.save'
+  /**
+   * `default` when absent.
+   */
+  permission_mode?: string | null
+  provider: string
+  reasoning?: string | null
+}
+/**
+ * The `preset.save` reply.
+ */
+export interface PresetSaved {
+  /**
+   * False when the preset already had these settings.
+   */
+  changed: boolean
+  preset: Preset
+  /**
+   * The `preset_saved` type tag.
+   */
+  type: 'preset_saved'
+  [k: string]: unknown
+}
+/**
+ * The `preset.get` reply.
+ */
+export interface PresetView {
+  capability_change: CapabilityChange
+  /**
+   * Empty when the preset can be applied as saved.
+   */
+  conflicts: PresetConflict[]
+  preset: Preset
+  /**
+   * The `preset` type tag.
+   */
+  type: 'preset'
+  [k: string]: unknown
+}
+/**
+ * The `provider.capabilities` reply.
+ */
+export interface ProviderCapabilities {
+  providers: CapabilityRecord[]
+  /**
+   * The `provider_capabilities` type tag.
+   */
+  type: 'provider_capabilities'
+  [k: string]: unknown
+}
+/**
+ * `provider.capabilities`: the capability records ADE ships.
+ */
+export interface ProviderCapabilitiesRequest {
+  op: 'provider.capabilities'
+  /**
+   * One provider; every provider when absent.
+   */
+  provider?: string | null
+}
+/**
  * `provider.list`: the providers this daemon can launch.
  */
 export interface ProviderListRequest {
   op: 'provider.list'
+}
+/**
+ * The `provider.quota` reply.
+ */
+export interface ProviderQuota {
+  entries: QuotaEntry[]
+  recording: UsageRecording
+  /**
+   * The `provider_quota` type tag.
+   */
+  type: 'provider_quota'
+  [k: string]: unknown
+}
+/**
+ * The quota picture for one provider and account.
+ */
+export interface QuotaEntry {
+  /**
+   * Null for the provider's own login.
+   */
+  account_id: string | null
+  /**
+   * How old that report is.
+   */
+  age_ms: number | null
+  /**
+   * True when a window that has not yet reset reports exhaustion. ADE does
+   * not switch account or model in response.
+   */
+  exhausted: boolean
+  /**
+   * When the newest window was received, in milliseconds since the epoch.
+   */
+  observed_at: number | null
+  provider: string
+  reason: string
+  state: QuotaState
+  windows: UsageLimitWindow[]
+  [k: string]: unknown
+}
+/**
+ * One rate-limit window as the provider last reported it.
+ */
+export interface UsageLimitWindow {
+  /**
+   * Null for the provider's own login.
+   */
+  account_id: string | null
+  /**
+   * The provider's name for the window, such as `five_hour` or `codex:primary`.
+   */
+  limit_id: string
+  /**
+   * When the daemon received this report. Limits are only as fresh as the
+   * provider's last report; no probe runs between turns.
+   */
+  observed_at: number
+  plan: string | null
+  provider: string
+  /**
+   * True when `resets_at` has passed, so `used_percent` is out of date.
+   */
+  reset_since_observed: boolean
+  /**
+   * Milliseconds since the Unix epoch.
+   */
+  resets_at: number | null
+  source: string
+  /**
+   * The provider's own status word, such as `allowed_warning` or `rejected`.
+   */
+  status: string | null
+  /**
+   * 0 to 100. Null when the latest report did not include it.
+   */
+  used_percent: number | null
+  window_minutes: number | null
+  [k: string]: unknown
+}
+/**
+ * Whether the daemon could record every report it received since it started.
+ */
+export interface UsageRecording {
+  /**
+   * Event batches whose usage could not be saved since the daemon started.
+   * Their turns are missing from every figure.
+   */
+  dropped_batches: number
+  last_error: string | null
+  [k: string]: unknown
+}
+/**
+ * `provider.quota`: reported limits per provider and account.
+ */
+export interface ProviderQuotaRequest {
+  account_id?: string | null
+  op: 'provider.quota'
+  provider?: string | null
+}
+/**
+ * The `provider.readiness` reply. It is a snapshot: an external CLI update
+ * changes it, so launches check again.
+ */
+export interface ProviderReadiness {
+  account_id: string | null
+  capability_revision: number
+  checked_at: number
+  checks: ReadinessCheck[]
+  provider: string
+  /**
+   * What to do next, in words a person can act on.
+   */
+  reason: string
+  state: ReadinessState2
+  /**
+   * The `provider_readiness` type tag.
+   */
+  type: 'provider_readiness'
+  /**
+   * The version the account probe read, when it ran.
+   */
+  version: string | null
+  [k: string]: unknown
+}
+/**
+ * One step of a readiness check.
+ */
+export interface ReadinessCheck {
+  /**
+   * Such as `executable:claude`, `runtime:node` or `account`.
+   */
+  check: string
+  detail: string
+  state: CheckState
+  [k: string]: unknown
+}
+/**
+ * `provider.readiness`: whether a provider, or one of its accounts, can run.
+ */
+export interface ProviderReadinessRequest {
+  /**
+   * A managed account to probe. Without it ADE checks installation only.
+   */
+  account_id?: string | null
+  op: 'provider.readiness'
+  provider: string
 }
 /**
  * The `provider.list` reply.
@@ -7957,45 +8593,6 @@ export interface UsageMeasure {
   [k: string]: unknown
 }
 /**
- * One rate-limit window as the provider last reported it.
- */
-export interface UsageLimitWindow {
-  /**
-   * Null for the provider's own login.
-   */
-  account_id: string | null
-  /**
-   * The provider's name for the window, such as `five_hour` or `codex:primary`.
-   */
-  limit_id: string
-  /**
-   * When the daemon received this report. Limits are only as fresh as the
-   * provider's last report; no probe runs between turns.
-   */
-  observed_at: number
-  plan: string | null
-  provider: string
-  /**
-   * True when `resets_at` has passed, so `used_percent` is out of date.
-   */
-  reset_since_observed: boolean
-  /**
-   * Milliseconds since the Unix epoch.
-   */
-  resets_at: number | null
-  source: string
-  /**
-   * The provider's own status word, such as `allowed_warning` or `rejected`.
-   */
-  status: string | null
-  /**
-   * 0 to 100. Null when the latest report did not include it.
-   */
-  used_percent: number | null
-  window_minutes: number | null
-  [k: string]: unknown
-}
-/**
  * The `usage.limits` reply.
  */
 export interface UsageLimits {
@@ -8005,18 +8602,6 @@ export interface UsageLimits {
    */
   type: 'usage_limits'
   windows: UsageLimitWindow[]
-  [k: string]: unknown
-}
-/**
- * Whether the daemon could record every report it received since it started.
- */
-export interface UsageRecording {
-  /**
-   * Event batches whose usage could not be saved since the daemon started.
-   * Their turns are missing from every figure.
-   */
-  dropped_batches: number
-  last_error: string | null
   [k: string]: unknown
 }
 /**
@@ -8784,7 +9369,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8985,6 +9570,13 @@ export interface RequestByOperation {
   "hook.delivery.inspect": HookDeliveryInspectRequest
   "hook.delivery.retry": HookDeliveryRetryRequest
   "hook.delivery.abandon": HookDeliveryAbandonRequest
+  "provider.capabilities": ProviderCapabilitiesRequest
+  "provider.readiness": ProviderReadinessRequest
+  "provider.quota": ProviderQuotaRequest
+  "preset.list": PresetListRequest
+  "preset.get": PresetGetRequest
+  "preset.save": PresetSaveRequest
+  "preset.delete": PresetDeleteRequest
 }
 
 export interface ResponseByOperation {
@@ -9186,6 +9778,13 @@ export interface ResponseByOperation {
   "hook.delivery.inspect": HookDeliveryReply
   "hook.delivery.retry": HookDeliveryReply
   "hook.delivery.abandon": HookDeliveryReply
+  "provider.capabilities": ProviderCapabilities
+  "provider.readiness": ProviderReadiness
+  "provider.quota": ProviderQuota
+  "preset.list": PresetList
+  "preset.get": PresetView
+  "preset.save": PresetSaved
+  "preset.delete": PresetDeleted
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

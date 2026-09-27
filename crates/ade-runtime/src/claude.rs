@@ -146,3 +146,112 @@ impl Provider for Adapter {
         self.rpc.stop_confirmed()
     }
 }
+
+/// Checked against `@anthropic-ai/claude-agent-sdk` 0.3.281 (`sdk.d.ts`) and
+/// the Claude Code 2.1.x range the account probe validates.
+pub fn capabilities() -> crate::capabilities::CapabilityRecord {
+    use crate::capabilities::*;
+    use Support::*;
+    CapabilityRecord {
+        provider: "claude".into(),
+        name: "Claude Code".into(),
+        revision: 1,
+        fingerprint: String::new(),
+        checked_against: "@anthropic-ai/claude-agent-sdk 0.3.281; Claude Code 2.1.x".into(),
+        models: ModelCapabilities {
+            selection: capability(Supported, "The bridge passes the model option to the SDK"),
+            format: ModelFormat::NativeId,
+            aliases: strings(&["default", "sonnet", "opus", "haiku", "opusplan"]),
+            discovery: capability(
+                NativeOnly,
+                "Query.supportedModels() lists them; the bridge does not call it",
+            ),
+        },
+        reasoning: ReasoningCapabilities {
+            selection: capability(
+                NativeOnly,
+                "The SDK effort option; ADE launches do not carry a reasoning level yet",
+            ),
+            levels: strings(&["low", "medium", "high", "xhigh", "max"]),
+            varies_by_model: true,
+        },
+        permission_modes: vec![
+            mode("default", Supported, "Ask before tools that need approval"),
+            mode(
+                "plan",
+                Supported,
+                "Plan without editing files or running tools",
+            ),
+            mode("acceptEdits", Supported, "Approve file edits automatically"),
+            mode(
+                "dontAsk",
+                Supported,
+                "Deny anything not already allowed, without asking",
+            ),
+            mode(
+                "bypassPermissions",
+                NativeOnly,
+                "Skip every permission check; ADE does not offer it",
+            ),
+            mode(
+                "auto",
+                NativeOnly,
+                "A classifier decides approvals; ADE does not offer it",
+            ),
+        ],
+        grants: GrantCapabilities {
+            once: capability(Supported, "Accept answers one canUseTool request"),
+            session: capability(
+                NativeOnly,
+                "updatedPermissions with the session destination; ADE never sends it",
+            ),
+            persistent: capability(
+                NativeOnly,
+                "updatedPermissions saved to settings files; ADE never sends it",
+            ),
+        },
+        conversation: ConversationCapabilities {
+            steering: capability(
+                NativeOnly,
+                "Streaming input accepts messages during a turn; ADE queues prompts until the turn settles",
+            ),
+            rewind: capability(
+                NativeOnly,
+                "Query.rewindFiles() restores files to a user message",
+            ),
+            compaction: capability(NativeOnly, "The /compact command"),
+            resume: capability(
+                Supported,
+                "The SDK resume option with the native session ID",
+            ),
+            import: capability(
+                Supported,
+                "history.import reads native transcripts; imported sessions are not resumed automatically",
+            ),
+            fork: capability(NativeOnly, "The forkSession option"),
+            account_switch: capability(
+                Unknown,
+                "No in-session account switch is documented; a native session belongs to one config directory",
+            ),
+        },
+        quota: capability(
+            Supported,
+            "rate_limit_event messages, recorded by the usage domain",
+        ),
+        managed_accounts: capability(Supported, "One CLAUDE_CONFIG_DIR per account"),
+    }
+}
+
+/// The Claude Code CLI the SDK drives, and Node for the bridge.
+pub const INSTALLATION: &[crate::capabilities::Executable] = &[
+    crate::capabilities::Executable {
+        check: "executable:claude",
+        env: "ADE_CLAUDE_BIN",
+        default: Some("claude"),
+    },
+    crate::capabilities::Executable {
+        check: "runtime:node",
+        env: "ADE_NODE_BIN",
+        default: Some("node"),
+    },
+];

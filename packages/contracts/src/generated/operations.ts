@@ -200,6 +200,13 @@ export const operations = {
   "hook.delivery.inspect": { tier: "query", domain: "hooks", request: "HookDeliveryInspectRequest", response: "HookDeliveryReply" },
   "hook.delivery.retry": { tier: "effect_command", domain: "hooks", request: "HookDeliveryRetryRequest", response: "HookDeliveryReply" },
   "hook.delivery.abandon": { tier: "idempotent_command", domain: "hooks", request: "HookDeliveryAbandonRequest", response: "HookDeliveryReply" },
+  "provider.capabilities": { tier: "query", domain: "providers", request: "ProviderCapabilitiesRequest", response: "ProviderCapabilities" },
+  "provider.readiness": { tier: "query", domain: "providers", request: "ProviderReadinessRequest", response: "ProviderReadiness" },
+  "provider.quota": { tier: "query", domain: "providers", request: "ProviderQuotaRequest", response: "ProviderQuota" },
+  "preset.list": { tier: "query", domain: "providers", request: "PresetListRequest", response: "PresetList" },
+  "preset.get": { tier: "query", domain: "providers", request: "PresetGetRequest", response: "PresetView" },
+  "preset.save": { tier: "idempotent_command", domain: "providers", request: "PresetSaveRequest", response: "PresetSaved" },
+  "preset.delete": { tier: "idempotent_command", domain: "providers", request: "PresetDeleteRequest", response: "PresetDeleted" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

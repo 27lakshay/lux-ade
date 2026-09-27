@@ -131,3 +131,76 @@ impl Provider for Adapter {
         self.rpc.stop_confirmed()
     }
 }
+
+/// Checked against the OpenCode v2 protocol sources recorded in
+/// `providers/opencode/PROVENANCE.md` (anomalyco/opencode 2c369a21).
+pub fn capabilities() -> crate::capabilities::CapabilityRecord {
+    use crate::capabilities::*;
+    use Support::*;
+    CapabilityRecord {
+        provider: "opencode".into(),
+        name: "OpenCode v2".into(),
+        revision: 1,
+        fingerprint: String::new(),
+        checked_against: "anomalyco/opencode 2c369a21 protocol; OpenCode v2.0.3 schema".into(),
+        models: ModelCapabilities {
+            selection: capability(Supported, "Session creation carries provider and model"),
+            format: ModelFormat::ProviderQualified,
+            aliases: vec![],
+            discovery: capability(NativeOnly, "GET /api/model; ADE does not call it"),
+        },
+        reasoning: ReasoningCapabilities {
+            selection: capability(
+                NativeOnly,
+                "Model variants (provider/model#variant); ADE launches do not carry one yet",
+            ),
+            // Variant names differ per model.
+            levels: vec![],
+            varies_by_model: true,
+        },
+        permission_modes: vec![mode(
+            "default",
+            Supported,
+            "The server's configured permission rules ask when needed",
+        )],
+        grants: GrantCapabilities {
+            once: capability(Supported, "The once reply"),
+            session: capability(NativeOnly, "The always reply; ADE never sends it"),
+            persistent: capability(
+                Unknown,
+                "Whether always outlives the server is not documented",
+            ),
+        },
+        conversation: ConversationCapabilities {
+            steering: capability(NativeOnly, "Prompt delivery steer; ADE does not send it"),
+            rewind: capability(NativeOnly, "session.revert.stage and session.revert.commit"),
+            compaction: capability(NativeOnly, "session.compact"),
+            resume: capability(Supported, "Reopens the session by ID"),
+            import: capability(
+                NativeOnly,
+                "session.import; ADE's history import reads Claude and Codex only",
+            ),
+            fork: capability(NativeOnly, "session.fork"),
+            account_switch: capability(Unknown, "Not documented in the protocol"),
+        },
+        quota: capability(Unknown, "No limit windows have been observed"),
+        managed_accounts: capability(
+            NativeOnly,
+            "OpenCode stores credentials natively; ADE does not manage OpenCode accounts yet",
+        ),
+    }
+}
+
+/// The OpenCode CLI the bridge serves, and Node for the bridge.
+pub const INSTALLATION: &[crate::capabilities::Executable] = &[
+    crate::capabilities::Executable {
+        check: "executable:opencode",
+        env: "ADE_OPENCODE_BIN",
+        default: Some("opencode"),
+    },
+    crate::capabilities::Executable {
+        check: "runtime:node",
+        env: "ADE_NODE_BIN",
+        default: Some("node"),
+    },
+];

@@ -667,6 +667,97 @@ fn item(value: &Value, turn: Option<&str>, completed: bool) -> Option<Item> {
     })
 }
 
+/// Checked against the `codex app-server generate-json-schema` output of
+/// codex-cli 0.157.0, the build the account probe validates.
+pub fn capabilities() -> crate::capabilities::CapabilityRecord {
+    use crate::capabilities::*;
+    use Support::*;
+    CapabilityRecord {
+        provider: "codex".into(),
+        name: "Codex".into(),
+        revision: 1,
+        fingerprint: String::new(),
+        checked_against: "codex-cli 0.157.0 app-server protocol v2".into(),
+        models: ModelCapabilities {
+            selection: capability(Supported, "thread/start carries the model"),
+            format: ModelFormat::NativeId,
+            aliases: vec![],
+            discovery: capability(NativeOnly, "model/list; ADE does not call it"),
+        },
+        reasoning: ReasoningCapabilities {
+            selection: capability(
+                NativeOnly,
+                "turn/start effort; ADE launches do not carry a reasoning level yet",
+            ),
+            // Each model advertises its own supportedReasoningEfforts.
+            levels: vec![],
+            varies_by_model: true,
+        },
+        permission_modes: vec![
+            mode(
+                "default",
+                Supported,
+                "Ask on request, inside a workspace-write sandbox",
+            ),
+            mode(
+                "read-only",
+                Supported,
+                "Ask on request, inside a read-only sandbox",
+            ),
+            mode(
+                "danger-full-access",
+                NativeOnly,
+                "No sandbox; ADE does not offer it",
+            ),
+        ],
+        grants: GrantCapabilities {
+            once: capability(
+                Supported,
+                "accept for one command or file change; permission grants are turn-scoped",
+            ),
+            session: capability(NativeOnly, "acceptForSession; ADE never sends it"),
+            persistent: capability(NativeOnly, "Execpolicy amendments; ADE never sends them"),
+        },
+        conversation: ConversationCapabilities {
+            steering: capability(NativeOnly, "turn/steer; ADE does not call it"),
+            rewind: capability(
+                NativeOnly,
+                "thread/revert rewrites history only and leaves files unchanged",
+            ),
+            compaction: capability(NativeOnly, "thread/compact/start"),
+            resume: capability(Supported, "thread/resume with the native thread ID"),
+            import: capability(
+                Supported,
+                "history.import reads rollouts; imported sessions are not resumed automatically",
+            ),
+            fork: capability(NativeOnly, "thread/fork"),
+            account_switch: capability(
+                Unknown,
+                "Login runs per app-server process; switching inside a thread is not documented",
+            ),
+        },
+        quota: capability(
+            Supported,
+            "account/rateLimits/updated, recorded by the usage domain",
+        ),
+        managed_accounts: capability(Supported, "One CODEX_HOME per account"),
+    }
+}
+
+/// The Codex CLI, and Bun for the shared app-server transport.
+pub const INSTALLATION: &[crate::capabilities::Executable] = &[
+    crate::capabilities::Executable {
+        check: "executable:codex",
+        env: "ADE_CODEX_BIN",
+        default: Some("codex"),
+    },
+    crate::capabilities::Executable {
+        check: "runtime:bun",
+        env: "ADE_BUN_BIN",
+        default: Some("bun"),
+    },
+];
+
 #[cfg(test)]
 mod tests {
     #[test]

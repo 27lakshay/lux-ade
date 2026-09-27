@@ -165,3 +165,71 @@ impl Provider for Adapter {
         self.rpc.stop_confirmed()
     }
 }
+
+/// Checked against `@oh-my-pi/pi-coding-agent` 18.3.0 and its `docs/rpc.md`.
+pub fn capabilities() -> crate::capabilities::CapabilityRecord {
+    use crate::capabilities::*;
+    use Support::*;
+    CapabilityRecord {
+        provider: "omp".into(),
+        name: "Oh My Pi".into(),
+        revision: 1,
+        fingerprint: String::new(),
+        checked_against: "@oh-my-pi/pi-coding-agent 18.3.0 RPC".into(),
+        models: ModelCapabilities {
+            selection: capability(Supported, "The --model launch argument"),
+            format: ModelFormat::NativeId,
+            aliases: vec![],
+            discovery: capability(NativeOnly, "get_available_models; ADE does not call it"),
+        },
+        reasoning: ReasoningCapabilities {
+            selection: capability(
+                NativeOnly,
+                "set_thinking_level; ADE launches do not carry a reasoning level yet",
+            ),
+            levels: strings(&["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+            varies_by_model: true,
+        },
+        permission_modes: vec![mode(
+            "default",
+            Supported,
+            "Tools ask through the extension UI when they need approval",
+        )],
+        grants: GrantCapabilities {
+            once: capability(Supported, "Accept answers one approval request"),
+            session: capability(Unknown, "Not documented in the RPC protocol"),
+            persistent: capability(Unknown, "Not documented in the RPC protocol"),
+        },
+        conversation: ConversationCapabilities {
+            steering: capability(NativeOnly, "The steer command; ADE does not send it"),
+            rewind: capability(NativeOnly, "branch from an earlier entry"),
+            compaction: capability(NativeOnly, "The compact command"),
+            resume: capability(Supported, "Reopens the session file"),
+            import: capability(
+                NativeOnly,
+                "Sessions are stored natively; ADE's history import reads Claude and Codex only",
+            ),
+            fork: capability(NativeOnly, "new_session with a parent session"),
+            account_switch: capability(Unknown, "Not documented in the RPC protocol"),
+        },
+        quota: capability(
+            Unknown,
+            "Reports per-call token usage; no limit windows have been observed",
+        ),
+        managed_accounts: capability(Supported, "One agent directory per account"),
+    }
+}
+
+/// Bun runs the bridge and the bundled CLI; `ADE_OMP_BIN` replaces the CLI.
+pub const INSTALLATION: &[crate::capabilities::Executable] = &[
+    crate::capabilities::Executable {
+        check: "runtime:bun",
+        env: "ADE_BUN_BIN",
+        default: Some("bun"),
+    },
+    crate::capabilities::Executable {
+        check: "executable:omp",
+        env: "ADE_OMP_BIN",
+        default: None,
+    },
+];
