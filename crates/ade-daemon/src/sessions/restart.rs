@@ -25,7 +25,6 @@ use anyhow::Context as _;
 const SNAPSHOT_TICKS: u32 = 8;
 /// Monitor ticks between observations of open attempts.
 const RECHECK_TICKS: u32 = 40;
-const BUSY: &[&str] = &["starting", "running", "waiting", "cancelling"];
 
 /// In-memory recovery state, kept in `Data`.
 #[derive(Default)]
@@ -459,11 +458,16 @@ impl Sessions {
         let (facts, subject, conversation_id, turn_id, title, ports) = match &claim.key {
             LeaseKey::Agent(id) => {
                 let c = d.store.conversation(id).ok();
+                let recorded_run = c.as_ref().is_some_and(|c| {
+                    c.runtime_run.is_some() && record.is_some_and(|r| r.attempt == c.runtime_run)
+                });
                 (
                     Facts {
                         kind: RecoveredAttemptKind::ProviderTurn,
-                        // A missing Conversation is treated as mid-turn.
-                        in_flight: c.as_ref().is_none_or(|c| BUSY.contains(&c.status.as_str())),
+                        in_flight: recovery::turn_in_flight(
+                            c.as_ref().map(|c| c.status.as_str()),
+                            recorded_run,
+                        ),
                         native_session: c.as_ref().is_some_and(|c| c.provider_thread_id.is_some()),
                     },
                     id.clone(),
