@@ -6,6 +6,32 @@ Type: delivery record
 Updated: 2026-09-27. Branch: `codex/architecture-proposal`. No Git remote is
 configured. This is a checkpoint, not a claim that the v1 register is complete.
 
+## UI phase started: renderer replaced, legacy specs pruned (2026-09-28)
+
+The UI phase runs on `main`. The desktop renderer's test harness was replaced by the
+workspace shell designed in Pen (`~/Documents/ade.pen`): tokens, panes, sidebars, palette and
+composer, still on sample data. The Electron main process and preload are unchanged except for
+the window's glass settings, a theme bridge (`adeHost.setTheme`) and a storage flush on quit.
+
+Legacy specs in `e2e/specs`, which no gate runs:
+
+- **Deleted, 34 files:** the specs that drove the old renderer. The main-process behaviour they
+  proved is listed in [the UI-phase checklist](ui-phase-main-process-checklist.md), to be proven
+  again against the new UI.
+- **Trimmed, 3 files:** `local-cli`, `service-peer-wiring` and `service-proxy` lost only
+  their Electron tests.
+- **Deleted, 19 files:** CLI and daemon specs that `e2e/protocol` already covers.
+- **Kept, 23 files:** specs whose behaviour `e2e/protocol` does not cover yet. They should be
+  ported there and then deleted. Most are stale: they send effect commands without
+  `operation_id` or expect old backup formats.
+- **Still on the old renderer:** `e2e/packaged/macos.spec.ts` and both `e2e/live` specs need new
+  selectors. Until then, the preload keeps its `e2eAliases`.
+- **Missing files:** `05-workspaces/issues/01-open-local-folder.md`,
+  `03-conversations/issues/03-history-export.md` and older rows below name deleted specs as
+  evidence.
+- **Contrary claim:** `evidence/e2e-files-git.md:136` says the `git-discard` scenarios were
+  re-proved at protocol level. They were not; `git-discard` is among the kept specs.
+
 ## Backend build closed: what needs the user (2026-09-27)
 
 Every round and fix that could be done without the user is merged. The build
