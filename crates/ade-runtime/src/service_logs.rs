@@ -17,7 +17,8 @@ const HEADER: usize = 48;
 const SEGMENT: usize = 512 * 1024;
 pub const RETAINED_BYTES: usize = 2 * SEGMENT;
 
-fn key(workspace: &str, terminal: &str) -> String {
+/// The file name stem of one terminal's segments.
+pub fn key(workspace: &str, terminal: &str) -> String {
     let digest = Sha256::digest(format!("{workspace}\0{terminal}").as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }

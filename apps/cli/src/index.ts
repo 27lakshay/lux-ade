@@ -12,6 +12,7 @@ import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
 import { historyUsage, runHistoryCommand } from './commands/history.js'
+import { retentionUsage, runRetentionCommand } from './commands/retention.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
@@ -77,6 +78,7 @@ const usage = [
   pluginUsage,
   orchestrationUsage,
   diagnosticsUsage,
+  retentionUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -206,6 +208,7 @@ const commandAreas = [
   runPluginCommand,
   runOrchestrationCommand,
   runDiagnosticsCommand,
+  runRetentionCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {

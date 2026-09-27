@@ -151,6 +151,8 @@ export const operations = {
   "resources.inspect": { tier: "query", domain: "resources", request: "ResourcesInspectRequest", response: "HostResourcesState" },
   "resources.claim.resolve": { tier: "effect_command", domain: "resources", request: "ResourcesClaimResolveRequest", response: "HostResourcesState" },
   "resources.registry.accept": { tier: "effect_command", domain: "resources", request: "ResourcesRegistryAcceptRequest", response: "HostResourcesState" },
+  "retention.preview": { tier: "query", domain: "retention", request: "RetentionPreviewRequest", response: "RetentionPreview" },
+  "retention.apply": { tier: "idempotent_command", domain: "retention", request: "RetentionApplyRequest", response: "RetentionApply" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */
