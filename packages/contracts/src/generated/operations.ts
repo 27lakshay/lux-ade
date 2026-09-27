@@ -185,6 +185,11 @@ export const operations = {
   "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
   "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
   "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
+  "hook.subscription.list": { tier: "query", domain: "hooks", request: "HookSubscriptionListRequest", response: "HookSubscriptionList" },
+  "hook.delivery.list": { tier: "query", domain: "hooks", request: "HookDeliveryListRequest", response: "HookDeliveryList" },
+  "hook.delivery.inspect": { tier: "query", domain: "hooks", request: "HookDeliveryInspectRequest", response: "HookDeliveryReply" },
+  "hook.delivery.retry": { tier: "effect_command", domain: "hooks", request: "HookDeliveryRetryRequest", response: "HookDeliveryReply" },
+  "hook.delivery.abandon": { tier: "idempotent_command", domain: "hooks", request: "HookDeliveryAbandonRequest", response: "HookDeliveryReply" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

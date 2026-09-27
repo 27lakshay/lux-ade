@@ -464,6 +464,7 @@ impl Store {
         // Activity commits with the state change it records.
         let now = now_ms();
         if let Some(recorded) = activity::turn_activity(&prior, conversation) {
+            enqueue_turn_hook(&tx, &recorded, &conversation.provider, now)?;
             activity::record(&tx, recorded, now)?;
         }
         for incoming in messages {
@@ -592,6 +593,7 @@ impl Store {
                 conversation.error=Some("The daemon restarted during this turn. Its previous process and approval requests are no longer active; resume the conversation explicitly.".into());
                 conversation.updated_at = now_ms();
                 let lost = activity::unknown_turn(&prior, &conversation);
+                enqueue_turn_hook(&tx, &lost, &conversation.provider, conversation.updated_at)?;
                 activity::record(&tx, lost, conversation.updated_at)?;
             } else if conversation.provider_thread_id.is_some() && conversation.status == "ready" {
                 conversation.status = "disconnected".into();
@@ -616,4 +618,22 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+
+/// A settled turn's lifecycle hook commits with the activity that records it (F058).
+fn enqueue_turn_hook(
+    tx: &Connection,
+    recorded: &activity::Recorded,
+    provider: &str,
+    now: i64,
+) -> Result<()> {
+    if let Some(event) = crate::hooks::Event::turn_settled(
+        &recorded.source_key,
+        recorded.kind,
+        &recorded.target,
+        provider,
+    ) {
+        crate::hooks::enqueue(tx, &event, now)?;
+    }
+    Ok(())
 }

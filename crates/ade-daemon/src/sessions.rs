@@ -33,6 +33,7 @@ mod activity;
 mod agents;
 mod checkpoints;
 mod conversations;
+mod hooks;
 mod imports;
 mod inspection;
 mod leases;
@@ -109,6 +110,7 @@ pub struct Sessions {
     pub worktrees: Arc<crate::worktrees::Worktrees>,
     /// The plugin registry, or why it could not open. Its failure never blocks the core.
     plugins: std::result::Result<crate::plugins::Plugins, String>,
+    hooks: crate::hooks::Dispatcher,
     files: crate::files::Files,
     data: Mutex<Data>,
     pub subscribers: Arc<AtomicUsize>,
@@ -126,6 +128,7 @@ impl Sessions {
     }
     pub fn open(path: &Path, runtime: Arc<Supervisor>) -> Result<Arc<Self>> {
         let store = Store::open(path)?;
+        crate::hooks::recover(&store.connection, now_ms())?;
         let (queue_wake, queue_rx) = mpsc::sync_channel(1);
 
         let worktrees = crate::worktrees::Worktrees::open(&path.with_extension("worktrees"))?;
@@ -153,6 +156,7 @@ impl Sessions {
             worktrees,
             review,
             plugins,
+            hooks: Default::default(),
             files: crate::files::Files::new(),
             data: Mutex::new(Data {
                 draining: false,
@@ -211,6 +215,8 @@ impl Sessions {
             }
         });
         sessions.start_retention_schedule();
+        sessions.refresh_hook_subscriptions();
+        sessions.start_hook_dispatcher();
         sessions.wake_queue();
         Ok(sessions)
     }
@@ -541,10 +547,16 @@ impl Sessions {
         let string = required_str(request);
         let op = request["op"].as_str().unwrap_or("");
         if op.starts_with("plugin.") {
-            return match &self.plugins {
+            let reply = match &self.plugins {
                 Ok(plugins) => plugins.command(request),
                 Err(error) => Err(anyhow!("Plugin registry is unavailable: {error}")),
             };
+            // Activations may have changed; hook subscriptions follow them.
+            self.refresh_hook_subscriptions();
+            return reply;
+        }
+        if op.starts_with("hook.") {
+            return self.hook_command(request);
         }
         if op.starts_with("worktree.")
             && op != "worktree.operation"

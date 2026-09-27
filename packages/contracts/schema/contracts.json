@@ -7309,6 +7309,395 @@
       ],
       "type": "object"
     },
+    "HookDelivery": {
+      "description": "One hook delivery.",
+      "properties": {
+        "activation_generation": {
+          "description": "The plugin's activation generation when the event committed.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "attempts": {
+          "description": "How many times it was handed to a plugin host.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "effect_id": {
+          "description": "Stable for the life of the delivery and across retries. The plugin\nreceives it with every send.",
+          "type": "string"
+        },
+        "error": {
+          "description": "The last error the host or the daemon recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "$ref": "#/$defs/HookEvent"
+        },
+        "next_attempt_at": {
+          "description": "The earliest time the dispatcher sends a queued delivery.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "payload": {
+          "description": "The event's facts, as the plugin receives them."
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "sequence": {
+          "description": "Commit order in the outbox.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/HookDeliveryStatus"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effect_id",
+        "sequence",
+        "plugin_id",
+        "event",
+        "activation_generation",
+        "payload",
+        "status",
+        "attempts",
+        "created_at",
+        "updated_at",
+        "next_attempt_at",
+        "error"
+      ],
+      "type": "object"
+    },
+    "HookDeliveryAbandonRequest": {
+      "additionalProperties": false,
+      "description": "`hook.delivery.abandon`: stop a delivery that is not in flight.",
+      "properties": {
+        "effect_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "hook.delivery.abandon"
+        }
+      },
+      "required": [
+        "op",
+        "effect_id"
+      ],
+      "type": "object"
+    },
+    "HookDeliveryInspectRequest": {
+      "additionalProperties": false,
+      "description": "`hook.delivery.inspect`: one delivery by its effect ID.",
+      "properties": {
+        "effect_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "hook.delivery.inspect"
+        }
+      },
+      "required": [
+        "op",
+        "effect_id"
+      ],
+      "type": "object"
+    },
+    "HookDeliveryList": {
+      "description": "The `hook.delivery.list` reply.",
+      "properties": {
+        "deliveries": {
+          "items": {
+            "$ref": "#/$defs/HookDelivery"
+          },
+          "type": "array"
+        },
+        "host": {
+          "$ref": "#/$defs/HookHostStatus"
+        },
+        "next_after": {
+          "description": "Pass as `after` for the next page; null on the last page.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `hook_deliveries` type tag.",
+          "enum": [
+            "hook_deliveries"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "deliveries",
+        "next_after",
+        "host"
+      ],
+      "type": "object"
+    },
+    "HookDeliveryListRequest": {
+      "additionalProperties": false,
+      "description": "`hook.delivery.list`: deliveries in commit order, oldest first.",
+      "properties": {
+        "after": {
+          "description": "Return deliveries after this sequence; the previous page's `next_after`.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "1 to 200; 50 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "hook.delivery.list"
+        },
+        "plugin_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookDeliveryStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "HookDeliveryReply": {
+      "description": "The `hook.delivery.inspect`, `hook.delivery.retry` and `hook.delivery.abandon` reply.",
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/HookDelivery"
+        },
+        "type": {
+          "description": "The `hook_delivery` type tag.",
+          "enum": [
+            "hook_delivery"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "delivery"
+      ],
+      "type": "object"
+    },
+    "HookDeliveryRetryRequest": {
+      "additionalProperties": false,
+      "description": "`hook.delivery.retry`: queue a failed or unknown delivery to be sent again\nwith the same effect ID. A delivered, abandoned or pending delivery is refused.",
+      "properties": {
+        "acknowledge_unknown": {
+          "description": "Required to retry an `unknown` delivery: the caller accepts that the\nplugin may see the same effect twice.",
+          "type": "boolean"
+        },
+        "effect_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "hook.delivery.retry"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "effect_id"
+      ],
+      "type": "object"
+    },
+    "HookDeliveryStatus": {
+      "description": "Where a delivery is in its lifecycle.",
+      "oneOf": [
+        {
+          "const": "awaiting_host",
+          "description": "Committed and never sent, because no plugin host is available. It is\nsent when a host becomes available.",
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Ready to send at `next_attempt_at`. It has never reached the plugin's\nhandler, so sending it is safe.",
+          "type": "string"
+        },
+        {
+          "const": "dispatching",
+          "description": "Durably claimed and handed to the plugin host; no answer yet.",
+          "type": "string"
+        },
+        {
+          "const": "delivered",
+          "description": "The plugin host reported that the handler completed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The handler ran and reported an error. Only an explicit retry sends it again.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "The delivery was sent but its outcome was lost, for example across a\ndaemon restart. The effect may or may not have happened. It is never\nsent again without an explicit retry that acknowledges this.",
+          "type": "string"
+        },
+        {
+          "const": "abandoned",
+          "description": "An operator gave up on it. It is never sent again.",
+          "type": "string"
+        }
+      ]
+    },
+    "HookEvent": {
+      "description": "A lifecycle event a plugin can subscribe to. Every event fires after the\nstate change it describes has committed.",
+      "oneOf": [
+        {
+          "const": "turn.settled",
+          "description": "A Conversation turn ended: completed, interrupted, failed, or lost\nacross a daemon restart (`outcome: unknown`).",
+          "type": "string"
+        },
+        {
+          "const": "workspace.created",
+          "description": "The daemon recorded a new workspace.",
+          "type": "string"
+        },
+        {
+          "const": "worktree.created",
+          "description": "A worktree lifecycle `create` succeeded.",
+          "type": "string"
+        },
+        {
+          "const": "worktree.removed",
+          "description": "A worktree lifecycle `remove` succeeded.",
+          "type": "string"
+        },
+        {
+          "const": "service.state_changed",
+          "description": "A workspace service run was reserved (`starting`) or released (`stopped`).",
+          "type": "string"
+        }
+      ]
+    },
+    "HookHostStatus": {
+      "description": "Whether a plugin host can take deliveries now.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "detail": {
+          "description": "Why deliveries are waiting, when the host is unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "HookSubscription": {
+      "description": "One plugin's subscription to one event, from its live activation.",
+      "properties": {
+        "activation_generation": {
+          "description": "The activation generation that declared it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event": {
+          "$ref": "#/$defs/HookEvent"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin_id",
+        "event",
+        "activation_generation"
+      ],
+      "type": "object"
+    },
+    "HookSubscriptionList": {
+      "description": "The `hook.subscription.list` reply.",
+      "properties": {
+        "subscriptions": {
+          "items": {
+            "$ref": "#/$defs/HookSubscription"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `hook_subscriptions` type tag.",
+          "enum": [
+            "hook_subscriptions"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "subscriptions"
+      ],
+      "type": "object"
+    },
+    "HookSubscriptionListRequest": {
+      "additionalProperties": false,
+      "description": "`hook.subscription.list`: the active subscriptions the outbox uses.",
+      "properties": {
+        "op": {
+          "const": "hook.subscription.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "HostResourcesState": {
       "description": "The reply to every `resources.*` operation.",
       "properties": {
@@ -8716,6 +9105,13 @@
           "default": [],
           "items": {
             "$ref": "#/$defs/PluginCommandContribution"
+          },
+          "type": "array"
+        },
+        "hooks": {
+          "description": "Lifecycle events delivered to the backend entry point after they commit (F058).",
+          "items": {
+            "$ref": "#/$defs/HookEvent"
           },
           "type": "array"
         },
@@ -18793,6 +19189,41 @@
       "request": "BrowserRecordingGetRequest",
       "response": "BrowserRecording",
       "tier": "query"
+    },
+    {
+      "domain": "hooks",
+      "name": "hook.subscription.list",
+      "request": "HookSubscriptionListRequest",
+      "response": "HookSubscriptionList",
+      "tier": "query"
+    },
+    {
+      "domain": "hooks",
+      "name": "hook.delivery.list",
+      "request": "HookDeliveryListRequest",
+      "response": "HookDeliveryList",
+      "tier": "query"
+    },
+    {
+      "domain": "hooks",
+      "name": "hook.delivery.inspect",
+      "request": "HookDeliveryInspectRequest",
+      "response": "HookDeliveryReply",
+      "tier": "query"
+    },
+    {
+      "domain": "hooks",
+      "name": "hook.delivery.retry",
+      "request": "HookDeliveryRetryRequest",
+      "response": "HookDeliveryReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "hooks",
+      "name": "hook.delivery.abandon",
+      "request": "HookDeliveryAbandonRequest",
+      "response": "HookDeliveryReply",
+      "tier": "idempotent_command"
     }
   ]
 }

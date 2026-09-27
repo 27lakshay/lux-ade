@@ -351,6 +351,12 @@ impl Store {
             "UPDATE services SET data=?3 WHERE workspace_id=?1 AND name=?2",
             params![workspace, name, serde_json::to_string(&service)?],
         )?;
+        let run = service.last_run_transfer_id.as_deref().unwrap_or_default();
+        crate::hooks::enqueue(
+            &tx,
+            &crate::hooks::Event::service_state(workspace, name, "starting", run),
+            crate::model::now_ms(),
+        )?;
         tx.commit()?;
         Ok(service)
     }
@@ -367,10 +373,19 @@ impl Store {
         );
         service.terminal_owner = None;
         service.launch_peers.clear();
-        self.connection.execute(
+        let tx =
+            rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        tx.execute(
             "UPDATE services SET data=?3 WHERE workspace_id=?1 AND name=?2",
             params![workspace, name, serde_json::to_string(&service)?],
         )?;
+        // The lifecycle hook commits with the release (F058).
+        crate::hooks::enqueue(
+            &tx,
+            &crate::hooks::Event::service_state(workspace, name, "stopped", &owner.transfer_id),
+            crate::model::now_ms(),
+        )?;
+        tx.commit()?;
         Ok(service)
     }
 }

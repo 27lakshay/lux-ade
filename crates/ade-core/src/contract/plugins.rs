@@ -124,6 +124,9 @@ pub struct PluginContributions {
     pub panels: Vec<PluginPanelContribution>,
     #[serde(default)]
     pub settings: Vec<PluginSettingContribution>,
+    /// Lifecycle events delivered to the backend entry point after they commit (F058).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<super::hooks::HookEvent>,
 }
 
 /// A command. Its ID starts with the plugin ID and a dot.

@@ -18,6 +18,7 @@ mod manifest;
 
 use crate::receipts::{self, Admission, Status};
 use activation::{Activation, Registry};
+use ade_core::contract::hooks::HookSubscription;
 use ade_core::contract::plugins::{
     PluginActivation, PluginDataRecord, PluginDetail, PluginDisableRequest, PluginEnableRequest,
     PluginInspectRequest, PluginInstallRequest, PluginList, PluginListRequest, PluginManifest,
@@ -203,6 +204,26 @@ impl Plugins {
             }
         }
         Ok(())
+    }
+
+    /// The lifecycle hooks each live activation's manifest subscribes to,
+    /// ordered by plugin ID. A disabled plugin or a failed activation has none.
+    pub fn hook_subscriptions(&self) -> Result<Vec<HookSubscription>> {
+        let state = self.state.lock().unwrap();
+        let mut ids: Vec<&String> = state.live.keys().collect();
+        ids.sort();
+        let mut out = Vec::new();
+        for id in ids {
+            let generation = state.live[id].activation.generation;
+            for event in installed(&state, id)?.detail.manifest.contributes.hooks {
+                out.push(HookSubscription {
+                    plugin_id: id.clone(),
+                    event,
+                    activation_generation: generation,
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// Handles one `plugin.*` operation. Plugin errors carry a wire code.
