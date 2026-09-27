@@ -3,10 +3,20 @@
 //! demand-driven refresh, Paseo's unborn-index handling, Ghostex's typed operations.
 use crate::{
     model::{new_id, now_ms},
+    receipts::{self, Admission, Status},
+    store::Store,
     worktrees::{self, ReviewGuard, Worktrees},
 };
-use anyhow::{Context, Result, bail, ensure};
-use rusqlite::{Connection, OptionalExtension, params};
+use ade_core::contract::review::{
+    GitOperation, GitOperationStatus, ReviewCommitRequest, ReviewDiff, ReviewDiffPage,
+    ReviewDiffPageRequest, ReviewDiffRequest, ReviewDiffRow, ReviewDiffRowKind,
+    ReviewDiscardRequest, ReviewFeedbackMatch, ReviewFeedbackSearch, ReviewFeedbackSearchRequest,
+    ReviewHunkRequest, ReviewOperationReply, ReviewOperationRequest, ReviewStageRequest,
+    ReviewStatus, ReviewStatusRequest, ReviewUnstageRequest,
+};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use rusqlite::{Connection, OptionalExtension};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -32,7 +42,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-type StatusCache = Arc<Mutex<Option<(Instant, Value)>>>;
+type StatusCache = Arc<Mutex<Option<(Instant, ReviewStatus)>>>;
 const DIFF_SNAPSHOT_MAX_BYTES: usize = 16 * 1024 * 1024;
 const DIFF_PAGE_MAX_BYTES: usize = 240 * 1024;
 const DIFF_PAGE_MAX_ROWS: usize = 1000;
@@ -131,6 +141,219 @@ pub fn feedback_anchors(feedback: &Value) -> Result<Vec<&Value>> {
             Ok(anchor)
         })
         .collect()
+}
+
+const INTERRUPTED: &str = "Daemon stopped during Git operation. Refresh and inspect Git history before retrying; this request will not run again.";
+
+/// Decodes a review request into its typed contract. An absent field keeps
+/// the `Missing or invalid <field>` wording of [`string`], and the operation ID
+/// keeps its older `request_id` name.
+fn decode<T: DeserializeOwned>(request: &Value) -> Result<T> {
+    T::deserialize(request).map_err(|error| {
+        let text = error.to_string();
+        match text
+            .strip_prefix("missing field `")
+            .and_then(|rest| rest.split('`').next())
+        {
+            Some("operation_id") => anyhow!("Missing or invalid request_id"),
+            Some("staged") => anyhow!("Invalid review side"),
+            Some(field) => anyhow!("Missing or invalid {field}"),
+            None => anyhow!("Invalid request: {text}"),
+        }
+    })
+}
+
+/// Applies [`string`]'s bounds to a decoded string field.
+fn text<'a>(key: &str, value: &'a str) -> Result<&'a str> {
+    ensure!(
+        !value.is_empty() && !value.contains('\0') && value.len() <= 16384,
+        "Missing or invalid {key}"
+    );
+    Ok(value)
+}
+
+fn reply<T: Serialize>(value: &T) -> Result<Value> {
+    Ok(serde_json::to_value(value)?)
+}
+
+/// The stored result of a Git mutation's receipt in `operations`. The root
+/// keeps one workspace from reading or reusing another's operation.
+#[derive(Serialize, Deserialize)]
+struct GitReceipt {
+    root: String,
+    operation: GitOperation,
+}
+
+/// A decoded Git mutation request.
+enum Mutation {
+    Stage(ReviewStageRequest),
+    Unstage(ReviewUnstageRequest),
+    Hunk(ReviewHunkRequest),
+    Discard(ReviewDiscardRequest),
+    Commit(ReviewCommitRequest),
+}
+
+impl Mutation {
+    fn decode(request: &Value) -> Result<Self> {
+        Ok(match request["op"].as_str().unwrap_or("") {
+            "review.stage" => Self::Stage(decode(request)?),
+            "review.unstage" => Self::Unstage(decode(request)?),
+            "review.hunk" => Self::Hunk(decode(request)?),
+            "review.discard" => Self::Discard(decode(request)?),
+            "review.commit" => Self::Commit(decode(request)?),
+            _ => bail!("Unknown review operation"),
+        })
+    }
+
+    fn op(&self) -> &'static str {
+        match self {
+            Self::Stage(_) => "review.stage",
+            Self::Unstage(_) => "review.unstage",
+            Self::Hunk(_) => "review.hunk",
+            Self::Discard(_) => "review.discard",
+            Self::Commit(_) => "review.commit",
+        }
+    }
+
+    fn id(&self) -> &str {
+        match self {
+            Self::Stage(request) => &request.operation_id,
+            Self::Unstage(request) => &request.operation_id,
+            Self::Hunk(request) => &request.operation_id,
+            Self::Discard(request) => &request.operation_id,
+            Self::Commit(request) => &request.operation_id,
+        }
+    }
+
+    fn path(&self) -> Option<&str> {
+        match self {
+            Self::Stage(request) => Some(&request.path),
+            Self::Unstage(request) => Some(&request.path),
+            Self::Hunk(request) => Some(&request.path),
+            Self::Discard(request) => Some(&request.path),
+            Self::Commit(_) => None,
+        }
+    }
+
+    /// The canonical payload the receipt fingerprints.
+    fn payload(&self) -> Result<Value> {
+        Ok(match self {
+            Self::Stage(request) => serde_json::to_value(request)?,
+            Self::Unstage(request) => serde_json::to_value(request)?,
+            Self::Hunk(request) => serde_json::to_value(request)?,
+            Self::Discard(request) => serde_json::to_value(request)?,
+            Self::Commit(request) => serde_json::to_value(request)?,
+        })
+    }
+}
+
+/// `review.feedback.search` over the profile's saved review notes.
+pub fn feedback_search(store: &Store, request: &Value) -> Result<Value> {
+    let search: ReviewFeedbackSearchRequest = decode(request)?;
+    let limit = search.limit.unwrap_or(20);
+    ensure!(
+        (1..=50).contains(&limit),
+        "Review search limit must be 1 to 50"
+    );
+    let (results, next_cursor) = store.search_review_feedback(
+        &search.workspace_id,
+        search.path.as_deref(),
+        search.query.as_deref(),
+        search.before,
+        limit as usize,
+    )?;
+    reply(&ReviewFeedbackSearch {
+        tag: Default::default(),
+        results: results
+            .into_iter()
+            .map(serde_json::from_value::<ReviewFeedbackMatch>)
+            .collect::<Result<_, _>>()?,
+        next_cursor,
+    })
+}
+
+/// Copies Git receipts from the retired `jobs` table into `operations` once.
+/// The `jobs` table stays in place, unused.
+fn migrate_jobs(db: &mut Connection) -> Result<()> {
+    let exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(());
+    }
+    let tx = db.transaction()?;
+    let rows = tx
+        .prepare("SELECT id,root,request,result FROM jobs")?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (id, root, request, result) in rows {
+        let (Ok(request), Ok(mut operation)) = (
+            serde_json::from_str::<Value>(&request),
+            serde_json::from_str::<GitOperation>(&result),
+        ) else {
+            continue;
+        };
+        let Ok(mutation) = Mutation::decode(&request) else {
+            continue;
+        };
+        let created = operation.started_at;
+        if receipts::begin(&tx, &id, mutation.op(), &mutation.payload()?, None, created)?
+            != Admission::New
+        {
+            continue;
+        }
+        if operation.status == GitOperationStatus::Running {
+            operation.status = GitOperationStatus::Interrupted;
+            operation.error = Some(INTERRUPTED.into());
+        }
+        let status = match operation.status {
+            GitOperationStatus::Succeeded | GitOperationStatus::Failed => Status::Settled,
+            GitOperationStatus::Running | GitOperationStatus::Interrupted => Status::Unknown,
+        };
+        let receipt = serde_json::to_value(GitReceipt { root, operation })?;
+        receipts::settle(&tx, &id, status, Some(&receipt), now_ms())?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Marks every Git operation that was running when the daemon stopped as
+/// interrupted. Its receipt becomes unknown, so the ID never runs again.
+fn interrupt_open_receipts(db: &mut Connection) -> Result<()> {
+    let tx = db.transaction()?;
+    let rows = tx
+        .prepare("SELECT id,result FROM operations WHERE status IN ('accepted','dispatched','acknowledged')")?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (id, result) in rows {
+        let Some(mut receipt) =
+            result.and_then(|result| serde_json::from_str::<GitReceipt>(&result).ok())
+        else {
+            continue;
+        };
+        receipt.operation.status = GitOperationStatus::Interrupted;
+        receipt.operation.error = Some(INTERRUPTED.into());
+        receipts::settle(
+            &tx,
+            &id,
+            Status::Unknown,
+            Some(&serde_json::to_value(receipt)?),
+            now_ms(),
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 struct DiffSnapshot {
@@ -244,7 +467,7 @@ fn bounded_line(line: &str) -> (&str, bool) {
     (&line[..end], true)
 }
 
-fn next_diff_row(raw: &str, state: &mut DiffCursor) -> Value {
+fn next_diff_row(raw: &str, state: &mut DiffCursor) -> ReviewDiffRow {
     let line = raw.strip_suffix('\n').unwrap_or(raw);
     let line = line.strip_suffix('\r').unwrap_or(line);
     let (text, truncated) = bounded_line(line);
@@ -264,32 +487,38 @@ fn next_diff_row(raw: &str, state: &mut DiffCursor) -> Value {
             .and_then(|part| part.split(',').next())
             .and_then(|number| number.parse().ok())
             .unwrap_or(0);
-        ("hunk", None, None)
+        (ReviewDiffRowKind::Hunk, None, None)
     } else if line.starts_with(' ') {
         let old = state.old_line;
         let new = state.new_line;
         state.old_line += 1;
         state.new_line += 1;
-        ("context", Some(old), Some(new))
+        (ReviewDiffRowKind::Context, Some(old), Some(new))
     } else if line.starts_with('+') {
         let new = state.new_line;
         state.new_line += 1;
-        ("added", None, Some(new))
+        (ReviewDiffRowKind::Added, None, Some(new))
     } else if line.starts_with('-') {
         let old = state.old_line;
         state.old_line += 1;
-        ("removed", Some(old), None)
+        (ReviewDiffRowKind::Removed, Some(old), None)
     } else {
-        ("meta", None, None)
+        (ReviewDiffRowKind::Meta, None, None)
     };
-    json!({"kind":kind,"old_line":old_line,"new_line":new_line,"text":text,
-        "hunk":state.hunk,"truncated":truncated})
+    ReviewDiffRow {
+        kind,
+        old_line,
+        new_line,
+        text: text.to_owned(),
+        hunk: state.hunk.clone(),
+        truncated,
+    }
 }
 
 fn page_rows(
     snapshot: &DiffSnapshot,
     cursor: &DiffCursor,
-) -> Result<(Vec<Value>, Option<DiffCursor>)> {
+) -> Result<(Vec<ReviewDiffRow>, Option<DiffCursor>)> {
     ensure!(
         cursor.offset >= snapshot.body_start && cursor.offset <= snapshot.patch.len(),
         "Invalid diff page cursor"
@@ -865,7 +1094,7 @@ impl Git<'_> {
         }
         self.stream_diff(&args, untracked)
     }
-    fn diff(&self, path: &str, staged: bool) -> Result<Value> {
+    fn diff(&self, path: &str, staged: bool) -> Result<ReviewDiff> {
         path_arg(path)?;
         let state = self.status()?;
         let file = state["files"]
@@ -918,10 +1147,18 @@ impl Git<'_> {
             patch.as_bytes(),
             state["index_token"].as_str().unwrap().as_bytes(),
         ]);
-        Ok(
-            json!({"type":"review_diff","path":path,"staged":staged,"token":token,
-            "header":header,"hunks":hunks,"hunk_actions":!special,"conflict":file["conflict"],"binary":patch.contains("Binary files "),"bytes":patch.len()}),
-        )
+        Ok(ReviewDiff {
+            tag: Default::default(),
+            path: path.to_owned(),
+            staged,
+            token,
+            header,
+            hunks,
+            hunk_actions: !special,
+            conflict: file["conflict"] == true,
+            binary: patch.contains("Binary files "),
+            bytes: patch.len() as u64,
+        })
     }
 }
 fn parse_status(raw: &str) -> Result<Value> {
@@ -996,11 +1233,12 @@ fn split_patch(patch: &str) -> (String, Vec<String>) {
 }
 impl Review {
     pub fn open(path: &Path, worktrees: Arc<Worktrees>) -> Result<Arc<Self>> {
-        let db = Connection::open(path)?;
+        let mut db = Connection::open(path)?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
-        db.execute_batch("CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, root TEXT NOT NULL, request TEXT NOT NULL, result TEXT NOT NULL);")?;
-        db.execute("UPDATE jobs SET result=json_set(result,'$.status','interrupted','$.error','Daemon stopped during Git operation. Refresh and inspect Git history before retrying; this request will not run again.') WHERE json_extract(result,'$.status')='running'",[])?;
+        receipts::ensure(&db)?;
+        migrate_jobs(&mut db)?;
+        interrupt_open_receipts(&mut db)?;
         Ok(Arc::new(Self {
             worktrees,
             db: Mutex::new(db),
@@ -1008,28 +1246,91 @@ impl Review {
             diff_pages: Mutex::new(DiffPages::default()),
         }))
     }
-    fn job(&self, root: &str, id: &str, request: Option<&Value>) -> Result<Option<Value>> {
-        let db = self.db.lock().unwrap();
-        let row: Option<(String, String, String)> = db
-            .query_row(
-                "SELECT root,request,result FROM jobs WHERE id=?1",
-                [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
+    /// The stored receipt of a Git operation, if it exists and has not expired.
+    fn stored(db: &Connection, id: &str) -> Result<Option<GitReceipt>> {
+        let result: Option<Option<String>> = db
+            .query_row("SELECT result FROM operations WHERE id=?1", [id], |row| {
+                row.get(0)
+            })
             .optional()?;
-        if let Some((old_root, old_request, result)) = row {
-            ensure!(old_root == root, "Operation belongs to another workspace");
-            if let Some(request) = request {
-                ensure!(
-                    serde_json::from_str::<Value>(&old_request)? == *request,
-                    "Request ID was used for different parameters"
-                );
+        result
+            .flatten()
+            .map(|text| serde_json::from_str(&text).context("Stored Git receipt is invalid"))
+            .transpose()
+    }
+    fn operation_reply(root: &str, receipt: GitReceipt) -> Result<Value> {
+        ensure!(
+            receipt.root == root,
+            "Operation belongs to another workspace"
+        );
+        reply(&ReviewOperationReply {
+            tag: Default::default(),
+            operation: receipt.operation,
+        })
+    }
+    /// Admits a Git mutation. With `job`, a new ID records that running job and
+    /// returns `None`; without it, the check leaves no receipt behind. A known
+    /// ID returns its stored operation.
+    fn admit(
+        &self,
+        root: &str,
+        mutation: &Mutation,
+        payload: &Value,
+        job: Option<&GitOperation>,
+    ) -> Result<Option<Value>> {
+        let id = mutation.id();
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        match receipts::begin(&tx, id, mutation.op(), payload, None, now_ms())? {
+            Admission::New => {
+                if let Some(job) = job {
+                    let receipt = GitReceipt {
+                        root: root.to_owned(),
+                        operation: job.clone(),
+                    };
+                    receipts::settle(
+                        &tx,
+                        id,
+                        Status::Dispatched,
+                        Some(&serde_json::to_value(receipt)?),
+                        now_ms(),
+                    )?;
+                    tx.commit()?;
+                }
+                Ok(None)
             }
-            return Ok(Some(
-                json!({"type":"review_operation","operation":serde_json::from_str::<Value>(&result)?}),
-            ));
+            Admission::Replay(stored) => {
+                let receipt: GitReceipt = serde_json::from_value(
+                    stored
+                        .result
+                        .context("Git operation receipt is incomplete")?,
+                )?;
+                Self::operation_reply(root, receipt).map(Some)
+            }
+            Admission::Conflict => {
+                if let Some(receipt) = Self::stored(&tx, id)? {
+                    ensure!(
+                        receipt.root == root,
+                        "Operation belongs to another workspace"
+                    );
+                }
+                bail!("Request ID was used for different parameters")
+            }
+            Admission::Expired => bail!("Request ID has expired; use a new request ID"),
         }
-        Ok(None)
+    }
+    /// Keeps the discard backup location in the receipt before the worktree changes.
+    fn record_backup(&self, id: &str, backup: &Path) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        let mut receipt = Self::stored(&db, id)?.context("Git operation receipt is missing")?;
+        receipt.operation.backup_path = Some(backup.to_string_lossy().into_owned());
+        receipts::settle(
+            &db,
+            id,
+            Status::Acknowledged,
+            Some(&serde_json::to_value(receipt)?),
+            now_ms(),
+        )
     }
     pub fn validate_anchor_then<T>(
         &self,
@@ -1129,21 +1430,24 @@ impl Review {
             let mut found_end = false;
             for raw in snapshot.patch[snapshot.body_start..].split_inclusive('\n') {
                 let row = next_diff_row(raw, &mut cursor);
-                if row["hunk"] == hunk
-                    && row["new_line"] == next_line
-                    && row["truncated"] == false
-                    && (row["kind"] == "added" || row["kind"] == "context")
+                if row.hunk == hunk
+                    && row.new_line == Some(next_line)
+                    && !row.truncated
+                    && matches!(
+                        row.kind,
+                        ReviewDiffRowKind::Added | ReviewDiffRowKind::Context
+                    )
                 {
                     if next_line == line {
                         ensure!(
-                            row["text"] == text,
+                            row.text == text,
                             "Stale diff: selected line changed; refresh Changes"
                         );
                         found_start = true;
                     }
                     if next_line == end_line {
                         ensure!(
-                            row["text"] == end_text,
+                            row.text == end_text,
                             "Stale diff: selected range changed; refresh Changes"
                         );
                         found_end = true;
@@ -1189,11 +1493,14 @@ impl Review {
         let root = git_root;
         let op = string(request, "op")?;
         if op == "review.operation" {
-            return self
-                .job(root, string(request, "request_id")?, None)?
-                .context("Unknown review operation");
+            let lookup: ReviewOperationRequest = decode(request)?;
+            let id = text("request_id", &lookup.operation_id)?;
+            let receipt =
+                Self::stored(&self.db.lock().unwrap(), id)?.context("Unknown review operation")?;
+            return Self::operation_reply(root, receipt);
         }
         if op == "review.status" {
+            let read: ReviewStatusRequest = decode(request)?;
             // Coalesce per workspace; one slow repository never holds the cache
             // map or blocks reads for another repository.
             let entry = {
@@ -1209,36 +1516,43 @@ impl Review {
             let mut cached = entry.lock().unwrap();
             if let Some((time, value)) = cached.as_ref()
                 && time.elapsed() < Duration::from_millis(750)
-                && request["force"] != true
+                && !read.force
             {
-                return Ok(value.clone());
+                return reply(value);
             }
             let guard = self.worktrees.review_guard(root)?;
-            let state = Git {
-                root,
-                guard: &guard,
-                binding,
-                common_binding,
-            }
-            .status()?;
-            *cached = Some((Instant::now(), state.clone()));
-            return Ok(state);
+            let state: ReviewStatus = serde_json::from_value(
+                Git {
+                    root,
+                    guard: &guard,
+                    binding,
+                    common_binding,
+                }
+                .status()?,
+            )?;
+            let value = reply(&state)?;
+            *cached = Some((Instant::now(), state));
+            return Ok(value);
         }
         if op == "review.diff" {
+            let read: ReviewDiffRequest = decode(request)?;
             let guard = self.worktrees.review_guard(root)?;
-            return Git {
-                root,
-                guard: &guard,
-                binding,
-                common_binding,
-            }
-            .diff(string(request, "path")?, request["staged"] == true);
+            return reply(
+                &Git {
+                    root,
+                    guard: &guard,
+                    binding,
+                    common_binding,
+                }
+                .diff(text("path", &read.path)?, read.staged)?,
+            );
         }
         if op == "review.diff_page" {
-            let workspace_id = string(request, "workspace_id")?;
-            let path = string(request, "path")?;
+            let page: ReviewDiffPageRequest = decode(request)?;
+            let workspace_id = text("workspace_id", &page.workspace_id)?;
+            let path = text("path", &page.path)?;
             path_arg(path)?;
-            let staged = request["staged"].as_bool().context("Invalid review side")?;
+            let staged = page.staged;
             let guard = self.worktrees.review_guard(root)?;
             let git = Git {
                 root,
@@ -1250,8 +1564,8 @@ impl Review {
             let revision = state["revision"]
                 .as_str()
                 .context("Missing review revision")?;
-            let (snapshot_id, cursor) = if request.get("cursor").is_some() {
-                let cursor_id = string(request, "cursor")?;
+            let (snapshot_id, cursor) = if let Some(cursor_id) = &page.cursor {
+                let cursor_id = text("cursor", cursor_id)?;
                 ensure!(cursor_id.len() <= 128, "Invalid diff page cursor");
                 let mut pages = self.diff_pages.lock().unwrap();
                 pages.prune();
@@ -1302,16 +1616,16 @@ impl Review {
                 .snapshots
                 .get(&snapshot_id)
                 .context("Diff page cursor expired; refresh Changes")?;
-            if let Some(expected) = request.get("expected_token") {
+            if let Some(expected) = &page.expected_token {
                 ensure!(
-                    expected.as_str() == Some(snapshot.token.as_str()),
+                    *expected == snapshot.token,
                     "Stale diff: token changed; refresh Changes"
                 );
             }
             let (rows, continuation) = page_rows(snapshot, &cursor)?;
             let token = snapshot.token.clone();
             let header = snapshot.header.clone();
-            let bytes = snapshot.patch.len();
+            let bytes = snapshot.patch.len() as u64;
             let binary = snapshot.binary;
             let conflict = snapshot.conflict;
             let next_cursor = continuation.map(|continuation| {
@@ -1322,42 +1636,47 @@ impl Review {
                 pages.cursors.insert(id.clone(), continuation);
                 id
             });
-            return Ok(
-                json!({"type":"review_diff_page","path":path,"staged":staged,
-                "revision":revision,"token":token,"header":header,"rows":rows,
-                "next_cursor":next_cursor,"complete":next_cursor.is_none(),
-                "binary":binary,"conflict":conflict,"bytes":bytes}),
-            );
+            return reply(&ReviewDiffPage {
+                tag: Default::default(),
+                path: path.to_owned(),
+                staged,
+                revision: revision.to_owned(),
+                token,
+                header,
+                rows,
+                complete: next_cursor.is_none(),
+                next_cursor,
+                binary,
+                conflict,
+                bytes,
+            });
         }
-        ensure!(
-            [
-                "review.stage",
-                "review.unstage",
-                "review.hunk",
-                "review.commit",
-                "review.discard"
-            ]
-            .contains(&op),
-            "Unknown review operation"
-        );
-        let id = string(request, "request_id")?;
+        let mutation = Mutation::decode(request)?;
+        let id = text("request_id", mutation.id())?.to_owned();
         ensure!(id.len() <= 256, "Request ID too long");
-        if let Some(job) = self.job(root, id, Some(request))? {
-            return Ok(job);
+        let payload = mutation.payload()?;
+        if let Some(known) = self.admit(root, &mutation, &payload, None)? {
+            return Ok(known);
         }
         let guard = self.worktrees.review_guard(root)?;
-        if let Some(job) = self.job(root, id, Some(request))? {
-            return Ok(job);
+        let job = GitOperation {
+            id: id.clone(),
+            status: GitOperationStatus::Running,
+            started_at: now_ms(),
+            op: mutation.op().to_owned(),
+            finished_at: None,
+            result: None,
+            error: None,
+            code: None,
+            recovery: None,
+            backup_path: None,
+        };
+        if let Some(known) = self.admit(root, &mutation, &payload, Some(&job))? {
+            return Ok(known);
         }
-        let job = json!({"id":id,"status":"running","started_at":now_ms(),"op":op});
-        self.db.lock().unwrap().execute(
-            "INSERT INTO jobs(id,root,request,result) VALUES(?1,?2,?3,?4)",
-            params![id, root, request.to_string(), job.to_string()],
-        )?;
         let hub = self.clone();
         let root = root.to_owned();
-        let request = request.clone();
-        let mut completed = job.clone();
+        let running = job.clone();
         std::thread::spawn(move || {
             let git = Git {
                 root: &root,
@@ -1365,54 +1684,68 @@ impl Review {
                 binding,
                 common_binding,
             };
-            let result = hub.mutate(&git, &request);
+            let result = hub.mutate(&git, &mutation);
             // Mutation may have persisted a recovery location before an
             // irreversible filesystem step. Preserve it in the final receipt.
-            if let Ok(Some(saved)) = hub.job(&root, request["request_id"].as_str().unwrap(), None) {
-                completed = saved["operation"].clone();
-            }
+            let mut completed = Self::stored(&hub.db.lock().unwrap(), &id)
+                .ok()
+                .flatten()
+                .map_or(running, |saved| saved.operation);
             match result {
                 Ok(value) => {
-                    completed["status"] = json!("succeeded");
-                    completed["result"] = value;
+                    completed.status = GitOperationStatus::Succeeded;
+                    completed.result = Some(value);
                 }
                 Err(e) => {
-                    completed["status"] = json!("failed");
+                    completed.status = GitOperationStatus::Failed;
                     let failure = ade_core::error::error_envelope(e);
-                    completed["error"] = failure["message"].clone();
-                    completed["code"] = failure["code"].clone();
-                    completed["recovery"] = failure["recovery"].clone();
+                    completed.error = failure["message"].as_str().map(str::to_owned);
+                    completed.code = Some(failure["code"].as_str().map(str::to_owned));
+                    completed.recovery = Some(failure["recovery"].as_str().map(str::to_owned));
                 }
             }
-            completed["finished_at"] = json!(now_ms());
-            if let Err(e) = hub.db.lock().unwrap().execute(
-                "UPDATE jobs SET result=?1 WHERE id=?2",
-                params![
-                    completed.to_string(),
-                    request["request_id"].as_str().unwrap()
-                ],
-            ) {
+            completed.finished_at = Some(now_ms());
+            let receipt = GitReceipt {
+                root: root.clone(),
+                operation: completed,
+            };
+            let settled = serde_json::to_value(&receipt)
+                .map_err(anyhow::Error::from)
+                .and_then(|value| {
+                    receipts::settle(
+                        &hub.db.lock().unwrap(),
+                        &id,
+                        Status::Settled,
+                        Some(&value),
+                        now_ms(),
+                    )
+                });
+            if let Err(e) = settled {
                 eprintln!("Could not persist Git receipt: {e}");
             }
             if cfg!(debug_assertions)
                 && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
                 && let Ok(directory) = std::env::var("ADE_E2E_REVIEW_PAUSE_DIR")
+                && let Ok(done) = serde_json::to_string(&receipt.operation)
             {
-                let _ = fs::write(Path::new(&directory).join("done"), completed.to_string());
+                let _ = fs::write(Path::new(&directory).join("done"), done);
             }
             drop(guard);
             hub.cache.lock().unwrap().remove(&root);
         });
-        Ok(json!({"type":"review_operation","operation":job}))
+        reply(&ReviewOperationReply {
+            tag: Default::default(),
+            operation: job,
+        })
     }
-    fn mutate(&self, git: &Git, request: &Value) -> Result<Value> {
+    fn mutate(&self, git: &Git, mutation: &Mutation) -> Result<Value> {
         let state = git.status()?;
-        let op = string(request, "op")?;
-        if op == "review.commit" {
-            let message = string(request, "message")?;
+        let op = mutation.op();
+        if let Mutation::Commit(commit) = mutation {
+            let message = text("message", &commit.message)?;
             ensure!(!message.trim().is_empty(), "Commit message is empty");
             ensure!(
-                request["index_token"] == state["index_token"],
+                state["index_token"] == commit.index_token.as_str(),
                 "Staged changes or HEAD changed. Review them again before committing."
             );
             ensure!(
@@ -1439,7 +1772,7 @@ impl Review {
                 json!({"head":git.text(&["rev-parse","HEAD"])?.trim(),"output":out["stdout"]}),
             );
         }
-        let path = string(request, "path")?;
+        let path = text("path", mutation.path().unwrap_or_default())?;
         path_arg(path)?;
         let file = state["files"]
             .as_array()
@@ -1447,7 +1780,8 @@ impl Review {
             .iter()
             .find(|f| f["path"] == path)
             .context("File is no longer changed; refresh")?;
-        if op == "review.discard" {
+        if let Mutation::Discard(discard) = mutation {
+            let revision = discard.revision.as_str();
             ensure!(
                 file["unstaged"] == true
                     && file["untracked"] != true
@@ -1456,7 +1790,7 @@ impl Review {
                 "Only tracked, non-conflicted working-tree changes can be discarded"
             );
             ensure!(
-                request["revision"] == state["revision"],
+                state["revision"] == revision,
                 "Changes moved since review; preview the file again before discarding"
             );
             match fs::symlink_metadata(Path::new(git.root).join(path)) {
@@ -1476,16 +1810,16 @@ impl Review {
             }
             let diff = git.diff(path, false)?;
             ensure!(
-                request["diff_token"] == diff["token"],
+                discard.diff_token == diff.token,
                 "Diff changed since preview; preview the file again before discarding"
             );
             ensure!(
-                request["revision"] == git.status()?["revision"],
+                git.status()?["revision"] == revision,
                 "Changes moved since preview; preview the file again before discarding"
             );
             let target = Path::new(git.root).join(path);
             let before = discard_file_digest(&target)?;
-            let stage_root = discard_stage_path(git, string(request, "request_id")?, path)?;
+            let stage_root = discard_stage_path(git, &discard.operation_id, path)?;
             let stage_identity = fs::metadata(&stage_root)?;
             let stage_binding = (stage_identity.dev(), stage_identity.ino());
             let staged = stage_root.join(path);
@@ -1494,16 +1828,10 @@ impl Review {
             // An interrupted operation keeps the old file in this private Git
             // directory. Persist its location before changing the worktree.
             if before.is_some() {
-                self.db.lock().unwrap().execute(
-                    "UPDATE jobs SET result=json_set(result,'$.backup_path',?1) WHERE id=?2",
-                    params![
-                        staged.to_string_lossy().as_ref(),
-                        string(request, "request_id")?
-                    ],
-                )?;
+                self.record_backup(&discard.operation_id, &staged)?;
             }
             ensure!(
-                request["revision"] == git.status()?["revision"],
+                git.status()?["revision"] == revision,
                 "Changes moved since preview; preview the file again before discarding"
             );
             if cfg!(debug_assertions)
@@ -1541,7 +1869,7 @@ impl Review {
                 }
             }
             ensure!(
-                request["revision"] == git.status()?["revision"],
+                git.status()?["revision"] == revision,
                 "Changes moved during discard; preview it again"
             );
             if cfg!(debug_assertions)
@@ -1668,28 +1996,26 @@ impl Review {
                     staged.display()
                 ),
             }
-        } else if op == "review.hunk" {
+        } else if let Mutation::Hunk(request) = mutation {
             ensure!(
                 file["conflict"] != true,
                 "Resolve conflicts before staging hunks"
             );
-            let staged = request["staged"] == true;
+            let staged = request.staged;
             let diff = git.diff(path, staged)?;
             ensure!(
-                diff["token"] == request["token"],
+                diff.token == request.token,
                 "Diff changed since review; reload it before applying a hunk"
             );
             ensure!(
-                diff["hunk_actions"] == true,
+                diff.hunk_actions,
                 "This change must be staged or unstaged as a whole file"
             );
-            let index = request["hunk"].as_u64().context("Missing hunk index")? as usize;
-            let hunk = diff["hunks"]
-                .as_array()
-                .and_then(|h| h.get(index))
-                .and_then(Value::as_str)
+            let hunk = usize::try_from(request.hunk)
+                .ok()
+                .and_then(|index| diff.hunks.get(index))
                 .context("Unknown hunk")?;
-            let patch = format!("{}{hunk}", diff["header"].as_str().unwrap()).into_bytes();
+            let patch = format!("{}{hunk}", diff.header).into_bytes();
             let mut args = vec!["apply", "--cached", "--whitespace=nowarn"];
             if staged {
                 args.push("--reverse");
@@ -1698,8 +2024,13 @@ impl Review {
             let out = git.run(&args, Some(patch), 30)?;
             worktrees::successful(&out)?;
         } else {
+            let revision = match mutation {
+                Mutation::Stage(request) => &request.revision,
+                Mutation::Unstage(request) => &request.revision,
+                _ => bail!("Unknown review operation"),
+            };
             ensure!(
-                request["revision"] == state["revision"],
+                state["revision"] == revision.as_str(),
                 "Changes moved since review; refresh before staging or unstaging"
             );
             let args = if op == "review.stage" {

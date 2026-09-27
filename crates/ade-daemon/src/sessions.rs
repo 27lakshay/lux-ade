@@ -482,35 +482,8 @@ impl Sessions {
             return Ok(response);
         }
         if op == "review.feedback.search" {
-            let limit = request
-                .get("limit")
-                .map(|value| value.as_u64().context("Invalid review search limit"))
-                .transpose()?
-                .unwrap_or(20);
-            ensure!(
-                (1..=50).contains(&limit),
-                "Review search limit must be 1 to 50"
-            );
             let data = self.data.lock().unwrap();
-            let (results, next_cursor) = data.store.search_review_feedback(
-                string("workspace_id")?,
-                request
-                    .get("path")
-                    .map(|value| value.as_str().context("Invalid review path query"))
-                    .transpose()?,
-                request
-                    .get("query")
-                    .map(|value| value.as_str().context("Invalid review note query"))
-                    .transpose()?,
-                request
-                    .get("before")
-                    .map(|value| value.as_i64().context("Invalid review search cursor"))
-                    .transpose()?,
-                limit as usize,
-            )?;
-            return Ok(
-                json!({"type":"review_feedback_search","results":results,"next_cursor":next_cursor}),
-            );
+            return crate::review::feedback_search(&data.store, request);
         }
         if request["op"]
             .as_str()
