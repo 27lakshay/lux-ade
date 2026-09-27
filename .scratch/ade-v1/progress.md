@@ -1179,3 +1179,24 @@ coordinator merge error in the fault-suite list, now fixed.)
 **Newly accepted (4):** R001, R002, R003 and R011. The register now holds 76
 accepted rows.
 
+**Round 5, merged at `078ce48`** (810 in-process tests; the full protocol suite passes:
+822 specs in 11.6 minutes at 2 workers, 13 skipped, no failures)
+
+- **terminals:** a lagging viewer resynchronizes from a fresh snapshot, and the
+  CLI, SDK and xterm adapter handle the mid-stream resync. Unicode 11 widths
+  fix emoji columns. F081 accepted.
+- **control-lane:** a reserved per-profile control socket for cancel, stop,
+  health and shutdown, so a connection flood cannot block stopping work. R004
+  accepted.
+- **descendants and Codex rewind:** escaped script descendants are recorded
+  per attempt and keep the attempt quarantined after a runtime kill. Codex
+  rewind forks before the turn (`thread/fork` with `lastTurnId`, documented
+  behaviour only). R006 and F043 accepted.
+- **files and packaging:** every headless part passes, including browse and
+  preview on a remote host, and the packaged bundle's daemon, runtime and CLI
+  running with `PATH=/usr/bin:/bin` and no developer tools. F071, F073, F078
+  and R020 each keep an Electron-only part, so none is accepted.
+
+**Newly accepted (4):** F081, R004, R006 and F043. The register now holds 80
+accepted rows.
+

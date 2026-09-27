@@ -62,7 +62,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F040 | Context compaction | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
 | F041 | Combined history | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
 | F042 | External session import | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
-| F043 | Work search | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F043 | Work search | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `078ce48` ([evidence](evidence/e2e-descendants-codex.md)) |
 | F044 | Task pins, labels, ordering and archive UI | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F045 | Dashboard | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F046 | Snoozing | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-context.md)) |
@@ -100,7 +100,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F078 | Multiple forge support | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
 | F079 | Issue tracker integrations | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F080 | Change attribution | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
-| F081 | Persistent terminals | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
+| F081 | Persistent terminals | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `078ce48` ([evidence](evidence/e2e-terminals2.md)) |
 | F082 | Terminal ergonomics | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
 | F083 | Programmatic terminal access | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-hooks-auth.md)) |
 | F084 | Saved commands | Not now | [07-terminals-services](07-terminals-services/spec.md) | Not scheduled |
@@ -174,7 +174,7 @@ These apply in addition to the 107 selected features.
 | R001 | Keep accepted operations after a daemon failure | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `65efca1` ([evidence](evidence/e2e-reliability-core.md)) |
 | R002 | Receive consistent retry results | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `65efca1` ([evidence](evidence/e2e-reliability-core.md)) |
 | R003 | Cancel one run without affecting its successor | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `65efca1` ([evidence](evidence/e2e-reliability-core.md)) |
-| R004 | Stop existing execution during overload | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R004 | Stop existing execution during overload | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `078ce48` ([evidence](evidence/e2e-control-lane.md)) |
 | R005 | Retain independent work across frontend and daemon restarts | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R006 | See actual process uncertainty | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R007 | Coordinate physical resources across profiles | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-reliability-c.md)) |
