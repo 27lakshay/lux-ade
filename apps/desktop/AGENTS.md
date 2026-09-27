@@ -52,3 +52,7 @@ claiming a UI change works.
   core recovery visible.
 - Global shortcuts belong to the native menu (`src/main/app-menu.ts`), which sends commands listed
   in `src/shared/app-commands.ts`. Do not bind the same keys in the renderer.
+- Other shortcuts go through the command service (`src/renderer/src/commands`): register a command,
+  then a keybinding with a `when` clause. Never add a raw `keydown` listener for a shortcut.
+- State from the daemon lives in the stores in `src/renderer/src/state`; read them with a selector
+  (`useDaemon`, or zustand's `useStore(store, selector)`). Test against `state/fake-host.ts`.
