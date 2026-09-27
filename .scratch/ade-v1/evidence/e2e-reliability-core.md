@@ -2,9 +2,78 @@
 
 Status: returned
 Type: slice evidence
-Branch: claude/wf_59b7ac6e-d6c-1
+Branch: claude/wf_59b7ac6e-d6c-1; follow-up `claude/wf_ead686db-a2b-1` (resources-receipts)
 Worker: ADE parallel build, reliability-core worker
 Requirements: R001, R002, R003
+
+## Follow-up: resources-receipts (review blocker from round 4)
+
+The blocker: `resources.claim.resolve` and `resources.registry.accept`
+committed their effect with the receipt `acknowledged`, then recorded the reply
+as `settled` in a separate write. A crash between the two left the receipt
+open forever, and every retry answered with the registry as it read at that
+moment, never a settled reply or an explicit unknown.
+
+What is uncertain, before what changed:
+
+- **The legacy `acknowledged` path of `resources.claim.resolve` has no spec.**
+  This build never leaves that receipt open, so only a database written by an
+  earlier build reaches it. The code settles it on its first retry, the same
+  way as `resources.registry.accept`, which the spec does prove.
+- **`resources.registry.accept` still writes twice.** Its reply includes the
+  claims re-taken in the new registry, a separate SQLite file from the profile
+  database that holds the receipt, so one transaction cannot cover both.
+  Instead the first retry of an `acknowledged` receipt settles it (below).
+- The accept handler now holds the worktree data lock until the reply is
+  recorded, so a concurrent retry of the same ID cannot settle first. That lock
+  already covered the re-claims, so the lock order (data, then registry) is
+  unchanged.
+
+Changes:
+
+1. **`resources.claim.resolve` records its reply in the same transaction as
+   the claim's removal** (`HostResources::resolve_claim`). The reply is built
+   from the uncommitted transaction (`state_in`), so it is exactly the state
+   the commit produces. A retry replays it or finds nothing done.
+2. **`resources.registry.accept` settles on its first `acknowledged` replay**
+   (`HostResources::accept`): the binding is known to have committed, so the
+   retry records the registry as it reads now as the settled reply and
+   returns it; every later retry replays that. An open receipt in any other
+   state answers "outcome is unknown and it will not run again".
+3. **A debug-only pause point**, `receipts::e2e_pause(point)`, gated by
+   `ADE_E2E_RECEIPT_PAUSE_DIR` and compiled out of release builds. With
+   `<point>.armed` in that directory the daemon writes `<point>.paused` and
+   waits up to 30 s for `<point>.release`. It sits after the resolve commit and
+   between the accept's two writes (`worktrees.rs`, `resources_command`).
+4. **Other `receipts.rs` callers checked.** The remaining callers that write
+   `acknowledged` (`review.rs` backup record, `sessions/checkpoints.rs`
+   restore, `sessions/repository.rs` clone and publish) use it as a phase
+   marker *before* the effect, and their replay paths reconcile it from disk
+   or mark it unknown (`interrupt_open_receipts`, `checkpoint_reconcile`,
+   `repository_reconcile`). `controls.rs` and `commands.rs` read it only.
+   `hooks.rs`, `skills.rs`, `plugins.rs` and `envelope.rs` settle in the
+   effect's transaction or reconcile open receipts on open. None has the split.
+
+Spec: `e2e/protocol/reliability-core/reply-record.spec.ts`, one test per
+command. It arms the pause, sends the command and drops the reply, SIGKILLs the
+daemon at the pause, restarts, retries, SIGKILLs again, and retries once more.
+Both retries must return the same reply (each daemon names its own incarnation
+in a reply read "as it reads now", so an unsettled replay differs), the effect
+applies once, and an altered payload is a conflict. With the accept's
+`acknowledged` reconciliation disabled, the spec fails on the second retry;
+with it, it passes 3 of 3 under `--repeat-each 3`.
+
+Checks for the follow-up:
+
+- `pnpm build:backend && pnpm build`: pass.
+- `ADE_E2E_WORKERS=2 pnpm test:e2e:protocol:only e2e/protocol/reliability-core e2e/protocol/resources`:
+  207 passed, 0 failed.
+- `pnpm check:static`: pass; 798 legacy Rust tests run, 798 passed, 5 skipped.
+- `pgrep` after the runs: no `ade-daemon`, `ade-runtime` or `security`
+  process from this worktree. No keychain, Security framework, `security` tool
+  or hdiutil was used.
+
+Time (minutes): implementation 35, review 10, checks 15, integration 0.
 
 ## Outcome
 
@@ -104,7 +173,7 @@ Marks:
 | plugin.command.invoke | op | core-rcpt | core-rcpt; `reliability-core/extras.spec.ts`: SIGKILL while the host holds the command, `outcome_unknown`, never started again |
 | orchestration.delegate, .child.send, .parent.send, .group.start | op | core-rcpt | core-rcpt |
 | orchestration.child.answer | native request_id | `extras.spec.ts`: converges after restart, other answer refused, one reply | `extras.spec.ts`: lost reply and SIGKILL, one reply |
-| resources.claim.resolve, resources.registry.accept | op | core-rcpt | core-rcpt |
+| resources.claim.resolve, resources.registry.accept | op | core-rcpt | core-rcpt; `reliability-core/reply-record.spec.ts`: SIGKILL after the effect commits and before the reply is final, then two retries with a SIGKILL between them return one settled reply |
 | checkpoint.create, .restore, .delete | op | rel-a | rel-a |
 | remote.host.start | op | cited `remote/bootstrap.spec.ts` | cited `bootstrap.spec.ts` |
 | remote.host.install | op | `reliability-core/remote.spec.ts`: replay, conflict, both after restart, no second upload | `remote.spec.ts`: SIGKILL while the host holds the install, `unknown`, nothing sent again |

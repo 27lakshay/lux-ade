@@ -275,6 +275,36 @@ pub fn recorded_reply(receipt: &Receipt) -> Option<Value> {
         .flatten()
 }
 
+/// The env gate of [`e2e_pause`]: a directory for its handshake files.
+pub const E2E_PAUSE_DIR: &str = "ADE_E2E_RECEIPT_PAUSE_DIR";
+
+/// A deterministic crash point for E2E, between an effect's commit and the
+/// moment its reply is final. Debug builds only, and only when
+/// [`E2E_PAUSE_DIR`] names a directory holding `<point>.armed`: the daemon
+/// writes `<point>.paused`, then waits up to 30 seconds for
+/// `<point>.release`, so a spec can SIGKILL it there. Release builds compile
+/// it to nothing.
+pub fn e2e_pause(point: &str) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let Some(directory) = std::env::var_os(E2E_PAUSE_DIR) else {
+        return;
+    };
+    let directory = PathBuf::from(directory);
+    if !directory.join(format!("{point}.armed")).exists() {
+        return;
+    }
+    if std::fs::write(directory.join(format!("{point}.paused")), b"paused").is_err() {
+        return;
+    }
+    let release = directory.join(format!("{point}.release"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !release.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// Drops the body of receipts past retention. Each keeps an expired marker so
 /// a reused ID still returns [`Admission::Expired`]. Returns how many expired.
 pub fn prune(connection: &Connection, now: i64) -> Result<usize> {

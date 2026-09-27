@@ -1320,6 +1320,24 @@ impl HostResources {
             Ok(open) => (Some(open.host.clone()), None, read_claims(&open.db)?),
             Err(blocked) => (None, Some(blocked.message()), Vec::new()),
         };
+        drop(guard);
+        self.state(host, blocked, claims, path, kind)
+    }
+
+    /// The registry as `db`, the open registry's connection, reads it. It may
+    /// be a transaction that has not committed yet.
+    fn state_in(&self, open: &Open, db: &Connection) -> Result<HostResourcesState> {
+        self.state(Some(open.host.clone()), None, read_claims(db)?, None, None)
+    }
+
+    fn state(
+        &self,
+        host: Option<String>,
+        blocked: Option<String>,
+        claims: Vec<Claim>,
+        path: Option<&str>,
+        kind: Option<ResourceKind>,
+    ) -> Result<HostResourcesState> {
         let filter = match (path, &host) {
             (Some(path), Some(host)) => {
                 let path = Path::new(path);
@@ -1403,72 +1421,82 @@ impl HostResources {
     }
 
     /// `resources.claim.resolve`: an effect command whose receipt lives in
-    /// the registry that owns the claim.
+    /// the registry that owns the claim. The claim's removal and the reply
+    /// commit in one transaction, so a retry after any crash replays the
+    /// reply or finds nothing done.
     pub fn resolve_claim(&self, request: &ResourcesClaimResolveRequest) -> Result<Value> {
+        const OP: &str = "resources.claim.resolve";
         let payload = serde_json::to_value(request)?;
-        {
-            let guard = self.inner.lock().unwrap();
-            let open = guard.as_ref().map_err(Self::unavailable)?;
-            let tx = Transaction::new_unchecked(&open.db, TransactionBehavior::Immediate)?;
-            match receipts::begin(
-                &tx,
-                &request.operation_id,
-                "resources.claim.resolve",
-                &payload,
-                None,
-                now_ms(),
-            )? {
-                Admission::New => {}
-                Admission::Replay(receipt) => {
-                    drop(tx);
-                    drop(guard);
-                    // R002: the recorded reply, not the registry as it reads now.
-                    if let Some(reply) = receipts::recorded_reply(&receipt) {
-                        return Ok(reply);
-                    }
-                    return Ok(serde_json::to_value(self.inspect(None)?)?);
-                }
-                Admission::Conflict => {
-                    bail!("Operation ID was already used for different parameters")
-                }
-                Admission::Expired => {
-                    bail!("Operation ID is past its 30-day receipt retention; use a new ID")
-                }
-            }
-            let claim = read_claim(&tx, &request.claim_id)?;
-            may_resolve(&claim, &request.confirm_path)?;
-            tx.execute("DELETE FROM claims WHERE id=?1", [&claim.id])?;
-            // The claim is gone once this commits; the reply is recorded next.
-            receipts::settle(
-                &tx,
-                &request.operation_id,
-                Status::Acknowledged,
-                Some(&json!({"resolved": claim.id})),
-                now_ms(),
-            )?;
-            tx.commit()?;
-        }
-        let reply = serde_json::to_value(self.inspect(None)?)?;
+        // What `inspect` sweeps first, so the recorded reply reads the same.
+        let _ = self.sweep();
         let guard = self.inner.lock().unwrap();
-        if let Ok(open) = guard.as_ref() {
-            let recorded = receipts::settle(
-                &open.db,
-                &request.operation_id,
-                Status::Settled,
-                Some(&json!({"reply": reply})),
-                now_ms(),
-            );
-            if let Err(error) = recorded {
-                tracing::warn!(
-                    "The reply to {} was not recorded: {error:#}",
-                    request.operation_id
-                );
+        let open = guard.as_ref().map_err(Self::unavailable)?;
+        let tx = Transaction::new_unchecked(&open.db, TransactionBehavior::Immediate)?;
+        match receipts::begin(&tx, &request.operation_id, OP, &payload, None, now_ms())? {
+            Admission::New => {}
+            Admission::Replay(receipt) => {
+                // R002: the recorded reply, not the registry as it reads now.
+                if let Some(reply) = receipts::recorded_reply(&receipt) {
+                    return Ok(reply);
+                }
+                return match receipt.status {
+                    // An earlier build committed the removal as acknowledged
+                    // and recorded the reply in a second write. The removal
+                    // is known to have happened, so the reply is the registry
+                    // as it reads now, recorded once so every later retry
+                    // returns the same.
+                    Status::Acknowledged => {
+                        let reply = serde_json::to_value(self.state_in(open, &tx)?)?;
+                        receipts::settle(
+                            &tx,
+                            &request.operation_id,
+                            Status::Settled,
+                            Some(&json!({"reply": reply})),
+                            now_ms(),
+                        )?;
+                        tx.commit()?;
+                        Ok(reply)
+                    }
+                    // Settled by an earlier build that recorded only a summary.
+                    Status::Settled => {
+                        drop(tx);
+                        drop(guard);
+                        Ok(serde_json::to_value(self.inspect(None)?)?)
+                    }
+                    Status::Accepted | Status::Dispatched | Status::Unknown => bail!(
+                        "{OP} {} was interrupted; its outcome is unknown and it will not run again. Inspect resources before resolving under a new operation ID",
+                        request.operation_id
+                    ),
+                };
+            }
+            Admission::Conflict => {
+                bail!("Operation ID was already used for different parameters")
+            }
+            Admission::Expired => {
+                bail!("Operation ID is past its 30-day receipt retention; use a new ID")
             }
         }
+        let claim = read_claim(&tx, &request.claim_id)?;
+        may_resolve(&claim, &request.confirm_path)?;
+        tx.execute("DELETE FROM claims WHERE id=?1", [&claim.id])?;
+        let reply = serde_json::to_value(self.state_in(open, &tx)?)?;
+        receipts::settle(
+            &tx,
+            &request.operation_id,
+            Status::Settled,
+            Some(&json!({"reply": reply, "resolved": claim.id})),
+            now_ms(),
+        )?;
+        tx.commit()?;
+        drop(guard);
+        // The claim is gone and the reply recorded; only its delivery is left.
+        receipts::e2e_pause(OP);
         Ok(reply)
     }
 
-    /// Records the reply of an accept that ran, so a retry returns it.
+    /// Records the reply of an accept that ran, so a retry returns it. Until
+    /// it does, the receipt stays acknowledged, and the first retry settles
+    /// it with the reply it reconciles (see [`Self::accept`]).
     pub fn record_accept_reply(profile_db: &Connection, operation_id: &str, reply: &Value) {
         let recorded = receipts::settle(
             profile_db,
@@ -1508,7 +1536,34 @@ impl HostResources {
         )? {
             Admission::New => {}
             Admission::Replay(receipt) => {
-                return Ok(AcceptOutcome::Replayed(receipts::recorded_reply(&receipt)));
+                if let Some(reply) = receipts::recorded_reply(&receipt) {
+                    return Ok(AcceptOutcome::Replayed(Some(reply)));
+                }
+                return match receipt.status {
+                    // The binding committed as acknowledged, and the daemon
+                    // stopped before it recorded the reply. The accept is
+                    // known to have run, so the reply is the registry as it
+                    // reads now, recorded once so every later retry returns
+                    // the same.
+                    Status::Acknowledged => {
+                        let reply = serde_json::to_value(self.inspect(None)?)?;
+                        receipts::settle(
+                            &tx,
+                            &request.operation_id,
+                            Status::Settled,
+                            Some(&json!({"reply": reply})),
+                            now_ms(),
+                        )?;
+                        tx.commit()?;
+                        Ok(AcceptOutcome::Replayed(Some(reply)))
+                    }
+                    // Settled by an earlier build that recorded only a summary.
+                    Status::Settled => Ok(AcceptOutcome::Replayed(None)),
+                    Status::Accepted | Status::Dispatched | Status::Unknown => bail!(
+                        "resources.registry.accept {} was interrupted; its outcome is unknown and it will not run again. Inspect resources before accepting under a new operation ID",
+                        request.operation_id
+                    ),
+                };
             }
             Admission::Conflict => bail!("Operation ID was already used for different parameters"),
             Admission::Expired => {
