@@ -7,19 +7,26 @@
 // nor lists it (`review.operation.list`). Anything else keeps the record.
 
 /** The fields of a failed daemon request that this decision reads. */
-export type RequestFailure = { code: string; delivery: string; message: string }
+export type RequestFailure = {
+  code: string
+  delivery: string
+  message: string
+  /** The daemon answered with a specific refusal code, such as `needs_rebind` (the SDK's `isDaemonRefusal`). */
+  refusal?: boolean
+}
 
 // Codes a daemon error frame carries for a request it answered. `unavailable`,
 // `timeout`, `protocol` and `incompatible` are also raised locally for a closed
 // socket or unreadable reply, and `outcome_unknown` and `in_progress` say the
-// outcome is open, so none of them proves a refusal.
+// outcome is open, so none of them proves a refusal. A specific daemon code
+// (`needs_rebind`, `host_resource_conflict`, ...) arrives with `refusal` set.
 const answeredCodes = new Set(['daemon', 'invalid_request', 'conflict', 'overloaded', 'not_applied'])
 
 /** Whether a failed Git mutation request was definitely refused rather than lost. */
 export function definiteRefusal(failure: RequestFailure | null): boolean {
   if (!failure) return false
   if (failure.delivery === 'not_sent' || failure.delivery === 'rejected') return true
-  return failure.delivery === 'unknown' && answeredCodes.has(failure.code)
+  return failure.delivery === 'unknown' && (answeredCodes.has(failure.code) || failure.refusal === true)
 }
 
 /** Whether a `review.operation` lookup failed because the daemon has no receipt for the ID. */

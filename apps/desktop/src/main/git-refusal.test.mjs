@@ -22,6 +22,12 @@ test('other pre-admission refusals release once the daemon denies knowing the ID
   }
 })
 
+test('a specific daemon refusal code releases like a code-less refusal', () => {
+  const rebind = { ...failure('needs_rebind', 'Workspace needs_rebind'), refusal: true }
+  assert.equal(decideRefusedGitRecord(id, rebind, unknown, []), 'release')
+  assert.equal(definiteRefusal(failure('needs_rebind', 'Raised locally, not answered')), false)
+})
+
 test('a lost, timed-out or unreadable reply keeps the record for a retry', () => {
   for (const send of [failure('timeout', 'The profile daemon did not respond before the deadline.'),
     failure('unavailable', 'Profile daemon closed the connection before replying.'),

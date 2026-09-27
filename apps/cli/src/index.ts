@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { DaemonRequestError, requestDaemon } from '@ade/client'
+import { DaemonRequestError, requestDaemon, type KnownDaemonErrorCode } from '@ade/client'
 import { accountUsage, runAccountCommand } from './commands/accounts.js'
 import { accountSwitchUsage, runAccountSwitchCommand } from './commands/account-switch.js'
 import { adapterUsage, runAdapterCommand } from './commands/adapters.js'
@@ -61,7 +61,18 @@ Commands:
 
 const usageFooter = `
 Command results are JSON on stdout, except terminal attach streams raw terminal output.
-Errors are JSON on stderr.
+Errors are JSON on stderr: {"type":"error","code","message"}, plus "recovery"
+when the daemon names one and "delivery" for a request that reached the socket.
+"code" is the daemon's own code, kept as sent. Exit codes:
+  2  usage, invalid_request             3  unavailable
+  4  incompatible                        5  timeout
+  6  protocol, or a local failure        7  daemon: any other daemon refusal code
+  8  conflict                            9  outcome_unknown, lifecycle_outcome_unknown
+  10 in_progress                         11 overloaded
+  12 not_applied                         13 needs_rebind
+  14 host_resource_conflict              15 host_resources_unavailable
+  16 lifecycle_command_failed, lifecycle_unavailable, lifecycle_invalid_output
+  17 restored_send_held
 Choose and retain a unique --request-id for each Git or worktree mutation. If
 the reply is lost, inspect its operation with that ID; retry only with the
 same command and arguments.
@@ -322,16 +333,25 @@ async function main(): Promise<void> {
     }
     process.stdout.write(`${JSON.stringify(await run(endpoint, words))}\n`)
   } catch (error) {
-    const code = error instanceof DaemonRequestError || error instanceof CliError ? error.code : 'protocol'
+    const code: string = error instanceof DaemonRequestError || error instanceof CliError ? error.code : 'protocol'
     const message = error instanceof Error ? error.message : String(error)
-    const exitCodes: Record<ErrorCode, number> = {
-      usage: 2, invalid_request: 2, unavailable: 3, incompatible: 4, timeout: 5, protocol: 6,
-      daemon: 7, conflict: 8, outcome_unknown: 9, in_progress: 10, overloaded: 11, not_applied: 12,
-    }
+    const daemon = error instanceof DaemonRequestError ? error : null
     process.stderr.write(`${JSON.stringify({ type: 'error', code, message,
-      ...(error instanceof DaemonRequestError ? { delivery: error.delivery } : {}) })}\n`)
-    process.exitCode = exitCodes[code as ErrorCode] ?? 6
+      ...(daemon?.recovery ? { recovery: daemon.recovery } : {}),
+      ...(daemon ? { delivery: daemon.delivery } : {}) })}\n`)
+    // A daemon code without its own exit keeps `daemon`'s; a local failure without one is `protocol`'s.
+    process.exitCode = Object.hasOwn(exitCodes, code) ? exitCodes[code as keyof typeof exitCodes]
+      : daemon?.replied ? exitCodes.daemon : exitCodes.protocol
   }
+}
+
+/** The exit code for each error code, as the usage text documents it. */
+const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
+  usage: 2, invalid_request: 2, unavailable: 3, incompatible: 4, timeout: 5, protocol: 6,
+  daemon: 7, conflict: 8, outcome_unknown: 9, in_progress: 10, overloaded: 11, not_applied: 12,
+  needs_rebind: 13, host_resource_conflict: 14, host_resources_unavailable: 15,
+  lifecycle_command_failed: 16, lifecycle_unavailable: 16, lifecycle_invalid_output: 16,
+  lifecycle_outcome_unknown: 9, restored_send_held: 17,
 }
 
 void main()
