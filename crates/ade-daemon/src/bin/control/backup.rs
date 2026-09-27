@@ -1,10 +1,11 @@
 //! Native backend snapshots. This format intentionally excludes browser state,
-//! credentials, external projects and running processes.
+//! credentials, external projects and running processes. [`coverage`] lists
+//! every profile store and whether a backup copies, rebuilds or excludes it.
 use super::{
     Lock, Profile, Registry, find_profile, private_dir, private_write, profile_path, profile_view,
     save_registry,
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use rusqlite::{
     Connection, OpenFlags,
     backup::{Backup, StepResult},
@@ -25,18 +26,8 @@ use std::{
 };
 use uuid::Uuid;
 
-const FILES: &[(&str, &str, i64)] = &[
-    ("sessions.sqlite", "sqlite", 17),
-    ("sessions.review.sqlite3", "sqlite", 0),
-    ("sessions.worktrees/lifecycle.sqlite3", "sqlite", 4),
-    ("sessions.worktrees/empty.toml", "manifest", 0),
-];
-const EXCLUDED: &[&str] = &[
-    "browser sessions, tabs, cookies and pending sends",
-    "provider-native homes and credentials",
-    "external projects, repositories and worktrees",
-    "service routes, logs, owner locks, sockets and processes",
-];
+mod coverage;
+use coverage::{Decision, FileRecord, Kind, Observed, PLUGIN_ARTIFACTS, PLUGINS_DB, Plan, STORES};
 
 fn directory(path: &Path) -> Result<()> {
     ensure!(
@@ -93,18 +84,115 @@ fn schema(path: &Path, name: &str) -> Result<i64> {
     regular(path)?;
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    let expected = FILES
-        .iter()
-        .find(|(entry, _, _)| *entry == name)
+    let expected = coverage::store(name)
+        .filter(|store| store.kind == Kind::Sqlite)
         .context("Unknown database")?
-        .2;
+        .schema;
     supported_schema(name, version, expected)?;
     let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
     ensure!(check == "ok", "Invalid SQLite database: {name}");
     if name == "sessions.sqlite" {
         attachments(&db)?;
+        skills(&db)?;
     }
     Ok(version)
+}
+fn tables(db: &Connection) -> Result<Vec<String>> {
+    let mut query = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
+    let names = query
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(names)
+}
+fn hex_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+/// Checks every stored skill bundle has each blob its manifest names, with the
+/// recorded digest and size. The skill catalog lives in `sessions.sqlite` and is
+/// created on first use, so a profile without it has nothing to check.
+fn skills(db: &Connection) -> Result<()> {
+    let names = tables(db)?;
+    if !names.iter().any(|name| name == "skill_bundles") {
+        return Ok(());
+    }
+    ensure!(
+        names.iter().any(|name| name == "skill_blobs"),
+        "Skill catalog has no blob table"
+    );
+    let mut bundles = db.prepare("SELECT name,content_hash,manifest FROM skill_bundles")?;
+    let rows = bundles
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut blobs = db.prepare("SELECT path,sha256,data FROM skill_blobs WHERE content_hash=?1")?;
+    for (name, content_hash, manifest) in rows {
+        let observed = blobs
+            .query_map([&content_hash], |row| {
+                let data: Vec<u8> = row.get(2)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    hex_sha256(&data),
+                    data.len() as u64,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        coverage::skill_verdict(&name, &content_hash, &manifest, &observed)?;
+    }
+    Ok(())
+}
+/// Leaves the history search index out of a copied profile database. It is a
+/// projection of `messages`: dropping its tables and triggers and zeroing its
+/// version makes the daemon rebuild it under a new epoch when it next opens.
+/// The copy is compacted so the dropped index takes no space.
+fn exclude_projection(path: &Path) -> Result<()> {
+    let mut db = Connection::open(path)?;
+    db.pragma_update(None, "journal_mode", "DELETE")?;
+    let tx = db.transaction()?;
+    tx.execute_batch(
+        "DROP TRIGGER IF EXISTS history_journal_insert;
+         DROP TRIGGER IF EXISTS history_journal_update;
+         DROP TRIGGER IF EXISTS history_journal_delete;
+         DROP TABLE IF EXISTS history_fts;
+         DROP TABLE IF EXISTS history_docs;
+         DROP TABLE IF EXISTS history_journal;",
+    )?;
+    if tables(&tx)?
+        .iter()
+        .any(|name| name == "history_index_state")
+    {
+        tx.execute(
+            "UPDATE history_index_state SET version=0,applied=0,rebuilding=1,backfill_after=NULL",
+            [],
+        )?;
+    }
+    tx.commit()?;
+    db.execute_batch("VACUUM")?;
+    drop(db);
+    sync(path)?;
+    projection_excluded(path)
+}
+fn projection_excluded(path: &Path) -> Result<()> {
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let names = tables(&db)?;
+    let version = if names.iter().any(|name| name == "history_index_state") {
+        Some(db.query_row(
+            "SELECT COALESCE(MAX(version),0) FROM history_index_state",
+            [],
+            |row| row.get(0),
+        )?)
+    } else {
+        None
+    };
+    coverage::projection_verdict(&names, version)
 }
 /// Checks one attachment row: its metadata names it, a live payload is exactly
 /// the declared size, a discarded payload is empty, and it has a generation.
@@ -237,11 +325,10 @@ fn test_pause(name: &str) -> Result<Option<Pause>> {
     )
 }
 fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
-    let expected = FILES
-        .iter()
-        .find(|(entry, _, _)| *entry == name)
+    let expected = coverage::store(name)
+        .filter(|store| store.kind != Kind::Directory)
         .context("Unknown backup file")?;
-    let actual = if expected.1 == "sqlite" {
+    let actual = if expected.kind == Kind::Sqlite {
         schema(source, name)?;
         let reader = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut writer = Connection::open(target)?;
@@ -270,13 +357,19 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
                 }
             }
         }
+        // A copy of a WAL database keeps WAL mode; a rollback-journal copy is
+        // one self-contained file that the entry's hash covers.
+        writer.pragma_update(None, "journal_mode", "DELETE")?;
         drop(writer);
         sync(target)?;
+        if name == "sessions.sqlite" {
+            exclude_projection(target)?;
+        }
         Some(schema(target, name)?)
     } else {
         regular(source)?;
         ensure!(
-            fs::metadata(source)?.len() <= 1024 * 1024,
+            fs::metadata(source)?.len() <= coverage::MAX_MANIFEST_BYTES,
             "Manifest exceeds 1 MiB"
         );
         fs::copy(source, target)?;
@@ -285,11 +378,203 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
     };
     let mut info = hash(target)?;
     info["path"] = json!(name);
-    info["kind"] = json!(expected.1);
+    info["kind"] = json!(expected.kind.name());
     if let Some(version) = actual {
         info["schema"] = json!(version);
     }
     Ok(info)
+}
+fn file_hash(path: &Path) -> Result<(u64, String)> {
+    let observed = hash(path)?;
+    Ok((
+        observed["size"].as_u64().context("Invalid file size")?,
+        observed["sha256"]
+            .as_str()
+            .context("Invalid file digest")?
+            .into(),
+    ))
+}
+/// Lists the files of `sessions.plugins/` that a backup takes, relative to
+/// `artifacts/`. [`coverage::decide`] rules on every entry.
+fn plugin_files(store: &Path) -> Result<Vec<String>> {
+    let mut taken = Vec::new();
+    let mut pending = vec![(store.to_owned(), String::new())];
+    while let Some((folder, prefix)) = pending.pop() {
+        for entry in fs::read_dir(&folder)? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow!("Plugin store has a file name that is not UTF-8"))?;
+            let relative = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let kind = entry.file_type()?;
+            let observed = if kind.is_dir() {
+                Observed::Directory
+            } else if kind.is_file() {
+                Observed::File
+            } else {
+                Observed::Other
+            };
+            match coverage::decide(&relative, observed)? {
+                Decision::Skip => {}
+                Decision::Descend => pending.push((entry.path(), relative)),
+                Decision::Take => {
+                    ensure!(
+                        taken.len() < coverage::MAX_DIRECTORY_FILES,
+                        "Plugin artifact store holds too many files"
+                    );
+                    let inside = relative
+                        .strip_prefix("artifacts/")
+                        .context("Plugin artifact path is invalid")?;
+                    taken.push(inside.to_owned());
+                }
+            }
+        }
+    }
+    taken.sort();
+    Ok(taken)
+}
+/// Creates every directory that `files` needs under `root`, parents first and
+/// each private. Returns them deepest first, for syncing.
+fn file_directories<'a>(root: &Path, files: impl Iterator<Item = &'a str>) -> Result<Vec<PathBuf>> {
+    let mut needed = std::collections::BTreeSet::new();
+    for file in files {
+        let mut prefix = file;
+        while let Some((parent, _)) = prefix.rsplit_once('/') {
+            needed.insert(parent.to_owned());
+            prefix = parent;
+        }
+    }
+    private_dir(root)?;
+    let mut created = vec![root.to_owned()];
+    for folder in needed {
+        let path = root.join(folder);
+        private_dir(&path)?;
+        created.push(path);
+    }
+    created.reverse();
+    Ok(created)
+}
+fn copy_private(from: &Path, to: &Path, executable: bool) -> Result<()> {
+    regular(from)?;
+    ensure!(
+        !to.exists() && !to.is_symlink(),
+        "Backup file already exists: {}",
+        to.display()
+    );
+    fs::copy(from, to)?;
+    let mode = if executable { 0o700 } else { 0o600 };
+    fs::set_permissions(to, fs::Permissions::from_mode(mode))?;
+    sync(to)
+}
+/// Copies the plugin artifact store file by file. Each copy is hashed and the
+/// source hashed again afterwards, so a file that changed mid-copy fails the
+/// backup instead of entering it.
+fn snapshot_directory(source: &Path, target: &Path) -> Result<Vec<FileRecord>> {
+    directory(source)?;
+    let names = plugin_files(source.parent().context("Plugin store has no parent")?)?;
+    let folders = file_directories(target, names.iter().map(String::as_str))?;
+    let mut records = Vec::with_capacity(names.len());
+    let mut total = 0u64;
+    for name in names {
+        let from = source.join(&name);
+        let to = target.join(&name);
+        let executable = fs::symlink_metadata(&from)?.permissions().mode() & 0o100 != 0;
+        copy_private(&from, &to, executable)?;
+        let (size, sha256) = file_hash(&to)?;
+        ensure!(
+            file_hash(&from)? == (size, sha256.clone()),
+            "Plugin artifact changed during backup; retry: {name}"
+        );
+        total = total.saturating_add(size);
+        ensure!(
+            total <= coverage::MAX_DIRECTORY_BYTES,
+            "Plugin artifact store exceeds the backup directory limit"
+        );
+        records.push(FileRecord {
+            path: name,
+            size,
+            sha256,
+            executable,
+        });
+    }
+    for path in folders {
+        sync(&path)?;
+    }
+    Ok(records)
+}
+/// Checks every installed plugin in a copied registry against the copied
+/// artifact files. Returns each plugin's ID and its artifact directory
+/// relative to the artifact store.
+fn plugin_artifacts(database: &Path, files: &[FileRecord]) -> Result<Vec<(String, String)>> {
+    let db = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    if !tables(&db)?.iter().any(|name| name == "plugins") {
+        return Ok(Vec::new());
+    }
+    let mut query = db.prepare("SELECT id,artifact_path,artifact_digest FROM plugins")?;
+    let rows = query
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    rows.into_iter()
+        .map(|(id, path, digest)| {
+            let relative = coverage::plugin_verdict(&id, &path, &digest, files)?;
+            Ok((id, relative))
+        })
+        .collect()
+}
+/// Checks a bundle's copied directory holds exactly the files its entry lists,
+/// each a regular file with the recorded size and digest.
+fn verify_directory(root: &Path, files: &[FileRecord]) -> Result<()> {
+    directory(root)?;
+    let mut observed = Vec::new();
+    let mut pending = vec![(root.to_owned(), String::new())];
+    while let Some((folder, prefix)) = pending.pop() {
+        for entry in fs::read_dir(&folder)? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| anyhow!("Backup directory has a file name that is not UTF-8"))?;
+            let relative = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                pending.push((entry.path(), relative));
+            } else {
+                ensure!(
+                    kind.is_file() && observed.len() < coverage::MAX_DIRECTORY_FILES,
+                    "Backup directory holds an unexpected entry: {relative}"
+                );
+                observed.push(relative);
+            }
+        }
+    }
+    observed.sort();
+    ensure!(
+        observed.iter().eq(files.iter().map(|file| &file.path)),
+        "Backup directory does not match its manifest"
+    );
+    for file in files {
+        ensure!(
+            file_hash(&root.join(&file.path))? == (file.size, file.sha256.clone()),
+            "Backup file failed verification: {}",
+            file.path
+        );
+    }
+    Ok(())
 }
 /// Refuses a backup destination inside a directory the backup copies. Both
 /// paths must already be canonical; a bundle nested in its own source would copy
@@ -323,25 +608,48 @@ fn create(source: &Path, output: &Path) -> Result<Value> {
     );
     let temporary = stage(parent)?;
     let result = (|| -> Result<Value> {
-        let mut entries = Vec::new();
-        for (name, _, _) in FILES {
+        let mut entries: Vec<Value> = Vec::new();
+        for store in STORES {
+            let name = store.path;
             let source_file = source.join(name);
+            let target = temporary.join(name);
+            if store.kind == Kind::Directory {
+                // The artifact store is only meaningful beside its registry;
+                // without one the daemon discards every artifact when it opens.
+                if !entries.iter().any(|entry| entry["path"] == PLUGINS_DB) {
+                    continue;
+                }
+                private_dir(target.parent().unwrap())?;
+                let files = if source_file.exists() || source_file.is_symlink() {
+                    directory(source_file.parent().unwrap())?;
+                    snapshot_directory(&source_file, &target)?
+                } else {
+                    private_dir(&target)?;
+                    Vec::new()
+                };
+                plugin_artifacts(&temporary.join(PLUGINS_DB), &files)?;
+                entries.push(directory_entry(&files));
+                continue;
+            }
             if !source_file.exists() && !source_file.is_symlink() {
                 continue;
             }
             directory(source_file.parent().unwrap())?;
-            let target = temporary.join(name);
             private_dir(target.parent().unwrap())?;
             entries.push(snapshot(&source_file, &target, name)?);
         }
-        let manifest = json!({"format_version":2,"scope":"backend-snapshot-only",
-            "entries":entries,"excluded":EXCLUDED});
+        let manifest = json!({"format_version":coverage::FORMAT,"scope":coverage::SCOPE,
+            "entries":entries,"excluded":coverage::EXCLUDED,"coverage":coverage::coverage()});
+        // Prove the bundle reads back before it is published.
+        coverage::check_manifest(&manifest)?;
         private_write(
             &temporary.join("manifest.json"),
             &serde_json::to_vec(&manifest)?,
         )?;
-        if temporary.join("sessions.worktrees").exists() {
-            sync(&temporary.join("sessions.worktrees"))?;
+        for nested in ["sessions.worktrees", "sessions.plugins"] {
+            if temporary.join(nested).exists() {
+                sync(&temporary.join(nested))?;
+            }
         }
         sync(&temporary)?;
         no_replace(&temporary, output)?;
@@ -353,60 +661,57 @@ fn create(source: &Path, output: &Path) -> Result<Value> {
     }
     result
 }
-fn validate(source: &Path) -> Result<Value> {
+fn directory_entry(files: &[FileRecord]) -> Value {
+    let total: u64 = files.iter().map(|file| file.size).sum();
+    let tree = coverage::tree_digest(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.sha256.as_str())),
+    );
+    json!({"path":PLUGIN_ARTIFACTS,"kind":Kind::Directory.name(),"size":total,
+        "sha256":tree.strip_prefix("sha256:").unwrap_or_default(),
+        "files":files.iter().map(FileRecord::to_json).collect::<Vec<_>>()})
+}
+/// Validates a bundle: [`coverage::check_manifest`] rules on the manifest,
+/// then every entry is checked against the files on disk. A format-3 bundle
+/// must also hold no history index and a registry whose plugins all have
+/// their artifacts.
+fn validate(source: &Path) -> Result<(Value, Plan)> {
     directory(source)?;
     let marker = source.join("manifest.json");
     regular(&marker)?;
     ensure!(
-        fs::metadata(&marker)?.len() <= 1024 * 1024,
-        "Backup manifest exceeds 1 MiB"
+        fs::metadata(&marker)?.len() <= coverage::MAX_MANIFEST_BYTES * 64,
+        "Backup manifest exceeds 64 MiB"
     );
     let value: Value = serde_json::from_slice(&fs::read(marker)?)?;
-    ensure!(
-        value["format_version"] == 2
-            && value["scope"] == "backend-snapshot-only"
-            && value["excluded"] == json!(EXCLUDED),
-        "Unsupported backend backup format or scope"
-    );
-    let entries = value["entries"]
-        .as_array()
-        .context("Invalid backup entries")?;
-    let mut seen = std::collections::BTreeSet::new();
-    for entry in entries {
-        let name = entry["path"].as_str().context("Invalid backup path")?;
-        let expected = FILES
-            .iter()
-            .find(|(path, _, _)| *path == name)
-            .context("Unknown backup path")?;
-        ensure!(
-            seen.insert(name) && entry["kind"] == expected.1,
-            "Duplicate or invalid backup entry"
-        );
+    let plan = coverage::check_manifest(&value)?;
+    for entry in &plan.entries {
+        let name = entry.path.as_str();
         let path = source.join(name);
         directory(path.parent().unwrap())?;
-        let observed = hash(&path)?;
+        if entry.kind == Kind::Directory {
+            verify_directory(&path, &entry.files)?;
+            continue;
+        }
         ensure!(
-            entry["size"] == observed["size"] && entry["sha256"] == observed["sha256"],
+            file_hash(&path)? == (entry.size, entry.sha256.clone()),
             "Backup file failed verification: {name}"
         );
-        if expected.1 == "sqlite" {
+        if entry.kind == Kind::Sqlite {
             ensure!(
-                entry["schema"] == schema(&path, name)?,
+                entry.schema == Some(schema(&path, name)?),
                 "Backup schema changed"
-            );
-        } else {
-            ensure!(
-                entry["schema"].is_null()
-                    && entry["size"].as_u64().unwrap_or(u64::MAX) <= 1024 * 1024,
-                "Invalid manifest entry"
             );
         }
     }
-    ensure!(
-        seen.contains("sessions.sqlite"),
-        "Backup lacks its profile database"
-    );
-    Ok(value)
+    if plan.format >= coverage::FORMAT {
+        projection_excluded(&source.join("sessions.sqlite"))?;
+    }
+    if plan.has(PLUGINS_DB) {
+        plugin_artifacts(&source.join(PLUGINS_DB), plan.artifact_files())?;
+    }
+    Ok((value, plan))
 }
 
 fn rewrite(
@@ -445,8 +750,11 @@ fn interrupt(record: &mut Value, now_ms: i64) {
         record["finished_at"] = json!(now_ms);
     }
 }
-fn fence(data: &Path, final_data: &Path) -> Result<()> {
+fn fence(data: &Path, final_data: &Path, plan: &Plan) -> Result<()> {
     let core = data.join("sessions.sqlite");
+    // A format-2 bundle still holds the history index; drop it here too, so
+    // every restored profile rebuilds the index from its own messages.
+    exclude_projection(&core)?;
     let mut db = Connection::open(&core)?;
     db.pragma_update(None, "journal_mode", "DELETE")?;
     let tx = db.transaction()?;
@@ -497,6 +805,15 @@ fn fence(data: &Path, final_data: &Path) -> Result<()> {
             Ok(())
         })?;
         tx.execute("DELETE FROM owned", [])?;
+        // The HostResources registry is host-owned and not in the backup. A
+        // stale binding would block the restored profile as "registry
+        // replaced", so it binds afresh to the registry on its host.
+        if tables(&tx)?
+            .iter()
+            .any(|name| name == "host_resources_binding")
+        {
+            tx.execute("DELETE FROM host_resources_binding", [])?;
+        }
         // Schema 4 keeps the lifecycle ledger in `jobs` and gives `operations` to
         // receipts, which the daemon reconciles when it opens. Schema 3 kept the
         // ledger in `operations`.
@@ -514,11 +831,40 @@ fn fence(data: &Path, final_data: &Path) -> Result<()> {
         drop(db);
         sync(&lifecycle)?;
     }
+    let plugins = data.join(PLUGINS_DB);
+    if plugins.exists() {
+        rebase_plugins(&plugins, plan.artifact_files(), final_data)?;
+    }
     schema(&core, "sessions.sqlite")?;
     Ok(())
 }
+/// Points each restored plugin at its artifact in the restored profile. The
+/// recorded path names the source profile's data directory; left alone, the
+/// restored profile would load another profile's artifacts.
+fn rebase_plugins(database: &Path, files: &[FileRecord], final_data: &Path) -> Result<()> {
+    let placed = plugin_artifacts(database, files)?;
+    let mut db = Connection::open(database)?;
+    db.pragma_update(None, "journal_mode", "DELETE")?;
+    let tx = db.transaction()?;
+    let store = final_data.join(PLUGIN_ARTIFACTS);
+    for (id, relative) in placed {
+        let path = store.join(relative);
+        ensure!(
+            tx.execute(
+                "UPDATE plugins SET artifact_path=?1 WHERE id=?2",
+                params![path.to_string_lossy().as_ref(), id],
+            )? == 1,
+            "Restored plugin {id} disappeared"
+        );
+    }
+    tx.commit()?;
+    drop(db);
+    sync(database)?;
+    schema(database, PLUGINS_DB)?;
+    Ok(())
+}
 fn restore(source: &Path, target: &Path, final_data: &Path) -> Result<Value> {
-    let manifest = validate(source)?;
+    let (manifest, plan) = validate(source)?;
     let parent = target.parent().context("Restore target has no parent")?;
     directory(parent)?;
     ensure!(
@@ -527,23 +873,42 @@ fn restore(source: &Path, target: &Path, final_data: &Path) -> Result<Value> {
     );
     let temporary = stage(parent)?;
     let result = (|| -> Result<()> {
-        for entry in manifest["entries"].as_array().unwrap() {
-            let name = entry["path"].as_str().unwrap();
+        for entry in &plan.entries {
+            let name = entry.path.as_str();
             let output = temporary.join(name);
             private_dir(output.parent().unwrap())?;
-            fs::copy(source.join(name), &output)?;
-            fs::set_permissions(&output, fs::Permissions::from_mode(0o600))?;
-            let observed = hash(&output)?;
+            if entry.kind == Kind::Directory {
+                let folders =
+                    file_directories(&output, entry.files.iter().map(|file| file.path.as_str()))?;
+                for file in &entry.files {
+                    let copied = output.join(&file.path);
+                    copy_private(
+                        &source.join(name).join(&file.path),
+                        &copied,
+                        file.executable,
+                    )?;
+                    ensure!(
+                        file_hash(&copied)? == (file.size, file.sha256.clone()),
+                        "Backup changed while restoring: {name}/{}",
+                        file.path
+                    );
+                }
+                for folder in folders {
+                    sync(&folder)?;
+                }
+                continue;
+            }
+            copy_private(&source.join(name), &output, false)?;
             ensure!(
-                observed["size"] == entry["size"] && observed["sha256"] == entry["sha256"],
+                file_hash(&output)? == (entry.size, entry.sha256.clone()),
                 "Backup changed while restoring: {name}"
             );
-            sync(&output)?;
         }
-        fence(&temporary, final_data)?;
+        fence(&temporary, final_data, &plan)?;
         for nested in [
             temporary.join("provider-accounts"),
             temporary.join("sessions.worktrees"),
+            temporary.join("sessions.plugins"),
         ] {
             if nested.exists() {
                 sync(&nested)?;
@@ -578,7 +943,7 @@ pub(super) fn command(args: &[String]) -> Result<Value> {
         }
         Some("inspect") => {
             let bundle = option(args, "--backup")?;
-            Ok(json!({"type":"backup","path":bundle,"manifest":validate(&bundle)?}))
+            Ok(json!({"type":"backup","path":bundle,"manifest":validate(&bundle)?.0}))
         }
         Some("restore") => {
             let bundle = option(args, "--backup")?;
@@ -767,6 +1132,7 @@ fn resume(home: &Path, value: &mut Registry, id: &str) -> Result<Value> {
     for name in [
         "sessions.review.sqlite3",
         "sessions.worktrees/lifecycle.sqlite3",
+        PLUGINS_DB,
     ] {
         let candidate = data.join(name);
         if candidate.exists() || candidate.is_symlink() {
