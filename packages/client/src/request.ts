@@ -19,7 +19,7 @@ export const categoryErrorCodes = ['unavailable', 'incompatible', 'timeout', 'pr
  */
 export const daemonRefusalCodes = ['needs_rebind', 'host_resource_conflict', 'host_resources_unavailable',
   'restored_send_held', 'lifecycle_command_failed', 'lifecycle_outcome_unknown', 'lifecycle_unavailable',
-  'lifecycle_invalid_output'] as const
+  'lifecycle_invalid_output', 'conversation_deleted'] as const
 
 export type KnownDaemonErrorCode = typeof categoryErrorCodes[number] | typeof daemonRefusalCodes[number]
 // `string & {}` keeps completion for the known codes while admitting any other.

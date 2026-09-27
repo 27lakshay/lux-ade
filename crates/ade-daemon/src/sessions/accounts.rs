@@ -160,6 +160,7 @@ impl Sessions {
             return Ok(());
         };
         let account = d.store.account(id)?;
+        ensure!(account.state != "disabled", crate::store::ACCOUNT_DISABLED);
         ensure!(
             account.provider == conversation.provider && account.state == "verified",
             "Conversation account is not verified"

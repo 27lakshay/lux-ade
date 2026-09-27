@@ -87,7 +87,7 @@ fn link(connection: &Connection, child: &str) -> Result<Option<ChildRecord>> {
 /// A Conversation, or `None` when it no longer exists.
 fn conversation(connection: &Connection, id: &str) -> Result<Option<Conversation>> {
     connection
-        .query_row("SELECT data FROM conversations WHERE id=?1", [id], |row| {
+        .query_row("SELECT data FROM conversations WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM conversation_tombstones WHERE conversation_id=?1)", [id], |row| {
             row.get::<_, String>(0)
         })
         .optional()?

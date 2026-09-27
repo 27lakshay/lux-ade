@@ -32,7 +32,7 @@ pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendI
 }
 
 pub(super) fn draft_from(db: &Connection, conversation: &str, window: &str) -> Result<Draft> {
-    one::<Conversation>(db, "conversations", conversation)?;
+    live_conversation(db, conversation)?;
     check_id(window)?;
     let mut draft: Draft = db.query_row("SELECT text,revision,attachments FROM drafts WHERE conversation_id=?1 AND window_id=?2",
         params![conversation,window], |row| Ok(Draft { text: row.get(0)?, revision: row.get(1)?,

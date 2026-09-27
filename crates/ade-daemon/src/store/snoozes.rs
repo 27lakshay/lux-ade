@@ -113,7 +113,7 @@ impl Store {
         check_until(now, until)?;
         ensure_table(&self.connection)?;
         let tx = self.transaction()?;
-        one::<Conversation>(&tx, "conversations", conversation_id)?;
+        live_conversation(&tx, conversation_id)?;
         let snooze = next_snooze(
             stored(&tx, conversation_id)?.as_ref(),
             conversation_id,

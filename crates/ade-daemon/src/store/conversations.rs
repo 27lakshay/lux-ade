@@ -16,7 +16,118 @@ pub enum QueueEntry {
 /// user resumes it, as `agent.send` may. Keep in step with `queue_heads`.
 pub const QUEUE_DISPATCH_STATUSES: &[&str] = &["idle", "ready", "interrupted", "error"];
 
+/// The refusal for a disabled account, the same when a Conversation is
+/// created on it and when its Agent launches.
+pub const ACCOUNT_DISABLED: &str =
+    "Conversation account is disabled in ADE; create or choose another account";
+
 pub(crate) const HISTORY_EPOCHS: &str = "CREATE TABLE IF NOT EXISTS conversation_history_epochs(conversation_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL CHECK(epoch>=0));";
+
+/// One row per deleted Conversation. The `conversations` row stays behind the
+/// tombstone as the anchor its attachment payloads reference until retention
+/// reclaims them, but nothing reads or writes it as a live Conversation again.
+/// `Store::open` creates the table; it has no numbered migration.
+pub(crate) const TOMBSTONES: &str = "CREATE TABLE IF NOT EXISTS conversation_tombstones(conversation_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, deleted_at INTEGER NOT NULL);";
+
+/// SQL that keeps only Conversations without a tombstone; `c` is the alias.
+pub(crate) const NOT_DELETED: &str =
+    "NOT EXISTS(SELECT 1 FROM conversation_tombstones t WHERE t.conversation_id=c.id)";
+
+pub(crate) fn is_deleted(db: &Connection, id: &str) -> Result<bool> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM conversation_tombstones WHERE conversation_id=?1)",
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
+/// The Conversation, refused as deleted when it has a tombstone.
+pub(super) fn live_conversation(db: &Connection, id: &str) -> Result<Conversation> {
+    let conversation = one(db, "conversations", id)?;
+    if is_deleted(db, id)? {
+        return Err(ade_core::error::ConversationDeleted(id.to_owned()).into());
+    }
+    Ok(conversation)
+}
+
+/// What [`delete_conversation`] removed.
+pub struct Deleted {
+    pub conversation: Conversation,
+    pub removed: ade_core::contract::conversations::ConversationDeletion,
+    pub attachments_left: u64,
+}
+
+/// Deletes rows of `table` that belong to the Conversation; a table no
+/// feature has created yet holds none.
+fn delete_rows(db: &Connection, table: &str, id: &str) -> Result<u64> {
+    let exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [table],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(0);
+    }
+    Ok(db.execute(
+        &format!("DELETE FROM {table} WHERE conversation_id=?1"),
+        [id],
+    )? as u64)
+}
+
+/// Deletes a Conversation inside the caller's transaction, which also holds
+/// its receipt. Refuses one that runs a turn or that a terminal owns. The
+/// messages go, and the history index drops them through its delete
+/// journal; so do the pending requests, drafts, draft history and stashes,
+/// context captures, queue, send intents, snooze and account-switch records.
+/// Windows that showed it show none. Attachment payloads stay: nothing
+/// references them now, so retention's attachment rule reclaims them after
+/// its grace period, and never one that something still references.
+pub fn delete_conversation(
+    db: &Connection,
+    id: &str,
+    operation_id: &str,
+    now: i64,
+) -> Result<Deleted> {
+    let conversation = live_conversation(db, id)?;
+    ensure!(
+        !BUSY.contains(&conversation.status.as_str()) && conversation.active_turn_id.is_none(),
+        "Cancel the active turn before deleting this Conversation"
+    );
+    ensure!(
+        conversation.terminal_owner.is_none(),
+        "Return this Conversation from its terminal before deleting it"
+    );
+    let removed = ade_core::contract::conversations::ConversationDeletion {
+        messages: delete_rows(db, "messages", id)?,
+        requests: delete_rows(db, "requests", id)?,
+        drafts: delete_rows(db, "drafts", id)? + delete_rows(db, "draft_context", id)?,
+        draft_history: delete_rows(db, "draft_history", id)?,
+        draft_stashes: delete_rows(db, "draft_stashes", id)?,
+        queued_prompts: delete_rows(db, "queued_prompts", id)?,
+        send_intents: delete_rows(db, "send_intents", id)?,
+        snoozes: delete_rows(db, "conversation_snoozes", id)?,
+        windows_detached: db.execute(
+            "UPDATE windows SET conversation_id=NULL,data=json_set(data,'$.conversation_id',NULL) WHERE conversation_id=?1",
+            [id],
+        )? as u64,
+    };
+    delete_rows(db, "context_nodes", id)?;
+    delete_rows(db, "account_switches", id)?;
+    db.execute(
+        "INSERT INTO conversation_tombstones(conversation_id,operation_id,deleted_at) VALUES(?1,?2,?3)",
+        params![id, operation_id, now],
+    )?;
+    let attachments_left: i64 = db.query_row(
+        "SELECT count(*) FROM attachments WHERE conversation_id=?1 AND state='live'",
+        [id],
+        |row| row.get(0),
+    )?;
+    Ok(Deleted {
+        conversation,
+        removed,
+        attachments_left: attachments_left.max(0) as u64,
+    })
+}
 
 pub(super) fn message_by_id(db: &Connection, id: &str) -> Result<Option<Message>> {
     db.query_row("SELECT data FROM messages WHERE id=?1", [id], |r| {
@@ -35,7 +146,7 @@ fn next_sequence(db: &Connection, conversation: &str) -> Result<i64> {
     current.checked_add(1).context("Message sequence exhausted")
 }
 pub(super) fn write_conversation(db: &Connection, conversation: &Conversation) -> Result<()> {
-    let old: Conversation = one(db, "conversations", &conversation.id)?;
+    let old: Conversation = live_conversation(db, &conversation.id)?;
     ensure!(
         old.workspace_id == conversation.workspace_id
             && old.provider == conversation.provider
@@ -62,7 +173,7 @@ fn write_message(db: &Connection, message: &Message) -> Result<()> {
 
 impl Store {
     pub fn conversation(&self, id: &str) -> Result<Conversation> {
-        one(&self.connection, "conversations", id)
+        live_conversation(&self.connection, id)
     }
     pub fn create_conversation(&self, workspace_id: &str, title: &str) -> Result<Conversation> {
         self.create_with_provider(workspace_id, title, "codex", Default::default())
@@ -114,6 +225,8 @@ impl Store {
                 account.provider == provider,
                 "Account belongs to another provider"
             );
+            // Fail closed now rather than at the first launch.
+            ensure!(account.state != "disabled", ACCOUNT_DISABLED);
         }
         check_text(title)?;
         let conversation = Conversation {
@@ -204,7 +317,7 @@ impl Store {
         self.connection.execute_batch(HISTORY_EPOCHS)?;
         let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
         if let Some((from, to)) = moved {
-            let mut current: Conversation = one(&tx, "conversations", conversation)?;
+            let mut current: Conversation = live_conversation(&tx, conversation)?;
             ensure!(
                 current.provider_thread_id.as_deref() == Some(from),
                 "The Conversation's provider session changed during the rewind"
@@ -498,7 +611,7 @@ impl Store {
         );
         validate_attachments(&self.connection, conversation_id, attachments)?;
         let tx = self.transaction()?;
-        let mut conversation: Conversation = one(&tx, "conversations", conversation_id)?;
+        let mut conversation: Conversation = live_conversation(&tx, conversation_id)?;
         ensure!(
             conversation.terminal_owner.is_none(),
             "Return this Conversation from its terminal before sending"
@@ -622,7 +735,7 @@ impl Store {
         let started = std::time::Instant::now();
         activity::ensure(&self.connection)?;
         let tx = self.transaction()?;
-        let prior: Conversation = one(&tx, "conversations", &conversation.id)?;
+        let prior: Conversation = live_conversation(&tx, &conversation.id)?;
         write_conversation(&tx, conversation)?;
         // Activity commits with the state change it records.
         let now = now_ms();
@@ -753,7 +866,10 @@ impl Store {
     pub fn recover_except(&self, live: &std::collections::HashSet<String>) -> Result<()> {
         activity::ensure(&self.connection)?;
         let tx = self.transaction()?;
-        for mut conversation in all::<Conversation>(&tx, "SELECT data FROM conversations")? {
+        for mut conversation in all::<Conversation>(
+            &tx,
+            &format!("SELECT data FROM conversations c WHERE {NOT_DELETED}"),
+        )? {
             if live.contains(&conversation.id) {
                 continue;
             }

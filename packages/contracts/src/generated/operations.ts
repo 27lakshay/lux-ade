@@ -38,6 +38,7 @@ export const operations = {
   "conversation.snooze": { tier: "idempotent_command", domain: "conversations", request: "ConversationSnoozeRequest", response: "ConversationSnoozeReply" },
   "conversation.unsnooze": { tier: "idempotent_command", domain: "conversations", request: "ConversationUnsnoozeRequest", response: "ConversationSnoozeReply" },
   "conversation.snooze.list": { tier: "query", domain: "conversations", request: "ConversationSnoozeListRequest", response: "ConversationSnoozeList" },
+  "conversation.delete": { tier: "effect_command", domain: "conversations", request: "ConversationDeleteRequest", response: "ConversationDeleted" },
   "draft.history.list": { tier: "query", domain: "conversations", request: "DraftHistoryListRequest", response: "DraftHistoryList" },
   "draft.history.restore": { tier: "idempotent_command", domain: "conversations", request: "DraftHistoryRestoreRequest", response: "DraftRestored" },
   "draft.stash.save": { tier: "idempotent_command", domain: "conversations", request: "DraftStashSaveRequest", response: "DraftStashReply" },
@@ -291,6 +292,7 @@ export const operationIdOperations = [
   "conversation.steer",
   "conversation.compact",
   "conversation.rewind",
+  "conversation.delete",
   "agent.cancel",
   "agent.resume",
   "agent.disconnect",
@@ -367,6 +369,7 @@ export const operationIdOperations = [
 export const frames = {
   "catalog": { domain: "workspaces", frame: "CatalogFrame" },
   "conversation_changed": { domain: "conversations", frame: "ConversationChanged" },
+  "conversation_deleted": { domain: "conversations", frame: "ConversationDeletedFrame" },
   "service_changed": { domain: "services", frame: "ServiceChanged" },
   "activity_changed": { domain: "activity", frame: "ActivityChanged" },
 } as const

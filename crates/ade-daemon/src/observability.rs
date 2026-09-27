@@ -179,7 +179,7 @@ pub fn session_queues(connection: &Connection) -> Result<SessionQueues> {
 pub fn interrupted_conversations(connection: &Connection) -> Result<Vec<DiagnosticUnknown>> {
     Ok(connection
         .prepare(
-            "SELECT id, workspace_id, json_extract(data, '$.updated_at') FROM conversations WHERE json_extract(data, '$.status') = 'interrupted' AND json_extract(data, '$.error') IS NOT NULL ORDER BY json_extract(data, '$.updated_at') DESC LIMIT ?1",
+            "SELECT id, workspace_id, json_extract(data, '$.updated_at') FROM conversations c WHERE NOT EXISTS(SELECT 1 FROM conversation_tombstones t WHERE t.conversation_id=c.id) AND json_extract(data, '$.status') = 'interrupted' AND json_extract(data, '$.error') IS NOT NULL ORDER BY json_extract(data, '$.updated_at') DESC LIMIT ?1",
         )?
         .query_map([UNKNOWN_LIMIT as i64], |row| {
             Ok(DiagnosticUnknown {
@@ -453,7 +453,10 @@ mod tests {
     fn only_an_interruption_with_a_recorded_loss_is_unknown() {
         let connection = Connection::open_in_memory().unwrap();
         connection
-            .execute_batch("CREATE TABLE conversations(id TEXT, workspace_id TEXT, data TEXT)")
+            .execute_batch(&format!(
+                "CREATE TABLE conversations(id TEXT, workspace_id TEXT, data TEXT);{}",
+                crate::store::TOMBSTONES
+            ))
             .unwrap();
         for (id, data) in [
             (

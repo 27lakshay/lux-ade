@@ -121,12 +121,14 @@ test('catches up after a daemon kill without losing or duplicating indexed messa
 })
 
 // F043 asks that deleted records leave the results. Messages a Conversation
-// rewind removes leave search (e2e/protocol/accounts-rewind/rewind.spec.ts). No operation
-// deletes a whole Conversation, so this path still cannot be driven.
-test.fixme('a deleted conversation disappears from search results', async ({ profile }) => {
+// rewind removes leave search (e2e/protocol/accounts-rewind/rewind.spec.ts);
+// a deleted Conversation leaves search and the history list.
+test('a deleted conversation disappears from search results', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await turn(profile, conversationId, 'pangolin notes')
   await searchUntil(profile, { query: 'pangolin' }, 1)
-  await profile.rpc({ op: 'conversation.delete', conversation_id: conversationId })
+  await profile.call('conversation.delete', { operation_id: 'history-delete', conversation_id: conversationId })
   await searchUntil(profile, { query: 'pangolin' }, 0)
+  const listed = await call(profile, 'history.list', {})
+  expect(listed.conversations.map((entry: any) => entry.provenance.conversation_id)).not.toContain(conversationId)
 })

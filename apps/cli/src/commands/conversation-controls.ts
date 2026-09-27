@@ -1,5 +1,5 @@
 import { dailyUseCommand } from '@ade/client'
-import { CliError, namedOptions, required, type CommandResult } from '../shared.js'
+import { CliError, effectOperationId, namedOptions, required, type CommandResult } from '../shared.js'
 import { parseWakeTime } from './wake-time.js'
 
 export const conversationControlUsage = `  conversation controls ID               Show which steer, compact and rewind controls the provider supports now
@@ -17,6 +17,8 @@ export const conversationControlUsage = `  conversation controls ID             
                                         with a zone, or epoch milliseconds; agent work continues
   conversation unsnooze ID              End a snooze now
   conversation snoozes                  List active snoozes, soonest first
+  conversation delete ID                Delete an idle Conversation, its history, drafts and queue; stops an idle
+                                        agent first. Retry a lost reply with the same --operation-id
 `
 
 /** A control that did not take effect fails the command, with the daemon's reason. */
@@ -99,6 +101,11 @@ export async function runConversationControlCommand(socketPath: string, area: st
   if (action === 'snoozes') {
     if (rest.length !== 0) throw new CliError('usage', 'conversation snoozes takes no arguments.')
     return dailyUseCommand(socketPath, { op: 'conversation.snooze.list' })
+  }
+  if (action === 'delete') {
+    const { args } = split(rest, 1, [], 'delete')
+    return dailyUseCommand<'conversation.delete'>(socketPath, { op: 'conversation.delete',
+      operation_id: effectOperationId(), conversation_id: args[0] })
   }
   return undefined
 }

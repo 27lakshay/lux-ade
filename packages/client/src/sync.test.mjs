@@ -48,7 +48,49 @@ test('asks for a new snapshot on a gap, a boot change or a reload of this conver
     { type: 'conversation_reload', boot_id: 'b1', revision: 6, conversation: { id: 'c2' } }, 'c1').kind, 'advance')
 })
 
+test('a deletion of this conversation ends it, even across a gap; another conversation only advances', () => {
+  const deleted = (revision, id = 'c1', boot = 'b1') => ({ type: 'conversation_deleted', boot_id: boot, revision, conversation_id: id })
+  assert.deepEqual(reduceFrame(snapshot(5), deleted(6), 'c1'), { kind: 'deleted' })
+  assert.deepEqual(reduceFrame(snapshot(5), deleted(9), 'c1'), { kind: 'deleted' })
+  assert.deepEqual(reduceFrame(snapshot(5), deleted(1, 'c1', 'b2'), 'c1'), { kind: 'deleted' })
+  assert.deepEqual(reduceFrame(snapshot(5), deleted(5), 'c1'), { kind: 'duplicate' })
+  assert.equal(reduceFrame(snapshot(5), deleted(6, 'c2'), 'c1').kind, 'advance')
+})
+
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+test('a snapshot delivered after the deletion frame is dropped, and nothing loads again', async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const states = []
+  let listener = () => {}
+  let fetches = 0
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => { fetches += 1; await gate; return snapshot(3, [message('a', 1)]) },
+    subscribe: (next) => { listener = next; return () => {} },
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  listener({ type: 'conversation_deleted', boot_id: 'b1', revision: 4, conversation_id: 'c1' })
+  release()
+  await settle()
+  listener(changed(5, [message('b', 2)]))
+  await settle()
+  assert.equal(fetches, 1)
+  assert.deepEqual(states.map((state) => [state.status, state.cause, state.snapshot]), [['deleted', 'deleted', null]])
+})
+
+test('a snapshot fetch refused as conversation_deleted ends the projection', async () => {
+  const states = []
+  startConversationProjection({
+    conversationId: 'c1',
+    fetchSnapshot: async () => { throw Object.assign(new Error('Conversation c1 was deleted'), { code: 'conversation_deleted' }) },
+    subscribe: () => () => {},
+    onState: (state, cause) => states.push({ ...state, cause }),
+  })
+  await settle()
+  assert.deepEqual(states.map((state) => [state.status, state.cause]), [['deleted', 'deleted']])
+})
 
 function harness(snapshots) {
   const fetches = []

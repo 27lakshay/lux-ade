@@ -55,6 +55,13 @@ pub struct NeedsRebind;
 #[error("Restored prompt is held until its source outcome is reconciled")]
 pub struct RestoredSendHeld;
 
+/// The Conversation has a deletion tombstone. Anything that names it, a
+/// late page, a stale snapshot or a delayed write, is refused rather than
+/// bringing it back.
+#[derive(Debug, thiserror::Error)]
+#[error("Conversation {0} was deleted; reload the conversation list")]
+pub struct ConversationDeleted(pub String);
+
 /// An effect whose outcome cannot be known, such as a Git command interrupted
 /// by a crash. The message is the operation's own account of what to inspect;
 /// the envelope types it `outcome_unknown`, so a client can tell it from a
@@ -298,6 +305,10 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if error.downcast_ref::<RestoredSendHeld>().is_some() {
         return serde_json::json!({"type":"error","message":RestoredSendHeld.to_string(),
             "code":"restored_send_held","recovery":"reconcile_source_send"});
+    }
+    if let Some(deleted) = error.downcast_ref::<ConversationDeleted>() {
+        return serde_json::json!({"type":"error","message":deleted.to_string(),
+            "code":"conversation_deleted","recovery":"reload_catalog"});
     }
     if let Some(unknown) = error.downcast_ref::<OperationOutcomeUnknown>() {
         return serde_json::json!({"type":"error","message":unknown.to_string(),

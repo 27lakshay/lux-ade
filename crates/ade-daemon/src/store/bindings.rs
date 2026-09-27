@@ -539,7 +539,10 @@ impl Store {
         let tx = self.connection.unchecked_transaction()?;
         let result = Catalogue {
             workspaces: all(&tx, "SELECT data FROM workspaces ORDER BY rowid")?,
-            conversations: all(&tx, "SELECT data FROM conversations ORDER BY rowid")?,
+            conversations: all(
+                &tx,
+                &format!("SELECT data FROM conversations c WHERE {NOT_DELETED} ORDER BY rowid"),
+            )?,
             windows: all(&tx, "SELECT data FROM windows ORDER BY rowid")?,
         };
         tx.commit()?;

@@ -111,7 +111,7 @@ fn held_by(connection: &Connection, resource: &PlacedResource) -> Result<Option<
             conversation_id, ..
         } => connection
             .query_row(
-                "SELECT workspace_id FROM conversations WHERE id=?1",
+                "SELECT workspace_id FROM conversations WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM conversation_tombstones WHERE conversation_id=?1)",
                 [conversation_id],
                 |row| row.get(0),
             )

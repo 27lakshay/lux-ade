@@ -73,7 +73,7 @@ when the daemon names one and "delivery" for a request that reached the socket.
   12 not_applied                         13 needs_rebind
   14 host_resource_conflict              15 host_resources_unavailable
   16 lifecycle_command_failed, lifecycle_unavailable, lifecycle_invalid_output
-  17 restored_send_held
+  17 restored_send_held                  18 conversation_deleted
 Commands that change state without their own --request-id take the global
 --operation-id ID. Without it the CLI generates one, and an error names it as
 "operation_id". Retry a lost reply only with that ID and the same command and
@@ -362,7 +362,7 @@ const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
   daemon: 7, conflict: 8, outcome_unknown: 9, in_progress: 10, overloaded: 11, not_applied: 12,
   needs_rebind: 13, host_resource_conflict: 14, host_resources_unavailable: 15,
   lifecycle_command_failed: 16, lifecycle_unavailable: 16, lifecycle_invalid_output: 16,
-  lifecycle_outcome_unknown: 9, restored_send_held: 17,
+  lifecycle_outcome_unknown: 9, restored_send_held: 17, conversation_deleted: 18,
 }
 
 void main()

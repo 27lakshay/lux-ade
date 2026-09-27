@@ -7706,6 +7706,177 @@
       ],
       "type": "object"
     },
+    "ConversationDeleteRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.delete`: delete a Conversation that is not running a turn.\nAn idle Agent is stopped first. The daemon removes its messages, pending\nrequests, drafts, draft history and stashes, queue, send intents and\nsnooze, detaches its windows, and leaves a tombstone: every later read,\nwrite, page or search that names the Conversation is refused as deleted.\nAttachment payloads stay until retention reclaims them.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.delete"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID. The deletion and its receipt commit in one\ntransaction; a retry with the same ID returns the recorded reply.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationDeleted": {
+      "description": "The `conversation.delete` reply.",
+      "properties": {
+        "attachments_left_for_retention": {
+          "description": "Live attachment payloads the deletion left in place. Nothing references\nthem any more, so retention reclaims each once its grace period passes.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "deleted_at": {
+          "description": "When the tombstone was written, in Unix milliseconds.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "removed": {
+          "$ref": "#/$defs/ConversationDeletion"
+        },
+        "type": {
+          "description": "The `conversation_deleted` type tag.",
+          "enum": [
+            "conversation_deleted"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "conversation_id",
+        "workspace_id",
+        "deleted_at",
+        "removed",
+        "attachments_left_for_retention"
+      ],
+      "type": "object"
+    },
+    "ConversationDeletedFrame": {
+      "description": "The `conversation_deleted` feed frame. A client drops its view of the\nConversation; a snapshot or page read earlier is stale.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "deleted_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `conversation_deleted` type tag.",
+          "enum": [
+            "conversation_deleted"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "workspace_id",
+        "deleted_at",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ConversationDeletion": {
+      "description": "What one deletion removed.",
+      "properties": {
+        "draft_history": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "draft_stashes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "drafts": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "messages": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued_prompts": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requests": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "send_intents": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "snoozes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "windows_detached": {
+          "description": "Windows that showed the Conversation and now show none.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "messages",
+        "requests",
+        "drafts",
+        "draft_history",
+        "draft_stashes",
+        "queued_prompts",
+        "send_intents",
+        "snoozes",
+        "windows_detached"
+      ],
+      "type": "object"
+    },
     "ConversationGetRequest": {
       "additionalProperties": false,
       "description": "`conversation.get`: one page of a conversation's messages, newest first.",
@@ -28146,6 +28317,11 @@
       "type": "conversation_changed"
     },
     {
+      "domain": "conversations",
+      "frame": "ConversationDeletedFrame",
+      "type": "conversation_deleted"
+    },
+    {
       "domain": "services",
       "frame": "ServiceChanged",
       "type": "service_changed"
@@ -28408,6 +28584,13 @@
       "request": "ConversationSnoozeListRequest",
       "response": "ConversationSnoozeList",
       "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.delete",
+      "request": "ConversationDeleteRequest",
+      "response": "ConversationDeleted",
+      "tier": "effect_command"
     },
     {
       "domain": "conversations",

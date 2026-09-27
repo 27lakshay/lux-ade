@@ -1383,7 +1383,7 @@ impl Sessions {
     fn conversation_exists(&self, id: &str) -> Result<bool> {
         self.device_db(false, |db| {
             Ok(rusqlite::OptionalExtension::optional(db.query_row(
-                "SELECT 1 FROM conversations WHERE id=?1",
+                "SELECT 1 FROM conversations WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM conversation_tombstones WHERE conversation_id=?1)",
                 [id],
                 |_| Ok(()),
             ))?
