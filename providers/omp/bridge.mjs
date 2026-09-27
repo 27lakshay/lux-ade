@@ -1,6 +1,7 @@
-import { join } from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { OmpTransport } from './transport.mjs';
 import { sessionIdentity, verifySession } from './session.mjs';
@@ -22,7 +23,7 @@ export class Bridge {
     this.subagents = new Subagents();
   }
   event(params) { this.emit({ method: 'event', params }); }
-  async open({ resume, config = {} }) {
+  async open({ resume, config = {}, mcp_servers: mcpServers = null }) {
     if (this.opening || this.transport || this.closed) throw new Error('Oh My Pi bridge cannot be opened again');
     this.opening = true;
     try {
@@ -31,12 +32,14 @@ export class Bridge {
       await mkdir(this.directory, { recursive: true, mode: 0o700 });
       this.identity = await sessionIdentity({ resume, cwd: this.cwd, directory: join(this.directory, 'sessions') });
       this.session = resume ?? JSON.stringify(this.identity);
+      const extension = await this.mcpExtension(mcpServers);
       this.ledger = new SubmissionLedger(join(this.directory, 'submissions.sqlite'));
       this.childTranscripts = new ChildTranscripts(this.ledger.db);
       this.transport = await this.connect({ command: this.command, cwd: this.cwd,
         env: process.env.ADE_OMP_ACCOUNT_HOME ? { ...process.env, HOME: process.env.ADE_OMP_ACCOUNT_HOME,
           PI_CODING_AGENT_DIR: process.env.ADE_OMP_ACCOUNT_HOME } : process.env,
-        args: ['--session', this.identity.file, ...(config.model ? ['--model', config.model] : [])],
+        args: ['--session', this.identity.file, ...(config.model ? ['--model', config.model] : []),
+          ...(extension ? ['--extension', extension] : [])],
         onFrame: frame => { this.events = this.events.then(() => this.consume(frame)).catch(error => this.fail(error)); },
       });
       const state = await this.transport.request('get_state');
@@ -59,6 +62,34 @@ export class Bridge {
       this.ready = true;
       return { session: this.session, history: history.items };
     } catch (error) { await this.close(); throw error; }
+  }
+  // The profile MCP catalog (F131). Oh My Pi reads the sibling `.mcp.json`
+  // of an extension package named with `--extension` (docs/extension-loading.md,
+  // docs/mcp-config.md "OMP extension packages"), with the same `${VAR}`
+  // expansion and pre-connect env/header resolution as its native mcp.json.
+  // The package is ADE's own directory per native session, holding only that
+  // file, so the user's `mcp.json` is never written and their native entries
+  // keep precedence. Each launch rewrites it, so a resume reads the current
+  // catalog; a launch with no servers removes it.
+  async mcpExtension(servers) {
+    // The session ID comes from a resume token; hash it so it is always one path segment.
+    const directory = join(this.directory, 'mcp', createHash('sha256').update(this.identity.id).digest('hex').slice(0, 32));
+    if (!servers || typeof servers !== 'object' || !Object.keys(servers).length) {
+      await rm(directory, { recursive: true, force: true });
+      return null;
+    }
+    const mcpServers = {};
+    for (const [name, server] of Object.entries(servers)) {
+      // Oh My Pi roots a path-like package command at the package directory; a
+      // native mcp.json roots it at the session cwd, which is what ADE's entry means.
+      mcpServers[name] = typeof server.command === 'string' && /^\.\.?[/\\]/.test(server.command)
+        ? { ...server, command: resolve(this.cwd, server.command) } : server;
+    }
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const file = join(directory, '.mcp.json'), partial = `${file}.${process.pid}.tmp`;
+    await writeFile(partial, JSON.stringify({ mcpServers }, null, 2) + '\n', { mode: 0o600 });
+    await rename(partial, file);
+    return directory;
   }
   project(snapshot) {
     return projectHistory(snapshot, this.ledger.identities(this.identity.id, snapshot.entries.filter(e => e.type === 'message' && e.message.role === 'user').map(e => e.id)));

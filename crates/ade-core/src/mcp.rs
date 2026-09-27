@@ -27,10 +27,13 @@ pub const PROJECTED_PROVIDERS: &[&str] = &["claude", "codex", "omp"];
 
 /// Providers whose adapter passes the projection to the provider at launch:
 /// Codex as one `mcp_servers.<name>` config override per server on
-/// `thread/start` and `thread/resume`, Claude as the SDK's `mcpServers` query option. Oh My Pi
-/// reads `mcp.json` from its agent directory, which ADE does not write
-/// without adoption, so it stays unwired.
-pub const WIRED_PROVIDERS: &[&str] = &["claude", "codex"];
+/// `thread/start` and `thread/resume`, Claude as the SDK's `mcpServers` query
+/// option, and Oh My Pi as the `.mcp.json` of an ADE-owned extension package
+/// named with `--extension`. Oh My Pi reads an explicitly named extension
+/// package's sibling `.mcp.json` (`docs/extension-loading.md`,
+/// `docs/mcp-config.md` "OMP extension packages"), so ADE never writes the
+/// user's own `mcp.json`, and the user's native entries keep precedence.
+pub const WIRED_PROVIDERS: &[&str] = &["claude", "codex", "omp"];
 
 const MAX_NAME: usize = 64;
 const MAX_TEXT: usize = 4096;

@@ -3,6 +3,21 @@
 import { createInterface } from 'node:readline';
 import { readFileSync, appendFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+
+// With ADE_MOCK_OMP_DIR set, record each launch in calls.jsonl: the arguments,
+// and for every `--extension` package the sibling `.mcp.json` Oh My Pi would
+// discover there (docs/extension-loading.md, docs/mcp-config.md), as written.
+if (process.env.ADE_MOCK_OMP_DIR) {
+  const argv = process.argv.slice(2);
+  const extensions = argv.flatMap((arg, i) => arg === '--extension' ? [argv[i + 1]] : []).map(path => {
+    let mcp = null;
+    try { mcp = JSON.parse(readFileSync(join(path, '.mcp.json'), 'utf8')); } catch {}
+    return { path, mcp };
+  });
+  appendFileSync(join(process.env.ADE_MOCK_OMP_DIR, 'calls.jsonl'),
+    JSON.stringify({ pid: process.pid, method: 'launch', args: argv, cwd: process.cwd(), extensions }) + '\n');
+}
 
 const file = process.argv[process.argv.indexOf('--session') + 1];
 const records = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
