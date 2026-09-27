@@ -2775,6 +2775,43 @@
       ],
       "type": "object"
     },
+    "Excluded": {
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/Exclusion"
+        }
+      },
+      "required": [
+        "name",
+        "reason",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "Exclusion": {
+      "description": "Why an entry does not reach a provider.",
+      "oneOf": [
+        {
+          "enum": [
+            "disabled",
+            "outside_scope",
+            "provider_not_selected"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The provider's native configuration cannot express the entry faithfully.",
+          "type": "string"
+        }
+      ]
+    },
     "ExecutionState": {
       "description": "Whether a service's recorded run is live in the current runtime.",
       "enum": [
@@ -3260,6 +3297,65 @@
       ],
       "type": "object"
     },
+    "Installation": {
+      "description": "How the server's code reached this host. ADE records it; it installs nothing.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A user-managed executable.",
+          "properties": {
+            "source": {
+              "const": "manual",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A package pinned to an exact version, named as in the MCP registry's `server.json`.",
+          "properties": {
+            "identifier": {
+              "type": "string"
+            },
+            "registry": {
+              "$ref": "#/$defs/PackageRegistry"
+            },
+            "source": {
+              "const": "package",
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "registry",
+            "identifier",
+            "version"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A server someone else hosts; used with an HTTP transport.",
+          "properties": {
+            "source": {
+              "const": "remote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ListenerFamily": {
       "enum": [
         "ipv4",
@@ -3385,6 +3481,534 @@
         "ownership",
         "workspace_id",
         "service_name"
+      ],
+      "type": "object"
+    },
+    "McpResolution": {
+      "description": "The `mcp.resolve` reply.",
+      "properties": {
+        "delivery": {
+          "description": "`direct`: the provider connects to each server itself and negotiates\nprotocol version, capabilities and authorization on that one leg. ADE\nruns no MCP gateway yet.",
+          "type": "string"
+        },
+        "document": {
+          "description": "The provider's native configuration document; null when the provider has no projection."
+        },
+        "excluded": {
+          "items": {
+            "$ref": "#/$defs/Excluded"
+          },
+          "type": "array"
+        },
+        "format": {
+          "description": "`claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON) or `omp_mcp_json`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "protocol_versions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/Projected"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `mcp_resolution` type tag.",
+          "enum": [
+            "mcp_resolution"
+          ],
+          "type": "string"
+        },
+        "wired": {
+          "description": "True only when the provider's adapter passes `document` at launch. When\nfalse, this is what ADE would pass; the provider does not see it.",
+          "type": "boolean"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "provider",
+        "delivery",
+        "wired",
+        "servers",
+        "excluded",
+        "document",
+        "format",
+        "protocol_versions"
+      ],
+      "type": "object"
+    },
+    "McpResolveRequest": {
+      "additionalProperties": false,
+      "description": "`mcp.resolve`: the servers that apply to one workspace and provider, in\nthe provider's native configuration shape.",
+      "properties": {
+        "op": {
+          "const": "mcp.resolve"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "provider"
+      ],
+      "type": "object"
+    },
+    "McpServerAddRequest": {
+      "additionalProperties": false,
+      "description": "`mcp.server.add`: record a new server once for the profile.",
+      "properties": {
+        "definition": {
+          "additionalProperties": false,
+          "description": "Everything a caller sets on a catalog entry. Inlined like [`Transport`].",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "installation": {
+              "$ref": "#/$defs/Installation"
+            },
+            "providers": {
+              "$ref": "#/$defs/ProviderSelection"
+            },
+            "scope": {
+              "$ref": "#/$defs/Scope"
+            },
+            "transport": {
+              "description": "How a provider reaches the server. Inlined in schemas: `cwd` is optional\nin a request and always present in a reply.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "A subprocess the provider launches, speaking newline-delimited JSON-RPC.",
+                  "properties": {
+                    "args": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "command": {
+                      "description": "An absolute path or a bare name looked up on the provider's PATH.",
+                      "type": "string"
+                    },
+                    "cwd": {
+                      "description": "An absolute directory, or null for the provider's default.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "env": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "stdio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "command",
+                    "args",
+                    "env"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "The Streamable HTTP binding.",
+                  "properties": {
+                    "headers": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "streamable_http",
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url",
+                    "headers"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "The legacy HTTP+SSE transport from protocol revision 2024-11-05.",
+                  "properties": {
+                    "headers": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "sse",
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url",
+                    "headers"
+                  ],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "required": [
+            "enabled",
+            "installation",
+            "transport",
+            "scope",
+            "providers"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "mcp.server.add"
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "definition"
+      ],
+      "type": "object"
+    },
+    "McpServerInspectRequest": {
+      "additionalProperties": false,
+      "description": "`mcp.server.inspect`: one entry and how each provider can express it.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "mcp.server.inspect"
+        }
+      },
+      "required": [
+        "op",
+        "name"
+      ],
+      "type": "object"
+    },
+    "McpServerInspection": {
+      "description": "The `mcp.server.inspect` reply.",
+      "properties": {
+        "protocol_versions": {
+          "description": "MCP protocol revisions the modelled transports follow, newest first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/ProviderSupport"
+          },
+          "type": "array"
+        },
+        "server": {
+          "$ref": "#/$defs/Server"
+        },
+        "type": {
+          "description": "The `mcp_server_inspection` type tag.",
+          "enum": [
+            "mcp_server_inspection"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "server",
+        "providers",
+        "protocol_versions"
+      ],
+      "type": "object"
+    },
+    "McpServerListRequest": {
+      "additionalProperties": false,
+      "description": "`mcp.server.list`: every catalog entry in the profile, in name order.",
+      "properties": {
+        "op": {
+          "const": "mcp.server.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "McpServerRemoveRequest": {
+      "additionalProperties": false,
+      "description": "`mcp.server.remove`: delete an entry at the revision the caller saw.",
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "mcp.server.remove"
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "McpServerRemoved": {
+      "description": "The `mcp.server.remove` reply. `removed` is false when no entry existed.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "removed": {
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `mcp_server_removed` type tag.",
+          "enum": [
+            "mcp_server_removed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "removed"
+      ],
+      "type": "object"
+    },
+    "McpServerReply": {
+      "description": "The `mcp.server.add` and `mcp.server.update` reply.",
+      "properties": {
+        "server": {
+          "$ref": "#/$defs/Server"
+        },
+        "type": {
+          "description": "The `mcp_server` type tag.",
+          "enum": [
+            "mcp_server"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "server"
+      ],
+      "type": "object"
+    },
+    "McpServerUpdateRequest": {
+      "additionalProperties": false,
+      "description": "`mcp.server.update`: replace an entry's definition.",
+      "properties": {
+        "definition": {
+          "additionalProperties": false,
+          "description": "Everything a caller sets on a catalog entry. Inlined like [`Transport`].",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "installation": {
+              "$ref": "#/$defs/Installation"
+            },
+            "providers": {
+              "$ref": "#/$defs/ProviderSelection"
+            },
+            "scope": {
+              "$ref": "#/$defs/Scope"
+            },
+            "transport": {
+              "description": "How a provider reaches the server. Inlined in schemas: `cwd` is optional\nin a request and always present in a reply.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "A subprocess the provider launches, speaking newline-delimited JSON-RPC.",
+                  "properties": {
+                    "args": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "command": {
+                      "description": "An absolute path or a bare name looked up on the provider's PATH.",
+                      "type": "string"
+                    },
+                    "cwd": {
+                      "description": "An absolute directory, or null for the provider's default.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "env": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "stdio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "command",
+                    "args",
+                    "env"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "The Streamable HTTP binding.",
+                  "properties": {
+                    "headers": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "streamable_http",
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url",
+                    "headers"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "The legacy HTTP+SSE transport from protocol revision 2024-11-05.",
+                  "properties": {
+                    "headers": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "sse",
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url",
+                    "headers"
+                  ],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "required": [
+            "enabled",
+            "installation",
+            "transport",
+            "scope",
+            "providers"
+          ],
+          "type": "object"
+        },
+        "expected_revision": {
+          "description": "The revision the caller last saw.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "mcp.server.update"
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "expected_revision",
+        "definition"
+      ],
+      "type": "object"
+    },
+    "McpServers": {
+      "description": "The `mcp.server.list` reply.",
+      "properties": {
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/Server"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `mcp_servers` type tag.",
+          "enum": [
+            "mcp_servers"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "servers"
       ],
       "type": "object"
     },
@@ -3773,6 +4397,14 @@
       ],
       "type": "string"
     },
+    "PackageRegistry": {
+      "enum": [
+        "npm",
+        "pypi",
+        "oci"
+      ],
+      "type": "string"
+    },
     "PeerEndpoint": {
       "additionalProperties": false,
       "properties": {
@@ -3938,6 +4570,28 @@
       ],
       "type": "string"
     },
+    "Projected": {
+      "description": "One entry in a provider's native shape.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "native": {
+          "description": "The provider-native server object."
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "revision",
+        "native"
+      ],
+      "type": "object"
+    },
     "ProviderListRequest": {
       "additionalProperties": false,
       "description": "`provider.list`: the providers this daemon can launch.",
@@ -3948,6 +4602,73 @@
       },
       "required": [
         "op"
+      ],
+      "type": "object"
+    },
+    "ProviderSelection": {
+      "description": "Which providers an entry applies to.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "all",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "only",
+              "type": "string"
+            },
+            "provider_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "provider_ids"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ProviderSupport": {
+      "description": "Whether one provider can express an entry, and whether its adapter reads it yet.",
+      "properties": {
+        "native": {
+          "description": "The provider-native server object, or null when it cannot be expressed."
+        },
+        "provider": {
+          "type": "string"
+        },
+        "unsupported_reason": {
+          "description": "Why the provider cannot express the entry; null when it can.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wired": {
+          "description": "True only when the provider's adapter passes the catalog at launch.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "native",
+        "unsupported_reason",
+        "wired"
       ],
       "type": "object"
     },
@@ -5418,6 +6139,66 @@
       ],
       "type": "object"
     },
+    "Scope": {
+      "description": "Which workspaces an entry applies to.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Every workspace in the profile.",
+          "properties": {
+            "kind": {
+              "const": "profile",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "workspaces",
+              "type": "string"
+            },
+            "workspace_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_ids"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Every workspace checked out from these repositories.",
+          "properties": {
+            "kind": {
+              "const": "repositories",
+              "type": "string"
+            },
+            "repository_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "repository_ids"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Script": {
       "description": "A configured workspace script, as `script.list` returns it.",
       "oneOf": [
@@ -5990,6 +6771,148 @@
           "type": "string"
         }
       ]
+    },
+    "Server": {
+      "description": "One catalog entry. `name` is its identity within the profile.",
+      "properties": {
+        "definition": {
+          "additionalProperties": false,
+          "description": "Everything a caller sets on a catalog entry. Inlined like [`Transport`].",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "installation": {
+              "$ref": "#/$defs/Installation"
+            },
+            "providers": {
+              "$ref": "#/$defs/ProviderSelection"
+            },
+            "scope": {
+              "$ref": "#/$defs/Scope"
+            },
+            "transport": {
+              "description": "How a provider reaches the server. Inlined in schemas: `cwd` is optional\nin a request and always present in a reply.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "A subprocess the provider launches, speaking newline-delimited JSON-RPC.",
+                  "properties": {
+                    "args": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "command": {
+                      "description": "An absolute path or a bare name looked up on the provider's PATH.",
+                      "type": "string"
+                    },
+                    "cwd": {
+                      "description": "An absolute directory, or null for the provider's default.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "env": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "stdio",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "command",
+                    "args",
+                    "env",
+                    "cwd"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "The Streamable HTTP binding.",
+                  "properties": {
+                    "headers": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "streamable_http",
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url",
+                    "headers"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "The legacy HTTP+SSE transport from protocol revision 2024-11-05.",
+                  "properties": {
+                    "headers": {
+                      "additionalProperties": {
+                        "$ref": "#/$defs/SettingValue"
+                      },
+                      "type": "object"
+                    },
+                    "type": {
+                      "const": "sse",
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url",
+                    "headers"
+                  ],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "required": [
+            "enabled",
+            "installation",
+            "transport",
+            "scope",
+            "providers"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "Starts at 1 and increases with each update.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "revision",
+        "definition"
+      ],
+      "type": "object"
     },
     "Service": {
       "properties": {
@@ -7147,6 +8070,37 @@
         "op"
       ],
       "type": "object"
+    },
+    "SettingValue": {
+      "description": "A value set in a server's environment or HTTP headers. Secrets are never\nstored: they are read at launch from the named environment variable.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A non-secret value stored as written.",
+          "properties": {
+            "literal": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "literal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The name of an environment variable in the provider's launch environment.",
+          "properties": {
+            "env": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "env"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "SetupState": {
       "description": "Whether a tree is ready for an Agent, from its latest `worktree.switch`.",
@@ -9003,6 +9957,48 @@
       "name": "notification.delivery.list",
       "request": "NotificationDeliveryListRequest",
       "response": "NotificationDeliveries",
+      "tier": "query"
+    },
+    {
+      "domain": "mcp",
+      "name": "mcp.server.list",
+      "request": "McpServerListRequest",
+      "response": "McpServers",
+      "tier": "query"
+    },
+    {
+      "domain": "mcp",
+      "name": "mcp.server.inspect",
+      "request": "McpServerInspectRequest",
+      "response": "McpServerInspection",
+      "tier": "query"
+    },
+    {
+      "domain": "mcp",
+      "name": "mcp.server.add",
+      "request": "McpServerAddRequest",
+      "response": "McpServerReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "mcp",
+      "name": "mcp.server.update",
+      "request": "McpServerUpdateRequest",
+      "response": "McpServerReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "mcp",
+      "name": "mcp.server.remove",
+      "request": "McpServerRemoveRequest",
+      "response": "McpServerRemoved",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "mcp",
+      "name": "mcp.resolve",
+      "request": "McpResolveRequest",
+      "response": "McpResolution",
       "tier": "query"
     },
     {

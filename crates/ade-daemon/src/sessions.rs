@@ -33,6 +33,7 @@ mod activity;
 mod agents;
 mod conversations;
 mod leases;
+mod mcp;
 mod services;
 mod terminals;
 mod workspaces;
@@ -679,6 +680,7 @@ impl Sessions {
             | "notification.delivery.claim"
             | "notification.delivery.report"
             | "notification.delivery.list" => self.activity_command(request),
+            op if op.starts_with("mcp.") => self.mcp_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"

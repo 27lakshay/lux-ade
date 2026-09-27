@@ -96,6 +96,8 @@ export type ContractDefinition =
   | DraftSendGetRequest
   | DraftSendListRequest
   | DraftSendPrepareRequest
+  | Excluded
+  | Exclusion
   | ExecutionState
   | FileEntry
   | FileKind
@@ -112,11 +114,23 @@ export type ContractDefinition =
   | HelloRequest
   | HostResourcesState
   | Inspection
+  | Installation
   | ListenerFamily
   | ListenerInventory
   | ListenerListRequest
   | ListenerOwnership
   | ListenerRow
+  | McpResolution
+  | McpResolveRequest
+  | McpServerAddRequest
+  | McpServerInspectRequest
+  | McpServerInspection
+  | McpServerListRequest
+  | McpServerRemoveRequest
+  | McpServerRemoved
+  | McpServerReply
+  | McpServerUpdateRequest
+  | McpServers
   | Message
   | NotificationDeliveries
   | NotificationDelivery
@@ -129,6 +143,7 @@ export type ContractDefinition =
   | OutputCoverage
   | OutputCoverageReason
   | OutputCoverageStatus
+  | PackageRegistry
   | PeerEndpoint
   | PendingRequest
   | PendingSend
@@ -136,7 +151,10 @@ export type ContractDefinition =
   | PortAssignment
   | PortObservation
   | PreviewKind
+  | Projected
   | ProviderListRequest
+  | ProviderSelection
+  | ProviderSupport
   | ProvidersReply
   | ProxyAvailability
   | QueueCancelRequest
@@ -188,6 +206,7 @@ export type ContractDefinition =
   | RuntimePrepareRestartRequest
   | RuntimeStatus
   | RuntimeStatusRequest
+  | Scope
   | Script
   | ScriptInspectRequest
   | ScriptInspection
@@ -208,6 +227,7 @@ export type ContractDefinition =
   | SendIntentState
   | SendOutcome
   | SendResolution
+  | Server
   | Service
   | ServiceChanged
   | ServiceConfigureRequest
@@ -237,6 +257,7 @@ export type ContractDefinition =
   | ServiceStartRequest
   | ServiceStopRequest
   | SessionSubscribeRequest
+  | SettingValue
   | SetupState
   | TerminalCreateRequest
   | TerminalCreated
@@ -323,6 +344,10 @@ export type DeliveryOutcome = 'shown' | 'failed' | 'suppressed'
  */
 export type DeliveryStatus = 'claimed' | 'shown' | 'failed' | 'suppressed'
 /**
+ * Why an entry does not reach a provider.
+ */
+export type Exclusion = ('disabled' | 'outside_scope' | 'provider_not_selected') | 'unsupported'
+/**
  * Whether a service's recorded run is live in the current runtime.
  */
 export type ExecutionState = 'running' | 'exited' | 'stopped' | 'unavailable'
@@ -339,9 +364,63 @@ export type PreviewKind = 'text' | 'image' | 'unsupported'
  */
 export type GitOperationStatus = ('running' | 'succeeded' | 'failed') | 'interrupted'
 export type RegistryState = 'ready' | 'blocked'
+/**
+ * How the server's code reached this host. ADE records it; it installs nothing.
+ */
+export type Installation =
+  | {
+      source: 'manual'
+    }
+  | {
+      identifier: string
+      registry: PackageRegistry
+      source: 'package'
+      version: string
+    }
+  | {
+      source: 'remote'
+    }
+export type PackageRegistry = 'npm' | 'pypi' | 'oci'
 export type ListenerFamily = 'ipv4' | 'ipv6'
 export type PortObservation = 'verified_managed' | 'contested' | 'observed_other' | 'unobserved'
 export type ListenerOwnership = 'managed_service' | 'unknown'
+/**
+ * Which providers an entry applies to.
+ */
+export type ProviderSelection =
+  | {
+      kind: 'all'
+    }
+  | {
+      kind: 'only'
+      provider_ids: string[]
+    }
+/**
+ * Which workspaces an entry applies to.
+ */
+export type Scope =
+  | {
+      kind: 'profile'
+    }
+  | {
+      kind: 'workspaces'
+      workspace_ids: string[]
+    }
+  | {
+      kind: 'repositories'
+      repository_ids: string[]
+    }
+/**
+ * A value set in a server's environment or HTTP headers. Secrets are never
+ * stored: they are read at launch from the named environment variable.
+ */
+export type SettingValue =
+  | {
+      literal: string
+    }
+  | {
+      env: string
+    }
 /**
  * Why output coverage is pending or incomplete.
  */
@@ -1581,6 +1660,12 @@ export interface DraftSendPrepareRequest {
   text: string
   window_id: string
 }
+export interface Excluded {
+  detail: string
+  name: string
+  reason: Exclusion
+  [k: string]: unknown
+}
 /**
  * One entry in a listing or search result.
  */
@@ -1908,6 +1993,309 @@ export interface ListenerRow {
  */
 export interface ListenerListRequest {
   op: 'listener.list'
+}
+/**
+ * The `mcp.resolve` reply.
+ */
+export interface McpResolution {
+  /**
+   * `direct`: the provider connects to each server itself and negotiates
+   * protocol version, capabilities and authorization on that one leg. ADE
+   * runs no MCP gateway yet.
+   */
+  delivery: string
+  /**
+   * The provider's native configuration document; null when the provider has no projection.
+   */
+  document: unknown
+  excluded: Excluded[]
+  /**
+   * `claude_mcp_json`, `codex_config_toml` (the TOML tables as JSON) or `omp_mcp_json`.
+   */
+  format: string | null
+  protocol_versions: string[]
+  provider: string
+  servers: Projected[]
+  /**
+   * The `mcp_resolution` type tag.
+   */
+  type: 'mcp_resolution'
+  /**
+   * True only when the provider's adapter passes `document` at launch. When
+   * false, this is what ADE would pass; the provider does not see it.
+   */
+  wired: boolean
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * One entry in a provider's native shape.
+ */
+export interface Projected {
+  name: string
+  /**
+   * The provider-native server object.
+   */
+  native: unknown
+  revision: number
+  [k: string]: unknown
+}
+/**
+ * `mcp.resolve`: the servers that apply to one workspace and provider, in
+ * the provider's native configuration shape.
+ */
+export interface McpResolveRequest {
+  op: 'mcp.resolve'
+  provider: string
+  workspace_id: string
+}
+/**
+ * `mcp.server.add`: record a new server once for the profile.
+ */
+export interface McpServerAddRequest {
+  /**
+   * Everything a caller sets on a catalog entry. Inlined like [`Transport`].
+   */
+  definition: {
+    enabled: boolean
+    installation: Installation
+    providers: ProviderSelection
+    scope: Scope
+    /**
+     * How a provider reaches the server. Inlined in schemas: `cwd` is optional
+     * in a request and always present in a reply.
+     */
+    transport:
+      | {
+          args: string[]
+          /**
+           * An absolute path or a bare name looked up on the provider's PATH.
+           */
+          command: string
+          /**
+           * An absolute directory, or null for the provider's default.
+           */
+          cwd?: string | null
+          env: {
+            [k: string]: SettingValue
+          }
+          type: 'stdio'
+        }
+      | {
+          headers: {
+            [k: string]: SettingValue
+          }
+          type: 'streamable_http'
+          url: string
+        }
+      | {
+          headers: {
+            [k: string]: SettingValue
+          }
+          type: 'sse'
+          url: string
+        }
+  }
+  name: string
+  op: 'mcp.server.add'
+}
+/**
+ * `mcp.server.inspect`: one entry and how each provider can express it.
+ */
+export interface McpServerInspectRequest {
+  name: string
+  op: 'mcp.server.inspect'
+}
+/**
+ * The `mcp.server.inspect` reply.
+ */
+export interface McpServerInspection {
+  /**
+   * MCP protocol revisions the modelled transports follow, newest first.
+   */
+  protocol_versions: string[]
+  providers: ProviderSupport[]
+  server: Server
+  /**
+   * The `mcp_server_inspection` type tag.
+   */
+  type: 'mcp_server_inspection'
+  [k: string]: unknown
+}
+/**
+ * Whether one provider can express an entry, and whether its adapter reads it yet.
+ */
+export interface ProviderSupport {
+  /**
+   * The provider-native server object, or null when it cannot be expressed.
+   */
+  native: unknown
+  provider: string
+  /**
+   * Why the provider cannot express the entry; null when it can.
+   */
+  unsupported_reason: string | null
+  /**
+   * True only when the provider's adapter passes the catalog at launch.
+   */
+  wired: boolean
+  [k: string]: unknown
+}
+/**
+ * One catalog entry. `name` is its identity within the profile.
+ */
+export interface Server {
+  /**
+   * Everything a caller sets on a catalog entry. Inlined like [`Transport`].
+   */
+  definition: {
+    enabled: boolean
+    installation: Installation
+    providers: ProviderSelection
+    scope: Scope
+    /**
+     * How a provider reaches the server. Inlined in schemas: `cwd` is optional
+     * in a request and always present in a reply.
+     */
+    transport:
+      | {
+          args: string[]
+          /**
+           * An absolute path or a bare name looked up on the provider's PATH.
+           */
+          command: string
+          /**
+           * An absolute directory, or null for the provider's default.
+           */
+          cwd: string | null
+          env: {
+            [k: string]: SettingValue
+          }
+          type: 'stdio'
+        }
+      | {
+          headers: {
+            [k: string]: SettingValue
+          }
+          type: 'streamable_http'
+          url: string
+        }
+      | {
+          headers: {
+            [k: string]: SettingValue
+          }
+          type: 'sse'
+          url: string
+        }
+  }
+  name: string
+  /**
+   * Starts at 1 and increases with each update.
+   */
+  revision: number
+  [k: string]: unknown
+}
+/**
+ * `mcp.server.list`: every catalog entry in the profile, in name order.
+ */
+export interface McpServerListRequest {
+  op: 'mcp.server.list'
+}
+/**
+ * `mcp.server.remove`: delete an entry at the revision the caller saw.
+ */
+export interface McpServerRemoveRequest {
+  expected_revision: number
+  name: string
+  op: 'mcp.server.remove'
+}
+/**
+ * The `mcp.server.remove` reply. `removed` is false when no entry existed.
+ */
+export interface McpServerRemoved {
+  name: string
+  removed: boolean
+  /**
+   * The `mcp_server_removed` type tag.
+   */
+  type: 'mcp_server_removed'
+  [k: string]: unknown
+}
+/**
+ * The `mcp.server.add` and `mcp.server.update` reply.
+ */
+export interface McpServerReply {
+  server: Server
+  /**
+   * The `mcp_server` type tag.
+   */
+  type: 'mcp_server'
+  [k: string]: unknown
+}
+/**
+ * `mcp.server.update`: replace an entry's definition.
+ */
+export interface McpServerUpdateRequest {
+  /**
+   * Everything a caller sets on a catalog entry. Inlined like [`Transport`].
+   */
+  definition: {
+    enabled: boolean
+    installation: Installation
+    providers: ProviderSelection
+    scope: Scope
+    /**
+     * How a provider reaches the server. Inlined in schemas: `cwd` is optional
+     * in a request and always present in a reply.
+     */
+    transport:
+      | {
+          args: string[]
+          /**
+           * An absolute path or a bare name looked up on the provider's PATH.
+           */
+          command: string
+          /**
+           * An absolute directory, or null for the provider's default.
+           */
+          cwd?: string | null
+          env: {
+            [k: string]: SettingValue
+          }
+          type: 'stdio'
+        }
+      | {
+          headers: {
+            [k: string]: SettingValue
+          }
+          type: 'streamable_http'
+          url: string
+        }
+      | {
+          headers: {
+            [k: string]: SettingValue
+          }
+          type: 'sse'
+          url: string
+        }
+  }
+  /**
+   * The revision the caller last saw.
+   */
+  expected_revision: number
+  name: string
+  op: 'mcp.server.update'
+}
+/**
+ * The `mcp.server.list` reply.
+ */
+export interface McpServers {
+  servers: Server[]
+  /**
+   * The `mcp_servers` type tag.
+   */
+  type: 'mcp_servers'
+  [k: string]: unknown
 }
 /**
  * The `notification.delivery.list` reply.
@@ -3750,7 +4138,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -3864,6 +4252,12 @@ export interface RequestByOperation {
   "notification.delivery.claim": NotificationDeliveryClaimRequest
   "notification.delivery.report": NotificationDeliveryReportRequest
   "notification.delivery.list": NotificationDeliveryListRequest
+  "mcp.server.list": McpServerListRequest
+  "mcp.server.inspect": McpServerInspectRequest
+  "mcp.server.add": McpServerAddRequest
+  "mcp.server.update": McpServerUpdateRequest
+  "mcp.server.remove": McpServerRemoveRequest
+  "mcp.resolve": McpResolveRequest
   "resources.inspect": ResourcesInspectRequest
   "resources.claim.resolve": ResourcesClaimResolveRequest
   "resources.registry.accept": ResourcesRegistryAcceptRequest
@@ -3981,6 +4375,12 @@ export interface ResponseByOperation {
   "notification.delivery.claim": NotificationDeliveryClaim
   "notification.delivery.report": NotificationDeliveryReply
   "notification.delivery.list": NotificationDeliveries
+  "mcp.server.list": McpServers
+  "mcp.server.inspect": McpServerInspection
+  "mcp.server.add": McpServerReply
+  "mcp.server.update": McpServerReply
+  "mcp.server.remove": McpServerRemoved
+  "mcp.resolve": McpResolution
   "resources.inspect": HostResourcesState
   "resources.claim.resolve": HostResourcesState
   "resources.registry.accept": HostResourcesState
