@@ -2,14 +2,14 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { isAbsolute } from 'node:path'
 import { dailyUseCommand, requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import { getClient, getClientGeneration, getProfileState, getSocket, getStartupProfileSelection, isSwitching,
-  launcher, managedProfiles, setSwitching, type Profile } from '../profile-connection'
+  journalProfileId, launcher, managedProfiles, setSwitching, type Profile } from '../profile-connection'
 import { activeReviewContext, assertReviewContext, reviewBatchPrompt, reviewPrompt, sameReviewAnchor,
   sameReviewFeedback } from '../review'
 import { SendJournal } from '../send-journal'
 import { validId } from '../validation'
 import { selectedWorkspaces } from '../workspaces'
 import { daemon, dispatchSend, draftKey, drafts, e2ePauseAfterSendJournal, flushDraft, journal, journalIdentity, journalRecord,
-  loadDraft, pendingSend, scheduleDraft, type SendIntent } from './send-pipeline'
+  listWindowSends, loadDraft, pendingSend, scheduleDraft, windowIds, type SendIntent } from './send-pipeline'
 
 function sendTransferRequest(event: Electron.IpcMainInvokeEvent, id: unknown, location: unknown,
   active: boolean): { profile: Profile; location: string } {
@@ -51,10 +51,31 @@ export function registerConversationIpc(): void {
           conversation_id: record.conversationId, window_id: record.windowId }))
     } finally { setSwitching(false) }
   })
-  ipcMain.handle('ade:pending-sends', async () => (await journal().list()).map((record) => ({
-    profileId: record.profileId, conversationId: record.conversationId,
-    requestId: record.requestId, text: record.text,
-  })))
+  // Pending prompts: the journal's unadmitted and restore-held records, plus, while
+  // the profile daemon is reachable, every send it still holds for this window.
+  // While it is unreachable only the journal can answer.
+  ipcMain.handle('ade:pending-sends', async (event) => {
+    const pending = (await journal().list()).map((record) => ({
+      profileId: record.profileId, conversationId: record.conversationId,
+      requestId: record.requestId, text: record.text,
+    }))
+    const endpoint = getSocket()
+    const windowId = windowIds.get(event.sender.id)
+    const generation = getClientGeneration()
+    if (!endpoint || !windowId || getClient().getState().status !== 'connected') return pending
+    let profileId: string
+    try { profileId = journalProfileId(endpoint) } catch { return pending }
+    const sends = await listWindowSends(endpoint, windowId)
+    if (getClientGeneration() !== generation || getSocket() !== endpoint) {
+      throw new Error('Profile changed while pending prompts were listed')
+    }
+    for (const send of sends) {
+      if (pending.some((item) => item.requestId === send.intent.request_id)) continue
+      pending.push({ profileId, conversationId: send.intent.conversation_id,
+        requestId: send.intent.request_id, text: send.intent.text })
+    }
+    return pending
+  })
   ipcMain.handle('ade:conversation-request', async (event, op: unknown, fields: unknown) => {
     if (typeof op !== 'string' || !conversationOps.has(op) || !fields || typeof fields !== 'object' || Array.isArray(fields)) {
       throw new Error('Invalid conversation request')
@@ -234,7 +255,7 @@ export function registerConversationIpc(): void {
       if (reviewContext) assertReviewContext(reviewContext, reviewWorkspaceId as string, args.conversation_id)
       const intent: SendIntent = { requestId: args.request_id, text, draftText: entry.draft.text,
         revision: entry.draft.revision, attachments: entry.draft.attachments,
-        state: 'pending', preparing: true, inFlight: null,
+        state: 'pending', preparing: true, admitted: false, inFlight: null,
         reviewAnchor: reviewContext ? args.review_anchor as ReviewAnchor : undefined,
         reviewFeedback,
         reviewSelection: reviewContext ? { senderId: event.sender.id,

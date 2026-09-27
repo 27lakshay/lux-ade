@@ -4,6 +4,7 @@ import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises
 import { isAbsolute, join } from 'node:path'
 import { DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseRequest,
   type DailyUseResponse, type RequestOptions, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
+import { decideSendRecovery, findPendingSend } from '@ade/client/outbox'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
 import { reviewNote, sameReviewAnchor, sameReviewFeedback } from '../review'
 import type { SendJournal, SendJournalIdentity, SendJournalRecord } from '../send-journal'
@@ -19,8 +20,12 @@ export async function daemon<O extends DailyUseOperation>(endpoint: string, op: 
   options?: RequestOptions): Promise<DailyUseResponse<O>> {
   return decodeDailyUseResponse(op, await requestDaemon(endpoint, op, fields as Record<string, unknown>, options))
 }
+// The send journal holds a prompt only until the daemon admits it. `admitted`
+// records that this process saw the daemon hold the intent (from
+// `draft.send.prepare`, `draft.send.get` or `draft.send.list`); from then on the
+// daemon's intent is the recovery record and the journal entry is dropped.
 export type SendIntent = { requestId: string; draftText: string; revision: number; text: string; attachments: unknown[];
-  state: 'pending' | 'rejected'; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null;
+  state: 'pending' | 'rejected'; preparing: boolean; admitted: boolean; inFlight: Promise<Record<string, unknown>> | null;
   reviewSelection?: { senderId: number; workspaceId: string; conversationId: string; epoch: number };
   reviewAnchor?: ReviewAnchor; reviewFeedback?: ReviewFeedback }
 type DraftEntry = { senderId: number; endpoint: string; profileId: string; conversationId: string; windowId: string; draft: Draft; timer: ReturnType<typeof setTimeout> | null; pending: Promise<void>; savedRevision: number; error: string; unclearedText: string; send: SendIntent | null }
@@ -72,11 +77,91 @@ async function journaled(entry: DraftEntry): Promise<boolean> {
     sameReviewFeedback(record.reviewFeedback, intent.reviewFeedback))
 }
 
+/** A pending send is safe to leave once the daemon holds its intent or the journal holds its exact record. */
 export async function unsafePending(entries: DraftEntry[]): Promise<boolean> {
   for (const entry of entries) {
-    if (entry.send && !(await journaled(entry).catch(() => false))) return true
+    if (entry.send && !entry.send.admitted && !(await journaled(entry).catch(() => false))) return true
   }
   return false
+}
+
+function localRecord(entry: DraftEntry, records: SendJournalRecord[]): SendJournalRecord | null {
+  return records.find((item) => item.profileId === entry.profileId &&
+    item.windowId === entry.windowId && item.conversationId === entry.conversationId) ?? null
+}
+
+type DaemonSendIntent = DailyUseResponse<'draft.send.list'>['sends'][number]['intent']
+type PendingDaemonSend = DailyUseResponse<'draft.send.list'>['sends'][number]
+
+function sameDaemonIntent(saved: DaemonSendIntent, intent: SendIntent): boolean {
+  return saved.request_id === intent.requestId && saved.text === intent.text &&
+    saved.draft_text === intent.draftText && saved.draft_revision === intent.revision &&
+    JSON.stringify(saved.attachments) === JSON.stringify(intent.attachments) &&
+    sameReviewAnchor(saved.review_anchor, intent.reviewAnchor) &&
+    sameReviewFeedback(saved.review_feedback, intent.reviewFeedback)
+}
+
+/** What `draft.send.list` reports for this window and Conversation. */
+function daemonSend(entry: DraftEntry, options?: RequestOptions): Promise<PendingDaemonSend | null> {
+  return findPendingSend(entry.conversationId, (after) => daemon(entry.endpoint, 'draft.send.list', {
+    window_id: entry.windowId, limit: 200, ...(after === undefined ? {} : { after }),
+  }, options))
+}
+
+/** Every unresolved send the daemon holds for one window, across Conversations. */
+export async function listWindowSends(endpoint: string, windowId: string): Promise<PendingDaemonSend[]> {
+  const sends: PendingDaemonSend[] = []
+  let after: string | undefined
+  for (let page = 0; page < 16; page++) {
+    const reply = await daemon(endpoint, 'draft.send.list', { window_id: windowId, limit: 200,
+      ...(after === undefined ? {} : { after }) })
+    sends.push(...reply.sends)
+    if (!reply.next_cursor) return sends
+    if (after !== undefined && reply.next_cursor <= after) throw new Error('Pending send list did not advance')
+    after = reply.next_cursor
+  }
+  throw new Error('Pending send list is too long to read')
+}
+
+/**
+ * Settles an admitted send through `draft.send.acknowledge`. The daemon completes an
+ * accepted prompt and releases a rejected one; it refuses anything it cannot prove
+ * and never dispatches. Either settlement ends this send, and the daemon's draft
+ * becomes the window's draft.
+ */
+async function acknowledgeSend(entry: DraftEntry, intent: SendIntent,
+  timeoutMs?: number): Promise<'completed' | 'aborted'> {
+  if (localRecord(entry, await journal().list())?.restoreHold) {
+    throw new Error('Restored prompt is held until its source outcome is reconciled')
+  }
+  const result = await daemon(entry.endpoint, 'draft.send.acknowledge', {
+    conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
+  }, { timeoutMs })
+  const draft = result.draft as Draft
+  if (result.request_id !== intent.requestId || result.conversation_id !== entry.conversationId ||
+    !draft || typeof draft.text !== 'string' || !Number.isSafeInteger(draft.revision) ||
+    (result.resolution === 'completed' && draft.text !== '')) throw new Error('Invalid send acknowledgement')
+  draft.attachments ??= []
+  if (entry.send !== intent) throw new Error('Prompt changed during acknowledgement')
+  await journal().remove(journalIdentity(entry, intent))
+  entry.draft = draft
+  entry.savedRevision = draft.revision
+  entry.unclearedText = ''
+  entry.error = ''
+  publishDraftError(entry, '')
+  entry.send = null
+  return result.resolution
+}
+
+/** Marks the intent as held by the daemon and drops its pre-admission journal record. */
+async function admit(entry: DraftEntry, intent: SendIntent): Promise<void> {
+  intent.admitted = true
+  // A restore-held record stays for the transfer bundle. Any other record left
+  // behind matches the daemon intent, and the next load reconciles it.
+  try {
+    if (localRecord(entry, await journal().list())?.restoreHold) return
+    await journal().remove(journalIdentity(entry, intent))
+  } catch { /* Kept records are reconciled against the daemon on the next load. */ }
 }
 export async function persistentWindowId(): Promise<string> {
   const directory = app.getPath('userData')
@@ -173,16 +258,22 @@ export async function loadDraft(senderId: number, endpoint: string, conversation
     !sameReviewFeedback(recorded.reviewFeedback, recovered.review_feedback))) {
     throw new Error('Local prompt recovery conflicts with the profile daemon; preserve both records for review')
   }
-  if (!recorded && recovered) {
+  // The daemon's intent is the recovery record once it exists. Only a restored
+  // profile's intent is copied into the journal, as a held record, because the
+  // pending-send transfer bundle reconciles against held records.
+  if (!recorded && recovered && restoredFromBackup) {
     await journal().upsert({ profileId, windowId, conversationId, requestId: recovered.request_id as string,
       endpoint, text: recovered.text as string, draftText: recovered.draft_text as string,
       draftRevision: recovered.draft_revision as number, attachments: recovered.attachments as unknown[],
       ...(recovered.review_anchor ? { reviewAnchor: recovered.review_anchor as ReviewAnchor } : {}),
       ...(recovered.review_feedback ? { reviewFeedback: recovered.review_feedback as ReviewFeedback } : {}),
-      dispatchStarted: true, ...(restoredFromBackup ? { restoreHold: true } : {}) })
+      dispatchStarted: true, restoreHold: true })
   } else if (recorded && restoredFromBackup && !recorded.restoreHold) {
     recorded = { ...recorded, restoreHold: true }
     await journal().upsert(recorded)
+  } else if (recorded && recovered && !recorded.restoreHold) {
+    // Admitted before the record could be dropped, or written by an older build.
+    await journal().remove({ profileId, windowId, conversationId, requestId: recorded.requestId }).catch(() => false)
   }
   const restored = recorded ?? (recovered ? { requestId: recovered.request_id as string,
     text: recovered.text as string, draftText: recovered.draft_text as string,
@@ -197,7 +288,8 @@ export async function loadDraft(senderId: number, endpoint: string, conversation
       draftText: restored.draftText, revision: restored.draftRevision,
       attachments: restored.attachments,
       reviewAnchor: restored.reviewAnchor, reviewFeedback: restored.reviewFeedback,
-      state: recovered?.state as 'pending' | 'rejected' || 'pending', preparing: false, inFlight: null } : null }
+      state: recovered?.state as 'pending' | 'rejected' || 'pending', preparing: false,
+      admitted: recovered !== null, inFlight: null } : null }
   const concurrent = drafts.get(key)
   if (concurrent) return concurrent
   drafts.set(key, entry)
@@ -212,15 +304,14 @@ export function pendingSend(entry: DraftEntry): Record<string, unknown> | null {
     ...(entry.send.reviewFeedback ? { review_feedback: entry.send.reviewFeedback } : {}) }
 }
 
-async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>> {
-  const recorded = (await journal().list()).find((item) => item.profileId === entry.profileId &&
-    item.windowId === entry.windowId && item.conversationId === entry.conversationId)
-  if (recorded?.restoreHold) {
+/** The live path: `agent.send` just accepted the prompt, so complete its intent. */
+async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (localRecord(entry, await journal().list())?.restoreHold) {
     throw new Error('Restored prompt is held until its source outcome is reconciled')
   }
   const result = await daemon(entry.endpoint, 'draft.send.complete', {
     conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
-  }, { timeoutMs })
+  })
   const cleared = result.draft as Draft
   if (!cleared || cleared.text !== '' || !Number.isSafeInteger(cleared.revision)) throw new Error('Invalid completed draft')
   cleared.attachments ??= []
@@ -235,8 +326,8 @@ async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Rec
 }
 
 // Closing a view must not turn an uncertain prompt into a new provider request.
-// The owning daemon can only complete this intent after it has recorded the exact
-// accepted user message, and an already completed intent returns the same draft.
+// Only a prompt the daemon lists as accepted, or one it already settled, is
+// acknowledged here; everything else keeps its request ID for a later retry.
 export async function reconcileAcceptedSend(entry: DraftEntry): Promise<void> {
   const intent = entry.send
   if (!intent || intent.preparing) return
@@ -247,10 +338,18 @@ export async function reconcileAcceptedSend(entry: DraftEntry): Promise<void> {
   })
   if (entry.send !== intent) return
   try {
-    await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true }, 3_000)
+    const listed = await daemonSend(entry, { timeoutMs: 3_000 })
+    if (entry.send !== intent) return
+    const accepted = listed !== null && listed.outcome === 'accepted' && sameDaemonIntent(listed.intent, intent)
+    if (accepted || (listed === null && intent.admitted)) await acknowledgeSend(entry, intent, 3_000)
   } catch { /* Keep the original request ID and ask the user to retry after recovery. */ }
 }
 
+/**
+ * Drives one send to a result the daemon can prove. The next step comes from
+ * `decideSendRecovery`: replay the pre-admission steps, deliver with the original
+ * ID, acknowledge, release, or keep the ID and report the send as pending.
+ */
 export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Record<string, unknown>> {
   if (intent.inFlight) return intent.inFlight
   const generation = getClientGeneration()
@@ -264,101 +363,21 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
   }
   const uncertain = (): Record<string, unknown> => ({ type: 'send_pending', request_id: intent.requestId, text: intent.text,
     message: 'Prompt delivery is unconfirmed. Retry will use the same request ID.' })
-  const work = (async (): Promise<Record<string, unknown>> => {
-    if (!activeProfile()) return uncertain()
-    const recorded = (await journal().list()).find((item) => item.profileId === entry.profileId &&
-      item.windowId === entry.windowId && item.conversationId === entry.conversationId)
-    if (!recorded || recorded.requestId !== intent.requestId || recorded.text !== intent.text) return uncertain()
-    if (recorded.restoreHold) return { ...uncertain(),
-      message: 'Restored prompt is held until the source outcome is reconciled. It will not be dispatched automatically.' }
-    if (recorded.dispatchStarted) {
-      try { return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true }) }
-      catch { /* The original provider turn may still be running or its outcome may be unavailable. */ }
-      try {
-        const previous = await daemon(entry.endpoint, 'draft.send.get', {
-          conversation_id: entry.conversationId, window_id: entry.windowId,
-        })
-        const saved = previous.intent as { request_id?: string; text?: string; draft_text?: string;
-          draft_revision?: number; attachments?: unknown[]; state?: string; review_anchor?: unknown; review_feedback?: unknown } | null
-        if (!saved || saved.request_id !== intent.requestId || saved.text !== intent.text ||
-          saved.draft_text !== intent.draftText || saved.draft_revision !== intent.revision ||
-          JSON.stringify(saved.attachments) !== JSON.stringify(intent.attachments) ||
-          !sameReviewAnchor(saved.review_anchor, intent.reviewAnchor) ||
-          !sameReviewFeedback(saved.review_feedback, intent.reviewFeedback) ||
-          !['pending', 'rejected'].includes(String(saved.state))) return uncertain()
-      } catch { return uncertain() }
-    } else {
-      try {
-        const response = await daemon(entry.endpoint, 'draft.get', {
-          conversation_id: entry.conversationId, window_id: entry.windowId,
-        })
-        let saved = response.draft as Draft
-        if (!saved || !Number.isSafeInteger(saved.revision) ||
-          (saved.attachments !== undefined && !Array.isArray(saved.attachments))) return uncertain()
-        saved.attachments ??= []
-        if (saved.revision < intent.revision) {
-          const result = await daemon(entry.endpoint, 'draft.save', {
-            conversation_id: entry.conversationId, window_id: entry.windowId,
-            revision: intent.revision, text: intent.draftText, attachments: intent.attachments as Attachments,
-          })
-          saved = result.draft as Draft
-          if (saved) saved.attachments ??= []
-        }
-        if (saved.revision !== intent.revision || saved.text !== intent.draftText ||
-          JSON.stringify(saved.attachments) !== JSON.stringify(intent.attachments)) return uncertain()
-      } catch { return uncertain() }
-    }
+  const reconciled = { type: 'ack', request_id: intent.requestId, reconciled: true }
+  const rejected = new Error('The profile daemon rejected this prompt before admission. The draft keeps its text.')
+
+  // Settles an admitted send. A released (rejected) send throws `rejection`.
+  const settle = async (rejection: unknown): Promise<Record<string, unknown>> => {
     if (!activeProfile()) return uncertain()
     try {
-      const prepared = await daemon(entry.endpoint, 'draft.send.prepare', {
-        conversation_id: entry.conversationId, window_id: entry.windowId,
-        request_id: intent.requestId, draft_text: intent.draftText, text: intent.text,
-        revision: intent.revision, attachments: intent.attachments as Attachments,
-        ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
-        ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
-      })
-      const persisted = prepared.intent as { request_id?: string; state?: string } | null
-      if (persisted?.request_id === intent.requestId && persisted.state === 'completed') {
-        if (!activeProfile()) return uncertain()
-        try { return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true }) }
-        catch { return uncertain() }
-      }
-      if (persisted?.request_id !== intent.requestId || !['pending', 'rejected'].includes(String(persisted.state))) {
-        throw new Error('Send intent was not admitted')
-      }
-      intent.state = persisted.state as 'pending' | 'rejected'
-    } catch (error) {
-      if (!activeProfile()) return uncertain()
-      try {
-        const state = await daemon(entry.endpoint, 'draft.send.get', {
-          conversation_id: entry.conversationId, window_id: entry.windowId,
-        })
-        const persisted = state.intent as { request_id?: string; state?: string } | null
-        if (persisted?.request_id === intent.requestId && ['pending', 'rejected'].includes(String(persisted.state))) {
-          intent.state = persisted.state as 'pending' | 'rejected'
-        } else if (persisted) {
-          throw new Error('A different prompt is awaiting reconciliation for this draft')
-        } else {
-          try {
-            if (!activeProfile()) return uncertain()
-            return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
-          } catch { /* No completed intent was found. */ }
-          if (!recorded.dispatchStarted && error instanceof DaemonRequestError &&
-            (error.code === 'daemon' || error.code === 'invalid_request')) {
-            await journal().remove(journalIdentity(entry, intent))
-            entry.send = null
-            throw error
-          }
-          return uncertain()
-        }
-      } catch (recoveryError) {
-        if (entry.send === null) throw recoveryError
-        return uncertain()
-      }
-    }
+      if (await acknowledgeSend(entry, intent) === 'completed') return reconciled
+    } catch { return uncertain() }
+    throw rejection
+  }
+
+  const deliver = async (): Promise<Record<string, unknown>> => {
     if (!activeProfile()) return uncertain()
     try {
-      await journal().markDispatched(journalIdentity(entry, intent))
       const response = await requestDaemon(entry.endpoint, intent.reviewAnchor || intent.reviewFeedback ? 'agent.send_review' : 'agent.send', {
         conversation_id: entry.conversationId, request_id: intent.requestId, text: intent.text,
         attachments: intent.attachments,
@@ -370,31 +389,116 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
       catch { return uncertain() }
     } catch (error) {
       if (!activeProfile()) return uncertain()
-      try {
-        return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
-      } catch { /* No matching durable user message is visible yet. */ }
-      try {
-        const state = await daemon(entry.endpoint, 'draft.send.get', {
+      let after: PendingDaemonSend | null
+      try { after = await daemonSend(entry) } catch { return uncertain() }
+      if (after === null) return settle(error)
+      if (!sameDaemonIntent(after.intent, intent)) return uncertain()
+      if (after.outcome === 'accepted') return settle(error)
+      if (after.outcome === 'rejected') return settle(error)
+      return uncertain()
+    }
+  }
+
+  // Pre-admission: the daemon holds no intent, so nothing was dispatched. Make the
+  // daemon draft match the journaled one, then prepare with the original ID.
+  const prepare = async (): Promise<Record<string, unknown>> => {
+    try {
+      const response = await daemon(entry.endpoint, 'draft.get', {
+        conversation_id: entry.conversationId, window_id: entry.windowId,
+      })
+      let saved = response.draft as Draft
+      if (!saved || !Number.isSafeInteger(saved.revision) ||
+        (saved.attachments !== undefined && !Array.isArray(saved.attachments))) return uncertain()
+      saved.attachments ??= []
+      if (saved.revision < intent.revision) {
+        const result = await daemon(entry.endpoint, 'draft.save', {
           conversation_id: entry.conversationId, window_id: entry.windowId,
+          revision: intent.revision, text: intent.draftText, attachments: intent.attachments as Attachments,
         })
-        const persisted = state.intent as { request_id?: string; state?: string } | null
-        if (persisted?.request_id === intent.requestId && persisted.state === 'rejected') {
-          await daemon(entry.endpoint, 'draft.send.abort', {
-            conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
-          })
-          if (!activeProfile()) return uncertain()
-          intent.state = 'rejected'
-          await journal().remove(journalIdentity(entry, intent))
-          entry.send = null
-          throw error
-        }
-      } catch (recoveryError) {
-        if (recoveryError === error) throw error
+        saved = result.draft as Draft
+        if (saved) saved.attachments ??= []
+      }
+      if (saved.revision !== intent.revision || saved.text !== intent.draftText ||
+        JSON.stringify(saved.attachments) !== JSON.stringify(intent.attachments)) return uncertain()
+    } catch { return uncertain() }
+    if (!activeProfile()) return uncertain()
+    try {
+      const prepared = await daemon(entry.endpoint, 'draft.send.prepare', {
+        conversation_id: entry.conversationId, window_id: entry.windowId,
+        request_id: intent.requestId, draft_text: intent.draftText, text: intent.text,
+        revision: intent.revision, attachments: intent.attachments as Attachments,
+        ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
+        ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
+      })
+      const persisted = prepared.intent as { request_id?: string; state?: string } | null
+      if (persisted?.request_id !== intent.requestId ||
+        !['pending', 'rejected', 'completed'].includes(String(persisted.state))) {
+        throw new Error('Send intent was not admitted')
+      }
+      await admit(entry, intent)
+      if (persisted.state === 'completed') return settle(rejected)
+      intent.state = persisted.state as 'pending' | 'rejected'
+      return persisted.state === 'rejected' ? settle(rejected) : deliver()
+    } catch (error) {
+      if (!activeProfile()) return uncertain()
+      // The reply may be lost while the intent was admitted; ask the daemon.
+      let after: PendingDaemonSend | null
+      try { after = await daemonSend(entry) } catch { return uncertain() }
+      if (!activeProfile()) return uncertain()
+      if (after !== null) {
+        if (!sameDaemonIntent(after.intent, intent)) return uncertain()
+        await admit(entry, intent)
+        return resume()
+      }
+      // No unresolved intent. A settled one returns its settlement again.
+      try {
+        if (await acknowledgeSend(entry, intent) === 'completed') return reconciled
+        throw rejected
+      } catch (settleError) {
+        if (entry.send === null) throw settleError
+      }
+      if (!intent.admitted && error instanceof DaemonRequestError &&
+        (error.code === 'daemon' || error.code === 'invalid_request')) {
+        await journal().remove(journalIdentity(entry, intent))
+        entry.send = null
+        throw error
       }
       return uncertain()
     }
-  })()
+  }
+
+  const resume = async (): Promise<Record<string, unknown>> => {
+    if (!activeProfile()) return uncertain()
+    let records: SendJournalRecord[]
+    let listed: PendingDaemonSend | null
+    try { [records, listed] = await Promise.all([journal().list(), daemonSend(entry)]) }
+    catch { return uncertain() }
+    if (!activeProfile()) return uncertain()
+    const local = localRecord(entry, records)
+    if (local && local.requestId === intent.requestId && local.text !== intent.text) return uncertain()
+    // Without a journal record, only the daemon can prove this prompt exists.
+    if (!local && !intent.admitted && listed === null) return uncertain()
+    if (listed !== null && sameDaemonIntent(listed.intent, intent)) intent.admitted = true
+    const action = decideSendRecovery({
+      requestId: intent.requestId,
+      admitted: intent.admitted,
+      local: local && { requestId: local.requestId, restoreHold: local.restoreHold === true, admitted: local.dispatchStarted },
+      daemon: listed && { requestId: listed.intent.request_id, outcome: listed.outcome, matches: sameDaemonIntent(listed.intent, intent) },
+    })
+    switch (action.kind) {
+      case 'hold': return { ...uncertain(),
+        message: 'Restored prompt is held until the source outcome is reconciled. It will not be dispatched automatically.' }
+      case 'conflict': return uncertain()
+      case 'acknowledge': return settle(rejected)
+      case 'release': intent.state = 'rejected'; return settle(rejected)
+      case 'deliver': await admit(entry, intent); return deliver()
+      case 'prepare': return prepare()
+    }
+  }
+
+  const work = resume()
   intent.inFlight = work
   void work.finally(() => { intent.inFlight = null }).catch(() => undefined)
   return work
 }
+
