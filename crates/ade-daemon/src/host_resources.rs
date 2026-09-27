@@ -110,6 +110,24 @@ impl Key {
     }
 }
 
+/// Whether an existing path, whose final components from the resource
+/// upward are `names`, was created at an unborn reservation `outer` that is
+/// not yet bound: some ancestor-or-self of the path sits in the reserved
+/// parent under the reserved folded name. Between Git creating the path and
+/// the reservation binding to it, [`Key::within`] cannot see this, because
+/// the created directory's identity is not in the reservation yet.
+pub fn born_inside_unborn(key: &Key, names: &[String], outer: &Key) -> bool {
+    let Some(reserved) = &outer.unborn else {
+        return false;
+    };
+    key.host == outer.host
+        && key.unborn.is_none()
+        && (0..key.chain.len()).any(|index| {
+            key.chain[index + 1..] == outer.chain[..]
+                && names.get(index).map(|name| fold_name(name)).as_ref() == Some(reserved)
+        })
+}
+
 /// Folds a final path component the way case-insensitive volumes compare it.
 /// On a case-sensitive volume this can only over-report a conflict.
 pub fn fold_name(name: &str) -> String {
@@ -600,7 +618,10 @@ fn chain(path: &Path) -> Result<Vec<Node>> {
 }
 
 /// Resolves a target to its canonical display path and physical key.
-fn resolve(host: &str, target: &Target) -> Result<(String, Key)> {
+/// Also returns, for an existing path, the final component of each node in
+/// its chain (the root's is empty).
+fn resolve(host: &str, target: &Target) -> Result<(String, Key, Vec<String>)> {
+    let mut names = Vec::new();
     let (path, key) = match target {
         Target::Existing(path) => {
             let path = std::fs::canonicalize(path)?;
@@ -610,6 +631,15 @@ fn resolve(host: &str, target: &Target) -> Result<(String, Key)> {
                 chain: chain(&path)?,
                 unborn: None,
             };
+            names = path
+                .ancestors()
+                .map(|ancestor| {
+                    ancestor
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                })
+                .collect();
             (path, key)
         }
         Target::Unborn(path) => {
@@ -630,7 +660,11 @@ fn resolve(host: &str, target: &Target) -> Result<(String, Key)> {
             (parent.join(name), key)
         }
     };
-    Ok((path.to_str().context("Path must be UTF-8")?.to_owned(), key))
+    Ok((
+        path.to_str().context("Path must be UTF-8")?.to_owned(),
+        key,
+        names,
+    ))
 }
 
 fn read_claims(db: &Connection) -> Result<Vec<Claim>> {
@@ -896,10 +930,10 @@ impl HostResources {
     ) -> Result<String> {
         let guard = self.inner.lock().unwrap();
         let open = guard.as_ref().map_err(Self::unavailable)?;
-        let (path, key, resource) = match taking {
+        let (path, key, resource, names) = match taking {
             Taking::Checkout(target) => {
-                let (path, key) = resolve(&open.host, &target)?;
-                (path, key, Resource::Checkout)
+                let (path, key, names) = resolve(&open.host, &target)?;
+                (path, key, Resource::Checkout, names)
             }
             Taking::Other(resource) => {
                 let key = Key {
@@ -907,7 +941,12 @@ impl HostResources {
                     chain: Vec::new(),
                     unborn: None,
                 };
-                (resource.label().unwrap_or_default(), key, resource)
+                (
+                    resource.label().unwrap_or_default(),
+                    key,
+                    resource,
+                    Vec::new(),
+                )
             }
         };
         let wanted = Wanted {
@@ -940,7 +979,10 @@ impl HostResources {
                 tx.execute("DELETE FROM claims WHERE id=?1", [&held.id])?;
                 continue;
             }
-            if claim_conflicts(&held, &wanted) {
+            let unbound_create = held.resource == Resource::Checkout
+                && held.mode == ClaimMode::Exclusive
+                && born_inside_unborn(&key, &names, &held.key);
+            if unbound_create || claim_conflicts(&held, &wanted) {
                 let whose = if held.owner_profile == self.location.profile {
                     "this profile".to_owned()
                 } else {
@@ -1678,6 +1720,54 @@ mod tests {
         let work = key(&["work", "root"]);
         assert!(conflicts((&work, Exclusive), (&a, Exclusive)));
         assert!(!conflicts((&work, Shared), (&a, Exclusive)));
+    }
+
+    #[test]
+    fn a_path_created_at_an_unbound_reservation_is_inside_it() {
+        let names = |list: &[&str]| {
+            list.iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let create = unborn("Feature", &["work", "root"]);
+        // Git created work/feature; the Create claim is not bound yet, so
+        // identity alone sees no conflict.
+        let created = key(&["new", "work", "root"]);
+        assert!(!conflicts((&create, Exclusive), (&created, Shared)));
+        assert!(born_inside_unborn(
+            &created,
+            &names(&["feature", "work", ""]),
+            &create
+        ));
+        let nested = key(&["src", "new", "work", "root"]);
+        assert!(born_inside_unborn(
+            &nested,
+            &names(&["src", "FEATURE", "work", ""]),
+            &create
+        ));
+        // A sibling in the same parent, or the same name elsewhere, is not.
+        assert!(!born_inside_unborn(
+            &key(&["other", "work", "root"]),
+            &names(&["other", "work", ""]),
+            &create
+        ));
+        assert!(!born_inside_unborn(
+            &key(&["new", "elsewhere", "root"]),
+            &names(&["feature", "elsewhere", ""]),
+            &create
+        ));
+        // The parent itself is not inside the reservation.
+        assert!(!born_inside_unborn(
+            &key(&["work", "root"]),
+            &names(&["work", ""]),
+            &create
+        ));
+        // A bound claim is decided by identity alone.
+        assert!(!born_inside_unborn(
+            &created,
+            &names(&["feature", "work", ""]),
+            &key(&["new", "work", "root"])
+        ));
     }
 
     #[test]

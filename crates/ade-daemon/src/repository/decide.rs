@@ -375,6 +375,33 @@ pub fn publish_interrupted_is_unknown(phase: PublishPhase) -> bool {
     phase == PublishPhase::Pushing
 }
 
+/// How a push that ran settles, from its exit and the remote read-back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PushSettlement {
+    /// The remote branch is at the pushed commit.
+    Published,
+    /// Git reported success but the remote does not confirm it.
+    VerifyFailed,
+    /// Git exited with an error, so it refused the push.
+    NotPushed,
+    /// Git was killed or timed out and the remote does not confirm the
+    /// commit. The push may have reached the remote, or receive-pack may still
+    /// finish it, so this is not a definite failure.
+    Unknown,
+}
+
+/// `push_exit` is Git's exit code, `None` when it was killed or timed out.
+/// `confirmed` is the read-back: `Some(true)` at the commit, `Some(false)`
+/// not at it, `None` unreadable.
+pub fn push_settlement(push_exit: Option<i64>, confirmed: Option<bool>) -> PushSettlement {
+    match (push_exit, confirmed) {
+        (_, Some(true)) => PushSettlement::Published,
+        (None, _) => PushSettlement::Unknown,
+        (Some(0), _) => PushSettlement::VerifyFailed,
+        (Some(_), _) => PushSettlement::NotPushed,
+    }
+}
+
 /// D08: ordinary Git only, with named coverage.
 pub fn coverage() -> RepositoryCoverage {
     use RepositoryTransport as T;
@@ -418,6 +445,24 @@ mod tests {
         parse_remote_url(url)
             .unwrap_or_else(|e| panic!("{url}: {e}"))
             .transport
+    }
+
+    #[test]
+    fn a_killed_push_that_the_remote_does_not_confirm_is_unknown() {
+        use PushSettlement::*;
+        // Killed or timed out, and ls-remote failed too: the push may have
+        // reached the remote.
+        assert_eq!(push_settlement(None, None), Unknown);
+        // Killed, and the remote is not at the commit yet: receive-pack may
+        // still finish.
+        assert_eq!(push_settlement(None, Some(false)), Unknown);
+        assert_eq!(push_settlement(None, Some(true)), Published);
+        // Git's own refusal is definite.
+        assert_eq!(push_settlement(Some(1), None), NotPushed);
+        assert_eq!(push_settlement(Some(128), Some(false)), NotPushed);
+        assert_eq!(push_settlement(Some(0), Some(true)), Published);
+        assert_eq!(push_settlement(Some(0), Some(false)), VerifyFailed);
+        assert_eq!(push_settlement(Some(0), None), VerifyFailed);
     }
 
     #[test]

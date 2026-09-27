@@ -510,7 +510,16 @@ impl Sessions {
             PUSH_TIMEOUT,
             true,
         );
-        let result = match repo::remote_has(folder, &input.remote, &branch, &commit) {
+        let readback = repo::remote_has(folder, &input.remote, &branch, &commit);
+        let settlement = decide::push_settlement(push.exit_code, readback.as_ref().ok().copied());
+        if settlement == decide::PushSettlement::Unknown {
+            // A killed push may have reached the remote; never report it as
+            // not pushed, and never push again under this ID.
+            let record = progress.record(&input, &branch, "pushing");
+            self.repository_settle(id, Status::Unknown, &record)?;
+            return Err(unknown(id, &record));
+        }
+        let result = match readback {
             Ok(true) => reply(&RepositoryPublished {
                 tag: Default::default(),
                 outcome: RepositoryPublishOutcome::Published,

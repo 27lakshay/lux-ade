@@ -6,6 +6,7 @@ use ade_core::contract::worktrees::{
 };
 use ade_core::worktrees::{Config, Hook};
 use anyhow::{Result, bail, ensure};
+use serde_json::Value;
 
 /// At most this many hooks per phase.
 pub const MAX_HOOKS: usize = 8;
@@ -255,6 +256,76 @@ pub enum Authority {
     None,
 }
 
+/// Decides authority from an ownership record and what was read from disk.
+/// - `found` is the tree's current (device, inode), `None` if unreadable.
+/// - `marker` is the marker file's content, `None` if unreadable.
+///
+/// A record without an identity predates identities and compares none. A
+/// replacement at the same path keeps the admin dir and marker, so only the
+/// identity tells it apart.
+pub fn authority_of(
+    owner: Option<&Value>,
+    repository: &str,
+    found: Option<(String, String)>,
+    marker: Option<&str>,
+) -> Authority {
+    let Some(owner) = owner else {
+        return Authority::None;
+    };
+    let same_tree = match (owner["device"].as_str(), owner["inode"].as_str()) {
+        (Some(device), Some(inode)) => found.is_some_and(|(d, i)| d == device && i == inode),
+        _ => true,
+    };
+    if owner["repository_id"] == repository
+        && same_tree
+        && marker.is_some()
+        && marker == owner["token"].as_str()
+    {
+        Authority::Verified
+    } else {
+        Authority::Changed
+    }
+}
+
+/// `worktree.remove` needs verified authority, like every other lifecycle
+/// effect on an owned tree.
+pub fn may_remove(authority: Authority) -> Result<()> {
+    match authority {
+        Authority::Verified => Ok(()),
+        Authority::None => {
+            bail!("This external worktree has no ADE removal authority; explicitly adopt it first.")
+        }
+        Authority::Changed => {
+            bail!("Worktree removal authority changed; refresh and inspect before retrying")
+        }
+    }
+}
+
+/// How an operation that decides from this profile's terminal leases needs
+/// them refreshed first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeaseRefresh {
+    /// An effect: a failed refresh refuses it, since a live shell the lease
+    /// map missed would otherwise go unseen.
+    Required,
+    /// A query: a failed refresh leaves the older leases, which can only
+    /// report more active work than there is.
+    BestEffort,
+}
+
+/// Operations that decide from this profile's terminal leases, so the daemon
+/// drops the leases of exited shells before running them. Without this, a
+/// tree whose last shell exited still reads as active work.
+pub fn needs_live_leases(op: &str) -> Option<LeaseRefresh> {
+    match op {
+        "worktree.remove" | "worktree.cleanup" | "worktree.carry" | "worktree.adopt" => {
+            Some(LeaseRefresh::Required)
+        }
+        "worktree.cleanup.plan" | "worktree.carry.preview" => Some(LeaseRefresh::BestEffort),
+        _ => None,
+    }
+}
+
 /// What the host registry says about a tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Claims {
@@ -367,6 +438,73 @@ pub fn output_tail(bytes: &[u8], cap: usize) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_operation_that_reads_active_work_refreshes_leases_first() {
+        // Before the fix only worktree.remove refreshed, so cleanup, carry
+        // and adopt saw a lease whose shell had exited as active work.
+        for op in [
+            "worktree.remove",
+            "worktree.cleanup",
+            "worktree.carry",
+            "worktree.adopt",
+        ] {
+            assert_eq!(needs_live_leases(op), Some(LeaseRefresh::Required), "{op}");
+        }
+        for op in ["worktree.cleanup.plan", "worktree.carry.preview"] {
+            assert_eq!(
+                needs_live_leases(op),
+                Some(LeaseRefresh::BestEffort),
+                "{op}"
+            );
+        }
+        for op in ["worktree.list", "worktree.create", "session.subscribe"] {
+            assert_eq!(needs_live_leases(op), None, "{op}");
+        }
+    }
+
+    #[test]
+    fn removal_needs_the_recorded_identity_not_just_the_marker() {
+        let owner = serde_json::json!({"repository_id": "repo", "marker": "/admin/marker",
+            "token": "t", "device": "1", "inode": "42"});
+        let same = || Some(("1".to_owned(), "42".to_owned()));
+        let verified = authority_of(Some(&owner), "repo", same(), Some("t"));
+        assert_eq!(verified, Authority::Verified);
+        assert!(may_remove(verified).is_ok());
+        // `mv T T.old && cp -a T.old T`: the copy keeps the .git file, so the
+        // admin dir and marker still match, but the directory is new.
+        let replaced = authority_of(
+            Some(&owner),
+            "repo",
+            Some(("1".to_owned(), "77".to_owned())),
+            Some("t"),
+        );
+        assert_eq!(replaced, Authority::Changed);
+        assert!(may_remove(replaced).is_err());
+        assert_eq!(
+            authority_of(Some(&owner), "repo", None, Some("t")),
+            Authority::Changed
+        );
+        assert_eq!(
+            authority_of(Some(&owner), "repo", same(), Some("other")),
+            Authority::Changed
+        );
+        assert_eq!(
+            authority_of(Some(&owner), "elsewhere", same(), Some("t")),
+            Authority::Changed
+        );
+        assert_eq!(
+            authority_of(None, "repo", same(), Some("t")),
+            Authority::None
+        );
+        assert!(may_remove(Authority::None).is_err());
+        // A record from before identities were kept compares none.
+        let legacy = serde_json::json!({"repository_id": "repo", "token": "t"});
+        assert_eq!(
+            authority_of(Some(&legacy), "repo", None, Some("t")),
+            Authority::Verified
+        );
+    }
 
     fn naming<'a>(name: Option<&'a str>, branch: Option<&'a str>) -> Naming<'a> {
         Naming {
