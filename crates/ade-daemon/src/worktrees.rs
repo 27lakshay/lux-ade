@@ -7,13 +7,17 @@ use ade_core::contract::resources::{
     ClaimMode, ClaimPurpose, ResourcesClaimResolveRequest, ResourcesInspectRequest,
     ResourcesRegistryAcceptRequest,
 };
+use ade_core::contract::resources::{ClaimState, RegistryState};
 use ade_core::contract::worktrees::{
-    WorktreeAdoptRequest, WorktreeConfigureRequest, WorktreeGetRequest, WorktreeItem,
-    WorktreeOperation as Operation, WorktreeOperationReply, WorktreeOperationRequest,
-    WorktreeOperationStatus as JobStatus, WorktreeRebindCandidate, WorktreeRebindCatalog,
-    WorktreeRebindListRequest, WorktreeRebindRequest, WorktreeRefreshRequest,
-    WorktreeRemoveRequest, WorktreeRepository, WorktreeRepositoryRequest, WorktreeState,
-    WorktreeSwitchRequest,
+    BranchPolicy, CleanupBlocker, CleanupOutcome, HookPhase, SetupState, WorktreeAdoptRequest,
+    WorktreeArchive, WorktreeArchiveEntry, WorktreeArchivedRequest, WorktreeCleanupCandidate,
+    WorktreeCleanupPlan, WorktreeCleanupPlanRequest, WorktreeCleanupRequest, WorktreeCleanupTree,
+    WorktreeConfigureRequest, WorktreeCreateRequest, WorktreeGetRequest, WorktreeHookRun,
+    WorktreeItem, WorktreeOperation as Operation, WorktreeOperationReply, WorktreeOperationRequest,
+    WorktreeOperationStatus as JobStatus, WorktreePhase, WorktreeRebindCandidate,
+    WorktreeRebindCatalog, WorktreeRebindListRequest, WorktreeRebindRequest,
+    WorktreeRefreshRequest, WorktreeRemoveRequest, WorktreeRepository, WorktreeRepositoryRequest,
+    WorktreeSetupRequest, WorktreeState, WorktreeSwitchRequest,
 };
 use ade_core::error::{HostResourcesUnavailable, LifecycleFailure};
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -38,6 +42,10 @@ use std::{
 };
 
 pub use ade_core::worktrees::Config;
+
+mod hooks;
+mod policy;
+use hooks::{HookContext, last_verdict, run_hooks};
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Repository {
@@ -141,6 +149,9 @@ enum Effect {
     Switch(WorktreeSwitchRequest),
     Remove(WorktreeRemoveRequest),
     Refresh(WorktreeRefreshRequest),
+    Create(WorktreeCreateRequest),
+    Setup(WorktreeSetupRequest),
+    Cleanup(WorktreeCleanupRequest),
 }
 
 impl Effect {
@@ -149,6 +160,9 @@ impl Effect {
             "worktree.switch" => Self::Switch(decode(request)?),
             "worktree.remove" => Self::Remove(decode(request)?),
             "worktree.refresh" => Self::Refresh(decode(request)?),
+            "worktree.create" => Self::Create(decode(request)?),
+            "worktree.setup" => Self::Setup(decode(request)?),
+            "worktree.cleanup" => Self::Cleanup(decode(request)?),
             _ => bail!("Unknown worktree operation"),
         })
     }
@@ -157,6 +171,9 @@ impl Effect {
             Self::Switch(request) => &request.repository_id,
             Self::Remove(request) => &request.repository_id,
             Self::Refresh(request) => &request.repository_id,
+            Self::Create(request) => &request.repository_id,
+            Self::Setup(request) => &request.repository_id,
+            Self::Cleanup(request) => &request.repository_id,
         }
     }
     fn operation_id(&self) -> &str {
@@ -164,6 +181,9 @@ impl Effect {
             Self::Switch(request) => &request.operation_id,
             Self::Remove(request) => &request.operation_id,
             Self::Refresh(request) => &request.operation_id,
+            Self::Create(request) => &request.operation_id,
+            Self::Setup(request) => &request.operation_id,
+            Self::Cleanup(request) => &request.operation_id,
         }
     }
     /// The canonical payload the receipt fingerprints. `request_id` and
@@ -173,7 +193,181 @@ impl Effect {
             Self::Switch(request) => serde_json::to_value(request)?,
             Self::Remove(request) => serde_json::to_value(request)?,
             Self::Refresh(request) => serde_json::to_value(request)?,
+            Self::Create(request) => serde_json::to_value(request)?,
+            Self::Setup(request) => serde_json::to_value(request)?,
+            Self::Cleanup(request) => serde_json::to_value(request)?,
         })
+    }
+}
+
+/// What admission decided and reserved for an effect's worker thread.
+struct Admitted {
+    remove_path: Option<PathBuf>,
+    remove_identity: Option<(String, String)>,
+    remove_claim: Option<String>,
+    setup_path: Option<PathBuf>,
+    use_claim: Option<String>,
+    cleanup: Vec<PathBuf>,
+}
+
+/// A tree's lifecycle phase, keyed by its canonical path in the `trees`
+/// table. Only trees ADE created or ran hooks in have one.
+#[derive(Clone, Serialize, Deserialize)]
+struct TreeRecord {
+    repository_id: String,
+    binding_generation: i64,
+    branch: Option<String>,
+    phase: WorktreePhase,
+    /// The operation that last changed the phase.
+    operation_id: String,
+    updated_at: i64,
+}
+
+/// `worktree_state` leaves hook output to `worktree.operation`.
+fn strip_hook_output(hooks: Option<&mut Value>) {
+    for run in hooks.and_then(Value::as_array_mut).into_iter().flatten() {
+        if let Some(run) = run.as_object_mut() {
+            run.remove("output");
+        }
+    }
+}
+
+fn read_tree(db: &Connection, path: &str) -> Result<Option<TreeRecord>> {
+    let row: Option<String> = db
+        .query_row("SELECT data FROM trees WHERE id=?1", [path], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    row.map(|row| Ok(serde_json::from_str(&row)?)).transpose()
+}
+
+/// The phase of a tree in this repository binding; a record left by another
+/// binding does not describe it.
+fn tree_phase(
+    db: &Connection,
+    repository: &str,
+    binding_generation: i64,
+    path: &str,
+) -> Result<Option<WorktreePhase>> {
+    Ok(read_tree(db, path)?
+        .filter(|tree| {
+            tree.repository_id == repository && tree.binding_generation == binding_generation
+        })
+        .map(|tree| tree.phase))
+}
+
+/// ADE's removal authority over `path`, from its ownership record and marker.
+fn authority(db: &Connection, repository: &str, path: &str) -> Result<policy::Authority> {
+    let owner: Option<String> = db
+        .query_row("SELECT data FROM owned WHERE id=?1", [path], |r| r.get(0))
+        .optional()?;
+    let Some(owner) = owner else {
+        return Ok(policy::Authority::None);
+    };
+    let owner: Value = serde_json::from_str(&owner)?;
+    Ok(
+        if owner["repository_id"] == repository
+            && std::fs::read_to_string(owner["marker"].as_str().unwrap_or(""))
+                .ok()
+                .as_deref()
+                == owner["token"].as_str()
+        {
+            policy::Authority::Verified
+        } else {
+            policy::Authority::Changed
+        },
+    )
+}
+
+/// Parses `git worktree list --porcelain -z` into listing items.
+fn parse_listing(text: &str) -> Result<Value> {
+    let mut items = Vec::new();
+    let mut item = serde_json::Map::new();
+    for line in text.split('\0') {
+        if line.is_empty() {
+            if !item.is_empty() {
+                ensure!(
+                    item.contains_key("path"),
+                    "Git worktree listing omitted a path"
+                );
+                items.push(Value::Object(std::mem::take(&mut item)));
+            }
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("worktree ") {
+            ensure!(item.is_empty(), "Invalid Git worktree listing");
+            item.insert("path".into(), json!(path));
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            item.insert("branch".into(), json!(branch));
+        } else if line == "detached" {
+            item.insert("detached".into(), json!(true));
+        } else if line == "bare" {
+            item.insert("bare".into(), json!(true));
+        } else if line == "locked" || line.starts_with("locked ") {
+            item.insert("locked".into(), json!(true));
+            if let Some(reason) = line.strip_prefix("locked ") {
+                item.insert("lock_reason".into(), json!(reason));
+            }
+        } else if line == "prunable" || line.starts_with("prunable ") {
+            item.insert("prunable".into(), json!(true));
+        }
+    }
+    ensure!(item.is_empty(), "Unterminated Git worktree listing");
+    Ok(json!(items))
+}
+
+/// A failed or uncertain hook, recorded with its own code and recovery. The
+/// message names the hook, never its output.
+#[derive(Debug)]
+struct HookFailure {
+    phase: HookPhase,
+    name: String,
+    uncertain: bool,
+}
+impl std::fmt::Display for HookFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let phase = match self.phase {
+            HookPhase::Setup => "Setup",
+            HookPhase::Teardown => "Teardown",
+        };
+        if self.uncertain {
+            write!(
+                f,
+                "{phase} hook {} did not finish cleanly; its processes may still run. The tree was kept; inspect it and its host resource claim before retrying",
+                self.name
+            )
+        } else {
+            write!(
+                f,
+                "{phase} hook {} failed. The tree was kept; read the hook output with worktree.operation, then retry",
+                self.name
+            )
+        }
+    }
+}
+impl std::error::Error for HookFailure {}
+
+/// Records an operation failure; a hook failure gets its own code.
+fn record_outcome(job: &mut Operation, error: anyhow::Error) {
+    let hook = error.downcast_ref::<HookFailure>().map(|failure| {
+        let code = match (failure.phase, failure.uncertain) {
+            (_, true) => "hook_outcome_unknown",
+            (HookPhase::Setup, false) => "setup_hook_failed",
+            (HookPhase::Teardown, false) => "teardown_hook_failed",
+        };
+        let recovery = match failure.phase {
+            HookPhase::Setup => "rerun_setup",
+            HookPhase::Teardown => "inspect_tree_before_removal",
+        };
+        (failure.to_string(), code, recovery)
+    });
+    match hook {
+        Some((message, code, recovery)) => {
+            job.error = Some(message);
+            job.code = Some(code.into());
+            job.recovery = Some(recovery.into());
+        }
+        None => record_failure(job, error),
     }
 }
 
@@ -279,6 +473,25 @@ fn setup_state(
     branch: &str,
     path: &str,
 ) -> Result<&'static str> {
+    // A tree with a recorded phase is ready only in the `ready` phase. A
+    // path inside the tree takes the tree's phase.
+    let mut phase = None;
+    for ancestor in Path::new(path).ancestors() {
+        if let Some(ancestor) = ancestor.to_str()
+            && let Some(found) = tree_phase(db, repository, binding_generation, ancestor)?
+        {
+            phase = Some(found);
+            break;
+        }
+    }
+    if let Some(phase) = phase {
+        return Ok(match policy::readiness(phase) {
+            SetupState::Ready => "ready",
+            SetupState::Preparing => "preparing",
+            SetupState::Interrupted => "interrupted",
+            SetupState::Failed => "failed",
+        });
+    }
     let receipt: Option<String> = db.query_row(
         "SELECT data FROM jobs WHERE json_extract(data,'$.repository_id')=?1 AND COALESCE(json_extract(data,'$.binding_generation'),0)=?2 AND json_extract(data,'$.request.op')='worktree.switch' AND (json_extract(data,'$.request.target')=?3 OR json_extract(data,'$.request.target')=?4 OR json_extract(data,'$.worktree_path')=?4) ORDER BY rowid DESC LIMIT 1",
         params![repository, binding_generation, branch, path], |row| row.get(0),
@@ -392,11 +605,52 @@ fn e2e_pause(directory: &Path) -> Result<()> {
     Ok(())
 }
 pub(crate) fn run_input(
-    mut command: Command,
+    command: Command,
     timeout: u64,
     lock: Option<&File>,
     input: Option<Vec<u8>>,
 ) -> Result<Value> {
+    let captured = capture(command, timeout, lock, input, 4 * 1024 * 1024, false)?;
+    ensure!(
+        captured.pipes_closed,
+        LifecycleFailure::LifecycleOutcomeUnknown
+    );
+    ensure!(
+        !captured.truncated,
+        LifecycleFailure::LifecycleInvalidOutput
+    );
+    Ok(
+        json!({"exit_code":captured.code,"stdout":String::from_utf8(captured.stdout).context("Git output contains non-UTF-8 paths or text")?,"stderr":String::from_utf8_lossy(&captured.stderr),"elapsed_ms":captured.elapsed_ms}),
+    )
+}
+
+/// What a supervised process left behind. `code` is `None` when it was
+/// killed or its state could not be read.
+struct Captured {
+    code: Option<i32>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    /// Output beyond the cap was dropped.
+    truncated: bool,
+    timed_out: bool,
+    /// Both pipes reached end of file within two seconds of exit. When false,
+    /// some descendant still holds them and the output is empty.
+    pipes_closed: bool,
+    elapsed_ms: u64,
+}
+
+/// Runs a command in its own process group, draining both pipes
+/// concurrently and keeping at most `cap` bytes of each: the first bytes, or
+/// with `tail` the last. Only a failure to start is an error; after that the
+/// outcome is always reported, never assumed.
+fn capture(
+    mut command: Command,
+    timeout: u64,
+    lock: Option<&File>,
+    input: Option<Vec<u8>>,
+    cap: usize,
+    tail: bool,
+) -> Result<Captured> {
     if input.is_some() {
         command.stdin(Stdio::piped());
     }
@@ -434,6 +688,8 @@ pub(crate) fn run_input(
         .map_err(|_| LifecycleFailure::LifecycleUnavailable)?;
     fn drain(
         mut pipe: impl Read + Send + 'static,
+        cap: usize,
+        tail: bool,
     ) -> std::thread::JoinHandle<std::io::Result<(Vec<u8>, bool)>> {
         std::thread::spawn(move || {
             let mut kept = Vec::new();
@@ -444,9 +700,22 @@ pub(crate) fn run_input(
                 if n == 0 {
                     break;
                 }
-                let retain = n.min((4 * 1024 * 1024_usize).saturating_sub(kept.len()));
-                kept.extend_from_slice(&buf[..retain]);
-                truncated |= retain < n;
+                if tail {
+                    kept.extend_from_slice(&buf[..n]);
+                    // Trim in batches so a chatty hook costs linear time.
+                    if kept.len() > cap * 2 {
+                        kept.drain(..kept.len() - cap);
+                        truncated = true;
+                    }
+                } else {
+                    let retain = n.min(cap.saturating_sub(kept.len()));
+                    kept.extend_from_slice(&buf[..retain]);
+                    truncated |= retain < n;
+                }
+            }
+            if kept.len() > cap {
+                kept.drain(..kept.len() - cap);
+                truncated = true;
             }
             Ok((kept, truncated))
         })
@@ -455,18 +724,29 @@ pub(crate) fn run_input(
         let mut pipe = child.stdin.take().unwrap();
         std::thread::spawn(move || pipe.write_all(&bytes))
     });
-    let stdout = drain(child.stdout.take().unwrap());
-    let stderr = drain(child.stderr.take().unwrap());
+    let stdout = drain(child.stdout.take().unwrap(), cap, tail);
+    let stderr = drain(child.stderr.take().unwrap(), cap, tail);
     let start = Instant::now();
+    let mut timed_out = false;
     let code = loop {
-        if let Some(status) = child.try_wait()? {
-            break status.code();
+        match child.try_wait() {
+            Ok(Some(status)) => break status.code(),
+            Ok(None) => {}
+            // The state cannot be read: stop the group and report no code.
+            Err(_) => {
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.wait();
+                break None;
+            }
         }
         if start.elapsed() > Duration::from_secs(timeout) {
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
             let _ = child.wait();
+            timed_out = true;
             break None;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -477,28 +757,38 @@ pub(crate) fn run_input(
     while (!stdout.is_finished() || !stderr.is_finished()) && Instant::now() < pipe_deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
-    ensure!(
-        stdout.is_finished() && stderr.is_finished(),
-        LifecycleFailure::LifecycleOutcomeUnknown
-    );
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    if !stdout.is_finished() || !stderr.is_finished() {
+        return Ok(Captured {
+            code,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            truncated: false,
+            timed_out,
+            pipes_closed: false,
+            elapsed_ms,
+        });
+    }
     if let Some(writer) = writer
         && writer.is_finished()
     {
         let _ = writer.join();
     }
-    let (out, too_large) = stdout
+    let (out, out_cut) = stdout
         .join()
         .map_err(|_| anyhow!("stdout reader failed"))??;
-    let (err, err_large) = stderr
+    let (err, err_cut) = stderr
         .join()
         .map_err(|_| anyhow!("stderr reader failed"))??;
-    ensure!(
-        !too_large && !err_large,
-        LifecycleFailure::LifecycleInvalidOutput
-    );
-    Ok(
-        json!({"exit_code":code,"stdout":String::from_utf8(out).context("Git output contains non-UTF-8 paths or text")?,"stderr":String::from_utf8_lossy(&err),"elapsed_ms":start.elapsed().as_millis() as u64}),
-    )
+    Ok(Captured {
+        code,
+        stdout: out,
+        stderr: err,
+        truncated: out_cut || err_cut,
+        timed_out,
+        pipes_closed: true,
+        elapsed_ms,
+    })
 }
 pub(crate) fn successful(output: &Value) -> Result<&str> {
     match output["exit_code"].as_i64() {
@@ -522,14 +812,9 @@ pub(crate) fn git(root: &str, args: &[&str]) -> Result<String> {
     Ok(successful(&o)?.trim_end().to_owned())
 }
 
-fn creation_path(repo: &Repository, request: &Value) -> Result<PathBuf> {
-    let target = field(request, "target")?;
-    ensure!(!target.starts_with('-'), "Invalid branch name");
-    let slug = target.replace('/', "-");
-    ensure!(
-        slug != "." && slug != ".." && !slug.is_empty(),
-        "Invalid branch name"
-    );
+/// The canonical directory new trees go in: the configured one, else the
+/// primary checkout's parent.
+fn worktree_parent(repo: &Repository) -> Result<PathBuf> {
     let default_parent = Path::new(&repo.root)
         .parent()
         .context("Repository has no parent")?;
@@ -543,6 +828,56 @@ fn creation_path(repo: &Repository, request: &Value) -> Result<PathBuf> {
         .canonicalize()
         .context("Worktree directory is unavailable")?;
     ensure!(parent.is_dir(), "Worktree directory is not a directory");
+    Ok(parent)
+}
+
+/// Resolves `worktree.create` into the switch form the creation path runs:
+/// a named branch, its base and its path, all recorded before Git runs.
+fn creation_spec(repo: &Repository, request: &Value, branches: &[String]) -> Result<Value> {
+    let create: WorktreeCreateRequest = decode(request)?;
+    let repository = Path::new(&repo.root)
+        .file_name()
+        .context("Repository has no directory name")?
+        .to_string_lossy()
+        .into_owned();
+    let parent = worktree_parent(repo)?;
+    let named = policy::resolve_name(
+        &policy::Naming {
+            repository: &repository,
+            prefix: repo.config.branch_prefix.as_deref(),
+            name: create.name.as_deref(),
+            branch: create.branch.as_deref(),
+        },
+        branches,
+        // An explicit path replaces the generated directory.
+        |directory| {
+            create.path.is_none() && std::fs::symlink_metadata(parent.join(directory)).is_ok()
+        },
+    )?;
+    let base = create
+        .base
+        .or_else(|| repo.config.default_base.clone())
+        .unwrap_or_else(|| "HEAD".into());
+    let path = match create.path {
+        Some(path) => path,
+        None => parent
+            .join(&named.directory)
+            .to_str()
+            .context("Path must be UTF-8")?
+            .to_owned(),
+    };
+    Ok(json!({"target": named.branch, "create": true, "base": base, "path": path}))
+}
+
+fn creation_path(repo: &Repository, request: &Value) -> Result<PathBuf> {
+    let target = field(request, "target")?;
+    ensure!(!target.starts_with('-'), "Invalid branch name");
+    let slug = target.replace('/', "-");
+    ensure!(
+        slug != "." && slug != ".." && !slug.is_empty(),
+        "Invalid branch name"
+    );
+    let parent = worktree_parent(repo)?;
     let candidate = if let Some(path) = request["path"].as_str() {
         let path = PathBuf::from(path);
         ensure!(path.is_absolute(), "Worktree path must be absolute");
@@ -612,6 +947,9 @@ impl Worktrees {
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS owned(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
+        // Tree phases and archive records need no schema version: both tables
+        // are new and additive, and older builds ignore them.
+        db.execute_batch("CREATE TABLE IF NOT EXISTS trees(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS archived(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
         if version < 2 {
             let tx = rusqlite::Transaction::new_unchecked(
                 &db,
@@ -689,6 +1027,21 @@ impl Worktrees {
                 put(&tx, LEDGER, &op.id, &op)?;
             }
             reconcile_receipt(&tx, &op)?;
+        }
+        // No lifecycle work survives a daemon stop, so a phase still in
+        // progress did not finish.
+        let trees: Vec<(String, String)> = tx
+            .prepare("SELECT id,data FROM trees")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (path, row) in trees {
+            let mut tree: TreeRecord = serde_json::from_str(&row)?;
+            let settled = policy::on_restart(tree.phase);
+            if settled != tree.phase {
+                tree.phase = settled;
+                tree.updated_at = now_ms();
+                put(&tx, "trees", &path, &tree)?;
+            }
         }
         receipts::prune(&tx, now_ms())?;
         tx.commit()?;
@@ -939,39 +1292,137 @@ impl Worktrees {
             repo.config.timeout_seconds,
             Some(lock),
         )?;
-        let mut items = Vec::new();
-        let mut item = serde_json::Map::new();
-        for line in successful(&result)?.split('\0') {
-            if line.is_empty() {
-                if !item.is_empty() {
-                    ensure!(
-                        item.contains_key("path"),
-                        "Git worktree listing omitted a path"
-                    );
-                    items.push(Value::Object(std::mem::take(&mut item)));
-                }
-                continue;
-            }
-            if let Some(path) = line.strip_prefix("worktree ") {
-                ensure!(item.is_empty(), "Invalid Git worktree listing");
-                item.insert("path".into(), json!(path));
-            } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
-                item.insert("branch".into(), json!(branch));
-            } else if line == "detached" {
-                item.insert("detached".into(), json!(true));
-            } else if line == "bare" {
-                item.insert("bare".into(), json!(true));
-            } else if line == "locked" || line.starts_with("locked ") {
-                item.insert("locked".into(), json!(true));
-                if let Some(reason) = line.strip_prefix("locked ") {
-                    item.insert("lock_reason".into(), json!(reason));
-                }
-            } else if line == "prunable" || line.starts_with("prunable ") {
-                item.insert("prunable".into(), json!(true));
-            }
+        parse_listing(successful(&result)?)
+    }
+    /// Local branch names, read under the repository lock.
+    fn branches(&self, repo: &Repository, lock: &File) -> Result<Vec<String>> {
+        let result = run(
+            self.command_for(
+                repo,
+                &[
+                    "for-each-ref".into(),
+                    "--format=%(refname:short)".into(),
+                    "refs/heads".into(),
+                ],
+            )?,
+            repo.config.timeout_seconds,
+            Some(lock),
+        )?;
+        Ok(successful(&result)?
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
+    fn put_tree(&self, path: &str, tree: &TreeRecord) -> Result<()> {
+        put(&self.data.lock().unwrap().db, "trees", path, tree)
+    }
+    fn set_phase(
+        &self,
+        repo: &Repository,
+        job: &Operation,
+        path: &str,
+        branch: Option<&str>,
+        phase: WorktreePhase,
+    ) -> Result<()> {
+        self.put_tree(
+            path,
+            &TreeRecord {
+                repository_id: repo.id.clone(),
+                binding_generation: repo.binding_generation,
+                branch: branch.map(str::to_owned),
+                phase,
+                operation_id: job.id.clone(),
+                updated_at: now_ms(),
+            },
+        )
+    }
+    fn hook_context<'a>(
+        &'a self,
+        repo: &'a Repository,
+        job: &'a Operation,
+        tree: &'a Path,
+        branch: Option<&'a str>,
+        lock: &'a File,
+    ) -> HookContext<'a> {
+        HookContext {
+            worker: &self.worker,
+            tree,
+            branch,
+            root: &repo.root,
+            operation_id: &job.id,
+            lock,
         }
-        ensure!(item.is_empty(), "Unterminated Git worktree listing");
-        Ok(json!(items))
+    }
+    /// Runs the setup hooks in `path` and records the phase they leave. The
+    /// tree is `setting_up` durably before the first hook starts. Returns
+    /// the runs and whether processes may outlive them.
+    fn setup_tree(
+        &self,
+        repo: &Repository,
+        job: &Operation,
+        lock: &File,
+        path: &Path,
+        branch: Option<&str>,
+    ) -> Result<(Vec<WorktreeHookRun>, Result<()>)> {
+        let text = path.to_str().context("Path must be UTF-8")?;
+        if repo.config.setup.is_empty() {
+            self.set_phase(repo, job, text, branch, WorktreePhase::Ready)?;
+            return Ok((Vec::new(), Ok(())));
+        }
+        self.set_phase(repo, job, text, branch, WorktreePhase::SettingUp)?;
+        let runs = run_hooks(
+            &repo.config.setup,
+            HookPhase::Setup,
+            &self.hook_context(repo, job, path, branch, lock),
+        );
+        let last = last_verdict(&runs);
+        self.set_phase(repo, job, text, branch, policy::after_setup(last))?;
+        let outcome = match runs.last() {
+            Some(run) if run.verdict != ade_core::contract::worktrees::HookVerdict::Succeeded => {
+                Err(HookFailure {
+                    phase: HookPhase::Setup,
+                    name: run.name.clone(),
+                    uncertain: policy::hook_uncertain(run.verdict),
+                }
+                .into())
+            }
+            _ => Ok(()),
+        };
+        Ok((runs, outcome))
+    }
+    /// Runs the teardown hooks in `path`. On success the tree stays
+    /// `tearing_down` for the removal that follows; on failure it records the
+    /// phase the failure leaves.
+    fn teardown_tree(
+        &self,
+        repo: &Repository,
+        job: &Operation,
+        lock: &File,
+        path: &Path,
+        branch: Option<&str>,
+    ) -> Result<(Vec<WorktreeHookRun>, Result<()>)> {
+        let text = path.to_str().context("Path must be UTF-8")?;
+        self.set_phase(repo, job, text, branch, WorktreePhase::TearingDown)?;
+        let runs = run_hooks(
+            &repo.config.teardown,
+            HookPhase::Teardown,
+            &self.hook_context(repo, job, path, branch, lock),
+        );
+        let outcome = match policy::after_teardown(last_verdict(&runs)) {
+            None => Ok(()),
+            Some(phase) => {
+                self.set_phase(repo, job, text, branch, phase)?;
+                let run = runs.last().context("Teardown failed without a hook run")?;
+                Err(HookFailure {
+                    phase: HookPhase::Teardown,
+                    name: run.name.clone(),
+                    uncertain: policy::hook_uncertain(run.verdict),
+                }
+                .into())
+            }
+        };
+        Ok((runs, outcome))
     }
     fn snapshot(&self, id: &str) -> Result<Value> {
         let d = self.data.lock().unwrap();
@@ -984,6 +1435,12 @@ impl Worktrees {
                 if let Some(result) = operation.result.as_object_mut() {
                     result.remove("stdout");
                     result.remove("stderr");
+                    strip_hook_output(result.get_mut("hooks"));
+                    if let Some(trees) = result.get_mut("trees").and_then(Value::as_array_mut) {
+                        for tree in trees {
+                            strip_hook_output(tree.get_mut("hooks"));
+                        }
+                    }
                 }
                 if let Some(error) = &mut operation.error {
                     *error = error.chars().take(4096).collect();
@@ -994,7 +1451,9 @@ impl Worktrees {
         let mut cache = r.cache.clone();
         if let Some(items) = cache.as_array_mut() {
             for item in items {
-                if let Some(path) = item["path"].as_str() {
+                if let Some(path) = item["path"].as_str().map(str::to_owned) {
+                    let path = path.as_str();
+                    let phase = tree_phase(&d.db, id, r.binding_generation, path)?;
                     let readiness = setup_state(
                         &d.db,
                         id,
@@ -1020,6 +1479,9 @@ impl Worktrees {
                     } else {
                         readiness
                     });
+                    if let Some(phase) = phase {
+                        item["phase"] = json!(phase);
+                    }
                 }
             }
         }
@@ -1254,6 +1716,11 @@ impl Worktrees {
             "DELETE FROM owned WHERE json_extract(data,'$.repository_id')=?1",
             [id],
         )?;
+        // Phases describe the old binding's trees, not the new checkout's.
+        tx.execute(
+            "DELETE FROM trees WHERE json_extract(data,'$.repository_id')=?1",
+            [id],
+        )?;
         tx.commit()?;
         drop(d);
         self.snapshot(id)
@@ -1332,6 +1799,14 @@ impl Worktrees {
                     configure.config.into(),
                 )
             }
+            "worktree.cleanup.plan" => {
+                let plan: WorktreeCleanupPlanRequest = decode(request)?;
+                self.cleanup_plan(valid("repository_id", &plan.repository_id)?)
+            }
+            "worktree.archived" => {
+                let archived: WorktreeArchivedRequest = decode(request)?;
+                self.archived(valid("repository_id", &archived.repository_id)?)
+            }
             "worktree.adopt" => {
                 let adopt: WorktreeAdoptRequest = decode(request)?;
                 self.adopt(
@@ -1406,10 +1881,7 @@ impl Worktrees {
         self.snapshot(&r.id)
     }
     fn configure(&self, id: &str, config: Config) -> Result<Value> {
-        ensure!(
-            (5..=300).contains(&config.timeout_seconds),
-            "Timeout must be 5–300 seconds"
-        );
+        policy::validate_config(&config)?;
         if let Some(directory) = &config.directory {
             ensure!(
                 Path::new(directory).is_absolute() && Path::new(directory).is_dir(),
@@ -1518,7 +1990,60 @@ impl Worktrees {
         ensure!(d.busy.len() < 8, "Too many lifecycle operations");
         let mut remove_path = None;
         let mut remove_identity = None;
+        let mut setup_path = None;
+        let mut cleanup = Vec::new();
         match &effect {
+            Effect::Create(create) => {
+                for (key, value) in [
+                    ("name", &create.name),
+                    ("branch", &create.branch),
+                    ("base", &create.base),
+                    ("path", &create.path),
+                ] {
+                    if let Some(value) = value {
+                        ensure!(
+                            valid(key, value)?.len() <= 1024 && !value.starts_with('-'),
+                            "Invalid {key}"
+                        );
+                    }
+                }
+                ensure!(
+                    create.name.is_none() || create.branch.is_none(),
+                    "Name a workspace or a branch, not both"
+                );
+            }
+            Effect::Setup(setup) => {
+                let path = std::fs::canonicalize(valid("path", &setup.path)?)?;
+                let text = path.to_str().context("Path must be UTF-8")?;
+                ensure!(
+                    path != Path::new(&repo.root),
+                    "Setup hooks run only in linked trees"
+                );
+                ensure!(
+                    authority(&d.db, id, text)? == policy::Authority::Verified,
+                    "Setup runs only in a tree ADE created or adopted"
+                );
+                policy::may_setup(tree_phase(&d.db, id, repo.binding_generation, text)?)?;
+                setup_path = Some(path);
+            }
+            Effect::Cleanup(request) => {
+                ensure!(
+                    (1..=policy::MAX_CLEANUP_PATHS).contains(&request.paths.len()),
+                    "Cleanup takes 1–{} paths",
+                    policy::MAX_CLEANUP_PATHS
+                );
+                for path in &request.paths {
+                    let path = valid("paths", path)?;
+                    ensure!(
+                        Path::new(path).is_absolute(),
+                        "Cleanup paths must be absolute"
+                    );
+                    // A path that no longer resolves is reported, not skipped silently.
+                    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
+                    ensure!(!cleanup.contains(&path), "Cleanup paths repeat");
+                    cleanup.push(path);
+                }
+            }
             Effect::Switch(switch) => {
                 let target = valid("target", &switch.target)?;
                 ensure!(!target.starts_with('-'), "Target cannot begin with '-'");
@@ -1576,8 +2101,18 @@ impl Worktrees {
             )?),
             None => None,
         };
+        // Setup hooks use the tree like any other work does.
+        let use_claim = match &setup_path {
+            Some(path) => Some(self.resources.acquire(
+                Target::Existing(path),
+                ClaimMode::Shared,
+                ClaimPurpose::Use,
+                Some(operation_id),
+            )?),
+            None => None,
+        };
         let release_claim = || {
-            if let Some(claim) = &remove_claim {
+            for claim in [&remove_claim, &use_claim].into_iter().flatten() {
                 self.resources.settle(claim, Settlement::Release);
             }
         };
@@ -1604,6 +2139,7 @@ impl Worktrees {
             request: request.clone(),
             worktree_path: remove_path
                 .as_ref()
+                .or(setup_path.as_ref())
                 .map(|path| path.to_string_lossy().into_owned()),
             status: JobStatus::Running,
             result: Value::Null,
@@ -1635,15 +2171,138 @@ impl Worktrees {
         if let Some(path) = &remove_path {
             d.removing.insert(path.clone());
         }
+        // New leases inside a tree being cleaned up are refused from here on.
+        d.removing.extend(cleanup.iter().cloned());
         d.busy.insert(id.into());
         drop(d);
         let hub = self.clone();
+        let admitted = Admitted {
+            remove_path,
+            remove_identity,
+            remove_claim,
+            setup_path,
+            use_claim,
+            cleanup,
+        };
         std::thread::spawn(move || {
-            hub.execute(repo, job, lock, remove_path, remove_identity, remove_claim);
+            hub.execute(repo, job, lock, admitted);
         });
         self.snapshot(id)
     }
-    fn execute(
+    fn execute(&self, repo: Repository, job: Operation, lock: File, admitted: Admitted) {
+        let Admitted {
+            remove_path,
+            remove_identity,
+            remove_claim,
+            setup_path,
+            use_claim,
+            cleanup,
+        } = admitted;
+        if let Some(path) = setup_path {
+            return self.execute_setup(repo, job, lock, path, use_claim);
+        }
+        if job.request["op"] == "worktree.cleanup" {
+            return self.execute_cleanup(repo, job, lock, cleanup);
+        }
+        self.execute_git(repo, job, lock, remove_path, remove_identity, remove_claim);
+    }
+    /// `worktree.setup`: runs the setup hooks again in an owned tree.
+    fn execute_setup(
+        &self,
+        repo: Repository,
+        mut job: Operation,
+        lock: File,
+        path: PathBuf,
+        claim: Option<String>,
+    ) {
+        let mut runs = Vec::new();
+        let result = (|| -> Result<()> {
+            ensure!(
+                repository_binding_matches(&repo),
+                ade_core::error::NeedsRebind
+            );
+            let listing = self.list(&repo, &lock)?;
+            let text = path.to_str().context("Path must be UTF-8")?;
+            let item = listing
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["path"].as_str() == Some(text))
+                .context("Worktree is absent from Git listing")?;
+            ensure!(
+                item["prunable"] != true,
+                "Worktree is unavailable to Git; refresh and inspect it"
+            );
+            {
+                let d = self.data.lock().unwrap();
+                ensure!(
+                    authority(&d.db, &repo.id, text)? == policy::Authority::Verified,
+                    "Worktree removal authority changed; refresh and inspect before retrying"
+                );
+                policy::may_setup(tree_phase(&d.db, &repo.id, repo.binding_generation, text)?)?;
+            }
+            let (done, outcome) =
+                self.setup_tree(&repo, &job, &lock, &path, item["branch"].as_str())?;
+            runs = done;
+            outcome
+        })();
+        if let Some(claim) = &claim {
+            let settlement = if runs
+                .last()
+                .is_some_and(|run| policy::hook_uncertain(run.verdict))
+            {
+                Settlement::Quarantine("hook_outcome_unknown")
+            } else {
+                Settlement::Release
+            };
+            self.resources.settle(claim, settlement);
+        }
+        job.result = json!({"value": {"path": job.worktree_path}});
+        if !runs.is_empty() {
+            job.result["hooks"] = json!(runs);
+        }
+        self.finish(repo, job, lock, result, None, Vec::new());
+    }
+    /// Records a finished operation: the repository, the ledger row and the
+    /// settled receipt commit together, then the repository is free.
+    fn finish(
+        &self,
+        repo: Repository,
+        mut job: Operation,
+        lock: File,
+        result: Result<()>,
+        status: Option<JobStatus>,
+        removing: Vec<PathBuf>,
+    ) {
+        job.status = status.unwrap_or(if result.is_ok() {
+            JobStatus::Succeeded
+        } else {
+            JobStatus::Failed
+        });
+        if let Err(error) = result {
+            record_outcome(&mut job, error);
+        }
+        job.finished_at = Some(now_ms());
+        unsafe {
+            libc::flock(lock.as_raw_fd(), libc::LOCK_UN);
+        }
+        let mut d = self.data.lock().unwrap();
+        if let Err(e) = (|| -> Result<()> {
+            let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
+            put(&tx, "repositories", &repo.id, &repo)?;
+            put(&tx, LEDGER, &job.id, &job)?;
+            reconcile_receipt(&tx, &job)?;
+            tx.commit()?;
+            Ok(())
+        })() {
+            eprintln!("Could not persist worktree completion: {e}");
+        }
+        d.busy.remove(&repo.id);
+        for path in removing {
+            d.removing.remove(&path);
+        }
+    }
+    fn execute_git(
         &self,
         mut repo: Repository,
         mut job: Operation,
@@ -1657,6 +2316,20 @@ impl Worktrees {
         let mut claim = remove_claim;
         let mut dispatched = false;
         let mut observed = false;
+        // The creation request in switch form; `worktree.create` replaces it
+        // with its resolved names.
+        let creating = matches!(
+            job.request["op"].as_str(),
+            Some("worktree.switch" | "worktree.create")
+        );
+        let mut spec = job.request.clone();
+        let mut resolved: Option<Value> = None;
+        let mut phase_recorded = false;
+        let mut created: Option<PathBuf> = None;
+        let mut removed_head: Option<String> = None;
+        let mut torn_down = false;
+        let mut hooks_uncertain = false;
+        let mut hook_runs: Vec<WorktreeHookRun> = Vec::new();
         let result = (|| -> Result<()> {
             // Recheck after admission and immediately before Git receives
             // the directory. A later external rename remains detectable on the
@@ -1671,17 +2344,31 @@ impl Worktrees {
                 repo.refreshed_at = Some(now_ms());
                 return Ok(());
             }
-            if job.request["op"] == "worktree.switch"
-                && let Some(item) = before.as_array().unwrap().iter().find(|item| {
-                    item["branch"] == job.request["target"] || item["path"] == job.request["target"]
-                })
+            // `worktree.create` resolves its names first and then runs as a
+            // creating switch. The resolved branch, base and path are durable
+            // before Git or any hook runs.
+            if job.request["op"] == "worktree.create" {
+                let branches = self.branches(&repo, &lock)?;
+                spec = creation_spec(&repo, &job.request, &branches)?;
+                job.worktree_path = spec["path"].as_str().map(str::to_owned);
+                resolved = Some(json!({"branch": spec["target"], "base": spec["base"],
+                    "path": spec["path"]}));
+                job.result = json!({"resolved": resolved});
+                put(&self.data.lock().unwrap().db, LEDGER, &job.id, &job)?;
+            }
+            if creating
+                && job.request["op"] == "worktree.switch"
+                && let Some(item) =
+                    before.as_array().unwrap().iter().find(|item| {
+                        item["branch"] == spec["target"] || item["path"] == spec["target"]
+                    })
             {
                 job.worktree_path = Some(field(item, "path")?.into());
                 put(&self.data.lock().unwrap().db, LEDGER, &job.id, &job)?;
             }
             let mut removed_branch = None;
-            let args = if job.request["op"] == "worktree.switch" {
-                let target = field(&job.request, "target")?;
+            let args = if creating {
+                let target = field(&spec, "target")?;
                 git(&repo.root, &["check-ref-format", "--branch", target])?;
                 if let Some(existing) = before
                     .as_array()
@@ -1689,10 +2376,7 @@ impl Worktrees {
                     .iter()
                     .find(|item| item["branch"] == target)
                 {
-                    ensure!(
-                        job.request["create"] != true,
-                        "Branch is already checked out"
-                    );
+                    ensure!(spec["create"] != true, "Branch is already checked out");
                     job.worktree_path = Some(field(existing, "path")?.into());
                     repo.cache = before;
                     repo.refreshed_at = Some(now_ms());
@@ -1700,7 +2384,7 @@ impl Worktrees {
                         json!({"exit_code":0,"value":{"path":job.worktree_path,"existing":true}});
                     return Ok(());
                 }
-                let path = creation_path(&repo, &job.request)?;
+                let path = creation_path(&repo, &spec)?;
                 // Reserve the unborn path host-wide before it is created.
                 claim = Some(self.resources.acquire(
                     Target::Unborn(&path),
@@ -1709,13 +2393,23 @@ impl Worktrees {
                     Some(&job.id),
                 )?);
                 job.worktree_path = Some(path.to_string_lossy().into_owned());
+                // The tree is `creating` before Git runs, so an Agent is
+                // refused until setup has finished.
+                self.set_phase(
+                    &repo,
+                    &job,
+                    path.to_str().context("Path must be UTF-8")?,
+                    Some(target),
+                    WorktreePhase::Creating,
+                )?;
+                phase_recorded = true;
                 let mut a = vec!["worktree".into(), "add".into()];
-                if job.request["create"] == true {
+                if spec["create"] == true {
                     a.extend(["-b".into(), target.into()]);
                 }
                 a.push(path.to_string_lossy().into_owned());
-                if job.request["create"] == true {
-                    let base = job.request["base"].as_str().unwrap_or("HEAD");
+                if spec["create"] == true {
+                    let base = spec["base"].as_str().unwrap_or("HEAD");
                     ensure!(!base.starts_with('-'), "Invalid base");
                     a.push(base.into());
                 } else {
@@ -1775,6 +2469,34 @@ impl Worktrees {
                     "Worktree has uncommitted or untracked files"
                 );
                 removed_branch = item["branch"].as_str().map(str::to_owned);
+                removed_head = git(path.to_str().unwrap(), &["rev-parse", "HEAD"]).ok();
+                if !repo.config.teardown.is_empty() {
+                    // Teardown acts on the tree, so the removal claim is
+                    // dispatched first: a daemon lost during teardown leaves
+                    // the tree quarantined, not free.
+                    if let Some(claim) = &claim {
+                        self.resources.dispatch(claim)?;
+                        dispatched = true;
+                    }
+                    let (runs, outcome) =
+                        self.teardown_tree(&repo, &job, &lock, path, removed_branch.as_deref())?;
+                    torn_down = true;
+                    hooks_uncertain = runs
+                        .last()
+                        .is_some_and(|run| policy::hook_uncertain(run.verdict));
+                    hook_runs = runs;
+                    // A hook that finished leaves the tree's state known.
+                    observed = !hooks_uncertain;
+                    outcome?;
+                    ensure!(
+                        git(
+                            path.to_str().unwrap(),
+                            &["status", "--porcelain", "--untracked-files=all"]
+                        )?
+                        .is_empty(),
+                        "Teardown left uncommitted or untracked files; the tree was kept"
+                    );
+                }
                 vec![
                     "worktree".into(),
                     "remove".into(),
@@ -1798,7 +2520,9 @@ impl Worktrees {
                     .env("ADE_EXPECT_REMOVE_INO", inode);
             }
             // The phase commits before the command starts; a failed commit stops here.
-            if let Some(claim) = &claim {
+            if let Some(claim) = &claim
+                && !dispatched
+            {
                 self.resources.dispatch(claim)?;
                 dispatched = true;
             }
@@ -1828,21 +2552,43 @@ impl Worktrees {
                 repo.refreshed_at = Some(now_ms());
                 for item in after.as_array().unwrap() {
                     if let Some(path) = item["path"].as_str() {
-                        if job.request["op"] == "worktree.switch"
-                            && (item["branch"] == job.request["target"]
-                                || item["path"] == job.request["target"])
+                        if creating
+                            && (item["branch"] == spec["target"] || item["path"] == spec["target"])
                         {
                             job.worktree_path = Some(path.into());
                         }
                         let was_present =
                             before.as_array().unwrap().iter().any(|i| i["path"] == path);
                         // Only claim the requested branch, never another process's tree.
-                        if !was_present
-                            && item["branch"] == job.request["target"]
-                            && job.request["op"] == "worktree.switch"
-                        {
+                        if !was_present && item["branch"] == spec["target"] && creating {
                             claim_worktree(&self.data.lock().unwrap().db, &repo.id, path, false)?;
+                            created = Some(PathBuf::from(path));
                         }
+                    }
+                }
+                // A creation that left no tree leaves no phase; one whose
+                // tree exists without a confirmed command is not ready.
+                if phase_recorded && created.is_none() {
+                    let path = job.worktree_path.clone().unwrap_or_default();
+                    if after
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|item| item["path"] == path.as_str())
+                    {
+                        self.set_phase(
+                            &repo,
+                            &job,
+                            &path,
+                            spec["target"].as_str(),
+                            WorktreePhase::SetupInterrupted,
+                        )?;
+                    } else {
+                        self.data
+                            .lock()
+                            .unwrap()
+                            .db
+                            .execute("DELETE FROM trees WHERE id=?1", [&path])?;
                     }
                 }
             }
@@ -1850,6 +2596,9 @@ impl Worktrees {
             let command_result = successful(&job.result).map(|_| ());
             job.result["value"] =
                 json!({"path":job.worktree_path,"git_exit_code":job.result["exit_code"]});
+            if let Some(resolved) = &resolved {
+                job.result["resolved"] = resolved.clone();
+            }
             if let Err(error) = after {
                 if let Err(command_error) = command_result {
                     return Err(command_error.context(format!(
@@ -1859,6 +2608,17 @@ impl Worktrees {
                 bail!("Command completed; reconciliation failed: {error}");
             }
             command_result?;
+            // A new tree is ready only after its setup hooks all succeed. A
+            // failed hook keeps the tree, owned and visibly failed.
+            if let Some(path) = &created {
+                let (runs, outcome) =
+                    self.setup_tree(&repo, &job, &lock, path, spec["target"].as_str())?;
+                hooks_uncertain = runs
+                    .last()
+                    .is_some_and(|run| policy::hook_uncertain(run.verdict));
+                hook_runs = runs;
+                outcome?;
+            }
             if let Some(path) = &remove_path {
                 ensure!(
                     !repo
@@ -1869,10 +2629,16 @@ impl Worktrees {
                         .any(|i| i["path"].as_str() == path.to_str()),
                     "Removal did not remove the worktree"
                 );
-                self.data.lock().unwrap().db.execute(
-                    "DELETE FROM owned WHERE id=?1",
-                    [path.to_string_lossy().as_ref()],
-                )?;
+                let text = path.to_string_lossy();
+                let mut entry = WorktreeArchiveEntry {
+                    path: text.clone().into_owned(),
+                    branch: removed_branch.clone(),
+                    head: removed_head.clone(),
+                    branch_deleted: false,
+                    operation_id: job.id.clone(),
+                    archived_at: now_ms(),
+                };
+                self.retire(&repo.id, &entry)?;
                 if job.request["delete_branch"] == "merged" {
                     let branch =
                         removed_branch.context("Detached worktree has no branch to delete")?;
@@ -1885,15 +2651,47 @@ impl Worktrees {
                             "Worktree removed; branch {branch} was retained. Inspect its merge state before deleting it."
                         );
                     }
+                    entry.branch_deleted = true;
+                    self.retire(&repo.id, &entry)?;
                 }
             }
             Ok(())
         })();
         if let Some(claim) = &claim {
-            self.resources.settle(
-                claim,
-                host_resources::settle_lifecycle(dispatched, observed),
-            );
+            let settlement = if hooks_uncertain {
+                Settlement::Quarantine("hook_outcome_unknown")
+            } else {
+                host_resources::settle_lifecycle(dispatched, observed)
+            };
+            self.resources.settle(claim, settlement);
+        }
+        // Teardown ran but the tree is still listed: it is not ready again.
+        if torn_down
+            && result.is_err()
+            && let Some(path) = remove_path.as_ref().and_then(|path| path.to_str())
+            && repo
+                .cache
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item["path"] == path))
+        {
+            let phase = if observed && !hooks_uncertain {
+                WorktreePhase::TeardownFailed
+            } else {
+                WorktreePhase::TeardownInterrupted
+            };
+            let current = read_tree(&self.data.lock().unwrap().db, path);
+            if let Ok(Some(mut tree)) = current
+                && tree.phase == WorktreePhase::TearingDown
+            {
+                tree.phase = phase;
+                tree.updated_at = now_ms();
+                if let Err(error) = self.put_tree(path, &tree) {
+                    eprintln!("Could not record teardown outcome: {error}");
+                }
+            }
+        }
+        if !hook_runs.is_empty() {
+            job.result["hooks"] = json!(hook_runs);
         }
         let partial = result.is_err()
             && job.request["op"] == "worktree.remove"
@@ -1904,38 +2702,383 @@ impl Worktrees {
                     .as_array()
                     .is_some_and(|items| items.iter().any(|item| item["path"] == path))
             });
-        job.status = if result.is_ok() {
+        let status = if result.is_ok() {
             JobStatus::Succeeded
         } else if partial {
             JobStatus::Partial
         } else {
             JobStatus::Failed
         };
-        if let Err(error) = result {
-            record_failure(&mut job, error);
-        }
-        job.finished_at = Some(now_ms());
         // Successful daemon completion releases the inherited lock explicitly;
         // daemon death leaves the supervisor holding it until Git exits.
-        unsafe {
-            libc::flock(lock.as_raw_fd(), libc::LOCK_UN);
+        self.finish(
+            repo,
+            job,
+            lock,
+            result,
+            Some(status),
+            remove_path.into_iter().collect(),
+        );
+    }
+    /// Drops ADE's authority and phase for a removed tree and keeps its
+    /// archive record, in one transaction.
+    fn retire(&self, repository_id: &str, entry: &WorktreeArchiveEntry) -> Result<()> {
+        let d = self.data.lock().unwrap();
+        let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM owned WHERE id=?1", [&entry.path])?;
+        tx.execute("DELETE FROM trees WHERE id=?1", [&entry.path])?;
+        put(
+            &tx,
+            "archived",
+            &format!("{}\0{}", entry.operation_id, entry.path),
+            &json!({"repository_id": repository_id, "entry": entry}),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+    /// `worktree.archived`: the newest 200 archive records.
+    fn archived(&self, id: &str) -> Result<Value> {
+        let d = self.data.lock().unwrap();
+        let _: Repository = read_json(&d.db, "repositories", id)?;
+        let entries = d
+            .db
+            .prepare(
+                "SELECT data FROM archived WHERE json_extract(data,'$.repository_id')=?1 ORDER BY json_extract(data,'$.entry.archived_at') DESC, rowid DESC LIMIT 200",
+            )?
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .map(|row| {
+                let row: Value = serde_json::from_str(&row?)?;
+                Ok(serde_json::from_value(row["entry"].clone())?)
+            })
+            .collect::<Result<_>>()?;
+        reply(&WorktreeArchive {
+            tag: Default::default(),
+            repository_id: id.into(),
+            entries,
+        })
+    }
+    /// Gathers the facts cleanup eligibility depends on for one tree.
+    /// `running` is the cleanup that is asking, which does not block itself.
+    fn tree_facts(
+        &self,
+        repo: &Repository,
+        listing: &Value,
+        path: &Path,
+        running: bool,
+    ) -> Result<policy::TreeFacts> {
+        let text = path.to_str().context("Path must be UTF-8")?;
+        let item = listing
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["path"] == text));
+        // Status is read before the data lock: Git may be slow.
+        let dirty = match item {
+            Some(_) => git(text, &["status", "--porcelain", "--untracked-files=all"])
+                .ok()
+                .map(|status| !status.is_empty()),
+            None => None,
+        };
+        let inspection = self.resources.inspect(Some(text));
+        let claims = match &inspection {
+            Err(_) => policy::Claims::Unavailable,
+            Ok(state) if state.registry.state == RegistryState::Blocked => {
+                policy::Claims::Unavailable
+            }
+            Ok(state) => {
+                let inside: Vec<_> = state
+                    .claims
+                    .iter()
+                    .filter(|claim| Path::new(&claim.path).starts_with(path))
+                    .collect();
+                if inside
+                    .iter()
+                    .any(|claim| claim.state == ClaimState::Quarantined)
+                {
+                    policy::Claims::Uncertain
+                } else if inside.is_empty() {
+                    policy::Claims::Free
+                } else {
+                    policy::Claims::Held
+                }
+            }
+        };
+        let d = self.data.lock().unwrap();
+        Ok(policy::TreeFacts {
+            primary: path == Path::new(&repo.root),
+            listed: item.is_some(),
+            authority: authority(&d.db, &repo.id, text)?,
+            locked: item.is_some_and(|item| item["locked"] == true),
+            prunable: item.is_some_and(|item| item["prunable"] == true),
+            dirty,
+            leased: d.leases.keys().any(|lease| lease.starts_with(path)),
+            busy: !running && d.busy.contains(&repo.id),
+            claims,
+            phase: tree_phase(&d.db, &repo.id, repo.binding_generation, text)?,
+        })
+    }
+    /// `worktree.cleanup.plan`: every linked tree with its blockers. It reads
+    /// a fresh Git listing and changes nothing.
+    fn cleanup_plan(&self, id: &str) -> Result<Value> {
+        let repo: Repository = read_json(&self.data.lock().unwrap().db, "repositories", id)?;
+        ensure!(
+            repository_binding_matches(&repo),
+            ade_core::error::NeedsRebind
+        );
+        let listing = parse_listing(&git(
+            &repo.root,
+            &["worktree", "list", "--porcelain", "-z"],
+        )?)?;
+        let mut trees = Vec::new();
+        for item in listing.as_array().unwrap() {
+            let path = field(item, "path")?;
+            if path == repo.root || item["bare"] == true {
+                continue;
+            }
+            let facts = self.tree_facts(&repo, &listing, Path::new(path), false)?;
+            let blockers = policy::cleanup_blockers(&facts);
+            trees.push(WorktreeCleanupCandidate {
+                path: path.into(),
+                branch: item["branch"].as_str().map(str::to_owned),
+                phase: facts.phase,
+                eligible: blockers.is_empty(),
+                blockers,
+            });
         }
-        let mut d = self.data.lock().unwrap();
-        // The repository, the ledger row and the settled receipt commit together.
-        if let Err(e) = (|| -> Result<()> {
-            let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
-            put(&tx, "repositories", &repo.id, &repo)?;
-            put(&tx, LEDGER, &job.id, &job)?;
-            reconcile_receipt(&tx, &job)?;
-            tx.commit()?;
+        reply(&WorktreeCleanupPlan {
+            tag: Default::default(),
+            repository_id: id.into(),
+            trees,
+        })
+    }
+    /// `worktree.cleanup`: each tree is classified again, claimed
+    /// exclusively, torn down, removed and archived in turn. A tree that is
+    /// blocked is skipped; nothing is forced.
+    fn execute_cleanup(
+        &self,
+        mut repo: Repository,
+        mut job: Operation,
+        lock: File,
+        paths: Vec<PathBuf>,
+    ) {
+        let mut trees = Vec::new();
+        let result = (|| -> Result<()> {
+            ensure!(
+                repository_binding_matches(&repo),
+                ade_core::error::NeedsRebind
+            );
+            let policy = match job.request["delete_branch"].as_str() {
+                Some("merged") => BranchPolicy::Merged,
+                _ => BranchPolicy::Keep,
+            };
+            for path in &paths {
+                // Each tree is judged against a listing read after the previous one.
+                let listing = self.list(&repo, &lock)?;
+                trees.push(self.cleanup_tree(&repo, &job, &lock, &listing, path, policy));
+            }
+            let after = self.list(&repo, &lock)?;
+            repo.cache = after;
+            repo.refreshed_at = Some(now_ms());
             Ok(())
-        })() {
-            eprintln!("Could not persist worktree completion: {e}");
+        })();
+        let outcomes: Vec<CleanupOutcome> = trees.iter().map(|tree| tree.outcome).collect();
+        job.result = json!({"trees": trees});
+        let (status, result) = match result {
+            Err(error) => (
+                if outcomes.contains(&CleanupOutcome::Archived) {
+                    JobStatus::Partial
+                } else {
+                    JobStatus::Failed
+                },
+                Err(error),
+            ),
+            Ok(()) => {
+                let status = policy::cleanup_status(&outcomes);
+                let archived = outcomes
+                    .iter()
+                    .filter(|outcome| **outcome == CleanupOutcome::Archived)
+                    .count();
+                let result = if status == JobStatus::Succeeded {
+                    Ok(())
+                } else {
+                    Err(anyhow!(
+                        "Cleanup archived {archived} of {} trees; see result.trees for each tree's blockers or failure",
+                        outcomes.len()
+                    ))
+                };
+                (status, result)
+            }
+        };
+        self.finish(repo, job, lock, result, Some(status), paths);
+    }
+    /// Retires one tree for `worktree.cleanup`. Never returns an error: every
+    /// path ends in a reported outcome.
+    fn cleanup_tree(
+        &self,
+        repo: &Repository,
+        job: &Operation,
+        lock: &File,
+        listing: &Value,
+        path: &Path,
+        policy: BranchPolicy,
+    ) -> WorktreeCleanupTree {
+        let mut tree = WorktreeCleanupTree {
+            path: path.to_string_lossy().into_owned(),
+            outcome: CleanupOutcome::Skipped,
+            blockers: Vec::new(),
+            error: None,
+            hooks: Vec::new(),
+            branch_deleted: None,
+        };
+        let facts = match self.tree_facts(repo, listing, path, true) {
+            Ok(facts) => facts,
+            Err(error) => {
+                tree.blockers.push(CleanupBlocker::StatusUnknown);
+                tree.error = Some(error.to_string());
+                return tree;
+            }
+        };
+        tree.blockers = policy::cleanup_blockers(&facts);
+        if !tree.blockers.is_empty() {
+            return tree;
         }
-        d.busy.remove(&repo.id);
-        if let Some(path) = remove_path {
-            d.removing.remove(&path);
+        let claim = match self.resources.acquire(
+            Target::Existing(path),
+            ClaimMode::Exclusive,
+            ClaimPurpose::Remove,
+            Some(&job.id),
+        ) {
+            Ok(claim) => claim,
+            Err(error) => {
+                tree.blockers.push(
+                    if error.downcast_ref::<HostResourcesUnavailable>().is_some() {
+                        CleanupBlocker::RegistryUnavailable
+                    } else {
+                        CleanupBlocker::ClaimHeld
+                    },
+                );
+                tree.error = Some(error.to_string());
+                return tree;
+            }
+        };
+        let mut dispatched = false;
+        let mut observed = false;
+        let mut uncertain = false;
+        let outcome = (|| -> Result<bool> {
+            let text = path.to_str().context("Path must be UTF-8")?;
+            let item = listing
+                .as_array()
+                .and_then(|items| items.iter().find(|item| item["path"] == text))
+                .context("Worktree is absent from Git listing")?;
+            let branch = item["branch"].as_str().map(str::to_owned);
+            let head = git(text, &["rev-parse", "HEAD"]).ok();
+            let (device, inode) = identity(text)?;
+            self.resources.dispatch(&claim)?;
+            dispatched = true;
+            if !repo.config.teardown.is_empty() {
+                let (runs, outcome) =
+                    self.teardown_tree(repo, job, lock, path, branch.as_deref())?;
+                uncertain = runs
+                    .last()
+                    .is_some_and(|run| policy::hook_uncertain(run.verdict));
+                tree.hooks = runs;
+                observed = !uncertain;
+                outcome?;
+                ensure!(
+                    git(text, &["status", "--porcelain", "--untracked-files=all"])?.is_empty(),
+                    "Teardown left uncommitted or untracked files; the tree was kept"
+                );
+            }
+            ensure!(
+                authority(&self.data.lock().unwrap().db, &repo.id, text)?
+                    == policy::Authority::Verified,
+                "Worktree ownership changed before removal"
+            );
+            let mut command =
+                self.command_for(repo, &["worktree".into(), "remove".into(), text.into()])?;
+            command
+                .env("ADE_EXPECT_REMOVE_PATH", path)
+                .env("ADE_EXPECT_REMOVE_DEV", &device)
+                .env("ADE_EXPECT_REMOVE_INO", &inode);
+            let output = run(command, repo.config.timeout_seconds, Some(lock));
+            let after = self.list(repo, lock);
+            let exited = match &output {
+                Ok(_) => true,
+                Err(error) => {
+                    error.downcast_ref::<LifecycleFailure>()
+                        == Some(&LifecycleFailure::LifecycleUnavailable)
+                }
+            };
+            observed = exited && after.is_ok();
+            let after = after?;
+            successful(&output?)?;
+            ensure!(
+                !after
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|item| item["path"] == text),
+                "Removal did not remove the worktree"
+            );
+            let mut entry = WorktreeArchiveEntry {
+                path: text.into(),
+                branch: branch.clone(),
+                head,
+                branch_deleted: false,
+                operation_id: job.id.clone(),
+                archived_at: now_ms(),
+            };
+            self.retire(&repo.id, &entry)?;
+            if policy == BranchPolicy::Merged
+                && let Some(branch) = branch
+            {
+                // `-d` refuses an unmerged branch; that is reported, not forced.
+                let deletion = run(
+                    self.command_for(repo, &["branch".into(), "-d".into(), branch])?,
+                    repo.config.timeout_seconds,
+                    Some(lock),
+                )?;
+                entry.branch_deleted = deletion["exit_code"] == 0;
+                tree.branch_deleted = Some(entry.branch_deleted);
+                self.retire(&repo.id, &entry)?;
+            }
+            Ok(true)
+        })();
+        let settlement = if uncertain {
+            Settlement::Quarantine("hook_outcome_unknown")
+        } else {
+            host_resources::settle_lifecycle(dispatched, observed)
+        };
+        self.resources.settle(&claim, settlement);
+        match outcome {
+            Ok(_) => tree.outcome = CleanupOutcome::Archived,
+            Err(error) => {
+                tree.outcome = if settlement == Settlement::Release {
+                    CleanupOutcome::Failed
+                } else {
+                    CleanupOutcome::Unknown
+                };
+                // A tree whose teardown ran and that still exists is not ready.
+                if let Some(text) = path.to_str() {
+                    let record = read_tree(&self.data.lock().unwrap().db, text);
+                    if let Ok(Some(mut record)) = record
+                        && record.phase == WorktreePhase::TearingDown
+                    {
+                        record.phase = if tree.outcome == CleanupOutcome::Failed {
+                            WorktreePhase::TeardownFailed
+                        } else {
+                            WorktreePhase::TeardownInterrupted
+                        };
+                        record.updated_at = now_ms();
+                        if let Err(error) = self.put_tree(text, &record) {
+                            eprintln!("Could not record teardown outcome: {error}");
+                        }
+                    }
+                }
+                let mut failed = job.clone();
+                record_outcome(&mut failed, error);
+                tree.error = failed.error;
+            }
         }
+        tree
     }
 }
 
