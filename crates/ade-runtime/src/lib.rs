@@ -5,6 +5,7 @@ mod agent_budget;
 pub mod agent_runtime;
 pub mod claude;
 pub mod codex;
+pub mod descendants;
 pub mod omp;
 pub mod opencode;
 pub mod provider;
