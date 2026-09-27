@@ -735,6 +735,17 @@ pub(super) fn serve(directory: PathBuf) -> Result<()> {
                 if host.stop.load(Ordering::Acquire) {
                     break;
                 }
+                // Owner tokens fence daemons; the peer check keeps other users out (F083).
+                if let Err(error) =
+                    runtime::authenticate_peer(&stream, "ADE_E2E_RUNTIME_PEER_UID_FILE")
+                {
+                    runtime::refuse_peer(
+                        stream,
+                        serde_json::to_value(protocol::Error::new(error.to_string()))
+                            .expect("errors serialize"),
+                    );
+                    continue;
+                }
                 let host = host.clone();
                 std::thread::spawn(move || {
                     let mut error_stream = stream.try_clone().ok();

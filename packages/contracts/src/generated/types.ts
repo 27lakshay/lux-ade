@@ -372,9 +372,11 @@ export type ContractDefinition =
   | HookDeliveryStatus
   | HookEvent
   | HookHostStatus
+  | HookPhase
   | HookSubscription
   | HookSubscriptionList
   | HookSubscriptionListRequest
+  | HookVerdict
   | HostCapabilities
   | HostReadiness
   | HostResourcesState
@@ -779,6 +781,8 @@ export type ContractDefinition =
   | WorktreeCreateRequest
   | WorktreeFetchSource
   | WorktreeGetRequest
+  | WorktreeHookProgress
+  | WorktreeHookRun
   | WorktreeItem
   | WorktreeOperation
   | WorktreeOperationReply
@@ -1430,6 +1434,14 @@ export type HookEvent =
  */
 export type HookDeliveryStatus =
   'awaiting_host' | 'queued' | 'dispatching' | 'delivered' | 'failed' | 'unknown' | 'abandoned'
+/**
+ * Whether a hook ran as a setup or a teardown hook.
+ */
+export type HookPhase = 'setup' | 'teardown'
+/**
+ * How one hook run ended.
+ */
+export type HookVerdict = 'succeeded' | 'failed' | 'timed_out' | 'unknown'
 export type RegistryState = 'ready' | 'blocked'
 /**
  * How the server's code reached this host. ADE records it; it installs nothing.
@@ -11961,6 +11973,61 @@ export interface WorktreeGetRequest {
   repository_id: string
 }
 /**
+ * A hook that is still running: which one, how far the operation has got,
+ * and the latest output, bounded to its last 16 KiB.
+ */
+export interface WorktreeHookProgress {
+  /**
+   * The hooks of this phase that have finished, without their output.
+   */
+  completed: WorktreeHookRun[]
+  elapsed_ms: number
+  /**
+   * The hook's position in its phase, from 0.
+   */
+  index: number
+  name: string
+  /**
+   * The last 16 KiB of stdout and stderr, interleaved as they arrived.
+   */
+  output: string
+  /**
+   * The tree the hook runs in.
+   */
+  path: string
+  phase: HookPhase
+  started_at: number
+  /**
+   * How many hooks the phase has configured.
+   */
+  total: number
+  /**
+   * Whether earlier output was dropped.
+   */
+  truncated: boolean
+  [k: string]: unknown
+}
+/**
+ * One hook run, as recorded in an operation's `result.hooks` or in a
+ * cleanup tree's `hooks`.
+ */
+export interface WorktreeHookRun {
+  elapsed_ms: number
+  exit_code: number | null
+  name: string
+  /**
+   * The last 64 KiB of stdout, then of stderr. `worktree_state` omits it.
+   */
+  output?: string | null
+  phase: HookPhase
+  /**
+   * Whether earlier output was dropped.
+   */
+  truncated: boolean
+  verdict: HookVerdict
+  [k: string]: unknown
+}
+/**
  * One entry of `git worktree list`, with ADE's ownership and setup state.
  */
 export interface WorktreeItem {
@@ -12015,6 +12082,12 @@ export interface WorktreeOperation {
  */
 export interface WorktreeOperationReply {
   operation: WorktreeOperation
+  /**
+   * The setup or teardown hook the operation is running now. Present only
+   * while a hook runs; the daemon keeps it in memory, so a restarted daemon
+   * reports the interrupted operation without it.
+   */
+  running_hook?: WorktreeHookProgress | null
   /**
    * The `worktree_operation` type tag.
    */
