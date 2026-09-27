@@ -11,14 +11,19 @@
 //! deactivation before a restart); an invocation runs without any lock, so a
 //! slow or hung plugin never blocks the registry or another plugin.
 //!
+//! A newer generation never cuts off an older host's calls. The older host
+//! is handed to a drain thread that waits for its open calls within a bound,
+//! then runs its `deactivate` and kills its process group (F060).
+//!
 //! A host call's outcome is classified by what can be proven: a refusal
 //! before plugin code ran, a handler failure, a result, or unknown (the host
 //! exited, timed out or broke protocol while the call was open).
+use super::dev::{self, DrainStep};
 use super::supervision::{ExitOutcome, HostKey, Phase, StartDecision, Supervision};
 use ade_core::contract::plugins::{PluginHostState, PluginHostStatus};
 use ade_core::model::now_ms;
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -202,6 +207,10 @@ impl HostProcess {
 
     fn is_closed(&self) -> bool {
         self.shared.pending.lock().unwrap().closed.is_some()
+    }
+
+    fn open_calls(&self) -> usize {
+        self.shared.pending.lock().unwrap().calls.len()
     }
 }
 
@@ -415,6 +424,8 @@ struct SlotState {
     spec: Option<LaunchSpec>,
     supervision: Supervision,
     process: Option<Arc<HostProcess>>,
+    /// An older generation's host that `adopt` retired; the caller drains it.
+    superseded: Option<Arc<HostProcess>>,
     last_error: Option<String>,
     /// Every generation up to this one was disabled; none may start again.
     retired_through: u64,
@@ -429,6 +440,8 @@ struct Slot {
 /// Supervises every plugin's backend host.
 pub struct Hosts {
     slots: Mutex<HashMap<String, Arc<Slot>>>,
+    /// Superseded hosts still draining, by plugin ID and generation.
+    draining: Mutex<HashSet<(String, u64)>>,
     this: Weak<Hosts>,
 }
 
@@ -436,8 +449,104 @@ impl Hosts {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             slots: Mutex::new(HashMap::new()),
+            draining: Mutex::new(HashSet::new()),
             this: this.clone(),
         })
+    }
+
+    /// Retires the host of `generation`, if it is the slot's generation, and
+    /// drains it in the background. Every generation up to it is fenced, so
+    /// a late invocation for it cannot start a host again. Returns whether a
+    /// running host was handed to the drain.
+    pub fn supersede(&self, plugin_id: &str, generation: u64) -> bool {
+        let slot = self.slot(plugin_id);
+        let process = {
+            let mut guard = slot.state.lock().unwrap();
+            let state = guard.get_or_insert_with(|| empty(0));
+            state.retired_through = state.retired_through.max(generation);
+            if state.supervision.generation == generation {
+                retire(state)
+            } else {
+                None
+            }
+        };
+        match process {
+            Some(process) => {
+                self.drain(plugin_id, process);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The plugin's generations whose hosts are still draining.
+    pub fn draining(&self, plugin_id: &str) -> HashSet<u64> {
+        self.draining
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, _)| id == plugin_id)
+            .map(|(_, generation)| *generation)
+            .collect()
+    }
+
+    /// Lets a superseded host finish its open calls for at most
+    /// [`dev::DRAIN_GRACE_MS`], then runs the plugin's `deactivate` with its
+    /// own bound and stops the process group. It runs on its own thread and
+    /// takes no slot lock, so the new generation starts at once. A call cut
+    /// off by the grace limit settles as unknown in its caller.
+    fn drain(&self, plugin_id: &str, process: Arc<HostProcess>) {
+        let key = (plugin_id.to_owned(), process.key.generation);
+        self.draining.lock().unwrap().insert(key.clone());
+        push_log(
+            &process.shared.logs,
+            format!(
+                "[ade] generation {} superseded; draining {} open call(s)",
+                process.key.generation,
+                process.open_calls()
+            ),
+        );
+        let this = self.this.clone();
+        std::thread::spawn(move || {
+            let started = now_ms();
+            loop {
+                match dev::drain_step(
+                    process.open_calls(),
+                    process.is_closed(),
+                    started,
+                    now_ms(),
+                    dev::DRAIN_GRACE_MS,
+                ) {
+                    DrainStep::Wait => std::thread::sleep(Duration::from_millis(50)),
+                    DrainStep::Deactivate { forced } => {
+                        if forced {
+                            push_log(
+                                &process.shared.logs,
+                                format!(
+                                    "[ade] generation {} drain grace ended with {} open call(s); their outcome is unknown",
+                                    process.key.generation,
+                                    process.open_calls()
+                                ),
+                            );
+                        }
+                        let _ = process.call(
+                            "deactivate",
+                            json!({"generation": process.key.generation}),
+                            DEACTIVATE_TIMEOUT,
+                        );
+                        process.kill();
+                        break;
+                    }
+                    DrainStep::Exited => {
+                        process.kill();
+                        break;
+                    }
+                }
+            }
+            if let Some(hosts) = this.upgrade() {
+                hosts.draining.lock().unwrap().remove(&key);
+            }
+        });
     }
 
     fn slot(&self, plugin_id: &str) -> Arc<Slot> {
@@ -456,6 +565,9 @@ impl Hosts {
         let slot = self.slot(&spec.plugin_id);
         let mut guard = slot.state.lock().unwrap();
         let state = adopt(&mut guard, spec)?;
+        if let Some(old) = state.superseded.take() {
+            self.drain(&spec.plugin_id, old);
+        }
         match state.supervision.decide_start(now_ms()) {
             StartDecision::AlreadyRunning(_) => match &state.process {
                 Some(process) if !process.is_closed() => Ok(process.clone()),
@@ -589,6 +701,7 @@ impl Hosts {
             return;
         };
         if state.supervision.generation != generation
+            || generation <= state.retired_through
             || !state.supervision.restart_due(retry_at, now_ms())
         {
             return;
@@ -627,6 +740,9 @@ impl Hosts {
         let slot = self.slot(&spec.plugin_id);
         let mut guard = slot.state.lock().unwrap();
         let state = adopt(&mut guard, spec)?;
+        if let Some(old) = state.superseded.take() {
+            self.drain(&spec.plugin_id, old);
+        }
         state.supervision.reset();
         if let Some(process) = retire(state) {
             let _ = process.call(
@@ -747,6 +863,7 @@ fn empty(generation: u64) -> SlotState {
         spec: None,
         supervision: Supervision::new(generation),
         process: None,
+        superseded: None,
         last_error: None,
         retired_through: 0,
         logs: Arc::new(Mutex::new(VecDeque::new())),
@@ -768,8 +885,9 @@ fn adopt<'a>(
     }
     if spec.generation != state.supervision.generation || state.spec.is_none() {
         if spec.generation != state.supervision.generation {
+            // The caller drains the older host instead of cutting its calls off.
             if let Some(old) = retire(state) {
-                old.kill();
+                state.superseded = Some(old);
             }
             state.supervision = Supervision::new(spec.generation);
             state.last_error = None;

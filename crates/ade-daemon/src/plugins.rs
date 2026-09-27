@@ -23,10 +23,15 @@
 //! the host answers. A receipt found `accepted` after a restart was never
 //! sent (`not_applied`); one found `dispatched` may have run, so it becomes
 //! `unknown` and is never run again under that ID.
+//!
+//! Development mode, activation generations and provider leases live in
+//! `reload.rs` (F139, F060, 04-S11); their pure decisions are in `dev.rs`.
 mod activation;
 mod artifact;
+mod dev;
 mod host;
 mod manifest;
+mod reload;
 mod supervision;
 
 use crate::receipts::{self, Admission, Status};
@@ -34,13 +39,14 @@ use activation::{Activation, Registry};
 use ade_core::contract::hooks::HookSubscription;
 use ade_core::contract::plugins::{
     PluginActivation, PluginCommandInvokeRequest, PluginCommandOutcome, PluginCommandResult,
-    PluginDataRecord, PluginDetail, PluginDisableRequest, PluginEnableRequest, PluginHostReply,
-    PluginHostRestartRequest, PluginHostStatusRequest, PluginInspectRequest, PluginInstallRequest,
-    PluginList, PluginListRequest, PluginManifest, PluginRecordDeleteRequest, PluginRecordDeleted,
-    PluginRecordGetRequest, PluginRecordList, PluginRecordListRequest, PluginRecordPutRequest,
-    PluginRecordReply, PluginRegistrationKind, PluginReply, PluginSettingListRequest,
-    PluginSettingSetRequest, PluginSettingValue, PluginSettings, PluginSourceKind, PluginSourcePin,
-    PluginStatus, PluginSummary, PluginUninstallRequest, PluginUninstalled,
+    PluginDataRecord, PluginDetail, PluginDisableRequest, PluginEnableRequest,
+    PluginGenerationOrigin, PluginHostReply, PluginHostRestartRequest, PluginHostStatusRequest,
+    PluginInspectRequest, PluginInstallRequest, PluginList, PluginListRequest, PluginManifest,
+    PluginRecordDeleteRequest, PluginRecordDeleted, PluginRecordGetRequest, PluginRecordList,
+    PluginRecordListRequest, PluginRecordPutRequest, PluginRecordReply, PluginRegistrationKind,
+    PluginReply, PluginSettingListRequest, PluginSettingSetRequest, PluginSettingValue,
+    PluginSettings, PluginSourceKind, PluginSourcePin, PluginStatus, PluginSummary,
+    PluginUninstallRequest, PluginUninstalled,
 };
 use ade_core::contract::providers::{ProviderWorker, ProviderWorkerPin};
 use ade_core::model::now_ms;
@@ -52,6 +58,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 const SCHEMA: &str = "
@@ -148,12 +155,48 @@ struct State {
     inflight: HashSet<String>,
 }
 
-pub struct Plugins {
+/// The plugin registry. Development-mode watchers share its core.
+pub struct Plugins(Arc<Core>);
+
+impl Plugins {
+    /// Opens the registry, activates every enabled plugin, retires
+    /// generations nothing holds and resumes development-mode watchers.
+    pub fn open(database: &Path, directory: &Path) -> Result<Self> {
+        let core = Arc::new(Core::open(database, directory)?);
+        core.resume()?;
+        Ok(Self(core))
+    }
+
+    /// The lifecycle hooks each live activation's manifest subscribes to,
+    /// ordered by plugin ID. A disabled plugin or a failed activation has none.
+    pub fn hook_subscriptions(&self) -> Result<Vec<HookSubscription>> {
+        self.0.hook_subscriptions()
+    }
+
+    /// Handles one `plugin.*` operation. Plugin errors carry a wire code.
+    pub fn command(&self, request: &Value) -> Result<Value> {
+        self.0.command(request)
+    }
+
+    /// Whether a development-mode reload changed an activation since the
+    /// last call. Hook subscriptions follow activations.
+    pub fn take_activation_change(&self) -> bool {
+        self.0.activation_changed.swap(false, Ordering::SeqCst)
+    }
+}
+
+struct Core {
     state: Mutex<State>,
     /// Backend hosts. No host call runs while `state` is locked.
     hosts: Arc<host::Hosts>,
     artifacts: PathBuf,
     staging: PathBuf,
+    /// Development-mode watchers by plugin ID. Lock order: `state`, then this.
+    watches: Mutex<HashMap<String, Arc<reload::Watch>>>,
+    /// Serializes reloads, so two watchers never stage the same plugin at once.
+    reloads: Mutex<()>,
+    /// Set when a reload changes an activation outside a `plugin.*` command.
+    activation_changed: AtomicBool,
 }
 
 /// One row of `plugins`.
@@ -162,15 +205,16 @@ struct Installed {
     enabled: bool,
 }
 
-impl Plugins {
+impl Core {
     /// Opens the registry database, settles interrupted effects, removes
     /// staging leftovers and artifacts of uninstalled plugins, then activates
     /// every enabled plugin with a fresh generation.
-    pub fn open(database: &Path, directory: &Path) -> Result<Self> {
+    fn open(database: &Path, directory: &Path) -> Result<Self> {
         let db = Connection::open(database)?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         db.execute_batch(SCHEMA)?;
+        db.execute_batch(reload::SCHEMA)?;
         receipts::ensure(&db)?;
         settle_interrupted(&db)?;
         let artifacts = directory.join("artifacts");
@@ -188,6 +232,9 @@ impl Plugins {
             hosts: host::Hosts::new(),
             artifacts,
             staging,
+            watches: Mutex::new(HashMap::new()),
+            reloads: Mutex::new(()),
+            activation_changed: AtomicBool::new(false),
         };
         plugins.collect_garbage()?;
         plugins.restore()?;
@@ -219,7 +266,7 @@ impl Plugins {
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         for id in enabled {
-            if let Err(error) = activate(&mut state, &id) {
+            if let Err(error) = activate(&mut state, &id, PluginGenerationOrigin::Restore) {
                 tracing::warn!(target: "ade", event = "plugin_activation_failed");
                 state.errors.insert(id, error.to_string());
             }
@@ -227,9 +274,7 @@ impl Plugins {
         Ok(())
     }
 
-    /// The lifecycle hooks each live activation's manifest subscribes to,
-    /// ordered by plugin ID. A disabled plugin or a failed activation has none.
-    pub fn hook_subscriptions(&self) -> Result<Vec<HookSubscription>> {
+    fn hook_subscriptions(&self) -> Result<Vec<HookSubscription>> {
         let state = self.state.lock().unwrap();
         let mut ids: Vec<&String> = state.live.keys().collect();
         ids.sort();
@@ -280,7 +325,7 @@ impl Plugins {
     }
 
     /// Handles one `plugin.*` operation. Plugin errors carry a wire code.
-    pub fn command(&self, request: &Value) -> Result<Value> {
+    fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let op = request["op"].as_str().unwrap_or("");
         let result = (|| match op {
             "plugin.list" => self.list(decode(request)?),
@@ -298,6 +343,9 @@ impl Plugins {
             "plugin.command.invoke" => self.invoke(decode(request)?),
             "plugin.host.status" => self.host_status(decode(request)?),
             "plugin.host.restart" => self.host_restart(decode(request)?),
+            "plugin.dev.enter" => self.dev_enter(decode(request)?),
+            "plugin.dev.leave" => self.dev_leave(decode(request)?),
+            "plugin.generation.list" => self.generation_list(decode(request)?),
             _ => Err(anyhow!("Unknown plugin operation")),
         })();
         Ok(result.unwrap_or_else(envelope))
@@ -331,7 +379,7 @@ impl Plugins {
         installed(&state, id)?;
         if !state.live.contains_key(id) {
             state.errors.remove(id);
-            activate(&mut state, id)?;
+            activate(&mut state, id, PluginGenerationOrigin::Enable)?;
             // The generation is already durable; flip the flag after the
             // activation exists, and undo the activation if that write fails.
             if let Err(error) = state.db.execute(
@@ -362,12 +410,16 @@ impl Plugins {
             if let Some(live) = state.live.remove(id) {
                 state.registry.deactivate(&live.activation);
             }
+            // Development mode ends with the activation it reloads.
+            self.end_dev(&state, id)?;
             current.detail.summary.activation_generation
         };
         // Outside the registry lock: the plugin's deactivate hook runs with a
         // bounded wait, and every generation issued so far is retired.
         self.hosts.stop(id, through);
-        let state = self.state.lock().unwrap();
+        let draining = self.hosts.draining(id);
+        let mut state = self.state.lock().unwrap();
+        self.settle(&mut state, id, &draining)?;
         detail_reply(&state, id)
     }
 
@@ -788,8 +840,20 @@ impl Plugins {
                 format!("Plugin {id} is enabled; disable it before uninstalling")
             )
         );
+        let leases = reload::lease_count(&state.db, id)?;
+        ensure!(
+            leases == 0,
+            coded(
+                "conflict",
+                format!(
+                    "{leases} provider session(s) still lease plugin {id}; end them before uninstalling"
+                )
+            )
+        );
         let tx = state.db.transaction()?;
         tx.execute("DELETE FROM plugins WHERE id=?1", [id])?;
+        tx.execute("DELETE FROM plugin_generations WHERE plugin_id=?1", [id])?;
+        tx.execute("DELETE FROM plugin_dev WHERE plugin_id=?1", [id])?;
         if request.purge_data {
             tx.execute("DELETE FROM plugin_records WHERE plugin_id=?1", [id])?;
             tx.execute("DELETE FROM plugin_settings WHERE plugin_id=?1", [id])?;
@@ -1046,9 +1110,25 @@ fn interrupted_invocation(status: Status) -> Option<(Status, Value)> {
     }
 }
 
+/// The static registrations a manifest contributes to its activation.
+fn contributions(manifest: &PluginManifest) -> Vec<(PluginRegistrationKind, String)> {
+    let contributes = &manifest.contributes;
+    contributes
+        .commands
+        .iter()
+        .map(|c| (PluginRegistrationKind::Command, c.id.clone()))
+        .chain(
+            contributes
+                .panels
+                .iter()
+                .map(|p| (PluginRegistrationKind::Panel, p.id.clone())),
+        )
+        .collect()
+}
+
 /// Bumps and persists the plugin's generation, verifies its artifact, then
 /// activates it with its manifest's contributions.
-fn activate(state: &mut State, id: &str) -> Result<()> {
+fn activate(state: &mut State, id: &str, origin: PluginGenerationOrigin) -> Result<()> {
     let plugin = installed(state, id)?;
     artifact::verify(
         Path::new(&plugin.detail.artifact_path),
@@ -1062,31 +1142,23 @@ fn activate(state: &mut State, id: &str) -> Result<()> {
     })?;
     let generation = plugin.detail.summary.activation_generation + 1;
     // Persist first: a crash after this never reuses the generation.
-    state.db.execute(
+    let now = now_ms();
+    let tx = state.db.transaction()?;
+    tx.execute(
         "UPDATE plugin_state SET activation_generation=?2 WHERE plugin_id=?1",
         params![id, generation as i64],
     )?;
-    let contributes = &plugin.detail.manifest.contributes;
-    let contributions: Vec<_> = contributes
-        .commands
-        .iter()
-        .map(|c| (PluginRegistrationKind::Command, c.id.clone()))
-        .chain(
-            contributes
-                .panels
-                .iter()
-                .map(|p| (PluginRegistrationKind::Panel, p.id.clone())),
-        )
-        .collect();
+    reload::record_generation(&tx, id, generation, &plugin.detail, origin, now)?;
+    tx.commit()?;
     let activation = state
         .registry
-        .activate_all(id, generation, &contributions)
+        .activate_all(id, generation, &contributions(&plugin.detail.manifest))
         .map_err(|error| coded("conflict", format!("{error}; plugin was not activated")))?;
     state.live.insert(
         id.to_owned(),
         Live {
             activation,
-            activated_at: now_ms(),
+            activated_at: now,
         },
     );
     Ok(())

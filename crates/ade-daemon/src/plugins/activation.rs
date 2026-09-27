@@ -209,6 +209,36 @@ impl Registry {
             .collect()
     }
 
+    /// Why [`Registry::activate_all`] would refuse these arguments, without
+    /// changing anything. A reload asks before it commits its generation.
+    pub fn refusal(
+        &self,
+        plugin_id: &str,
+        generation: u64,
+        contributions: &[(PluginRegistrationKind, String)],
+    ) -> Option<RegistryError> {
+        if self
+            .highest
+            .get(plugin_id)
+            .is_some_and(|highest| generation <= *highest)
+        {
+            return Some(RegistryError::GenerationReused {
+                plugin_id: plugin_id.to_owned(),
+                generation,
+            });
+        }
+        contributions.iter().find_map(|(kind, id)| {
+            self.entries
+                .get(&(*kind, id.clone()))
+                .filter(|existing| existing.activation.plugin_id != plugin_id)
+                .map(|existing| RegistryError::Conflict {
+                    kind: *kind,
+                    id: id.clone(),
+                    owner: existing.activation.plugin_id.clone(),
+                })
+        })
+    }
+
     /// Activates `generation` and registers every `(kind, id)`, or changes
     /// nothing. Conflicts are checked before any mutation, so a refused
     /// activation neither consumes its generation nor disturbs the current one.
@@ -218,26 +248,8 @@ impl Registry {
         generation: u64,
         contributions: &[(PluginRegistrationKind, String)],
     ) -> Result<Activation, RegistryError> {
-        if self
-            .highest
-            .get(plugin_id)
-            .is_some_and(|highest| generation <= *highest)
-        {
-            return Err(RegistryError::GenerationReused {
-                plugin_id: plugin_id.to_owned(),
-                generation,
-            });
-        }
-        for (kind, id) in contributions {
-            if let Some(existing) = self.entries.get(&(*kind, id.clone()))
-                && existing.activation.plugin_id != plugin_id
-            {
-                return Err(RegistryError::Conflict {
-                    kind: *kind,
-                    id: id.clone(),
-                    owner: existing.activation.plugin_id.clone(),
-                });
-            }
+        if let Some(error) = self.refusal(plugin_id, generation, contributions) {
+            return Err(error);
         }
         let activation = self.activate(plugin_id, generation)?;
         for (kind, id) in contributions {
@@ -347,6 +359,27 @@ mod tests {
         assert_eq!(registry.current("b.two"), Some(1));
         assert_eq!(registry.registrations("b.two").len(), 1);
         assert!(registry.activate("b.two", 2).is_ok());
+    }
+
+    #[test]
+    fn a_reload_takes_over_kept_ids_and_old_cleanup_drops_only_removed_ones() {
+        let mut registry = Registry::default();
+        let v1 = registry
+            .activate_all(
+                "a.b",
+                1,
+                &[(Command, "a.b.keep".into()), (Command, "a.b.gone".into())],
+            )
+            .unwrap();
+        let next = [(Command, "a.b.keep".into()), (Panel, "a.b.new".into())];
+        assert_eq!(registry.refusal("a.b", 2, &next), None);
+        assert!(registry.refusal("a.b", 1, &next).is_some());
+        registry.activate_all("a.b", 2, &next).unwrap();
+        let removed = registry.deactivate(&v1);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].id, "a.b.gone");
+        assert_eq!(registry.current("a.b"), Some(2));
+        assert_eq!(registry.registrations("a.b").len(), 2);
     }
 
     #[test]

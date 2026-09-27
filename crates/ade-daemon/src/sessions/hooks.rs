@@ -52,7 +52,12 @@ impl Sessions {
     }
 
     fn dispatch_hooks(&self) -> Result<()> {
-        if self.hooks.take_stale() {
+        if self.hooks.take_stale()
+            | self
+                .plugins
+                .as_ref()
+                .is_ok_and(|p| p.take_activation_change())
+        {
             self.refresh_hook_subscriptions();
         }
         let staged = self.worktrees.staged_hook_deliveries()?;

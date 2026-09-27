@@ -14220,6 +14220,118 @@
       ],
       "type": "object"
     },
+    "PluginDevEnterRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.dev.enter`: watch an enabled plugin's local source directory and\nreload it on change. Each reload that changes the artifact starts a new\nactivation generation; a reload that fails leaves the current one running.\nEntering again only updates the debounce. Disabling the plugin ends\ndevelopment mode.",
+      "properties": {
+        "debounce_ms": {
+          "description": "How long the source must stay unchanged before a reload, 50 to 10000\nms. Defaults to 300 ms. A source that keeps changing reloads at most\n10 s after its first unsettled change.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "plugin.dev.enter"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginDevLeaveRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.dev.leave`: stop watching. The last reloaded artifact stays\ninstalled and active. Leaving a plugin not in development mode succeeds.",
+      "properties": {
+        "op": {
+          "const": "plugin.dev.leave"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginDevMode": {
+      "description": "A plugin's development mode.",
+      "properties": {
+        "debounce_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entered_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "last_change_at": {
+          "description": "When the watcher last saw the source change.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "last_reload": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginReload"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reload_due_at": {
+          "description": "When the pending change will reload, if one is pending.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source_path": {
+          "description": "The watched source directory: the plugin's local source locator.",
+          "type": "string"
+        },
+        "watch_error": {
+          "description": "Why the last scan of the source directory failed, until one succeeds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "watching": {
+          "description": "Whether this daemon is watching the source now.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source_path",
+        "debounce_ms",
+        "entered_at",
+        "watching",
+        "last_change_at",
+        "reload_due_at",
+        "last_reload",
+        "watch_error"
+      ],
+      "type": "object"
+    },
     "PluginDisableRequest": {
       "additionalProperties": false,
       "description": "`plugin.disable`: end the current activation and dispose only its registrations.",
@@ -14280,6 +14392,171 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "PluginGeneration": {
+      "description": "One activation generation of one plugin.",
+      "properties": {
+        "activated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "artifact_digest": {
+          "type": "string"
+        },
+        "generation": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "origin": {
+          "$ref": "#/$defs/PluginGenerationOrigin"
+        },
+        "provider_leases": {
+          "description": "Provider sessions that lease this generation.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retired_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/PluginGenerationState"
+        },
+        "superseded_at": {
+          "description": "When a newer generation replaced it or the plugin was disabled.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "The artifact version the generation ran.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "generation",
+        "version",
+        "artifact_digest",
+        "origin",
+        "state",
+        "activated_at",
+        "superseded_at",
+        "retired_at",
+        "provider_leases"
+      ],
+      "type": "object"
+    },
+    "PluginGenerationListRequest": {
+      "additionalProperties": false,
+      "description": "`plugin.generation.list`: the plugin's activation generations, newest\nfirst, and its development mode. It records the retirement of generations\nnothing holds any more; it never starts or stops a host.",
+      "properties": {
+        "op": {
+          "const": "plugin.generation.list"
+        },
+        "plugin_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "plugin_id"
+      ],
+      "type": "object"
+    },
+    "PluginGenerationOrigin": {
+      "description": "What started an activation generation.",
+      "oneOf": [
+        {
+          "const": "enable",
+          "description": "`plugin.enable`.",
+          "type": "string"
+        },
+        {
+          "const": "restore",
+          "description": "The daemon reactivated an enabled plugin when it started.",
+          "type": "string"
+        },
+        {
+          "const": "dev_reload",
+          "description": "A development-mode reload.",
+          "type": "string"
+        }
+      ]
+    },
+    "PluginGenerationState": {
+      "description": "Where an activation generation is in its life.",
+      "oneOf": [
+        {
+          "const": "current",
+          "description": "The live activation. New work goes here.",
+          "type": "string"
+        },
+        {
+          "const": "draining",
+          "description": "Superseded; its backend host is finishing open calls before it is\ndeactivated and stopped.",
+          "type": "string"
+        },
+        {
+          "const": "leased",
+          "description": "Superseded; provider sessions still lease it, so its artifact stays.",
+          "type": "string"
+        },
+        {
+          "const": "retired",
+          "description": "Nothing holds it. Its artifact may have been removed.",
+          "type": "string"
+        }
+      ]
+    },
+    "PluginGenerations": {
+      "description": "The `plugin.dev.enter`, `plugin.dev.leave` and `plugin.generation.list` reply.",
+      "properties": {
+        "dev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginDevMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null when the plugin is not in development mode."
+        },
+        "generations": {
+          "description": "Newest first. Only the last 20 retired generations are kept.",
+          "items": {
+            "$ref": "#/$defs/PluginGeneration"
+          },
+          "type": "array"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `plugin_generations` type tag.",
+          "enum": [
+            "plugin_generations"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "plugin_id",
+        "dev",
+        "generations"
+      ],
       "type": "object"
     },
     "PluginHostReply": {
@@ -14873,6 +15150,67 @@
         "panel"
       ],
       "type": "string"
+    },
+    "PluginReload": {
+      "description": "The last development-mode reload attempt.",
+      "properties": {
+        "at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "generation": {
+          "description": "The generation it activated.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Why it was refused or failed, or why the new backend host did not start.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/PluginReloadStatus"
+        }
+      },
+      "required": [
+        "at",
+        "status",
+        "generation",
+        "message"
+      ],
+      "type": "object"
+    },
+    "PluginReloadStatus": {
+      "description": "The result of one development-mode reload attempt.",
+      "oneOf": [
+        {
+          "const": "activated",
+          "description": "A new generation is current.",
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "The copied tree matched the installed artifact; nothing changed.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The reload would break a rule (another plugin's registration, a data\nschema change while provider sessions lease the plugin, a different\nplugin ID); the current generation keeps running.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Copying or validating the source failed; the current generation keeps\nrunning.",
+          "type": "string"
+        }
+      ]
     },
     "PluginReply": {
       "description": "The `plugin.inspect`, `plugin.install`, `plugin.enable` and `plugin.disable` reply.",
@@ -26138,6 +26476,27 @@
       "request": "PluginHostRestartRequest",
       "response": "PluginHostReply",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.dev.enter",
+      "request": "PluginDevEnterRequest",
+      "response": "PluginGenerations",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.dev.leave",
+      "request": "PluginDevLeaveRequest",
+      "response": "PluginGenerations",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "plugins",
+      "name": "plugin.generation.list",
+      "request": "PluginGenerationListRequest",
+      "response": "PluginGenerations",
+      "tier": "query"
     },
     {
       "domain": "orchestration",

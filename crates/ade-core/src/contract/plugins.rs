@@ -10,6 +10,13 @@
 //! (F057). The daemon starts one host per activation generation, lazily, on
 //! the first command invocation, restarts it after a crash with bounded
 //! backoff, and stops it when the plugin is disabled.
+//!
+//! A plugin installed from a local directory can enter development mode
+//! (F139, F060). The daemon then watches the source directory and, after the
+//! writes settle, installs the changed tree as a new artifact and starts a new
+//! activation generation. The old generation's backend host drains its open
+//! calls with a bounded wait before it is deactivated. A generation that
+//! provider sessions still lease keeps its artifact until they end.
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -77,6 +84,18 @@ pub fn operations() -> Vec<OperationSpec> {
         OperationSpec::new::<PluginHostRestartRequest, PluginHostReply>(
             "plugin.host.restart",
             Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<PluginDevEnterRequest, PluginGenerations>(
+            "plugin.dev.enter",
+            Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<PluginDevLeaveRequest, PluginGenerations>(
+            "plugin.dev.leave",
+            Tier::IdempotentCommand,
+        ),
+        OperationSpec::new::<PluginGenerationListRequest, PluginGenerations>(
+            "plugin.generation.list",
+            Tier::Query,
         ),
     ]
 }
@@ -346,6 +365,36 @@ pub struct PluginHostRestartRequest {
     pub plugin_id: String,
 }
 
+/// `plugin.dev.enter`: watch an enabled plugin's local source directory and
+/// reload it on change. Each reload that changes the artifact starts a new
+/// activation generation; a reload that fails leaves the current one running.
+/// Entering again only updates the debounce. Disabling the plugin ends
+/// development mode.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginDevEnterRequest {
+    pub plugin_id: String,
+    /// How long the source must stay unchanged before a reload, 50 to 10000
+    /// ms. Defaults to 300 ms. A source that keeps changing reloads at most
+    /// 10 s after its first unsettled change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debounce_ms: Option<u32>,
+}
+
+/// `plugin.dev.leave`: stop watching. The last reloaded artifact stays
+/// installed and active. Leaving a plugin not in development mode succeeds.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginDevLeaveRequest {
+    pub plugin_id: String,
+}
+
+/// `plugin.generation.list`: the plugin's activation generations, newest
+/// first, and its development mode. It records the retirement of generations
+/// nothing holds any more; it never starts or stops a host.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginGenerationListRequest {
+    pub plugin_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // Replies
 // ---------------------------------------------------------------------------
@@ -359,6 +408,7 @@ wire_tag!(PluginRecordDeletedTag, "plugin_record_deleted");
 wire_tag!(PluginSettingsTag, "plugin_settings");
 wire_tag!(PluginCommandResultTag, "plugin_command_result");
 wire_tag!(PluginHostTag, "plugin_host");
+wire_tag!(PluginGenerationsTag, "plugin_generations");
 
 /// The kind of source a plugin was installed from.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
@@ -618,6 +668,108 @@ pub struct PluginHostReply {
     pub host: PluginHostStatus,
 }
 
+/// What started an activation generation.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginGenerationOrigin {
+    /// `plugin.enable`.
+    Enable,
+    /// The daemon reactivated an enabled plugin when it started.
+    Restore,
+    /// A development-mode reload.
+    DevReload,
+}
+
+/// Where an activation generation is in its life.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginGenerationState {
+    /// The live activation. New work goes here.
+    Current,
+    /// Superseded; its backend host is finishing open calls before it is
+    /// deactivated and stopped.
+    Draining,
+    /// Superseded; provider sessions still lease it, so its artifact stays.
+    Leased,
+    /// Nothing holds it. Its artifact may have been removed.
+    Retired,
+}
+
+/// One activation generation of one plugin.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct PluginGeneration {
+    pub generation: u64,
+    /// The artifact version the generation ran.
+    pub version: String,
+    pub artifact_digest: String,
+    pub origin: PluginGenerationOrigin,
+    pub state: PluginGenerationState,
+    pub activated_at: i64,
+    /// When a newer generation replaced it or the plugin was disabled.
+    pub superseded_at: Option<i64>,
+    pub retired_at: Option<i64>,
+    /// Provider sessions that lease this generation.
+    pub provider_leases: u32,
+}
+
+/// The result of one development-mode reload attempt.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginReloadStatus {
+    /// A new generation is current.
+    Activated,
+    /// The copied tree matched the installed artifact; nothing changed.
+    Unchanged,
+    /// The reload would break a rule (another plugin's registration, a data
+    /// schema change while provider sessions lease the plugin, a different
+    /// plugin ID); the current generation keeps running.
+    Refused,
+    /// Copying or validating the source failed; the current generation keeps
+    /// running.
+    Failed,
+}
+
+/// The last development-mode reload attempt.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct PluginReload {
+    pub at: i64,
+    pub status: PluginReloadStatus,
+    /// The generation it activated.
+    pub generation: Option<u64>,
+    /// Why it was refused or failed, or why the new backend host did not start.
+    pub message: Option<String>,
+}
+
+/// A plugin's development mode.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct PluginDevMode {
+    /// The watched source directory: the plugin's local source locator.
+    pub source_path: String,
+    pub debounce_ms: u32,
+    pub entered_at: i64,
+    /// Whether this daemon is watching the source now.
+    pub watching: bool,
+    /// When the watcher last saw the source change.
+    pub last_change_at: Option<i64>,
+    /// When the pending change will reload, if one is pending.
+    pub reload_due_at: Option<i64>,
+    pub last_reload: Option<PluginReload>,
+    /// Why the last scan of the source directory failed, until one succeeds.
+    pub watch_error: Option<String>,
+}
+
+/// The `plugin.dev.enter`, `plugin.dev.leave` and `plugin.generation.list` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PluginGenerations {
+    #[serde(rename = "type")]
+    pub tag: PluginGenerationsTag,
+    pub plugin_id: String,
+    /// Null when the plugin is not in development mode.
+    pub dev: Option<PluginDevMode>,
+    /// Newest first. Only the last 20 retired generations are kept.
+    pub generations: Vec<PluginGeneration>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,6 +885,22 @@ mod tests {
             "plugin.host.restart",
             json!({"op": "plugin.host.restart", "plugin_id": "a.b"}),
         );
+        request::<PluginDevEnterRequest>(
+            "plugin.dev.enter",
+            json!({"op": "plugin.dev.enter", "plugin_id": "a.b", "debounce_ms": 500}),
+        );
+        request::<PluginDevEnterRequest>(
+            "plugin.dev.enter",
+            json!({"op": "plugin.dev.enter", "plugin_id": "a.b"}),
+        );
+        request::<PluginDevLeaveRequest>(
+            "plugin.dev.leave",
+            json!({"op": "plugin.dev.leave", "plugin_id": "a.b"}),
+        );
+        request::<PluginGenerationListRequest>(
+            "plugin.generation.list",
+            json!({"op": "plugin.generation.list", "plugin_id": "a.b"}),
+        );
         let (name, _) = names("plugin.command.invoke");
         assert!(!valid(
             &name,
@@ -792,6 +960,25 @@ mod tests {
                 "generation": 2, "attempt": 1, "pid": null, "started_at": 4, "crashes": 1,
                 "retry_at": 9, "last_error": "exited with status 70", "responsive": null,
                 "registered": [], "log_tail": ["boom"]}}),
+        );
+        response::<PluginGenerations>(
+            "plugin.generation.list",
+            json!({"type": "plugin_generations", "plugin_id": "a.b",
+                "dev": {"source_path": "/src/a", "debounce_ms": 300, "entered_at": 1,
+                    "watching": true, "last_change_at": 7, "reload_due_at": null,
+                    "last_reload": {"at": 8, "status": "activated", "generation": 3, "message": null},
+                    "watch_error": null},
+                "generations": [
+                    {"generation": 3, "version": "1.0.0", "artifact_digest": "sha256:b",
+                        "origin": "dev_reload", "state": "current", "activated_at": 8,
+                        "superseded_at": null, "retired_at": null, "provider_leases": 0},
+                    {"generation": 2, "version": "1.0.0", "artifact_digest": "sha256:a",
+                        "origin": "enable", "state": "leased", "activated_at": 2,
+                        "superseded_at": 8, "retired_at": null, "provider_leases": 1}]}),
+        );
+        response::<PluginGenerations>(
+            "plugin.dev.leave",
+            json!({"type": "plugin_generations", "plugin_id": "a.b", "dev": null, "generations": []}),
         );
         response::<PluginSettings>(
             "plugin.setting.list",

@@ -32,6 +32,7 @@ import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } fr
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { runSlashCommand, slashCommandUsage } from './commands/slash-commands.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
+import { pluginDevUsage, runPluginDevCommand } from './commands/plugin-dev.js'
 import { hookUsage, runHookCommand } from './commands/hooks.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
@@ -113,6 +114,7 @@ const usage = [
   skillUsage,
   slashCommandUsage,
   pluginUsage,
+  pluginDevUsage,
   hookUsage,
   orchestrationUsage,
   runsUsage,
@@ -262,6 +264,7 @@ const commandAreas = [
   runPlacementCommand,
   runSkillCommand,
   runSlashCommand,
+  runPluginDevCommand,
   runPluginCommand,
   runHookCommand,
   runOrchestrationCommand,
