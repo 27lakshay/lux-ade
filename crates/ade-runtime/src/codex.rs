@@ -840,6 +840,7 @@ mod tests {
             socket_directory: Some(directory.clone()),
             session: Mutex::new(None),
             identity: None,
+            mcp_servers: Mutex::new(None),
         };
         adapter.stop_confirmed().unwrap();
         assert!(!directory.exists());

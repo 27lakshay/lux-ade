@@ -173,11 +173,11 @@ impl Run {
     pub fn spawn(spec: Spec) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::sync_channel(256);
         let adapter = launch(&spec, tx)?;
-        if let Some(servers) = &spec.mcp_servers {
-            if let Err(error) = adapter.configure_mcp(servers.clone()) {
-                adapter.stop();
-                return Err(error);
-            }
+        if let Some(servers) = &spec.mcp_servers
+            && let Err(error) = adapter.configure_mcp(servers.clone())
+        {
+            adapter.stop();
+            return Err(error);
         }
         let run = Arc::new(Self {
             spec,

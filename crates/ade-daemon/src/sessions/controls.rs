@@ -22,9 +22,9 @@ use ade_core::contract::conversations::{
     ControlAvailability, ControlOutcome, ConversationCompactRequest, ConversationControl,
     ConversationControlReply, ConversationControls, ConversationControlsRequest,
     ConversationRewindHistory, ConversationRewindPreview, ConversationRewindPreviewRequest,
-    ConversationRewindRequest,
-    ConversationSnoozeList, ConversationSnoozeListRequest, ConversationSnoozeReply,
-    ConversationSnoozeRequest, ConversationSteerRequest, ConversationUnsnoozeRequest, RewindScope,
+    ConversationRewindRequest, ConversationSnoozeList, ConversationSnoozeListRequest,
+    ConversationSnoozeReply, ConversationSnoozeRequest, ConversationSteerRequest,
+    ConversationUnsnoozeRequest, RewindScope,
 };
 use ade_core::model::now_ms;
 use rusqlite::{Transaction, TransactionBehavior};
@@ -119,8 +119,9 @@ fn history_state_token(conversation_id: &str, epoch: u64, removed: &[Message]) -
             ])
         })
         .collect();
-    let canonical =
-        receipts::canonical_json(&json!({"conversation": conversation_id, "epoch": epoch, "removed": items}));
+    let canonical = receipts::canonical_json(
+        &json!({"conversation": conversation_id, "epoch": epoch, "removed": items}),
+    );
     format!("{:x}", Sha256::digest(canonical.as_bytes()))
 }
 
@@ -168,8 +169,8 @@ fn history_preview(
         .context("Choose the user message that started a turn")?;
     let all = d.store.messages_from(conversation_id, 0)?;
     ensure!(
-        !all.iter()
-            .any(|message| message.sequence < first.sequence && message.turn_id.as_deref() == Some(turn.as_str())),
+        !all.iter().any(|message| message.sequence < first.sequence
+            && message.turn_id.as_deref() == Some(turn.as_str())),
         "Choose the user message that started a turn"
     );
     let removed: Vec<Message> = all
@@ -179,7 +180,14 @@ fn history_preview(
         .collect();
     let epoch = d.store.history_epoch(conversation_id)?;
     Ok((
-        history_summary(conversation_id, epoch, &first, &turn, &removed, all.len() as u64),
+        history_summary(
+            conversation_id,
+            epoch,
+            &first,
+            &turn,
+            &removed,
+            all.len() as u64,
+        ),
         first.sequence,
     ))
 }

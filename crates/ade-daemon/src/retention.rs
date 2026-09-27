@@ -53,7 +53,9 @@ pub fn effective(configured: &RetentionConfigured, revision: u64) -> RetentionPo
         receipt_retention_ms: receipts::RETENTION_MS,
         receipt_prune_interval_ms: PRUNE_INTERVAL_MS,
         attachment_grace_ms: ATTACHMENT_GRACE_MS,
-        service_log_idle_ms: configured.service_log_idle_ms.unwrap_or(SERVICE_LOG_IDLE_MS),
+        service_log_idle_ms: configured
+            .service_log_idle_ms
+            .unwrap_or(SERVICE_LOG_IDLE_MS),
         diagnostic_log_max_age_ms: configured
             .diagnostic_log_max_age_ms
             .unwrap_or(DIAGNOSTIC_LOG_MAX_AGE_MS),
@@ -83,7 +85,10 @@ pub fn plan_policy_change(
 ) -> Result<PolicyChange, String> {
     for (field, value) in [
         ("service_log_idle_ms", requested.service_log_idle_ms),
-        ("diagnostic_log_max_age_ms", requested.diagnostic_log_max_age_ms),
+        (
+            "diagnostic_log_max_age_ms",
+            requested.diagnostic_log_max_age_ms,
+        ),
     ] {
         if let Some(value) = value
             && !(CONFIGURABLE_MIN_MS..=CONFIGURABLE_MAX_MS).contains(&value)
@@ -400,16 +405,28 @@ mod tests {
             item(RetentionKind::Attachment, "a", "g"),
             item(RetentionKind::ServiceLog, "k", "1"),
         ];
-        assert_eq!(generation(&mut a, false, &policy()), generation(&mut b, false, &policy()));
+        assert_eq!(
+            generation(&mut a, false, &policy()),
+            generation(&mut b, false, &policy())
+        );
         assert_eq!(a[0].kind, RetentionKind::Attachment);
         let mut changed = vec![
             item(RetentionKind::Attachment, "a", "g2"),
             item(RetentionKind::ServiceLog, "k", "1"),
         ];
-        assert_ne!(generation(&mut a, false, &policy()), generation(&mut changed, false, &policy()));
-        assert_ne!(generation(&mut a, false, &policy()), generation(&mut a.clone(), true, &policy()));
+        assert_ne!(
+            generation(&mut a, false, &policy()),
+            generation(&mut changed, false, &policy())
+        );
+        assert_ne!(
+            generation(&mut a, false, &policy()),
+            generation(&mut a.clone(), true, &policy())
+        );
         let mut fewer = vec![item(RetentionKind::Attachment, "a", "g")];
-        assert_ne!(generation(&mut a, false, &policy()), generation(&mut fewer, false, &policy()));
+        assert_ne!(
+            generation(&mut a, false, &policy()),
+            generation(&mut fewer, false, &policy())
+        );
         assert_ne!(generation(&mut [], false, &policy()), "");
         // The same set under another policy is another generation.
         let stricter = effective(
@@ -459,7 +476,10 @@ mod tests {
             assert!(plan_policy_change(0, &none, 0, &request).is_err(), "{bad}");
         }
         assert_eq!(effective(&two_days, 3).service_log_idle_ms, 2 * DAY_MS);
-        assert_eq!(effective(&two_days, 3).diagnostic_log_max_age_ms, DIAGNOSTIC_LOG_MAX_AGE_MS);
+        assert_eq!(
+            effective(&two_days, 3).diagnostic_log_max_age_ms,
+            DIAGNOSTIC_LOG_MAX_AGE_MS
+        );
     }
 
     #[test]

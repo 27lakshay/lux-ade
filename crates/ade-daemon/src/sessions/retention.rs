@@ -507,13 +507,9 @@ impl Sessions {
                 connection.execute_batch(SCHEMA)?;
                 let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
                 let (revision, stored) = configured(&tx)?;
-                let change = rules::plan_policy_change(
-                    revision,
-                    &stored,
-                    set.expected_revision,
-                    &requested,
-                )
-                .map_err(|error| anyhow!(error))?;
+                let change =
+                    rules::plan_policy_change(revision, &stored, set.expected_revision, &requested)
+                        .map_err(|error| anyhow!(error))?;
                 let revision = match change {
                     rules::PolicyChange::Unchanged => revision,
                     rules::PolicyChange::Apply => {
@@ -574,7 +570,13 @@ impl Sessions {
             Ok(runtime) => {
                 let owned = owned_service_log_keys(store, &runtime)?;
                 let directory = self.runtime.data_directory().join("service-logs");
-                if let Err(error) = service_logs(&directory, &owned, policy.service_log_idle_ms, now, &mut entries) {
+                if let Err(error) = service_logs(
+                    &directory,
+                    &owned,
+                    policy.service_log_idle_ms,
+                    now,
+                    &mut entries,
+                ) {
                     withheld.push(RetentionWithheld {
                         kind: RetentionKind::ServiceLog,
                         reason: format!("the service log directory could not be read: {error}"),

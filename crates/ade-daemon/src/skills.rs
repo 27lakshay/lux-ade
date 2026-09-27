@@ -848,8 +848,7 @@ pub fn begin_place(
         .optional()?;
     let (observed, decision, reason) =
         placement::decide(seen, adopted.as_deref(), &place.expected_content_hash);
-    let plan =
-        placement::plan_place(observed, decision, reason).map_err(|error| anyhow!(error))?;
+    let plan = placement::plan_place(observed, decision, reason).map_err(|error| anyhow!(error))?;
     let reply = SkillPlaced {
         tag: Default::default(),
         name: place.name.clone(),

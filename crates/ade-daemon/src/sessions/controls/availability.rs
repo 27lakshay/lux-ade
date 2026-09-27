@@ -216,7 +216,10 @@ mod tests {
         }
         let claude = decide(&facts("claude", "ready"), RewindConversation);
         assert!(claude.available);
-        assert_eq!(claude.mechanism.as_deref(), Some("claude.resume_session_at"));
+        assert_eq!(
+            claude.mechanism.as_deref(),
+            Some("claude.resume_session_at")
+        );
         for status in ["running", "waiting", "starting", "cancelling"] {
             let busy = decide(&facts("claude", status), RewindConversation);
             assert!(!busy.available, "{status}");
