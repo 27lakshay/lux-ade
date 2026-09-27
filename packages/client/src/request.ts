@@ -55,6 +55,14 @@ export function isDaemonRefusal(error: DaemonRequestError): boolean {
 
 export interface RequestOptions {
   timeoutMs?: number
+  /** Presented in the hello on a remote host's paired endpoint. */
+  pairing?: { pairingId: string; token: string } | null
+}
+
+/** The hello line a connection opens with; a paired client presents its pairing. */
+export function helloLine(pairing?: { pairingId: string; token: string } | null): string {
+  return `${JSON.stringify(pairing ? { op: 'hello', pairing_id: pairing.pairingId, pairing_token: pairing.token }
+    : { op: 'hello' })}\n`
 }
 
 export type DaemonResponse = Record<string, unknown> & { type: string }
@@ -104,7 +112,7 @@ export function requestDaemon(
       reject(new DaemonRequestError(code, message, delivery, replied, recovery))
     }
 
-    socket.on('connect', () => socket.write('{"op":"hello"}\n'))
+    socket.on('connect', () => socket.write(helloLine(options.pairing)))
     socket.on('data', (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk])
       if (buffer.length > MAX_RESPONSE_BYTES) return fail('protocol', 'Daemon response exceeded 32 MiB.')

@@ -7062,6 +7062,17 @@ export interface HealthPolicy {
  */
 export interface HelloRequest {
   op: 'hello'
+  /**
+   * A paired client's pairing (`remote.host.pair`). Required on a remote
+   * daemon's paired endpoint, together with `pairing_token`; ignored on
+   * the owner socket.
+   */
+  pairing_id?: string | null
+  /**
+   * The pairing's token. The daemon compares its SHA-256 with the grant
+   * and never stores or logs it.
+   */
+  pairing_token?: string | null
 }
 /**
  * One conversation in the combined history.
@@ -9547,6 +9558,12 @@ export interface RemoteDaemon {
   application_protocol: string
   boot_id: string
   build_id: string | null
+  /**
+   * The paired endpoint on the remote host that the start granted this
+   * profile's pairing on. Clients forward to it and present the pairing ID
+   * and token in `hello`; revoking the pairing closes it to them.
+   */
+  paired_socket?: string | null
   pid: number
   profile_id: string
   runtime_protocol: string
@@ -9776,8 +9793,15 @@ export interface RemotePairRequest {
  */
 export interface RemotePairingReply {
   /**
-   * Where revocation takes effect. `local_profile`: this profile refuses to
-   * start or attach the host; the remote backend does not yet check tokens.
+   * Why a revocation has not reached the host yet; revoking again retries.
+   */
+  detail?: string | null
+  /**
+   * Where the pairing is enforced. `local_profile`: only this profile
+   * refuses a revoked pairing; a pairing is granted on the host when
+   * `remote.host.start` runs, and a revocation that could not reach the
+   * host has not taken effect there yet. `remote_daemon`: the host itself
+   * recorded the revocation and refuses the pairing on its paired endpoint.
    */
   enforcement: string
   host_id: string

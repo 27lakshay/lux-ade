@@ -8,6 +8,7 @@ test('the CLI outlasts the daemon ssh budget of each remote request', () => {
   // remote.host.start: 45 s probe + 60 s start script in one request.
   assert.ok(remoteDeadlineMs('remote.host.start') > 105_000)
   assert.ok(remoteDeadlineMs('remote.host.probe') > 45_000)
+  assert.ok(remoteDeadlineMs('remote.host.revoke') > 45_000)
   // remote.host.add: 10 s ssh -G + 30 s ssh-keyscan.
   assert.ok(remoteDeadlineMs('remote.host.add') > 40_000)
   // remote.host.install: two 45 s probes + three 120 s uploads.

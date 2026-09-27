@@ -142,19 +142,18 @@ test('the remote daemon listens only on an owner-only Unix socket reached throug
   expect(unpinned.getState()).toMatchObject({ phase: 'failed', failure: 'host_untrusted' })
 })
 
-// Gap: the remote backend does not issue or verify pairing tokens yet. A
-// revoked pairing is enforced only by this profile (`enforcement:
-// "local_profile"`); a client holding SSH access to the host can still reach
-// the remote daemon over the forward after revocation. F122's "reject
-// subsequent reconnections" needs a remote grant store and token presentation
-// on connect.
-test.fixme('the remote daemon rejects a connection that presents a revoked pairing', async ({ remote }) => {
+// The host grants the pairing on its paired endpoint at start and records the
+// revocation there; e2e/protocol/remote2/revocation.spec.ts covers the rest.
+test('the remote daemon rejects a connection that presents a revoked pairing', async ({ remote }) => {
   const profile = await remote.profile()
   const started = await startedHost(remote, profile, 'devbox')
-  await profile.call('remote.host.revoke', { host_id: 'devbox', pairing_id: started.pairing.pairing_id })
-  const transport = await remote.transport(targetOf(started))
+  const revoked = await profile.call('remote.host.revoke', { host_id: 'devbox', pairing_id: started.pairing.pairing_id },
+    { timeoutMs: 75_000 })
+  expect(revoked.enforcement).toBe('remote_daemon')
+  const transport = await remote.transport({ ...targetOf(started), remoteSocket: started.daemon.paired_socket!,
+    pairing: { pairingId: started.pairing.pairing_id, token: remote.pairingToken } })
   transport.start()
-  await expect(transport.waitUntilConnected(10_000)).rejects.toThrow()
+  await expect(transport.waitUntilConnected(10_000)).rejects.toMatchObject({ code: 'pairing_revoked' })
 })
 
 test('a pairing is recorded for an explicit host only and revoking an unknown pairing is refused', async ({ remote }) => {

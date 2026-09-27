@@ -11907,6 +11907,20 @@
       "properties": {
         "op": {
           "const": "hello"
+        },
+        "pairing_id": {
+          "description": "A paired client's pairing (`remote.host.pair`). Required on a remote\ndaemon's paired endpoint, together with `pairing_token`; ignored on\nthe owner socket.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pairing_token": {
+          "description": "The pairing's token. The daemon compares its SHA-256 with the grant\nand never stores or logs it.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -18524,6 +18538,13 @@
             "null"
           ]
         },
+        "paired_socket": {
+          "description": "The paired endpoint on the remote host that the start granted this\nprofile's pairing on. Clients forward to it and present the pairing ID\nand token in `hello`; revoking the pairing closes it to them.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "pid": {
           "maximum": 9007199254740991,
           "minimum": 0,
@@ -19024,8 +19045,15 @@
     "RemotePairingReply": {
       "description": "The `remote.host.pair` and `remote.host.revoke` reply.",
       "properties": {
+        "detail": {
+          "description": "Why a revocation has not reached the host yet; revoking again retries.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "enforcement": {
-          "description": "Where revocation takes effect. `local_profile`: this profile refuses to\nstart or attach the host; the remote backend does not yet check tokens.",
+          "description": "Where the pairing is enforced. `local_profile`: only this profile\nrefuses a revoked pairing; a pairing is granted on the host when\n`remote.host.start` runs, and a revocation that could not reach the\nhost has not taken effect there yet. `remote_daemon`: the host itself\nrecorded the revocation and refuses the pairing on its paired endpoint.",
           "type": "string"
         },
         "host_id": {

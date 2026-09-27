@@ -38,7 +38,8 @@ pub fn operations() -> Vec<OperationSpec> {
             "remote.host.pair",
             Tier::IdempotentCommand,
         ),
-        // Revoked is final; revoking again converges.
+        // Revoked is final; revoking again converges and retries recording
+        // the revocation on the host.
         OperationSpec::new::<RemoteRevokeRequest, RemotePairingReply>(
             "remote.host.revoke",
             Tier::IdempotentCommand,
@@ -253,9 +254,15 @@ pub struct RemotePairingReply {
     pub tag: RemotePairingTag,
     pub host_id: String,
     pub pairing: RemotePairing,
-    /// Where revocation takes effect. `local_profile`: this profile refuses to
-    /// start or attach the host; the remote backend does not yet check tokens.
+    /// Where the pairing is enforced. `local_profile`: only this profile
+    /// refuses a revoked pairing; a pairing is granted on the host when
+    /// `remote.host.start` runs, and a revocation that could not reach the
+    /// host has not taken effect there yet. `remote_daemon`: the host itself
+    /// recorded the revocation and refuses the pairing on its paired endpoint.
     pub enforcement: String,
+    /// Why a revocation has not reached the host yet; revoking again retries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,6 +287,11 @@ pub struct RemoteDaemon {
     pub build_id: Option<String>,
     pub application_protocol: String,
     pub runtime_protocol: String,
+    /// The paired endpoint on the remote host that the start granted this
+    /// profile's pairing on. Clients forward to it and present the pairing ID
+    /// and token in `hello`; revoking the pairing closes it to them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paired_socket: Option<String>,
 }
 
 /// The `remote.host.start` reply.

@@ -87,7 +87,17 @@ fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, 
 
 /// `hello`: the handshake every connection sends first.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
-pub struct HelloRequest {}
+pub struct HelloRequest {
+    /// A paired client's pairing (`remote.host.pair`). Required on a remote
+    /// daemon's paired endpoint, together with `pairing_token`; ignored on
+    /// the owner socket.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing_id: Option<String>,
+    /// The pairing's token. The daemon compares its SHA-256 with the grant
+    /// and never stores or logs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing_token: Option<String>,
+}
 
 /// `runtime.status`: read the daemon and runtime supervisor state.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]

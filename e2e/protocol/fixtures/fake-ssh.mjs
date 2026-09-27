@@ -9,6 +9,9 @@
 //   caller's environment. stdin, stdout, stderr and the exit code pass through.
 // - `ssh [-o ...] -N -T -L LOCAL_SOCKET:REMOTE_SOCKET -- TARGET` forwards a
 //   Unix socket until it is signalled or the host's link goes down.
+// - `ssh [-o ...] -N -T -L 127.0.0.1:PORT:HOST:HOSTPORT -- TARGET` forwards a
+//   loopback TCP port to HOST:HOSTPORT as the remote host sees it. The scratch
+//   hosts share this machine's network, so HOST must be a loopback address.
 // - Installed as `ssh-keyscan`, it prints the host's current key.
 //
 // Each host has a fixed key in `<root>/host_key.pub` that a test can replace.
@@ -144,11 +147,14 @@ if (flags.has('N')) {
     if (--pending === 0) log({ args: argv, forwarding: forwards })
   }
   for (const spec of forwards) {
+    const tcp = /^127\.0\.0\.1:(\d+):(127(?:\.\d{1,3}){3}|\[::1\]):(\d+)$/.exec(spec)
     const split = spec.indexOf(':')
-    const local = spec.slice(0, split)
-    const remote = spec.slice(split + 1)
-    if (!local.startsWith('/') || !remote.startsWith('/')) die(`fake ssh forwards Unix sockets only: ${spec}`)
-    if (options.streamlocalbindunlink === 'yes') rmSync(local, { force: true })
+    const local = tcp ? null : spec.slice(0, split)
+    const remote = tcp ? { host: tcp[2].replace(/^\[|\]$/g, ''), port: Number(tcp[3]) } : spec.slice(split + 1)
+    if (!tcp && (!local.startsWith('/') || !remote.startsWith('/'))) {
+      die(`fake ssh forwards Unix sockets and loopback TCP ports only: ${spec}`)
+    }
+    if (local && options.streamlocalbindunlink === 'yes') rmSync(local, { force: true })
     const server = createServer((client) => {
       const upstream = createConnection(remote)
       sockets.add(client)
@@ -161,16 +167,19 @@ if (flags.has('N')) {
       client.pipe(upstream)
       upstream.pipe(client)
     })
-    server.once('error', (error) => die(`bind [${local}]: ${error.message}\r\nCould not request local forwarding.`))
-    server.listen(local, () => {
-      chmodSync(local, 0o777 & ~mask)
-      ready()
-    })
+    server.once('error', (error) => die(`bind [${local ?? spec}]: ${error.message}\r\nCould not request local forwarding.`))
+    if (tcp) server.listen(Number(tcp[1]), '127.0.0.1', ready)
+    else {
+      server.listen(local, () => {
+        chmodSync(local, 0o777 & ~mask)
+        ready()
+      })
+    }
     servers.push({ server, local })
   }
   const shutdown = (code, message) => {
     for (const socket of sockets) socket.destroy()
-    for (const { server, local } of servers) { server.close(); rmSync(local, { force: true }) }
+    for (const { server, local } of servers) { server.close(); if (local) rmSync(local, { force: true }) }
     if (message) process.stderr.write(`${message}\n`)
     log({ args: argv, exit: code, stderr: message ?? null })
     process.exit(code)

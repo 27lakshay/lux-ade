@@ -491,12 +491,64 @@ pub fn compatibility(
 }
 
 /// The script that starts the remote profile daemon, or attaches to the one
-/// running, through the `ade-control` the probe verified.
-pub fn start_script(control_path: &str, profile_id: Option<&str>) -> String {
+/// running, through the `ade-control` the probe verified. With a grant, the
+/// host first records the pairing ID and its token's SHA-256 and opens its
+/// paired endpoint; the token itself never leaves this machine.
+pub fn start_script(
+    control_path: &str,
+    profile_id: Option<&str>,
+    grant: Option<(&str, &str)>,
+) -> String {
     let profile = profile_id
         .map(|id| format!(" {}", sh_quote(id)))
         .unwrap_or_default();
-    format!("exec {} profiles start{profile}\n", sh_quote(control_path))
+    let grant = grant
+        .map(|(pairing_id, digest)| {
+            format!(" --grant {}", sh_quote(&format!("{pairing_id}:{digest}")))
+        })
+        .unwrap_or_default();
+    format!(
+        "exec {} profiles start{profile}{grant}\n",
+        sh_quote(control_path)
+    )
+}
+
+/// The script that records a revoked pairing on the host. It needs no running
+/// daemon: the host's grant file changes, and a running daemon closes the
+/// pairing's connections. `control_path` null uses `ade-control` on PATH.
+pub fn revoke_script(
+    control_path: Option<&str>,
+    pairing_id: &str,
+    profile_id: Option<&str>,
+) -> String {
+    let control = control_path.map_or_else(|| "ade-control".to_owned(), sh_quote);
+    let profile = profile_id
+        .map(|id| format!(" {}", sh_quote(id)))
+        .unwrap_or_default();
+    format!(
+        "exec {control} profiles access-revoke {}{profile}\n",
+        sh_quote(pairing_id)
+    )
+}
+
+/// Whether the host confirmed the revocation: `ade-control` printed the grant
+/// list with that pairing revoked.
+pub fn revocation_confirmed(finished: &Finished, pairing_id: &str) -> bool {
+    finished.code == Some(0)
+        && !finished.timed_out
+        && finished
+            .stdout
+            .lines()
+            .rev()
+            .find_map(|line| serde_json::from_str::<Value>(line).ok())
+            .is_some_and(|reply| {
+                reply["type"] == "access_grants"
+                    && reply["grants"].as_array().is_some_and(|grants| {
+                        grants.iter().any(|grant| {
+                            grant["pairing_id"] == pairing_id && grant["state"] == "revoked"
+                        })
+                    })
+            })
 }
 
 /// How a finished (or abandoned) `ssh` process ended.
@@ -563,6 +615,7 @@ const REFUSED_BEFORE_LAUNCH: &[&str] = &[
     "Profile ID is not registered on this host",
     "Another process owns",
     "Existing daemon cannot hand off this runtime",
+    "Access grant refused",
 ];
 
 /// The worst case one `remote.host.start` request runs: the probe's and the
@@ -781,6 +834,7 @@ fn parse_started(stdout: &str) -> Result<RemoteDaemon> {
         build_id: daemon["build_id"].as_str().map(str::to_owned),
         application_protocol: text(&daemon["application_protocol"], "application protocol")?,
         runtime_protocol: text(&daemon["runtime_protocol"], "runtime protocol")?,
+        paired_socket: reply["access"]["endpoint"].as_str().map(str::to_owned),
     })
 }
 
@@ -975,12 +1029,24 @@ mod tests {
         );
         assert!(probe_script(None).contains("command -v ade-control"));
         assert_eq!(
-            start_script("/opt/ade/ade-control", Some("p1")),
+            start_script("/opt/ade/ade-control", Some("p1"), None),
             "exec '/opt/ade/ade-control' profiles start 'p1'\n"
         );
         assert_eq!(
-            start_script("/opt/ade/ade-control", None),
+            start_script("/opt/ade/ade-control", None, None),
             "exec '/opt/ade/ade-control' profiles start\n"
+        );
+        assert_eq!(
+            start_script("/opt/ade/ade-control", Some("p1"), Some(("pair-1", "ab"))),
+            "exec '/opt/ade/ade-control' profiles start 'p1' --grant 'pair-1:ab'\n"
+        );
+        assert_eq!(
+            revoke_script(None, "pair-1", Some("p1")),
+            "exec ade-control profiles access-revoke 'pair-1' 'p1'\n"
+        );
+        assert_eq!(
+            revoke_script(Some("/opt/ade/ade-control"), "pair-1", None),
+            "exec '/opt/ade/ade-control' profiles access-revoke 'pair-1'\n"
         );
     }
 

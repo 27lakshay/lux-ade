@@ -10,7 +10,7 @@
 // Import `test` from this file to get the `remote` fixture. Its teardown stops
 // every remote daemon and runtime before the harness checks for survivors.
 import { execFile, execFileSync } from 'node:child_process'
-import { createHash, generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -280,9 +280,20 @@ async function stopDaemonAndRuntime(ade: AdeHarness, socket: string, hello: Reco
   await waitForExit(runtime.pid as number, 'remote runtime')
 }
 
+/**
+ * The variable a lab profile's daemon reads pairing tokens from. `addAndPair`
+ * pairs every host with it; `ADE_DEVBOX_TOKEN` holds the same token.
+ */
+export const pairingTokenEnv = 'ADE_E2E_PAIRING_TOKEN'
+
 export class RemoteLab {
   /** The directory holding the fake `ssh` and `ssh-keyscan`; put it first on PATH. */
   readonly bin: string
+  /**
+   * The pairing token in a lab profile's environment. A start grants it on the
+   * host by its SHA-256; a paired client presents it in hello.
+   */
+  readonly pairingToken = randomBytes(24).toString('base64url')
   private readonly hosts: RemoteHost[] = []
   private readonly transports: RemoteDaemonTransport[] = []
 
@@ -327,7 +338,8 @@ export class RemoteLab {
   /** Profile options that put the fake ssh first on the daemon's and CLI's PATH. */
   profileOptions(options: ProfileOptions = {}): ProfileOptions {
     const path = scratchEnvironment(join(this.ade.root, 'unused-home')).PATH
-    return { ...options, env: { ...options.env, PATH: `${this.bin}:${path}` } }
+    return { ...options, env: { [pairingTokenEnv]: this.pairingToken, ADE_DEVBOX_TOKEN: this.pairingToken,
+      ...options.env, PATH: `${this.bin}:${path}` } }
   }
 
   /** A local scratch profile whose daemon and CLI reach remote hosts only through the fake ssh. */

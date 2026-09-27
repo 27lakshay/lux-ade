@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  admitRemoteRequest, classifySshExit, connectionKey, initialRemoteState, reduceRemote, remoteStatus,
+  admitRemoteRequest, classifySshExit, connectionKey, initialRemoteState, pairingRefusal, reduceRemote, remoteStatus,
   pinnedKnownHosts, requestLostLink, retryDelay, sshForwardArgs, validateLocalSocket, validateTarget,
 } from '../dist/remote-state.js'
 
@@ -189,4 +189,27 @@ test('a daemon-coded unavailable reply does not count as link loss', () => {
   assert.equal(requestLostLink({ code: 'unavailable', replied: false }), true)
   assert.equal(requestLostLink({ code: 'timeout', replied: false }), false)
   assert.equal(requestLostLink({ code: 'conflict', replied: true }), false)
+})
+
+test('a host that refuses the pairing stops the connection without a retry, keeping its pin', () => {
+  const before = connected()
+  const { state, effects } = run(before, { type: 'refused', failure: 'pairing_revoked', detail: 'Pairing p was revoked' })
+  assert.equal(state.phase, 'failed')
+  assert.equal(state.failure, 'pairing_revoked')
+  assert.deepEqual(state.pinned, before.pinned)
+  assert.deepEqual(effects.map((effect) => effect.type), ['kill_forward', 'cancel_retry'])
+  assert.equal(admitRemoteRequest(state, target).admitted, false)
+  // A refusal after a stop changes nothing.
+  const stopped = run(before, { type: 'stop' }, { type: 'refused', failure: 'unauthorized', detail: 'x' }).state
+  assert.equal(stopped.phase, 'stopped')
+  assert.equal(pairingRefusal({ code: 'pairing_revoked', replied: true }), 'pairing_revoked')
+  assert.equal(pairingRefusal({ code: 'unauthenticated', replied: true }), 'unauthorized')
+  assert.equal(pairingRefusal({ code: 'unauthenticated', replied: false }), null)
+  assert.equal(pairingRefusal({ code: 'unavailable', replied: true }), null)
+})
+
+test('a pairing credential is validated with the target', () => {
+  assert.equal(validateTarget({ ...target, pairing: { pairingId: 'p-1', token: 't' } }), null)
+  assert.match(validateTarget({ ...target, pairing: { pairingId: 'p 1', token: 't' } }), /Pairing ID/)
+  assert.match(validateTarget({ ...target, pairing: { pairingId: 'p-1', token: '' } }), /token/)
 })

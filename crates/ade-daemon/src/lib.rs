@@ -19,6 +19,7 @@ pub mod placement;
 pub mod plugins;
 pub mod receipts;
 pub mod remote;
+pub mod remote_access;
 pub mod repository;
 pub mod retention;
 pub mod review;
