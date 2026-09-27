@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+/* The terminal surface (packages/terminal) builds its elements with Tailwind classes. */
+@source '../../../../../packages/terminal/src';
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
 

@@ -31,11 +31,7 @@
     "shiki",
     "sonner",
     "streamdown",
-    "zod",
-    "@xterm/addon-search",
-    "@xterm/addon-serialize",
-    "@xterm/addon-web-links",
-    "@xterm/addon-webgl"
+    "zod"
   ],
   "boundaries": {
     "zones": [

@@ -1,10 +1,13 @@
-import { FitAddon } from '@xterm/addon-fit'
-import { Terminal, type IDisposable } from '@xterm/xterm'
-import '@xterm/xterm/css/xterm.css'
 import { TerminalFeed, type TerminalFrame } from './feed'
-import { prepareTerminal, terminalOptions } from './options'
+import type { GhosttyTheme } from './ghostty/core'
+import { GhosttyTerminalSurface, type GhosttyTerminalFont } from './ghostty/surface'
+import { terminalThemeFrom } from './theme'
 
 export type { TerminalFrame } from './feed'
+// For the host's `onLinkActivate`: whether a click should open a link, and where a path points.
+export { isTerminalLinkActivation, resolvePathLinkTarget } from './ghostty/links'
+export type { GhosttyTheme } from './ghostty/core'
+export type { GhosttyTerminalFont } from './ghostty/surface'
 
 export interface TerminalChannel {
   input(data: string): void
@@ -27,87 +30,121 @@ export interface TerminalBridge {
   ): Promise<TerminalChannel>
 }
 
+export interface MountTerminalOptions {
+  /** A user-facing message: a failed attach, a gap, or a closed connection. */
+  onStatus(message: string): void
+  /** A link the user activated (a URL or a file path, with any `:line:column`). */
+  onLinkActivate?(text: string, event: MouseEvent): void
+  /** A right-click the running program did not take. The host shows its menu. */
+  onContextMenu?(event: MouseEvent): void
+  font?: GhosttyTerminalFont
+  /** Colours; by default read from the container's CSS `color` and background. */
+  theme?: GhosttyTheme
+}
+
 export interface TerminalView {
-  terminal: Terminal
+  /** Pauses drawing while the view is hidden; output is still parsed. */
+  setVisible(visible: boolean): void
+  /** Re-reads the colours after the app theme changed, or applies the given ones. */
+  setTheme(theme?: GhosttyTheme): void
+  /** Loads and applies a font; the grid refits to the new cell size. */
+  setFont(font: GhosttyTerminalFont): Promise<void>
+  focus(): void
   dispose(): void
 }
 
-/** Mounts a terminal without routing PTY bytes through React state. */
+/**
+ * Mounts a terminal: a Ghostty surface drawing into `container`, fed by one attachment. PTY bytes
+ * never pass through React state.
+ */
 export function mountTerminal(
   container: HTMLElement,
   bridge: TerminalBridge,
   workspaceId: string,
   terminalId: string,
-  onStatus: (message: string) => void,
+  options: MountTerminalOptions,
 ): TerminalView {
-  const terminal = new Terminal(terminalOptions)
-  const fit = new FitAddon()
-  terminal.loadAddon(fit)
-  terminal.open(container)
+  let surface: GhosttyTerminalSurface | null = null
+  let feed: TerminalFeed | null = null
   let channel: TerminalChannel | null = null
+  let visible = true
   let disposed = false
   let failed = false
-  const subscriptions: IDisposable[] = []
-  const feed = new TerminalFeed(terminal, {
-    status: onStatus,
-    ready: () => fitAndNotify(),
-    failed: () => {
-      failed = true
-      channel?.dispose()
-    },
-  })
 
-  const fitAndNotify = (): void => {
-    if (!feed.ready || !channel || disposed || !container.isConnected) return
-    fit.fit()
+  const reportSize = (): void => {
+    if (!surface || !channel || !feed?.ready || disposed) return
     const box = container.getBoundingClientRect()
-    channel.resize(terminal.cols, terminal.rows, Math.round(box.width), Math.round(box.height))
+    channel.resize(surface.cols, surface.rows, Math.round(box.width), Math.round(box.height))
   }
-  const observer = new ResizeObserver(fitAndNotify)
-  observer.observe(container)
 
-  subscriptions.push(...prepareTerminal(terminal))
-  subscriptions.push(
-    terminal.onData((data) => {
-      if (feed.ready) channel?.input(data)
-    }),
-  )
-  subscriptions.push(
-    terminal.onBinary((data) => {
-      if (feed.ready) channel?.binary(Array.from(data, (character) => character.charCodeAt(0) & 255))
-    }),
-  )
-
-  void bridge
-    .attach(
+  const start = async (): Promise<void> => {
+    const created = await GhosttyTerminalSurface.create(container, {
+      theme: options.theme ?? terminalThemeFrom(container),
+      font: options.font,
+      get visible() {
+        return visible
+      },
+      onData: (data) => {
+        if (feed?.ready) channel?.input(data)
+      },
+      onResize: reportSize,
+      onSelectionChange: () => {},
+      // Global shortcuts belong to the native menu, which sees them first; every other key is the
+      // terminal's.
+      beforeKey: () => true,
+      onLinkActivate: (text, event) => options.onLinkActivate?.(text, event),
+      onContextMenu: (event) => options.onContextMenu?.(event),
+    })
+    if (disposed) {
+      created.dispose()
+      return
+    }
+    surface = created
+    feed = new TerminalFeed(created, {
+      status: (message) => options.onStatus(message),
+      ready: reportSize,
+      failed: () => {
+        failed = true
+        channel?.dispose()
+      },
+    })
+    const attached = await bridge.attach(
       workspaceId,
       terminalId,
       (frame) => {
-        if (!disposed && !failed) feed.push(frame)
+        if (!disposed && !failed) feed?.push(frame)
       },
       (reason) => {
-        if (!disposed) onStatus(reason)
+        if (!disposed) options.onStatus(reason)
       },
     )
-    .then((attached) => {
-      if (disposed || failed) attached.dispose()
-      else {
-        channel = attached
-        fitAndNotify()
-      }
-    })
-    .catch((error: Error) => onStatus(error.message))
+    if (disposed || failed) {
+      attached.dispose()
+      return
+    }
+    channel = attached
+    reportSize()
+  }
+  start().catch((error: Error) => {
+    if (!disposed) options.onStatus(error.message)
+  })
 
   return {
-    terminal,
+    setVisible: (next) => {
+      visible = next
+      surface?.setVisible(next)
+    },
+    setTheme: (theme) => surface?.setTheme(theme ?? terminalThemeFrom(container)),
+    setFont: async (font) => {
+      await surface?.setFont(font)
+    },
+    focus: () => surface?.focus(),
     dispose: () => {
       if (disposed) return
       disposed = true
-      feed.dispose()
-      observer.disconnect()
-      for (const subscription of subscriptions) subscription.dispose()
+      feed?.dispose()
       channel?.dispose()
-      terminal.dispose()
+      surface?.dispose()
     },
   }
 }

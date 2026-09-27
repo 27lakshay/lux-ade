@@ -1,13 +1,13 @@
-// F081 on the xterm side, headless: a full-screen program keeps running
+// F081 on the window side, headless: a full-screen program keeps running
 // while its only view detaches and the daemon is killed, and a new view
-// restores the same screen, cursor, alternate buffer and modes in a real
-// xterm.js core through the desktop adapter's TerminalFeed. Drawing it on a
+// restores the same screen, cursor, alternate screen and modes in the
+// window's Ghostty core through the desktop adapter's TerminalFeed. Drawing it on a
 // DOM, fit and focus stay with Electron E2E.
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, isRunning, test } from '../fixtures'
 import { terminalMetrics } from '../fixtures/terminals'
-import { openView } from './xterm'
+import { openView } from './viewer'
 
 /**
  * A full-screen program: raw mode, alternate screen, bracketed paste,
@@ -32,7 +32,7 @@ termios.tcsetattr(0, termios.TCSADRAIN, saved)
 out('program-exit\r\n')
 `
 
-test('a full-screen program survives detach and a daemon kill, and xterm restores its screen and modes', async ({
+test("a full-screen program survives detach and a daemon kill, and the window's Ghostty restores its screen and modes", async ({
   profile,
 }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
@@ -66,7 +66,7 @@ test('a full-screen program survives detach and a daemon kill, and xterm restore
 
   // The only view detaches, then the daemon is killed and replaced.
   first.connection.detach()
-  first.view.terminal.dispose()
+  first.viewer.screen.dispose()
   const hello = await profile.restartDaemon('kill')
   expect(hello.runtime_instance).toBe(profile.hello.runtime_instance)
   expect(await isRunning(programPid)).toBe(true)
@@ -74,7 +74,7 @@ test('a full-screen program survives detach and a daemon kill, and xterm restore
   // A new view restores exactly what the old one showed, without restarting anything.
   const second = await openView(profile, ...target)
   expect(second.connection.incarnation()).toBe(runId)
-  expect(await second.screen()).toEqual(drawn)
+  expect(second.screen()).toEqual(drawn)
   expect(await terminalMetrics(profile, ...target)).toMatchObject({
     run_id: runId,
     shell_pid: before.shell_pid,
@@ -97,15 +97,15 @@ test('a full-screen program survives detach and a daemon kill, and xterm restore
   expect(after.lines.join('')).toContain(`python3 '${script}'`)
   await expect.poll(() => isRunning(programPid), { message: 'the program to exit' }).toBe(false)
 
-  // Output arrived in order: a third view built from the replay alone matches the live one.
+  // Output arrived in order: a third view built from the snapshot alone matches the live one.
   const third = await openView(profile, ...target)
   // The shell's prompt may still be arriving; both views then show it.
   await expect
-    .poll(async () => JSON.stringify(await third.screen()) === JSON.stringify(await second.screen()), {
-      message: 'the replayed view to match the live one',
+    .poll(() => JSON.stringify(third.screen()) === JSON.stringify(second.screen()), {
+      message: 'the restored view to match the live one',
     })
     .toBe(true)
-  expect((await third.screen()).lines).toContain('program-exit')
-  second.connection.dispose()
-  third.connection.dispose()
+  expect(third.screen().lines).toContain('program-exit')
+  second.dispose()
+  third.dispose()
 })

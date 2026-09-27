@@ -28,16 +28,26 @@ export interface TerminalConnection {
 export interface TerminalConnectionOptions {
   /** Refuse to attach unless the terminal is still this incarnation. */
   runId?: string
+  /**
+   * How snapshots restore the screen. `xterm-replay-v1` (the default) replays recorded output;
+   * `ghostty` sends the runtime's own Ghostty terminal state as base64, which a viewer built from
+   * the same Ghostty decodes exactly.
+   */
+  snapshotFormat?: 'xterm-replay-v1' | 'ghostty'
 }
 
 /**
  * Decides whether a frame belongs to the incarnation an attachment is bound to.
  * Frames without a `run_id` come from hosts that predate fencing and are kept.
  */
-/** The live-output offset an xterm-replay-v1 snapshot resumes at, if it names one. */
+/**
+ * The live-output offset a snapshot resumes at, if it names one: an xterm-replay-v1 snapshot's
+ * `through_offset`, or the byte count a Ghostty snapshot was taken at.
+ */
 function snapshotOffset(frame: TerminalFrame): number | null {
   const recovery = frame.terminal_recovery as Record<string, unknown> | undefined
-  const offset = recovery?.through_offset
+  const metrics = frame.metrics as Record<string, unknown> | undefined
+  const offset = recovery?.through_offset ?? metrics?.terminal_bytes
   return typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0 ? offset : null
 }
 
@@ -85,7 +95,13 @@ export function openTerminalConnection(
     socket.destroy()
     onClose(reason)
   }
-  socket.on('connect', () => send({ op: 'subscribe', snapshot_format: 'xterm-replay-v1' }))
+  socket.on('connect', () =>
+    send(
+      options.snapshotFormat === 'ghostty'
+        ? { op: 'subscribe', snapshot_format: 'binary', snapshot_encoding: 'base64' }
+        : { op: 'subscribe', snapshot_format: 'xterm-replay-v1' },
+    ),
+  )
   socket.on('data', (chunk: Buffer) => {
     if (closed) return
     buffered = Buffer.concat([buffered, chunk])

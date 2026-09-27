@@ -13,7 +13,8 @@ export default defineConfig({
   // (say a Base UI subpath) reloads the page and loads a second React, failing that run.
   optimizeDeps: { entries: ['src/renderer/**/*.{ts,tsx}'] },
   test: {
-    include: ['src/renderer/**/*.test.{ts,tsx}'],
+    // The terminal package's engine tests run here too: they need the same real Chromium.
+    include: ['src/renderer/**/*.test.{ts,tsx}', '../../packages/terminal/src/**/*.test.ts'],
     browser: {
       enabled: true,
       headless: true,

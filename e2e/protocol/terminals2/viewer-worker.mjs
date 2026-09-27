@@ -1,24 +1,31 @@
-// A desktop-shaped terminal viewer on a worker thread: the SDK's terminal
-// connection feeding the adapter's TerminalFeed and a real xterm core, with
-// input from xterm sent back as the adapter sends it. While `gate[0]` is 0
-// every output frame blocks the thread for one millisecond per
-// `bytesPerMs` bytes, so the viewer reads its stream slower than a flood
-// produces it; the test sets `gate[0]` to 1
-// to let it read freely. It runs on its own thread so its blocked loop never
-// stalls the test.
-import { createRequire } from 'node:module'
+// A desktop-shaped terminal viewer on a worker thread: the SDK's terminal connection, asking for
+// Ghostty snapshots, feeding the adapter's TerminalFeed and the window's Ghostty WebAssembly core.
+// While `gate[0]` is 0 every output frame blocks the thread for one millisecond per `bytesPerMs`
+// bytes, so the viewer reads its stream slower than a flood produces it; the test sets `gate[0]`
+// to 1 to let it read freely. It runs on its own thread so its blocked loop never stalls the test.
+import { readFile } from 'node:fs/promises'
+import { register } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parentPort, workerData } from 'node:worker_threads'
 
-const { clientPath, feedPath, terminalPackage, socket, workspaceId, terminalId, gateBuffer, bytesPerMs } = workerData
-const gate = new Int32Array(gateBuffer)
-const { openTerminalConnection } = await import(pathToFileURL(clientPath).href)
-const { TerminalFeed, suppressReplies } = await import(pathToFileURL(feedPath).href)
-const { Terminal } = createRequire(join(terminalPackage, 'package.json'))('@xterm/xterm')
+register('./ts-resolve.mjs', import.meta.url)
 
-const terminal = new Terminal({ cols: 100, rows: 30, convertEol: false, scrollback: 10_000, allowProposedApi: true })
-suppressReplies(terminal)
+const { clientPath, terminalSource, socket, workspaceId, terminalId, gateBuffer, bytesPerMs } = workerData
+const gate = new Int32Array(gateBuffer)
+const source = (path) => import(pathToFileURL(join(terminalSource, path)).href)
+const { openTerminalConnection } = await import(pathToFileURL(clientPath).href)
+const { TerminalFeed } = await source('feed.ts')
+const { GHOSTTY_CELL_WIDE, GhosttyTerminalCore } = await source('ghostty/core.ts')
+const { setGhosttyWasmSource } = await source('ghostty/runtime.ts')
+
+setGhosttyWasmSource(() => readFile(join(terminalSource, 'ghostty/vendor/ghostty-vt.wasm')))
+const white = { r: 255, g: 255, b: 255 }
+const core = await GhosttyTerminalCore.create(100, 30, 8, 16, {
+  foreground: white,
+  background: { r: 0, g: 0, b: 0 },
+  cursor: white,
+})
 const statuses = []
 const errors = []
 let closed = null
@@ -26,16 +33,13 @@ let snapshots = 0
 let resyncs = 0
 let failed = false
 let connection = null
-const feed = new TerminalFeed(terminal, {
+const feed = new TerminalFeed(core, {
   status: (message) => statuses.push(message),
   ready: () => {},
   failed: () => {
     failed = true
     connection?.dispose()
   },
-})
-terminal.onData((data) => {
-  if (feed.ready) connection?.input(data)
 })
 connection = openTerminalConnection(
   socket,
@@ -53,42 +57,49 @@ connection = openTerminalConnection(
   (reason) => {
     closed = reason
   },
+  { snapshotFormat: 'ghostty' },
 )
 
+/** The same shape as `screenOf` in viewer.ts. */
 function screen() {
-  const buffer = terminal.buffer.active
-  const lines = []
-  for (let row = 0; row < terminal.rows; row++) {
-    lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '')
-  }
+  const snapshot = core.snapshot()
+  const mode = (number) => core.isModeEnabled(number)
   return {
-    buffer: buffer.type,
-    cols: terminal.cols,
-    rows: terminal.rows,
-    cursor: [buffer.cursorX, buffer.cursorY],
-    lines,
-    modes: { ...terminal.modes },
+    buffer: core.isAlternateScreen() ? 'alternate' : 'normal',
+    cols: snapshot.cols,
+    rows: snapshot.rows,
+    cursor: [snapshot.cursorX, snapshot.cursorY],
+    lines: snapshot.rowData.map((row) =>
+      row.cells
+        .filter((cell) => cell.wide !== GHOSTTY_CELL_WIDE.spacerTail && cell.wide !== GHOSTTY_CELL_WIDE.spacerHead)
+        .map((cell) => cell.text || ' ')
+        .join('')
+        .trimEnd(),
+    ),
+    modes: {
+      bracketedPasteMode: mode(2004),
+      applicationCursorKeysMode: mode(1),
+      mouseTrackingMode: mode(1003) ? 'any' : mode(1002) ? 'drag' : mode(1000) ? 'vt200' : mode(9) ? 'x10' : 'none',
+    },
   }
 }
 
 parentPort.on('message', (message) => {
   if (message.type === 'report') {
-    terminal.write('', () =>
-      parentPort.postMessage({
-        sdk: { offset: connection.offset(), resyncs: connection.resyncs(), incarnation: connection.incarnation() },
-        feed: { ready: feed.ready, failed },
-        snapshots,
-        resyncs,
-        errors,
-        statuses,
-        closed,
-        screen: screen(),
-      }),
-    )
+    parentPort.postMessage({
+      sdk: { offset: connection.offset(), resyncs: connection.resyncs(), incarnation: connection.incarnation() },
+      feed: { ready: feed.ready, failed },
+      snapshots,
+      resyncs,
+      errors,
+      statuses,
+      closed,
+      screen: screen(),
+    })
   } else if (message.type === 'close') {
     connection.dispose()
     feed.dispose()
-    terminal.dispose()
+    core.dispose()
     parentPort.close()
   }
 })

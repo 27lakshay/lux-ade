@@ -46,7 +46,9 @@ claiming a UI change works.
   elsewhere. `shadcn.css` is not imported by the prototype shell yet: its variable names overlap the
   prototype's tokens, and ADE's tokens get mapped onto it once the design system is settled in Pen.
   Use the `shadcn` skill and the `shadcn` MCP server (`.mcp.json`); config is `components.json`.
-- Terminal output stays outside React state (xterm.js).
+- Terminal output stays outside React state. Terminals render with Ghostty compiled to
+  WebAssembly (`packages/terminal`), built from the daemon's own Ghostty so its snapshots restore
+  exactly; see [docs/agents/terminal.md](../../docs/agents/terminal.md).
 - `?safeMode=1` in the window URL means main reloaded the window after a hang or crash
   (`src/main/renderer-recovery.ts`). Load no plugins in safe mode, and keep pending approvals and
   core recovery visible.

@@ -13,4 +13,6 @@
 /packages/*/dist/
 /test-results/
 /playwright-report/
+# Vitest browser mode's failure screenshots.
+/apps/*/.vitest/
 /.dev/

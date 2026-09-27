@@ -23,15 +23,21 @@ Built before any product surface, on `main`, `c59348a`..`dbaf259`:
   carrying the feed and terminal streams per window.
 - **Renderer:** the stock shadcn/ui kit on Base UI (not yet used by the prototype shell), daemon
   and conversation stores, and a command and keybinding service.
+- **Terminal engine:** Ghostty's libghostty-vt as WebAssembly, built from the daemon's pin, with
+  t3code's Canvas 2D surface adapted (`packages/terminal`, D06). Views restore from the daemon's
+  Ghostty snapshot. xterm.js is removed. The protocol E2E in `e2e/protocol/terminals2` drives
+  the same core and feed against a real daemon. No pane mounts a live terminal yet.
 
 Deferred until the surface that needs it is built:
 
-- A cap on live browser tabs and on terminal WebGL contexts, and hiding a browser tab's native
+- A shared WebGL2 renderer for many terminals (Canvas 2D meanwhile), find in terminal, and a
+  screen-reader mirror.
+- A cap on live browser tabs, and hiding a browser tab's native
   view while an overlay is open. The browser and terminal panes are still mock-ups, and the tab
   cap changes `browser.ts`'s ownership and restore paths, which have no Electron E2E coverage.
 - Saving the pane layout through the daemon's `window.save` (`dock_layout`): the panes still hold
   sample tabs.
-- TanStack Virtual, Streamdown and Shiki, Pierre Diffs, TipTap, Pragmatic drag and drop, zod, Sonner and the xterm addons are
+- TanStack Virtual, Streamdown and Shiki, Pierre Diffs, TipTap, Pragmatic drag and drop, zod and Sonner are
   installed (D07) and get wired in with the surface that uses them; Fallow ignores them until then.
 - Terminal output as raw bytes: the daemon sends JSON frames; this needs a wire format change.
 - Electron E2E (Playwright `_electron`) was dropped from this plan by the user.

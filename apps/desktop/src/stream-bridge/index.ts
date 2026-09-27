@@ -66,7 +66,8 @@ function attachTerminal(link: WindowLink, message: Extract<WindowToBridge, { typ
   }
   link.terminals.get(connectionId)?.dispose()
   // Frames reach the renderer unchanged and in order, including a mid-stream `resync: true`
-  // snapshot, which the renderer's TerminalFeed applies as a reset and replay. The SDK closes the
+  // snapshot, which the renderer's TerminalFeed restores in place of the screen. Snapshots are the
+  // runtime's Ghostty state, which the renderer's Ghostty decodes exactly. The SDK closes the
   // attachment on an output gap, so the renderer never receives non-contiguous output.
   const terminal = openTerminalConnection(
     socket,
@@ -83,6 +84,7 @@ function attachTerminal(link: WindowLink, message: Extract<WindowToBridge, { typ
       flush(link)
       link.port.postMessage({ type: 'terminal-close', connectionId, reason })
     },
+    { snapshotFormat: 'ghostty' },
   )
   link.terminals.set(connectionId, terminal)
   reply(null)

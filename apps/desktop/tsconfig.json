@@ -7,10 +7,16 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "skipLibCheck": true,
     "paths": { "@/*": ["./src/renderer/src/*"] }
   },
-  "include": ["src", "scripts", "electron.vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "scripts",
+    "electron.vite.config.ts",
+    "vitest.config.ts",
+    "../../packages/terminal/src/assets.d.ts"
+  ]
 }

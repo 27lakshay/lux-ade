@@ -4,7 +4,7 @@
 // marked `resync: true`, and live output continues from that snapshot's
 // offset. Each caller must reset and restore from that snapshot:
 // - the SDK tracks the offset across it and refuses a real gap;
-// - the desktop adapter's TerminalFeed resets xterm and replays it;
+// - the desktop adapter's TerminalFeed restores the window's Ghostty from it;
 // - `ade terminal attach` resets the TTY and replays it.
 import { createServer } from 'node:net'
 import { writeFileSync } from 'node:fs'
@@ -14,7 +14,7 @@ import { expect, test, type ScratchProfile } from '../fixtures'
 import { binaries } from '../fixtures/environment'
 import type { ProcessLedger } from '../fixtures/processes'
 import { attachThroughTty, clientSdk, terminalMetrics, TerminalStream, type TerminalFrame } from '../fixtures/terminals'
-import { feedSource, restoredScreen, terminalPackage, type ScreenState } from './xterm'
+import { restoredScreen, terminalSource, type ScreenState } from './viewer'
 
 interface ViewerReport {
   sdk: { offset: number | null; resyncs: number; incarnation: string | null }
@@ -29,7 +29,7 @@ interface ViewerReport {
 }
 
 /**
- * A desktop-shaped viewer (SDK, TerminalFeed, xterm) on a worker thread that
+ * A desktop-shaped viewer (SDK, TerminalFeed, Ghostty core) on a worker thread that
  * reads slowly until released. See `viewer-worker.mjs`.
  */
 async function slowViewer(profile: ScratchProfile, workspaceId: string, terminalId: string, bytesPerMs: number) {
@@ -38,8 +38,7 @@ async function slowViewer(profile: ScratchProfile, workspaceId: string, terminal
   const worker = new Worker(join(__dirname, 'viewer-worker.mjs'), {
     workerData: {
       clientPath: binaries.client,
-      feedPath: feedSource,
-      terminalPackage,
+      terminalSource,
       socket: profile.socket,
       workspaceId,
       terminalId,
@@ -79,6 +78,9 @@ async function openTerminal(profile: ScratchProfile) {
   return { target, runId, shellPid, stream }
 }
 
+/** A subscribe asking for the runtime's Ghostty state, as the desktop adapter does. */
+const ghosttySubscribe = { op: 'subscribe', snapshot_format: 'binary', snapshot_encoding: 'base64' }
+
 /** Starts a flood and closes the stream that typed it, so every resync counted belongs to the viewer under test. */
 function startFlood(stream: TerminalStream, runId: string, command: string): void {
   stream.send({ op: 'input', run_id: runId, data: `${command}\n` })
@@ -91,14 +93,13 @@ async function typeLine(profile: ScratchProfile, target: readonly [string, strin
   expect(sent.code, sent.stderr).toBe(0)
 }
 
-test('the SDK and the xterm adapter restore exactly from a resync snapshot mid-stream', async ({ profile }) => {
+test('the SDK and the desktop adapter restore exactly from a resync snapshot mid-stream', async ({ profile }) => {
   test.setTimeout(180_000)
   const { target, runId, shellPid, stream } = await openTerminal(profile)
   const viewer = await slowViewer(profile, ...target, 200)
   await expect.poll(async () => (await viewer.report()).feed.ready, { message: 'the viewer to restore' }).toBe(true)
 
-  // About 2.8 MB of distinct lines: below the 4 MiB replay bound, so a resync
-  // snapshot replays the whole history, but about 8 MiB of frames, twice the
+  // About 2.8 MB of distinct lines, but about 8 MiB of frames: twice the
   // viewer budget.
   startFlood(stream, runId, 'seq 1 360000; echo "flo""od-end"')
   await expect
@@ -117,12 +118,11 @@ test('the SDK and the xterm adapter restore exactly from a resync snapshot mid-s
       async () => {
         const total = (await terminalMetrics(profile, ...target))!.terminal_bytes as number
         const report = await viewer.report()
-        const fresh = TerminalStream.open(profile, ...target)
+        const fresh = TerminalStream.open(profile, ...target, ghosttySubscribe)
         const snapshot = await fresh.snapshot()
         fresh.close()
-        const recovery = snapshot.terminal_recovery as { through_offset: number; complete: boolean }
-        if (report.sdk.offset !== total || recovery.through_offset !== total) return false
-        expect(recovery.complete).toBe(true)
+        const taken = (snapshot.metrics as { terminal_bytes: number }).terminal_bytes
+        if (report.sdk.offset !== total || taken !== total) return false
         settled = { report, fresh: await restoredScreen(snapshot), total }
         return report.screen.lines.some((line) => line === 'flood-end')
       },
@@ -159,13 +159,14 @@ test('the SDK and the xterm adapter restore exactly from a resync snapshot mid-s
   await viewer.close()
 })
 
-test('a resync past the replay bound resets the xterm view and says the history is lost', async ({ profile }) => {
+test('a resync after more output than xterm could replay still restores the whole screen', async ({ profile }) => {
   test.setTimeout(180_000)
   const { target, runId, shellPid, stream } = await openTerminal(profile)
   const viewer = await slowViewer(profile, ...target, 200)
   await expect.poll(async () => (await viewer.report()).feed.ready, { message: 'the viewer to restore' }).toBe(true)
 
-  // 8 MiB: past the 4 MiB replay bound, so later resync snapshots carry no history.
+  // 8 MiB: past the 4 MiB xterm replay bound. A Ghostty snapshot is the terminal's state, not its
+  // output, so its size does not grow with the flood and the restore stays complete.
   const flood = 8 * 1024 * 1024
   startFlood(stream, runId, `head -c ${flood} /dev/zero | tr '\\0' s; echo; echo "flo""od-end"`)
   // About 200 KB/s: the viewer falls a budget behind within seconds and is
@@ -199,10 +200,7 @@ test('a resync past the replay bound resets the xterm view and says the history 
   expect(report!.sdk.resyncs).toBeGreaterThanOrEqual(1)
   expect(report!.resyncs).toBe(report!.sdk.resyncs)
   expect(report!).toMatchObject({ errors: [], closed: null, feed: { failed: false, ready: true } })
-  expect(report!.statuses).toContain(
-    'Terminal fell behind and its history is too large to restore; live output continues.',
-  )
-  expect(report!.statuses.filter((status) => /incomplete\. Reconnect|replay queue/.test(status))).toEqual([])
+  expect(report!.statuses).toEqual([])
   expect(await terminalMetrics(profile, ...target)).toMatchObject({
     run_id: runId,
     shell_pid: shellPid,
