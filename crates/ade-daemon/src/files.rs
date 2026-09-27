@@ -170,6 +170,13 @@ fn live_frame(root: &OwnedFd, frame: Frame) -> Result<LiveFrame> {
     })
 }
 
+/// The host refused access, as opposed to the tree changing or vanishing.
+fn permission_denied(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied)
+}
+
 fn stat(fd: RawFd) -> Result<libc::stat> {
     let mut value = unsafe { std::mem::zeroed() };
     if unsafe { libc::fstat(fd, &mut value) } != 0 {
@@ -592,7 +599,13 @@ impl Files {
             }
             if kind(&metadata) == FileKind::Directory {
                 if stack.len() < SEARCH_DEPTH_LIMIT {
-                    stack.push(live_frame(root, stamp(child_path, &metadata))?);
+                    // One unreadable folder must not hide the rest of the
+                    // workspace: skip it and report the search as incomplete.
+                    match live_frame(root, stamp(child_path, &metadata)) {
+                        Ok(frame) => stack.push(frame),
+                        Err(error) if permission_denied(&error) => *incomplete = true,
+                        Err(error) => return Err(error),
+                    }
                 } else {
                     *incomplete = true;
                 }
@@ -741,5 +754,21 @@ impl Files {
         // describe the newly installed checkout.
         root_fd(path, expected)?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::permission_denied;
+
+    #[test]
+    fn only_a_refused_folder_is_skipped() {
+        let refused = anyhow::Error::from(std::io::Error::from_raw_os_error(libc::EACCES));
+        assert!(permission_denied(&refused));
+        let gone = anyhow::Error::from(std::io::Error::from_raw_os_error(libc::ENOENT));
+        assert!(!permission_denied(&gone));
+        assert!(!permission_denied(&anyhow::anyhow!(
+            "File search changed; refresh"
+        )));
     }
 }

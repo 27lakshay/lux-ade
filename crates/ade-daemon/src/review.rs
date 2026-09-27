@@ -44,6 +44,7 @@ use std::{
 };
 
 mod outbox;
+mod sync;
 
 type StatusCache = Arc<Mutex<Option<(Instant, ReviewStatus)>>>;
 const DIFF_SNAPSHOT_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -194,6 +195,7 @@ enum Mutation {
     Hunk(ReviewHunkRequest),
     Discard(ReviewDiscardRequest),
     Commit(ReviewCommitRequest),
+    Sync(sync::SyncRequest),
 }
 
 impl Mutation {
@@ -204,6 +206,9 @@ impl Mutation {
             "review.hunk" => Self::Hunk(decode(request)?),
             "review.discard" => Self::Discard(decode(request)?),
             "review.commit" => Self::Commit(decode(request)?),
+            op if sync::SyncRequest::handles(op) => {
+                Self::Sync(sync::SyncRequest::decode(op, request)?)
+            }
             _ => bail!("Unknown review operation"),
         })
     }
@@ -215,6 +220,7 @@ impl Mutation {
             Self::Hunk(_) => "review.hunk",
             Self::Discard(_) => "review.discard",
             Self::Commit(_) => "review.commit",
+            Self::Sync(request) => request.op(),
         }
     }
 
@@ -225,6 +231,7 @@ impl Mutation {
             Self::Hunk(request) => &request.operation_id,
             Self::Discard(request) => &request.operation_id,
             Self::Commit(request) => &request.operation_id,
+            Self::Sync(request) => request.id(),
         }
     }
 
@@ -234,7 +241,7 @@ impl Mutation {
             Self::Unstage(request) => Some(&request.path),
             Self::Hunk(request) => Some(&request.path),
             Self::Discard(request) => Some(&request.path),
-            Self::Commit(_) => None,
+            Self::Commit(_) | Self::Sync(_) => None,
         }
     }
 
@@ -246,6 +253,7 @@ impl Mutation {
             Self::Hunk(request) => serde_json::to_value(request)?,
             Self::Discard(request) => serde_json::to_value(request)?,
             Self::Commit(request) => serde_json::to_value(request)?,
+            Self::Sync(request) => request.payload()?,
         })
     }
 }
@@ -851,7 +859,7 @@ fn discard_stage_path(git: &Git<'_>, request_id: &str, path: &str) -> Result<Pat
     private_dir.sync_all()?;
     Ok(stage)
 }
-struct Git<'a> {
+pub(crate) struct Git<'a> {
     root: &'a str,
     guard: &'a ReviewGuard,
     binding: (u64, u64),
@@ -894,6 +902,23 @@ impl Git<'_> {
     fn run(&self, args: &[&str], input: Option<Vec<u8>>, timeout: u64) -> Result<Value> {
         let c = self.worker_command(args)?;
         worktrees::run_input(c, timeout, Some(&self.guard.file), input)
+    }
+    /// Runs a Git command that talks to a remote: remote helpers stay
+    /// disabled and SSH never prompts unless the user configured it.
+    fn run_remote(&self, args: &[&str], timeout: u64) -> Result<Value> {
+        let mut full = vec!["-c", "protocol.ext.allow=never"];
+        full.extend_from_slice(args);
+        let mut c = self.worker_command(&full)?;
+        if !crate::repository::ssh_is_configured(Path::new(self.root)) {
+            c.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+        }
+        if cfg!(debug_assertions)
+            && std::env::var("ADE_E2E_WORKER_PAUSE_ENABLED").as_deref() == Ok("1")
+            && let Ok(directory) = std::env::var("ADE_E2E_REVIEW_REMOTE_PAUSE_DIR")
+        {
+            c.env("ADE_E2E_WORKER_PAUSE_DIR", directory);
+        }
+        worktrees::run_input(c, timeout, Some(&self.guard.file), None)
     }
     fn stream_diff(&self, args: &[&str], untracked: bool) -> Result<String> {
         let mut command = self.worker_command(args)?;
@@ -1711,6 +1736,9 @@ impl Review {
                 }
                 Err(e) => {
                     completed.status = GitOperationStatus::Failed;
+                    if let Some(stopped) = e.downcast_ref::<sync::GitStopped>() {
+                        completed.result = Some(stopped.detail.clone());
+                    }
                     let failure = ade_core::error::error_envelope(e);
                     completed.error = failure["message"].as_str().map(str::to_owned);
                     completed.code = Some(failure["code"].as_str().map(str::to_owned));
@@ -1754,6 +1782,9 @@ impl Review {
     fn mutate(&self, git: &Git, mutation: &Mutation) -> Result<Value> {
         let state = git.status()?;
         let op = mutation.op();
+        if let Mutation::Sync(request) = mutation {
+            return sync::run(git, &state, request);
+        }
         if let Mutation::Commit(commit) = mutation {
             let message = text("message", &commit.message)?;
             ensure!(!message.trim().is_empty(), "Commit message is empty");

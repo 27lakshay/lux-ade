@@ -11254,7 +11254,7 @@
           ]
         },
         "result": {
-          "description": "The success result: `{head, output}` for a commit, otherwise\n`{changed, action, receipt}`."
+          "description": "The success result: `{head, output}` for a commit, `{changed, action,\nreceipt}` for a file change, and `{action, branch, head, ...}` for a\nbranch, stash, merge, fetch, pull or push. A merge or stash pop that\nstopped on conflicts fails with `{action, conflicts}` here."
         },
         "started_at": {
           "maximum": 9007199254740991,
@@ -20121,6 +20121,45 @@
       ],
       "type": "object"
     },
+    "ReviewBranchRequest": {
+      "additionalProperties": false,
+      "description": "`review.branch`: create a branch at HEAD, switch to a local branch, or both.\nGit refuses a switch that would overwrite local changes.",
+      "properties": {
+        "create": {
+          "description": "Create the branch at HEAD first; it must not exist yet.",
+          "type": "boolean"
+        },
+        "index_token": {
+          "description": "The status `index_token` the user reviewed.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The local branch name, checked with `git check-ref-format --branch`.",
+          "type": "string"
+        },
+        "op": {
+          "const": "review.branch"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "switch": {
+          "description": "Switch to the branch. At least one of `create` and `switch` is true.",
+          "type": "boolean"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "name",
+        "index_token"
+      ],
+      "type": "object"
+    },
     "ReviewCommitRequest": {
       "additionalProperties": false,
       "description": "`review.commit`: commit the reviewed staged index.",
@@ -20513,6 +20552,31 @@
       ],
       "type": "object"
     },
+    "ReviewFetchRequest": {
+      "additionalProperties": false,
+      "description": "`review.fetch`: fetch one configured remote. Only remote-tracking refs change.",
+      "properties": {
+        "op": {
+          "const": "review.fetch"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "remote": {
+          "description": "A configured remote name; the current branch's upstream remote, else\n`origin`, when absent. URLs are refused.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id"
+      ],
+      "type": "object"
+    },
     "ReviewFile": {
       "description": "One changed file in `review.status`.",
       "properties": {
@@ -20589,6 +20653,55 @@
         "path",
         "token",
         "hunk"
+      ],
+      "type": "object"
+    },
+    "ReviewMergeAction": {
+      "description": "What `review.merge` does.",
+      "oneOf": [
+        {
+          "const": "merge",
+          "description": "Merge `target` into the current branch with Git's default strategy.",
+          "type": "string"
+        },
+        {
+          "const": "abort",
+          "description": "Abort the merge in progress and restore the pre-merge state.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReviewMergeRequest": {
+      "additionalProperties": false,
+      "description": "`review.merge`: merge a branch or commit into the current branch, or abort\na stopped merge. A merge that stops on conflicts fails and lists them in\nthe receipt's `result.conflicts`; resolve, stage and commit, or abort.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ReviewMergeAction"
+        },
+        "index_token": {
+          "description": "The status `index_token` the user reviewed.",
+          "type": "string"
+        },
+        "op": {
+          "const": "review.merge"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "target": {
+          "description": "Merge only: a local branch, remote-tracking branch, tag or commit.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "action",
+        "index_token"
       ],
       "type": "object"
     },
@@ -20750,6 +20863,62 @@
       ],
       "type": "object"
     },
+    "ReviewPullRequest": {
+      "additionalProperties": false,
+      "description": "`review.pull`: fetch the current branch's upstream and fast-forward to it.\nA diverged branch fails; fetch and merge explicitly instead.",
+      "properties": {
+        "index_token": {
+          "description": "The status `index_token` the user reviewed.",
+          "type": "string"
+        },
+        "op": {
+          "const": "review.pull"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "index_token"
+      ],
+      "type": "object"
+    },
+    "ReviewPushRequest": {
+      "additionalProperties": false,
+      "description": "`review.push`: push the current branch without force, to its upstream, or\nto the same-named branch on `remote`, which then becomes the upstream.",
+      "properties": {
+        "index_token": {
+          "description": "The status `index_token` the user reviewed.",
+          "type": "string"
+        },
+        "op": {
+          "const": "review.push"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "remote": {
+          "description": "Required when the branch has no upstream; must be a configured remote name.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "index_token"
+      ],
+      "type": "object"
+    },
     "ReviewStageRequest": {
       "additionalProperties": false,
       "description": "`review.stage`: stage one reviewed file at a status revision.",
@@ -20775,6 +20944,59 @@
         "workspace_id",
         "operation_id",
         "path",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ReviewStashAction": {
+      "description": "What `review.stash` does.",
+      "oneOf": [
+        {
+          "const": "push",
+          "description": "Save the working changes and the index, leaving a clean tree.",
+          "type": "string"
+        },
+        {
+          "const": "pop",
+          "description": "Apply the newest stash and drop it; a conflicting stash is kept.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReviewStashRequest": {
+      "additionalProperties": false,
+      "description": "`review.stash`: save or restore uncommitted changes.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ReviewStashAction"
+        },
+        "include_untracked": {
+          "description": "Push only: also save untracked files.",
+          "type": "boolean"
+        },
+        "message": {
+          "description": "Push only: the stash message.",
+          "type": "string"
+        },
+        "op": {
+          "const": "review.stash"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "The status `revision` the user reviewed; a changed tree fails as stale.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id",
+        "action",
         "revision"
       ],
       "type": "object"
@@ -27413,6 +27635,48 @@
       "domain": "review",
       "name": "review.commit",
       "request": "ReviewCommitRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.branch",
+      "request": "ReviewBranchRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.stash",
+      "request": "ReviewStashRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.merge",
+      "request": "ReviewMergeRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.fetch",
+      "request": "ReviewFetchRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.pull",
+      "request": "ReviewPullRequest",
+      "response": "ReviewOperationReply",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "review",
+      "name": "review.push",
+      "request": "ReviewPushRequest",
       "response": "ReviewOperationReply",
       "tier": "effect_command"
     },

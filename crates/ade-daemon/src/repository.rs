@@ -57,7 +57,7 @@ impl GitRun {
     }
 }
 
-fn ssh_is_configured(cwd: &Path) -> bool {
+pub(crate) fn ssh_is_configured(cwd: &Path) -> bool {
     if std::env::var_os("GIT_SSH_COMMAND").is_some() || std::env::var_os("GIT_SSH").is_some() {
         return true;
     }
