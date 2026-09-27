@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url'
 import type { CallRequest, Operation } from '../../../packages/client/dist/index.js'
 import type { Request, Response } from '../../../packages/contracts/dist/index.js'
 import { rpc } from '../../fixtures/daemon'
-import { binaries, repositoryRoot, scratchEnvironment } from './environment'
+import { binaries, repositoryRoot, scratchEnvironment, scratchGitConfig } from './environment'
 import { ScratchRepo } from './git'
 import { test as base, type AdeHarness } from './index'
 import { isRunning, processTable } from './processes'
@@ -332,7 +332,7 @@ export class RemoteLab {
     const host = new RemoteHost(name, join(this.ade.root, 'hosts', name), generateHostKey())
     for (const directory of [host.root, host.binDirectory, host.home]) await mkdir(directory, { recursive: true, mode: 0o700 })
     await writeFile(join(host.root, 'host_key.pub'), `${host.hostKey.line} root@${name}\n`)
-    await writeFile(join(host.home, '.gitconfig'), '[user]\n\tname = ADE Remote E2E\n\temail = remote@example.invalid\n')
+    await writeFile(join(host.home, '.gitconfig'), scratchGitConfig('ADE Remote E2E', 'remote@example.invalid'))
     await host.install(options.artifacts ?? allArtifacts)
     this.hosts.push(host)
     await this.saveConfig()

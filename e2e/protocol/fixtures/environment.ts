@@ -39,6 +39,18 @@ function interpreterDirectories(): string {
   return interpreterPath
 }
 
+/**
+ * The start of every scratch global Git config. The daemon's Git drops
+ * `GIT_CONFIG_NOSYSTEM` (see `neutral` in the daemon), so it still reads the
+ * Xcode Git's built-in config, which names the `osxkeychain` credential helper.
+ * The empty `helper` resets that list, so no Git a spec starts can reach the
+ * login keychain (machine safety, AGENTS.md). A spec that needs a helper
+ * appends its own after this line.
+ */
+export function scratchGitConfig(name = 'ADE E2E', email = 'e2e@example.invalid'): string {
+  return `[user]\n\tname = ${name}\n\temail = ${email}\n[credential]\n\thelper =\n`
+}
+
 /** A clean environment rooted at `home`, plus `extra`. */
 export function scratchEnvironment(home: string, extra: Record<string, string> = {}): Record<string, string> {
   const base: Record<string, string> = {}

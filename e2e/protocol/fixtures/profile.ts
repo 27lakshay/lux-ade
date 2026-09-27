@@ -12,7 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { CallRequest, Operation } from '../../../packages/client/dist/index.js'
 import type { Response } from '../../../packages/contracts/dist/index.js'
 import { rpc } from '../../fixtures/daemon'
-import { binaries, scratchEnvironment } from './environment'
+import { binaries, scratchEnvironment, scratchGitConfig } from './environment'
 import { ScratchSecretStore } from './secret-store'
 import { isRunning, type ProcessLedger } from './processes'
 import { mockCalls, providerEnvironment, releaseMock, type MockCall, type MockProvider } from './providers'
@@ -138,7 +138,7 @@ export class ScratchProfile {
     for (const directory of [profile.dataDirectory, profile.home, profile.defaultWorkspaceRoot, profile.logsDirectory]) {
       await mkdir(directory, { recursive: true, mode: 0o700 })
     }
-    await writeFile(join(profile.home, '.gitconfig'), '[user]\n\tname = ADE E2E\n\temail = e2e@example.invalid\n')
+    await writeFile(join(profile.home, '.gitconfig'), scratchGitConfig())
     await profile.secrets.create()
     await profile.launchDaemon()
     return profile
