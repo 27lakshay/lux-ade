@@ -29,10 +29,8 @@ Also left for the user:
 - **Legacy Electron E2E specs are stale.** They predate `operation_id` in raw
   requests, backup format 6 and the new send-recovery results. Update them
   when Electron E2E resumes in the UI phase.
-- **One worktree remains:** `claude/wf_317b0f50-41b-9` (old ops-3). Its commits
-  are all merged. It holds one untracked file, an outdated copy of
-  `evidence/e2e-ops3.md`. The hazards guard refused `wt remove --force`, so it
-  stays until the user removes it.
+- The old ops-3 worktree `claude/wf_317b0f50-41b-9` was removed at the user's
+  request; its commits were already merged.
 - `apps/desktop/PRODUCT.md` is the user's untracked file and was not touched.
 
 ## Parallel build: overnight coordinator log (2026-09-27)
