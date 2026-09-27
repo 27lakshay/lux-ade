@@ -27,6 +27,9 @@ const e2eAliases = {
 
 contextBridge.exposeInMainWorld('adeHost', {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('ade:app-version'),
+  // The window's vibrancy material follows the native appearance, so the renderer's theme has to
+  // reach the main process.
+  setTheme: (theme: 'dark' | 'light'): void => ipcRenderer.send('ade:theme', theme),
   profiles,
   conversations,
   workspaces,

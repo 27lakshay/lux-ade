@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, shell } from 'electron'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { browserQuitGuard, closeBrowserWindow, registerBrowserIpc, setBrowserProfile } from './browser'
@@ -28,6 +28,10 @@ if (process.env.ADE_E2E_USER_DATA_DIR) {
 registerBrowserIpc(selectProfile)
 
 ipcMain.handle('ade:app-version', () => app.getVersion())
+// The renderer's theme drives the native appearance, which picks the vibrancy material.
+ipcMain.on('ade:theme', (_event, theme: unknown) => {
+  if (theme === 'dark' || theme === 'light') nativeTheme.themeSource = theme
+})
 registerProfileIpc()
 registerConversationIpc()
 registerWorkspaceIpc()
@@ -49,15 +53,29 @@ registerQuitTeardown(() => {
   closeAllTerminals()
   stopClient()
 })
+// localStorage (the renderer's layout and appearance settings) is written lazily; flush it so a
+// setting changed just before quitting survives.
+registerQuitTeardown(() => session.defaultSession.flushStorageData())
+
+// Native macOS window buttons sit at a fixed spot. The renderer's title row (layout.ts) is laid out
+// around them; change one and the other must follow.
+const TRAFFIC_LIGHTS = { x: 22, y: 26 }
 
 function openMainWindow(): void {
   const window = new BrowserWindow({
     show: process.env.ADE_E2E_HIDE_WINDOW !== '1',
-    width: 1200,
-    height: 820,
+    width: 1440,
+    height: 900,
     minWidth: 720,
     minHeight: 480,
     title: 'ADE',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: TRAFFIC_LIGHTS,
+    // Glass: macOS blurs whatever is behind the window and the renderer paints translucent cards
+    // over it. `active` keeps the blur when the window loses focus.
+    vibrancy: 'under-window',
+    visualEffectState: 'active',
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -132,6 +150,7 @@ app.whenReady().then(async () => {
     app.setActivationPolicy('accessory')
     app.dock?.hide()
   }
+  nativeTheme.themeSource = 'dark'
   singleWindowId = await persistentWindowId()
   setSendJournal(await SendJournal.open(join(app.getPath('userData'), 'pending-sends-v1.json')))
   setGitJournal(await GitJournal.open(join(app.getPath('userData'), 'git-intents-v1.json')))

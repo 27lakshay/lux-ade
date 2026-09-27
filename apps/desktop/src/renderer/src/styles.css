@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/* Colour values live in tokens.ts, which sets these variables on <html> for the current theme and
+   glass setting (applyTokens). This file only maps them to Tailwind utilities. */
+@theme inline {
+  --color-backdrop: var(--backdrop);
+  --color-app: var(--app-bg);
+  --color-side: var(--side-bg);
+  --color-status: var(--status-bg);
+  --color-panel: var(--panel-bg);
+  --color-raised: var(--raised-bg);
+  --color-overlay: var(--overlay-bg);
+  --color-selected: var(--selected-bg);
+  --color-muted: var(--muted);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-inverse: var(--inverse);
+  --color-attention: var(--attention);
+  --color-attention-muted: var(--attention-muted);
+  --color-success: var(--success);
+  --color-running: var(--running);
+  --color-destructive: var(--destructive);
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--backdrop);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Window dragging: empty chrome moves the window, anything interactive stays clickable. */
+.drag {
+  -webkit-app-region: drag;
+}
+.drag button,
+.drag [role='tab'],
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+/* While a tab, pane or divider is being dragged, window-drag regions would swallow pointer events
+   over every tab strip, so they are switched off, and the drag's cursor holds everywhere. */
+[data-dragging] .drag {
+  -webkit-app-region: no-drag;
+}
+[data-dragging]:not([data-dragging='palette']),
+[data-dragging]:not([data-dragging='palette']) * {
+  user-select: none;
+}
+[data-dragging='tab'] *,
+[data-dragging='pane'] * {
+  cursor: grabbing !important;
+}
+[data-dragging='resize-row'] * {
+  cursor: col-resize !important;
+}
+[data-dragging='resize-col'] * {
+  cursor: row-resize !important;
+}
+
+.card {
+  background: var(--card-bg, var(--side-bg));
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* In the base layer so Tailwind utilities (bg-*, px-*) still win. */
+@layer base {
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: default;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--fg-muted);
+  outline-offset: 2px;
+}

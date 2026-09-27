@@ -1,5 +1,7 @@
-import type { BrowserState } from '../browser'
 import type { ProfileState } from '../types'
+
+export type BrowserTab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
+export type BrowserState = { profileId: string; selectedId: string | null; tabs: BrowserTab[] }
 
 /** `window.adeHost.browser`: the main-process `browser` module. */
 export interface BrowserBridge {

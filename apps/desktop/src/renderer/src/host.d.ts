@@ -10,6 +10,7 @@ import type { WorkspacesBridge } from './host/workspaces'
 /** The preload bridge. Each domain owns its interface under `./host`; this type only composes them. */
 interface AdeHost {
   getAppVersion(): Promise<string>
+  setTheme(theme: 'dark' | 'light'): void
   profiles: ProfilesBridge
   conversations: ConversationsBridge
   workspaces: WorkspacesBridge
