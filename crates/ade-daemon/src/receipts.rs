@@ -41,6 +41,28 @@ impl Status {
         }
     }
 
+    /// Whether a receipt may move from `self` to `next`. States only move
+    /// forward; any open state may become unknown after a crash, unknown only
+    /// resolves to settled, and settled is final.
+    pub fn may_become(self, next: Self) -> bool {
+        match (self, next) {
+            (Self::Settled, _) => false,
+            (Self::Unknown, next) => next == Self::Settled,
+            (_, Self::Unknown) => true,
+            (current, next) => next.rank() > current.rank(),
+        }
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Accepted => 0,
+            Self::Dispatched => 1,
+            Self::Acknowledged => 2,
+            Self::Settled => 3,
+            Self::Unknown => 4,
+        }
+    }
+
     pub fn parse(value: &str) -> Result<Self> {
         Ok(match value {
             "accepted" => Self::Accepted,
@@ -193,12 +215,29 @@ pub fn settle(
     result: Option<&Value>,
     now: i64,
 ) -> Result<()> {
+    let current: Option<String> = connection
+        .query_row(
+            "SELECT status FROM operations WHERE id=?1 AND status!=?2",
+            params![operation_id, EXPIRED],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(current) = current else {
+        bail!("No live receipt for operation {operation_id}");
+    };
+    let current = Status::parse(&current)?;
+    ensure!(
+        current.may_become(status),
+        "Operation {operation_id} cannot move from {} to {}",
+        current.as_str(),
+        status.as_str()
+    );
+    // A transition without a result keeps the one already stored.
     let result = result.map(Value::to_string);
-    let changed = connection.execute(
-        "UPDATE operations SET status=?2,result=?3,updated_at=?4 WHERE id=?1 AND status!=?5",
-        params![operation_id, status.as_str(), result, now, EXPIRED],
+    connection.execute(
+        "UPDATE operations SET status=?2,result=COALESCE(?3,result),updated_at=?4 WHERE id=?1",
+        params![operation_id, status.as_str(), result, now],
     )?;
-    ensure!(changed == 1, "No live receipt for operation {operation_id}");
     Ok(())
 }
 
@@ -340,5 +379,40 @@ mod tests {
             assert_eq!(Status::parse(status.as_str()).unwrap(), status);
         }
         assert!(Status::parse(EXPIRED).is_err());
+    }
+
+    #[test]
+    fn transitions_only_move_forward_and_settled_is_final() {
+        use Status::*;
+        assert!(Accepted.may_become(Dispatched));
+        assert!(Accepted.may_become(Settled));
+        assert!(Dispatched.may_become(Unknown));
+        assert!(Unknown.may_become(Settled));
+        assert!(!Unknown.may_become(Dispatched));
+        assert!(!Dispatched.may_become(Accepted));
+        assert!(!Settled.may_become(Unknown));
+        assert!(!Settled.may_become(Settled));
+    }
+
+    #[test]
+    fn settle_rejects_backward_moves_and_keeps_stored_results() {
+        let connection = database();
+        let payload = json!({"operation_id": "op-1", "text": "hi"});
+        begin(&connection, "op-1", "agent.send", &payload, None, 0).unwrap();
+        settle(
+            &connection,
+            "op-1",
+            Status::Settled,
+            Some(&json!({"ok": true})),
+            1,
+        )
+        .unwrap();
+        assert!(settle(&connection, "op-1", Status::Accepted, None, 2).is_err());
+        let stored: String = connection
+            .query_row("SELECT result FROM operations WHERE id='op-1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored, r#"{"ok":true}"#);
     }
 }

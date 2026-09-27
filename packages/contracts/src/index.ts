@@ -42,9 +42,11 @@ export function isOperation(op: unknown): op is Operation {
 
 /** Validate a request line, including its `op`. */
 export function decodeRequest(value: unknown): Request {
-  if (!record(value) || !isOperation(value.op)) throw new ContractError('request.op', 'unknown operation')
-  check(operations[value.op].request, value, 'request')
-  return value as unknown as Request
+  // Validate the request as it travels: JSON drops keys whose value is undefined.
+  const wire: unknown = value === undefined ? value : JSON.parse(JSON.stringify(value))
+  if (!record(wire) || !isOperation(wire.op)) throw new ContractError('request.op', 'unknown operation')
+  check(operations[wire.op].request, wire, 'request')
+  return wire as unknown as Request
 }
 
 /** Validate a daemon reply to `op`. */
