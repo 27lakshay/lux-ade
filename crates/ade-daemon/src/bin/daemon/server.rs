@@ -1453,8 +1453,42 @@ impl Host {
         )?;
         Ok(serde_json::to_value(Ack::default())?)
     }
-    /// `terminal.stop` and `terminal.retire`.
+    /// `terminal.stop` and `terminal.retire`. Afterwards the worktree leases
+    /// are refreshed, so a checkout no longer in use releases its host-wide
+    /// shared-use claim at once instead of blocking other profiles' lifecycle
+    /// commands until this profile's next lifecycle command. The runtime
+    /// signals a stopped shell and reaps it on its own thread, so a stop
+    /// waits, briefly and bounded, for the runtime to report the exit first;
+    /// a shell still running keeps its lease.
     fn terminal_lifecycle(&self, request: &Value) -> anyhow::Result<Value> {
+        let reply = self.terminal_lifecycle_locked(request)?;
+        if request["op"] == "terminal.stop" {
+            let workspace = request["workspace_id"].as_str().unwrap_or_default();
+            let terminal = request["terminal_id"].as_str().unwrap_or_default();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                let running = self.runtime_terminals().map(|terminals| {
+                    terminals.iter().any(|entry| {
+                        entry.workspace.id == workspace
+                            && entry.workspace.terminal_id == terminal
+                            && entry.shell_running()
+                    })
+                });
+                if !matches!(running, Ok(true)) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        if let Err(error) = self.refresh_leases() {
+            eprintln!(
+                "Terminal leases were not refreshed after {}: {error}",
+                request["op"]
+            );
+        }
+        Ok(reply)
+    }
+    fn terminal_lifecycle_locked(&self, request: &Value) -> anyhow::Result<Value> {
         let stop = request["op"] == "terminal.stop";
         let (workspace, terminal) = if stop {
             let TerminalStopRequest {

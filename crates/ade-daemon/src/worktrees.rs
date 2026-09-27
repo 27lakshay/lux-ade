@@ -23,7 +23,7 @@ use ade_core::contract::worktrees::{
 use ade_core::contract::worktrees::{
     WorktreeCarryPreviewRequest, WorktreeCarryRequest, WorktreeResourcesApplyRequest,
 };
-use ade_core::error::{HostResourcesUnavailable, LifecycleFailure};
+use ade_core::error::{HostResourceConflict, HostResourcesUnavailable, LifecycleFailure};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -918,11 +918,16 @@ fn creation_path(repo: &Repository, request: &Value) -> Result<PathBuf> {
             .is_some_and(|path| path.canonicalize().ok().as_deref() == Some(parent.as_path())),
         "Worktree path must be directly inside its configured directory"
     );
-    ensure!(
-        !candidate.exists() && std::fs::symlink_metadata(&candidate).is_err(),
-        "Worktree path already exists"
-    );
-    Ok(candidate)
+    // Record the canonical path: Git lists trees by it, and settling the
+    // creation claim compares the listing with this path.
+    let name = candidate
+        .file_name()
+        .context("Worktree path must name a directory")?;
+    Ok(parent.join(name))
+}
+
+fn path_is_free(path: &Path) -> bool {
+    !path.exists() && std::fs::symlink_metadata(path).is_err()
 }
 
 /// The tree's Git admin directory. Callers read it before taking the data
@@ -2532,6 +2537,24 @@ impl Worktrees {
                     return Ok(());
                 }
                 let path = creation_path(&repo, &spec)?;
+                if !path_is_free(&path) {
+                    // Another profile may be creating this very path. Its
+                    // claim is the explicit answer; a probe that is admitted
+                    // is released at once and the path is simply taken.
+                    match self.resources.acquire(
+                        Target::Existing(&path),
+                        ClaimMode::Exclusive,
+                        ClaimPurpose::Create,
+                        Some(&job.id),
+                    ) {
+                        Err(error) if error.downcast_ref::<HostResourceConflict>().is_some() => {
+                            return Err(error);
+                        }
+                        Ok(probe) => self.resources.release(&probe)?,
+                        Err(_) => {}
+                    }
+                    bail!("Worktree path already exists");
+                }
                 // Reserve the unborn path host-wide before it is created.
                 claim = Some(self.resources.acquire(
                     Target::Unborn(&path),
