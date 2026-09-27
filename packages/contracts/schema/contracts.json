@@ -2835,6 +2835,16 @@
       ],
       "type": "object"
     },
+    "CostBasis": {
+      "description": "Where a cost figure came from.",
+      "oneOf": [
+        {
+          "const": "agent_estimate",
+          "description": "The agent priced its own calls from list prices. Not a billing statement.",
+          "type": "string"
+        }
+      ]
+    },
     "DaemonHello": {
       "description": "The `hello` reply: build identity and every protocol version.",
       "properties": {
@@ -11976,6 +11986,704 @@
       ],
       "type": "object"
     },
+    "UsageCostMeasure": {
+      "description": "A cost total over a group of turns.",
+      "properties": {
+        "basis": {
+          "items": {
+            "$ref": "#/$defs/CostBasis"
+          },
+          "type": "array"
+        },
+        "reported_turns": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unreported_turns": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value_usd": {
+          "description": "US dollars summed over turns that reported a cost; null when none did.",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "value_usd",
+        "basis",
+        "reported_turns",
+        "unreported_turns"
+      ],
+      "type": "object"
+    },
+    "UsageGroup": {
+      "description": "Aggregated figures for one group.",
+      "properties": {
+        "cache_write": {
+          "$ref": "#/$defs/UsageMeasure"
+        },
+        "cached_input": {
+          "$ref": "#/$defs/UsageMeasure"
+        },
+        "cost": {
+          "$ref": "#/$defs/UsageCostMeasure"
+        },
+        "input": {
+          "$ref": "#/$defs/UsageMeasure"
+        },
+        "key": {
+          "description": "The group's ID or day. Null in the `total` row, and for turns without\na managed account when grouping by account.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "open_turns": {
+          "description": "Turns still running, whose figures may grow.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output": {
+          "$ref": "#/$defs/UsageMeasure"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/UsageMeasure"
+        },
+        "scopes": {
+          "description": "The scopes the counted figures cover. More than one means the group\nmixes figures that include subagents with figures that do not.",
+          "items": {
+            "$ref": "#/$defs/UsageScope"
+          },
+          "type": "array"
+        },
+        "turns": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unreported_turns": {
+          "description": "Turns for which the provider reported nothing at all.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key",
+        "turns",
+        "open_turns",
+        "unreported_turns",
+        "input",
+        "cached_input",
+        "cache_write",
+        "output",
+        "reasoning",
+        "cost",
+        "scopes"
+      ],
+      "type": "object"
+    },
+    "UsageGroupBy": {
+      "description": "The dimension `usage.summary` groups turns by.",
+      "oneOf": [
+        {
+          "enum": [
+            "conversation",
+            "workspace",
+            "provider"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "account",
+          "description": "A null key groups turns that ran on the provider's own login rather\nthan a managed account.",
+          "type": "string"
+        },
+        {
+          "const": "day",
+          "description": "The calendar day the turn was first observed, shifted by\n`utc_offset_minutes`, as `YYYY-MM-DD`.",
+          "type": "string"
+        }
+      ]
+    },
+    "UsageLimitWindow": {
+      "description": "One rate-limit window as the provider last reported it.",
+      "properties": {
+        "account_id": {
+          "description": "Null for the provider's own login.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit_id": {
+          "description": "The provider's name for the window, such as `five_hour` or `codex:primary`.",
+          "type": "string"
+        },
+        "observed_at": {
+          "description": "When the daemon received this report. Limits are only as fresh as the\nprovider's last report; no probe runs between turns.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "plan": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reset_since_observed": {
+          "description": "True when `resets_at` has passed, so `used_percent` is out of date.",
+          "type": "boolean"
+        },
+        "resets_at": {
+          "description": "Milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "status": {
+          "description": "The provider's own status word, such as `allowed_warning` or `rejected`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "used_percent": {
+          "description": "0 to 100. Null when the latest report did not include it.",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "window_minutes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "account_id",
+        "limit_id",
+        "used_percent",
+        "window_minutes",
+        "resets_at",
+        "status",
+        "plan",
+        "observed_at",
+        "source",
+        "reset_since_observed"
+      ],
+      "type": "object"
+    },
+    "UsageLimits": {
+      "description": "The `usage.limits` reply.",
+      "properties": {
+        "recording": {
+          "$ref": "#/$defs/UsageRecording"
+        },
+        "type": {
+          "description": "The `usage_limits` type tag.",
+          "enum": [
+            "usage_limits"
+          ],
+          "type": "string"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/UsageLimitWindow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "windows",
+        "recording"
+      ],
+      "type": "object"
+    },
+    "UsageLimitsRequest": {
+      "additionalProperties": false,
+      "description": "`usage.limits`: the latest rate-limit windows each provider reported.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "usage.limits"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "UsageMeasure": {
+      "description": "A token total over a group of turns.",
+      "properties": {
+        "reported_turns": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unreported_turns": {
+          "description": "Turns in the group that did not report this figure. The value is\ncomplete only when this is 0.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "description": "The sum over turns that reported this figure; null when none did.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "reported_turns",
+        "unreported_turns"
+      ],
+      "type": "object"
+    },
+    "UsageRecording": {
+      "description": "Whether the daemon could record every report it received since it started.",
+      "properties": {
+        "dropped_batches": {
+          "description": "Event batches whose usage could not be saved since the daemon started.\nTheir turns are missing from every figure.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "dropped_batches",
+        "last_error"
+      ],
+      "type": "object"
+    },
+    "UsageScope": {
+      "description": "Which agents a turn's figures cover.",
+      "oneOf": [
+        {
+          "const": "main_agent",
+          "description": "Only the conversation's own agent; subagent and helper calls are excluded.",
+          "type": "string"
+        },
+        {
+          "const": "all_agents",
+          "description": "The agent and every subagent or internal call the provider counted.",
+          "type": "string"
+        }
+      ]
+    },
+    "UsageSummary": {
+      "description": "The `usage.summary` reply.",
+      "properties": {
+        "group_by": {
+          "$ref": "#/$defs/UsageGroupBy"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/UsageGroup"
+          },
+          "type": "array"
+        },
+        "recording": {
+          "$ref": "#/$defs/UsageRecording"
+        },
+        "total": {
+          "$ref": "#/$defs/UsageGroup"
+        },
+        "type": {
+          "description": "The `usage_summary` type tag.",
+          "enum": [
+            "usage_summary"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "group_by",
+        "groups",
+        "total",
+        "recording"
+      ],
+      "type": "object"
+    },
+    "UsageSummaryRequest": {
+      "additionalProperties": false,
+      "description": "`usage.summary`: aggregate recorded turns by one dimension.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_by": {
+          "$ref": "#/$defs/UsageGroupBy"
+        },
+        "op": {
+          "const": "usage.summary"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "description": "Inclusive lower bound.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "until": {
+          "description": "Exclusive upper bound.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "utc_offset_minutes": {
+          "description": "Shifts day boundaries for `group_by: day`, from -840 to 840; 0 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "group_by"
+      ],
+      "type": "object"
+    },
+    "UsageTokens": {
+      "description": "Token counts for one turn. `input` counts every prompt token, including\ntokens read from or written to the prompt cache; `cached_input` and\n`cache_write` are parts of it. `reasoning` is part of `output`. A null\nfield was not reported by the provider.",
+      "properties": {
+        "cache_write": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cached_input": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "input": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "output": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reasoning": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "input",
+        "cached_input",
+        "cache_write",
+        "output",
+        "reasoning"
+      ],
+      "type": "object"
+    },
+    "UsageTurn": {
+      "description": "One turn's recorded usage and its provenance.",
+      "properties": {
+        "account_id": {
+          "description": "The managed account the turn ran on; null for the provider's own login.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "cost_basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostBasis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "finished": {
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "note": {
+          "description": "Why a figure is partial or unavailable, when the daemon knows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_at": {
+          "description": "When the daemon first observed the turn, in milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reported": {
+          "description": "False when the provider reported nothing for this turn.",
+          "type": "boolean"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UsageScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "description": "The native event the figures came from, such as `thread/tokenUsage/updated`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokens": {
+          "$ref": "#/$defs/UsageTokens"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "turn_id",
+        "workspace_id",
+        "provider",
+        "account_id",
+        "observed_at",
+        "updated_at",
+        "finished",
+        "reported",
+        "tokens",
+        "cost_usd",
+        "cost_basis",
+        "scope",
+        "models",
+        "source",
+        "note"
+      ],
+      "type": "object"
+    },
+    "UsageTurns": {
+      "description": "The `usage.turns` reply.",
+      "properties": {
+        "next_cursor": {
+          "description": "Null when no more records remain.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recording": {
+          "$ref": "#/$defs/UsageRecording"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/UsageTurn"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `usage_turns` type tag.",
+          "enum": [
+            "usage_turns"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "turns",
+        "next_cursor",
+        "recording"
+      ],
+      "type": "object"
+    },
+    "UsageTurnsRequest": {
+      "additionalProperties": false,
+      "description": "`usage.turns`: one page of per-turn records, most recently observed first.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursor": {
+          "description": "The `next_cursor` of the previous page for the same filters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Page size, 1 to 100; the daemon uses 50 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "usage.turns"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "description": "Inclusive lower bound.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "until": {
+          "description": "Exclusive upper bound.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "WindowCloseRequest": {
       "additionalProperties": false,
       "description": "`window.close`: forget a window's record, unless it is the last one.",
@@ -13963,6 +14671,27 @@
       "request": "ResourcesRegistryAcceptRequest",
       "response": "HostResourcesState",
       "tier": "effect_command"
+    },
+    {
+      "domain": "usage",
+      "name": "usage.summary",
+      "request": "UsageSummaryRequest",
+      "response": "UsageSummary",
+      "tier": "query"
+    },
+    {
+      "domain": "usage",
+      "name": "usage.turns",
+      "request": "UsageTurnsRequest",
+      "response": "UsageTurns",
+      "tier": "query"
+    },
+    {
+      "domain": "usage",
+      "name": "usage.limits",
+      "request": "UsageLimitsRequest",
+      "response": "UsageLimits",
+      "tier": "query"
     }
   ]
 }

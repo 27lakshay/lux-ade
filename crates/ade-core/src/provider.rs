@@ -218,6 +218,18 @@ pub enum Event {
     Resolved {
         id: Value,
     },
+    /// Token, cost or rate-limit figures exactly as the provider reported
+    /// them. `source` names the native event; the daemon normalizes `report`
+    /// and never fills in a figure the provider left out.
+    Usage {
+        #[serde(default)]
+        session: String,
+        #[serde(default)]
+        turn: Option<String>,
+        source: String,
+        #[serde(default)]
+        report: Value,
+    },
     Error {
         error: String,
     },

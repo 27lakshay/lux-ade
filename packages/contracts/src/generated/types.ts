@@ -93,6 +93,7 @@ export type ContractDefinition =
   | ConversationCreated
   | ConversationGetRequest
   | ConversationSnapshot
+  | CostBasis
   | DaemonHello
   | DelegateRequest
   | DeliveryChannel
@@ -377,6 +378,21 @@ export type ContractDefinition =
   | TerminalRestartRequest
   | TerminalRetireRequest
   | TerminalStopRequest
+  | UsageCostMeasure
+  | UsageGroup
+  | UsageGroupBy
+  | UsageLimitWindow
+  | UsageLimits
+  | UsageLimitsRequest
+  | UsageMeasure
+  | UsageRecording
+  | UsageScope
+  | UsageSummary
+  | UsageSummaryRequest
+  | UsageTokens
+  | UsageTurn
+  | UsageTurns
+  | UsageTurnsRequest
   | WindowCloseRequest
   | WindowSaveRequest
   | WorkspaceAck
@@ -535,6 +551,10 @@ export type ClaimMode = 'shared' | 'exclusive'
 export type ClaimPhase = 'reserved' | 'dispatched' | 'bound' | 'active'
 export type ClaimPurpose = 'use' | 'create' | 'remove'
 export type ClaimState = 'active' | 'quarantined'
+/**
+ * Where a cost figure came from.
+ */
+export type CostBasis = 'agent_estimate'
 /**
  * Where the child works, stated explicitly. Parallel children in the same
  * workspace share its files; ADE never merges their edits.
@@ -807,6 +827,14 @@ export type SkillObservedPlacement =
  * How a bundle entered the catalog.
  */
 export type SkillSourceKind = 'local_directory' | 'adopted'
+/**
+ * Which agents a turn's figures cover.
+ */
+export type UsageScope = 'main_agent' | 'all_agents'
+/**
+ * The dimension `usage.summary` groups turns by.
+ */
+export type UsageGroupBy = ('conversation' | 'workspace' | 'provider') | 'account' | 'day'
 /**
  * A lifecycle operation's status in its ledger.
  */
@@ -5587,6 +5615,267 @@ export interface TerminalStopRequest {
   workspace_id: string
 }
 /**
+ * A cost total over a group of turns.
+ */
+export interface UsageCostMeasure {
+  basis: CostBasis[]
+  reported_turns: number
+  unreported_turns: number
+  /**
+   * US dollars summed over turns that reported a cost; null when none did.
+   */
+  value_usd: number | null
+  [k: string]: unknown
+}
+/**
+ * Aggregated figures for one group.
+ */
+export interface UsageGroup {
+  cache_write: UsageMeasure
+  cached_input: UsageMeasure
+  cost: UsageCostMeasure
+  input: UsageMeasure
+  /**
+   * The group's ID or day. Null in the `total` row, and for turns without
+   * a managed account when grouping by account.
+   */
+  key: string | null
+  /**
+   * Turns still running, whose figures may grow.
+   */
+  open_turns: number
+  output: UsageMeasure
+  reasoning: UsageMeasure
+  /**
+   * The scopes the counted figures cover. More than one means the group
+   * mixes figures that include subagents with figures that do not.
+   */
+  scopes: UsageScope[]
+  turns: number
+  /**
+   * Turns for which the provider reported nothing at all.
+   */
+  unreported_turns: number
+  [k: string]: unknown
+}
+/**
+ * A token total over a group of turns.
+ */
+export interface UsageMeasure {
+  reported_turns: number
+  /**
+   * Turns in the group that did not report this figure. The value is
+   * complete only when this is 0.
+   */
+  unreported_turns: number
+  /**
+   * The sum over turns that reported this figure; null when none did.
+   */
+  value: number | null
+  [k: string]: unknown
+}
+/**
+ * One rate-limit window as the provider last reported it.
+ */
+export interface UsageLimitWindow {
+  /**
+   * Null for the provider's own login.
+   */
+  account_id: string | null
+  /**
+   * The provider's name for the window, such as `five_hour` or `codex:primary`.
+   */
+  limit_id: string
+  /**
+   * When the daemon received this report. Limits are only as fresh as the
+   * provider's last report; no probe runs between turns.
+   */
+  observed_at: number
+  plan: string | null
+  provider: string
+  /**
+   * True when `resets_at` has passed, so `used_percent` is out of date.
+   */
+  reset_since_observed: boolean
+  /**
+   * Milliseconds since the Unix epoch.
+   */
+  resets_at: number | null
+  source: string
+  /**
+   * The provider's own status word, such as `allowed_warning` or `rejected`.
+   */
+  status: string | null
+  /**
+   * 0 to 100. Null when the latest report did not include it.
+   */
+  used_percent: number | null
+  window_minutes: number | null
+  [k: string]: unknown
+}
+/**
+ * The `usage.limits` reply.
+ */
+export interface UsageLimits {
+  recording: UsageRecording
+  /**
+   * The `usage_limits` type tag.
+   */
+  type: 'usage_limits'
+  windows: UsageLimitWindow[]
+  [k: string]: unknown
+}
+/**
+ * Whether the daemon could record every report it received since it started.
+ */
+export interface UsageRecording {
+  /**
+   * Event batches whose usage could not be saved since the daemon started.
+   * Their turns are missing from every figure.
+   */
+  dropped_batches: number
+  last_error: string | null
+  [k: string]: unknown
+}
+/**
+ * `usage.limits`: the latest rate-limit windows each provider reported.
+ */
+export interface UsageLimitsRequest {
+  account_id?: string | null
+  op: 'usage.limits'
+  provider?: string | null
+}
+/**
+ * The `usage.summary` reply.
+ */
+export interface UsageSummary {
+  group_by: UsageGroupBy
+  groups: UsageGroup[]
+  recording: UsageRecording
+  total: UsageGroup
+  /**
+   * The `usage_summary` type tag.
+   */
+  type: 'usage_summary'
+  [k: string]: unknown
+}
+/**
+ * `usage.summary`: aggregate recorded turns by one dimension.
+ */
+export interface UsageSummaryRequest {
+  account_id?: string | null
+  conversation_id?: string | null
+  group_by: UsageGroupBy
+  op: 'usage.summary'
+  provider?: string | null
+  /**
+   * Inclusive lower bound.
+   */
+  since?: number | null
+  /**
+   * Exclusive upper bound.
+   */
+  until?: number | null
+  /**
+   * Shifts day boundaries for `group_by: day`, from -840 to 840; 0 when absent.
+   */
+  utc_offset_minutes?: number | null
+  workspace_id?: string | null
+}
+/**
+ * Token counts for one turn. `input` counts every prompt token, including
+ * tokens read from or written to the prompt cache; `cached_input` and
+ * `cache_write` are parts of it. `reasoning` is part of `output`. A null
+ * field was not reported by the provider.
+ */
+export interface UsageTokens {
+  cache_write: number | null
+  cached_input: number | null
+  input: number | null
+  output: number | null
+  reasoning: number | null
+  [k: string]: unknown
+}
+/**
+ * One turn's recorded usage and its provenance.
+ */
+export interface UsageTurn {
+  /**
+   * The managed account the turn ran on; null for the provider's own login.
+   */
+  account_id: string | null
+  conversation_id: string
+  cost_basis: CostBasis | null
+  cost_usd: number | null
+  finished: boolean
+  models: string[]
+  /**
+   * Why a figure is partial or unavailable, when the daemon knows.
+   */
+  note: string | null
+  /**
+   * When the daemon first observed the turn, in milliseconds since the Unix epoch.
+   */
+  observed_at: number
+  provider: string
+  /**
+   * False when the provider reported nothing for this turn.
+   */
+  reported: boolean
+  scope: UsageScope | null
+  /**
+   * The native event the figures came from, such as `thread/tokenUsage/updated`.
+   */
+  source: string | null
+  tokens: UsageTokens
+  turn_id: string
+  updated_at: number
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * The `usage.turns` reply.
+ */
+export interface UsageTurns {
+  /**
+   * Null when no more records remain.
+   */
+  next_cursor: string | null
+  recording: UsageRecording
+  turns: UsageTurn[]
+  /**
+   * The `usage_turns` type tag.
+   */
+  type: 'usage_turns'
+  [k: string]: unknown
+}
+/**
+ * `usage.turns`: one page of per-turn records, most recently observed first.
+ */
+export interface UsageTurnsRequest {
+  account_id?: string | null
+  conversation_id?: string | null
+  /**
+   * The `next_cursor` of the previous page for the same filters.
+   */
+  cursor?: string | null
+  /**
+   * Page size, 1 to 100; the daemon uses 50 when it is absent.
+   */
+  limit?: number
+  op: 'usage.turns'
+  provider?: string | null
+  /**
+   * Inclusive lower bound.
+   */
+  since?: number | null
+  /**
+   * Exclusive upper bound.
+   */
+  until?: number | null
+  workspace_id?: string | null
+}
+/**
  * `window.close`: forget a window's record, unless it is the last one.
  */
 export interface WindowCloseRequest {
@@ -5929,7 +6218,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "usage.summary" | "usage.turns" | "usage.limits"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -6081,6 +6370,9 @@ export interface RequestByOperation {
   "resources.inspect": ResourcesInspectRequest
   "resources.claim.resolve": ResourcesClaimResolveRequest
   "resources.registry.accept": ResourcesRegistryAcceptRequest
+  "usage.summary": UsageSummaryRequest
+  "usage.turns": UsageTurnsRequest
+  "usage.limits": UsageLimitsRequest
 }
 
 export interface ResponseByOperation {
@@ -6233,6 +6525,9 @@ export interface ResponseByOperation {
   "resources.inspect": HostResourcesState
   "resources.claim.resolve": HostResourcesState
   "resources.registry.accept": HostResourcesState
+  "usage.summary": UsageSummary
+  "usage.turns": UsageTurns
+  "usage.limits": UsageLimits
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

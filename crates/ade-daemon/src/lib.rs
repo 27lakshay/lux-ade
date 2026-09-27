@@ -17,4 +17,5 @@ pub mod sessions;
 pub mod skills;
 pub mod store;
 mod toolchain;
+pub mod usage;
 pub mod worktrees;

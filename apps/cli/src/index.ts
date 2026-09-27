@@ -12,6 +12,7 @@ import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
 import { historyUsage, runHistoryCommand } from './commands/history.js'
+import { runUsageCommand, usageAnalyticsUsage } from './commands/usage.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
@@ -66,6 +67,7 @@ const usage = [
   workspaceUsage,
   conversationUsage,
   historyUsage,
+  usageAnalyticsUsage,
   accountUsage,
   terminalUsage,
   browserUsage,
@@ -195,6 +197,7 @@ const commandAreas = [
   runWorkspaceCommand,
   runConversationCommand,
   runHistoryCommand,
+  runUsageCommand,
   runAccountCommand,
   runTerminalCommand,
   runBrowserCommand,
