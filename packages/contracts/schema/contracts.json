@@ -2608,6 +2608,71 @@
         }
       ]
     },
+    "CarryBlocker": {
+      "description": "Why a carry cannot run as asked.",
+      "oneOf": [
+        {
+          "const": "unmerged",
+          "description": "A selected path has an unresolved merge conflict.",
+          "type": "string"
+        },
+        {
+          "const": "submodule",
+          "description": "A selected path is a submodule; submodule changes are not carried.",
+          "type": "string"
+        },
+        {
+          "const": "not_changed",
+          "description": "A requested path has no uncommitted change.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_path",
+          "description": "A requested path is absolute, contains `..` or names `.git`.",
+          "type": "string"
+        },
+        {
+          "const": "no_changes",
+          "description": "Nothing is selected.",
+          "type": "string"
+        },
+        {
+          "const": "too_many_changes",
+          "description": "More than 10000 changed paths.",
+          "type": "string"
+        },
+        {
+          "const": "unborn_head",
+          "description": "The source has no commit to carry from.",
+          "type": "string"
+        },
+        {
+          "const": "head_changed",
+          "description": "The source `HEAD` differs from `expect_head`.",
+          "type": "string"
+        }
+      ]
+    },
+    "CarryChange": {
+      "description": "How a path differs from `HEAD` in the source tree.",
+      "oneOf": [
+        {
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "type_changed",
+            "untracked"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unmerged",
+          "description": "An unresolved merge conflict; never carried.",
+          "type": "string"
+        }
+      ]
+    },
     "CatalogFrame": {
       "description": "The `catalog.get` reply and the `catalog` feed frame.",
       "properties": {
@@ -4001,6 +4066,13 @@
             "string",
             "null"
           ]
+        },
+        "resources": {
+          "description": "Ignored local resources, such as `.env` files or `node_modules`, and\nhow each reaches a tree ADE creates. Nothing ignored is copied or\nlinked unless a rule names it.",
+          "items": {
+            "$ref": "#/$defs/ResourceRule"
+          },
+          "type": "array"
         },
         "setup": {
           "description": "Hooks run in order inside a new tree after Git creates it. The tree is\nready for an Agent only after every hook exits 0.",
@@ -10890,6 +10962,43 @@
       ],
       "type": "object"
     },
+    "ResourceMode": {
+      "description": "How an ignored resource of the primary checkout reaches a tree.",
+      "oneOf": [
+        {
+          "const": "copy",
+          "description": "An independent copy; the tree owns it and removal deletes it.",
+          "type": "string"
+        },
+        {
+          "const": "link",
+          "description": "A symbolic link to the primary checkout's resource, which stays\nexternally owned: removing the tree removes only the link.",
+          "type": "string"
+        },
+        {
+          "const": "skip",
+          "description": "Recorded and reported, never materialized.",
+          "type": "string"
+        }
+      ]
+    },
+    "ResourceRule": {
+      "additionalProperties": false,
+      "description": "One ignored-resource rule. `path` is a literal path relative to the\nrepository root: no globs, no `..`, not inside `.git`.",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ResourceMode"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "mode"
+      ],
+      "type": "object"
+    },
     "ResourcesClaimResolveRequest": {
       "additionalProperties": false,
       "description": "`resources.claim.resolve`: release one quarantined claim after the caller\nhas reconciled the resource outside ADE. Active claims cannot be resolved.",
@@ -16564,6 +16673,183 @@
       ],
       "type": "object"
     },
+    "WorktreeCarryEntry": {
+      "description": "One changed path in the source.",
+      "properties": {
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CarryBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "change": {
+          "$ref": "#/$defs/CarryChange"
+        },
+        "path": {
+          "type": "string"
+        },
+        "selected": {
+          "type": "boolean"
+        },
+        "staged": {
+          "description": "The index differs from `HEAD`. Carried changes arrive staged.",
+          "type": "boolean"
+        },
+        "unstaged": {
+          "description": "The working tree differs from the index.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "change",
+        "staged",
+        "unstaged",
+        "selected"
+      ],
+      "type": "object"
+    },
+    "WorktreeCarryPreview": {
+      "description": "The `worktree.carry.preview` reply. Ignored files are never listed or\ncarried; ignored-resource rules handle them.",
+      "properties": {
+        "blockers": {
+          "items": {
+            "$ref": "#/$defs/CarryBlocker"
+          },
+          "type": "array"
+        },
+        "carriable": {
+          "description": "True only when `blockers` is empty.",
+          "type": "boolean"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/WorktreeCarryEntry"
+          },
+          "type": "array"
+        },
+        "head": {
+          "description": "The source commit; pass it as `expect_head`. `null` when unborn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `worktree_carry_preview` type tag.",
+          "enum": [
+            "worktree_carry_preview"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repository_id",
+        "source",
+        "head",
+        "entries",
+        "blockers",
+        "carriable"
+      ],
+      "type": "object"
+    },
+    "WorktreeCarryPreviewRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.carry.preview`: list a tree's uncommitted changes and whether\neach can be carried. Changes nothing.",
+      "properties": {
+        "op": {
+          "const": "worktree.carry.preview"
+        },
+        "paths": {
+          "description": "Paths relative to the tree root to select; every change when absent.\nA directory selects the changes beneath it.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "source": {
+          "description": "The tree whose changes would move: the primary checkout or a linked tree.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "source"
+      ],
+      "type": "object"
+    },
+    "WorktreeCarryRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.carry`: move uncommitted changes from `source` into the clean,\nADE-owned tree `target`. The changes are first saved as a commit under\n`refs/ade/carry/…`, which ADE never deletes, then applied to the target\nand verified. The source is cleaned only when `clean_source` is true, the\ntarget verified exactly, and the source is unchanged since the snapshot.\nA failure never discards anything.",
+      "properties": {
+        "clean_source": {
+          "description": "Remove the carried changes from the source after verification.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "expect_head": {
+          "description": "The source `HEAD` the caller previewed; a different `HEAD` refuses.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "worktree.carry"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "paths": {
+          "description": "As in `worktree.carry.preview`; every change when absent.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id",
+        "source",
+        "target"
+      ],
+      "type": "object"
+    },
     "WorktreeCleanupCandidate": {
       "description": "One linked tree's cleanup classification.",
       "properties": {
@@ -16715,6 +17001,13 @@
             "null"
           ]
         },
+        "resources": {
+          "description": "Ignored-resource rules, at most 64, applied in each tree ADE creates\nbefore its setup hooks.",
+          "items": {
+            "$ref": "#/$defs/ResourceRule"
+          },
+          "type": "array"
+        },
         "setup": {
           "description": "Setup hooks, at most 8, run in order inside each tree ADE creates.",
           "items": {
@@ -16778,6 +17071,17 @@
             "null"
           ]
         },
+        "fetch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorktreeFetchSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Start from a ref fetched from a configured remote, such as a pull\nrequest head. Conflicts with `base`. Only the fetch is performed; ADE\nadds no pull-request workflow."
+        },
         "name": {
           "description": "A workspace name; the branch is the configured prefix plus its slug.",
           "type": [
@@ -16807,6 +17111,25 @@
         "op",
         "repository_id",
         "operation_id"
+      ],
+      "type": "object"
+    },
+    "WorktreeFetchSource": {
+      "additionalProperties": false,
+      "description": "A ref to fetch from a configured remote into `refs/ade/fetched/…`. The\nnew branch starts at the fetched commit.",
+      "properties": {
+        "ref": {
+          "description": "A full ref on the remote, such as `refs/pull/12/head` or\n`refs/merge-requests/12/head`.",
+          "type": "string"
+        },
+        "remote": {
+          "description": "A remote name from `git remote`; URLs are refused.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "remote",
+        "ref"
       ],
       "type": "object"
     },
@@ -17369,6 +17692,32 @@
       },
       "required": [
         "op",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WorktreeResourcesApplyRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.resources.apply`: apply the repository's ignored-resource rules\nto an ADE-owned tree, such as an adopted one. Existing files are never\nreplaced.",
+      "properties": {
+        "op": {
+          "const": "worktree.resources.apply"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id",
         "path"
       ],
       "type": "object"
@@ -18135,6 +18484,27 @@
       "request": "WorktreeArchivedRequest",
       "response": "WorktreeArchive",
       "tier": "query"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.carry.preview",
+      "request": "WorktreeCarryPreviewRequest",
+      "response": "WorktreeCarryPreview",
+      "tier": "query"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.carry",
+      "request": "WorktreeCarryRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.resources.apply",
+      "request": "WorktreeResourcesApplyRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
     },
     {
       "domain": "scripts",

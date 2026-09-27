@@ -25,6 +25,11 @@ pub struct Config {
     /// keeps the tree.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub teardown: Vec<Hook>,
+    /// Ignored local resources, such as `.env` files or `node_modules`, and
+    /// how each reaches a tree ADE creates. Nothing ignored is copied or
+    /// linked unless a rule names it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<ResourceRule>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -35,6 +40,7 @@ impl Default for Config {
             default_base: None,
             setup: Vec::new(),
             teardown: Vec::new(),
+            resources: Vec::new(),
         }
     }
 }
@@ -62,4 +68,26 @@ fn default_hook_timeout() -> u64 {
 // Omitting the default keeps one schema for requests and replies.
 fn is_default_hook_timeout(timeout: &u64) -> bool {
     *timeout == default_hook_timeout()
+}
+
+/// How an ignored resource of the primary checkout reaches a tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceMode {
+    /// An independent copy; the tree owns it and removal deletes it.
+    Copy,
+    /// A symbolic link to the primary checkout's resource, which stays
+    /// externally owned: removing the tree removes only the link.
+    Link,
+    /// Recorded and reported, never materialized.
+    Skip,
+}
+
+/// One ignored-resource rule. `path` is a literal path relative to the
+/// repository root: no globs, no `..`, not inside `.git`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceRule {
+    pub path: String,
+    pub mode: ResourceMode,
 }

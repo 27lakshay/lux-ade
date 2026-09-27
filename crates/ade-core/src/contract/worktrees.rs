@@ -1,12 +1,13 @@
 //! Worktree lifecycle contracts: repository registration, linked-tree listing,
 //! switch, create, setup, adopt, remove, cleanup, refresh, configuration,
-//! operation receipts, archive records and rebind.
+//! operation receipts, archive records, rebind, carrying uncommitted changes
+//! between trees and ignored-resource rules.
 //!
 //! Effect commands carry `operation_id`; `request_id` is accepted as an alias
 //! for callers written before the rename. Replies describe exactly what the
 //! lifecycle daemon sends.
 use super::{FrameSpec, OperationSpec, Tier};
-use crate::worktrees::{Config, Hook};
+use crate::worktrees::{Config, Hook, ResourceMode, ResourceRule};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,6 +70,18 @@ pub fn operations() -> Vec<OperationSpec> {
         OperationSpec::new::<WorktreeArchivedRequest, WorktreeArchive>(
             "worktree.archived",
             Tier::Query,
+        ),
+        OperationSpec::new::<WorktreeCarryPreviewRequest, WorktreeCarryPreview>(
+            "worktree.carry.preview",
+            Tier::Query,
+        ),
+        OperationSpec::new::<WorktreeCarryRequest, WorktreeState>(
+            "worktree.carry",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<WorktreeResourcesApplyRequest, WorktreeState>(
+            "worktree.resources.apply",
+            Tier::EffectCommand,
         ),
     ]
 }
@@ -189,6 +202,10 @@ pub struct WorktreeConfigInput {
     /// Teardown hooks, at most 8, run in order before ADE removes a tree.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub teardown: Vec<Hook>,
+    /// Ignored-resource rules, at most 64, applied in each tree ADE creates
+    /// before its setup hooks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<ResourceRule>,
 }
 
 impl Default for WorktreeConfigInput {
@@ -200,6 +217,7 @@ impl Default for WorktreeConfigInput {
             default_base,
             setup,
             teardown,
+            resources,
         } = Config::default();
         Self {
             directory,
@@ -208,6 +226,7 @@ impl Default for WorktreeConfigInput {
             default_base,
             setup,
             teardown,
+            resources,
         }
     }
 }
@@ -221,6 +240,7 @@ impl From<WorktreeConfigInput> for Config {
             default_base: input.default_base,
             setup: input.setup,
             teardown: input.teardown,
+            resources: input.resources,
         }
     }
 }
@@ -246,6 +266,24 @@ pub struct WorktreeCreateRequest {
     /// Absolute path for the tree, directly inside the configured directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Start from a ref fetched from a configured remote, such as a pull
+    /// request head. Conflicts with `base`. Only the fetch is performed; ADE
+    /// adds no pull-request workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetch: Option<WorktreeFetchSource>,
+}
+
+/// A ref to fetch from a configured remote into `refs/ade/fetched/…`. The
+/// new branch starts at the fetched commit.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorktreeFetchSource {
+    /// A remote name from `git remote`; URLs are refused.
+    pub remote: String,
+    /// A full ref on the remote, such as `refs/pull/12/head` or
+    /// `refs/merge-requests/12/head`.
+    #[serde(rename = "ref")]
+    pub reference: String,
 }
 
 /// `worktree.setup`: run the setup hooks again in an ADE-owned tree, such as
@@ -297,6 +335,56 @@ pub struct WorktreeOperationRequest {
     pub operation_id: String,
 }
 
+/// `worktree.carry.preview`: list a tree's uncommitted changes and whether
+/// each can be carried. Changes nothing.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCarryPreviewRequest {
+    pub repository_id: String,
+    /// The tree whose changes would move: the primary checkout or a linked tree.
+    pub source: String,
+    /// Paths relative to the tree root to select; every change when absent.
+    /// A directory selects the changes beneath it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
+}
+
+/// `worktree.carry`: move uncommitted changes from `source` into the clean,
+/// ADE-owned tree `target`. The changes are first saved as a commit under
+/// `refs/ade/carry/…`, which ADE never deletes, then applied to the target
+/// and verified. The source is cleaned only when `clean_source` is true, the
+/// target verified exactly, and the source is unchanged since the snapshot.
+/// A failure never discards anything.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCarryRequest {
+    pub repository_id: String,
+    /// Caller-owned operation ID; `request_id` is accepted as an alias.
+    #[serde(alias = "request_id")]
+    pub operation_id: String,
+    pub source: String,
+    pub target: String,
+    /// As in `worktree.carry.preview`; every change when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
+    /// The source `HEAD` the caller previewed; a different `HEAD` refuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect_head: Option<String>,
+    /// Remove the carried changes from the source after verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clean_source: Option<bool>,
+}
+
+/// `worktree.resources.apply`: apply the repository's ignored-resource rules
+/// to an ADE-owned tree, such as an adopted one. Existing files are never
+/// replaced.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeResourcesApplyRequest {
+    pub repository_id: String,
+    /// Caller-owned operation ID; `request_id` is accepted as an alias.
+    #[serde(alias = "request_id")]
+    pub operation_id: String,
+    pub path: String,
+}
+
 /// `worktree.rebind`: bind a restored lifecycle repository to a verified checkout.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRebindRequest {
@@ -313,6 +401,7 @@ wire_tag!(WorktreeOperationTag, "worktree_operation");
 wire_tag!(WorktreeRebindCatalogTag, "worktree_rebind_catalog");
 wire_tag!(WorktreeCleanupPlanTag, "worktree_cleanup_plan");
 wire_tag!(WorktreeArchiveTag, "worktree_archive");
+wire_tag!(WorktreeCarryPreviewTag, "worktree_carry_preview");
 
 /// A repository's lifecycle state: the reply to every command except
 /// `worktree.operation` and `worktree.rebind.list`.
@@ -607,6 +696,169 @@ pub struct WorktreeOperationReply {
     pub operation: WorktreeOperation,
 }
 
+/// How a path differs from `HEAD` in the source tree.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CarryChange {
+    Added,
+    Modified,
+    Deleted,
+    TypeChanged,
+    Untracked,
+    /// An unresolved merge conflict; never carried.
+    Unmerged,
+}
+
+/// Why a carry cannot run as asked.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CarryBlocker {
+    /// A selected path has an unresolved merge conflict.
+    Unmerged,
+    /// A selected path is a submodule; submodule changes are not carried.
+    Submodule,
+    /// A requested path has no uncommitted change.
+    NotChanged,
+    /// A requested path is absolute, contains `..` or names `.git`.
+    InvalidPath,
+    /// Nothing is selected.
+    NoChanges,
+    /// More than 10000 changed paths.
+    TooManyChanges,
+    /// The source has no commit to carry from.
+    UnbornHead,
+    /// The source `HEAD` differs from `expect_head`.
+    HeadChanged,
+}
+
+/// One changed path in the source.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct WorktreeCarryEntry {
+    pub path: String,
+    pub change: CarryChange,
+    /// The index differs from `HEAD`. Carried changes arrive staged.
+    pub staged: bool,
+    /// The working tree differs from the index.
+    pub unstaged: bool,
+    pub selected: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<CarryBlocker>,
+}
+
+/// The `worktree.carry.preview` reply. Ignored files are never listed or
+/// carried; ignored-resource rules handle them.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCarryPreview {
+    #[serde(rename = "type")]
+    pub tag: WorktreeCarryPreviewTag,
+    pub repository_id: String,
+    pub source: String,
+    /// The source commit; pass it as `expect_head`. `null` when unborn.
+    pub head: Option<String>,
+    pub entries: Vec<WorktreeCarryEntry>,
+    pub blockers: Vec<CarryBlocker>,
+    /// True only when `blockers` is empty.
+    pub carriable: bool,
+}
+
+/// How the carried changes reached the target.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CarryApply {
+    /// The target was at the source commit; the result equals the snapshot.
+    Exact,
+    /// The target was elsewhere; a clean three-way merge was applied.
+    Merged,
+    /// The merge conflicted; nothing was applied. See `conflicts`.
+    Conflicted,
+}
+
+/// What happened to the carried changes in the source.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CarrySourceOutcome {
+    Kept,
+    Cleaned,
+    /// Cleaning started but the source does not read back clean. The carry
+    /// ref still holds every change.
+    CleanupIncomplete,
+}
+
+/// Why the source kept its changes.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CarryKeepReason {
+    NotRequested,
+    /// The target was not verified.
+    NotVerified,
+    /// The target started from another commit, so its content cannot be
+    /// compared with the snapshot exactly.
+    BaseDiffers,
+    /// The source changed after the snapshot.
+    SourceChanged,
+}
+
+/// A carry operation's `result.carry`, written to the ledger as each step
+/// completes, so an interrupted carry still names its saved commit.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCarryResult {
+    pub source: String,
+    pub target: String,
+    /// The source commit the snapshot is based on.
+    pub base: String,
+    /// The snapshot commit, whose parent is `base`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    /// The ref that keeps `commit`; ADE never deletes it.
+    pub ref_name: String,
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied: Option<CarryApply>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<String>,
+    /// The target's index and working tree read back as the applied result.
+    pub verified: bool,
+    pub source_outcome: CarrySourceOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_reason: Option<CarryKeepReason>,
+}
+
+/// What an ignored-resource rule did in one tree.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceOutcome {
+    Copied,
+    Linked,
+    /// A `skip` rule.
+    Skipped,
+    /// The primary checkout has no such path.
+    Missing,
+    /// Git does not ignore the path, or could not say. Tracked and ordinary
+    /// untracked files are never materialized.
+    NotIgnored,
+    /// Something already exists at the destination; it was kept.
+    Conflict,
+    /// The copy would exceed 2 GiB or 200000 entries; nothing was copied.
+    TooLarge,
+    /// The source or destination resolves outside its tree, or is not a
+    /// file, directory or symbolic link.
+    Unsafe,
+    /// The copy or link failed; a partial copy is kept for inspection.
+    Failed,
+}
+
+/// One rule's result, in an operation's `result.resources`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct WorktreeResourceResult {
+    pub path: String,
+    pub mode: ResourceMode,
+    pub outcome: ResourceOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// The `worktree.rebind.list` reply.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRebindCatalog {
@@ -898,6 +1150,75 @@ mod tests {
                 "exit_code": null, "elapsed_ms": 30000, "truncated": false}]}))
         .unwrap();
         assert_eq!(tree.hooks[0].verdict, HookVerdict::TimedOut);
+    }
+
+    #[test]
+    fn carry_and_resource_requests_round_trip() {
+        let carry: WorktreeCarryRequest = request(
+            "worktree.carry",
+            json!({"repository_id": "r", "request_id": "k", "source": "/tmp/a",
+                "target": "/tmp/b", "paths": ["src"], "clean_source": true}),
+        );
+        assert_eq!(carry.operation_id, "k");
+        assert_eq!(carry.clean_source, Some(true));
+        request::<WorktreeCarryPreviewRequest>(
+            "worktree.carry.preview",
+            json!({"repository_id": "r", "source": "/tmp/a"}),
+        );
+        request::<WorktreeResourcesApplyRequest>(
+            "worktree.resources.apply",
+            json!({"repository_id": "r", "operation_id": "k", "path": "/tmp/b"}),
+        );
+        let create: WorktreeCreateRequest = request(
+            "worktree.create",
+            json!({"repository_id": "r", "operation_id": "k", "name": "pr",
+                "fetch": {"remote": "origin", "ref": "refs/pull/12/head"}}),
+        );
+        assert_eq!(create.fetch.unwrap().reference, "refs/pull/12/head");
+        let configure: WorktreeConfigureRequest = request(
+            "worktree.configure",
+            json!({"repository_id": "r", "config": {"resources": [
+                {"path": ".env", "mode": "copy"}, {"path": "node_modules", "mode": "link"}]}}),
+        );
+        assert_eq!(
+            Config::from(configure.config).resources[1].mode,
+            ResourceMode::Link
+        );
+        let (configure, _) = names("worktree.configure");
+        assert!(
+            !errors(
+                &configure,
+                &json!({"op": "worktree.configure", "repository_id": "r",
+                    "config": {"resources": [{"path": ".env", "mode": "share"}]}})
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn carry_preview_and_results_round_trip() {
+        reply::<WorktreeCarryPreview>(
+            "worktree.carry.preview",
+            json!({"type": "worktree_carry_preview", "repository_id": "r", "source": "/tmp/a",
+                "head": "abc", "entries": [
+                    {"path": "f", "change": "modified", "staged": false, "unstaged": true,
+                        "selected": true},
+                    {"path": "m", "change": "unmerged", "staged": true, "unstaged": true,
+                        "selected": true, "blocker": "unmerged"}],
+                "blockers": ["unmerged"], "carriable": false}),
+        );
+        reply::<WorktreeState>("worktree.carry", state());
+        reply::<WorktreeState>("worktree.resources.apply", state());
+        let result = json!({"source": "/a", "target": "/b", "base": "abc", "commit": "def",
+            "ref_name": "refs/ade/carry/x", "paths": ["f"], "applied": "exact",
+            "verified": true, "source_outcome": "kept", "source_reason": "not_requested"});
+        let decoded: WorktreeCarryResult = serde_json::from_value(result.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), result);
+        let resource: WorktreeResourceResult = serde_json::from_value(
+            json!({"path": ".env", "mode": "copy", "outcome": "not_ignored"}),
+        )
+        .unwrap();
+        assert_eq!(resource.outcome, ResourceOutcome::NotIgnored);
     }
 
     #[test]
