@@ -9,6 +9,7 @@ import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
+import { deviceUsage, runDeviceCommand } from './commands/devices.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
@@ -93,6 +94,7 @@ const usage = [
   diagnosticsUsage,
   remoteConnectUsage,
   retentionUsage,
+  deviceUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -229,6 +231,7 @@ const commandAreas = [
   runRunsCommand,
   runDiagnosticsCommand,
   runRetentionCommand,
+  runDeviceCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {

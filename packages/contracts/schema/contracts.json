@@ -4563,6 +4563,702 @@
       ],
       "type": "object"
     },
+    "DeviceAppInstallRequest": {
+      "additionalProperties": false,
+      "description": "`device.app.install`: install an app bundle on one booted device. The\npath is on the device's host: a `.app` directory for a simulator or an\n`.apk` file for Android. The daemon reads the app's identity from the\nbundle and confirms the device reports it installed at that version.",
+      "properties": {
+        "app_path": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "device.app.install"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "host_id",
+        "device_id",
+        "app_path"
+      ],
+      "type": "object"
+    },
+    "DeviceAppInstalled": {
+      "description": "The `device.app.install` reply.",
+      "properties": {
+        "app_id": {
+          "description": "The bundle identifier or Android package name.",
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `device_app_installed` type tag.",
+          "enum": [
+            "device_app_installed"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "description": "`CFBundleVersion` or the Android version code.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "host_id",
+        "device_id",
+        "app_id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "DeviceAppLaunchRequest": {
+      "additionalProperties": false,
+      "description": "`device.app.launch`: launch an installed app on one booted device.",
+      "properties": {
+        "app_id": {
+          "description": "The bundle identifier or Android package name.",
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "device.app.launch"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "host_id",
+        "device_id",
+        "app_id"
+      ],
+      "type": "object"
+    },
+    "DeviceAppLaunched": {
+      "description": "The `device.app.launch` reply. It is sent only once the device reports a\nprocess for the app.",
+      "properties": {
+        "app_id": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "pid": {
+          "description": "The app's process ID on the device.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `device_app_launched` type tag.",
+          "enum": [
+            "device_app_launched"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "host_id",
+        "device_id",
+        "app_id",
+        "pid"
+      ],
+      "type": "object"
+    },
+    "DeviceBootRequest": {
+      "additionalProperties": false,
+      "description": "`device.boot`: boot one simulator or AVD and wait until it is usable.\nBooting a booted device records that it already was.",
+      "properties": {
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "device.boot"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the boot to finish, 5000 to 300000 milliseconds;\n120000 when absent. A boot still running at the deadline stays open:\nrepeat the same operation ID to reconcile it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "host_id",
+        "device_id"
+      ],
+      "type": "object"
+    },
+    "DeviceBooted": {
+      "description": "The `device.boot` reply.",
+      "properties": {
+        "already_booted": {
+          "description": "True when the device was booted before this operation ran.",
+          "type": "boolean"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "serial": {
+          "description": "The adb serial of a booted Android device.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `device_booted` type tag.",
+          "enum": [
+            "device_booted"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "host_id",
+        "device_id",
+        "already_booted",
+        "serial"
+      ],
+      "type": "object"
+    },
+    "DeviceCapability": {
+      "description": "An operation a device can take.",
+      "enum": [
+        "screenshot",
+        "boot",
+        "install_app",
+        "launch_app"
+      ],
+      "type": "string"
+    },
+    "DeviceCapabilityStatus": {
+      "description": "Whether one capability is available on one device now.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "capability": {
+          "$ref": "#/$defs/DeviceCapability"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it is unavailable; null when available."
+        }
+      },
+      "required": [
+        "capability",
+        "available",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "DeviceFamily": {
+      "description": "A group of devices that share one adapter and its tools.",
+      "oneOf": [
+        {
+          "const": "computer",
+          "description": "The host's own displays (screen access).",
+          "type": "string"
+        },
+        {
+          "const": "ios_simulator",
+          "description": "iOS simulators through `xcrun simctl`.",
+          "type": "string"
+        },
+        {
+          "const": "android",
+          "description": "Android emulators and devices through the Android SDK's `adb` and `emulator`.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeviceFamilyStatus": {
+      "description": "One family's availability on the host.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "family": {
+          "$ref": "#/$defs/DeviceFamily"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/DevicePermissionStatus"
+          },
+          "type": "array"
+        },
+        "reasons": {
+          "description": "Why the family, or part of it, is unavailable.",
+          "items": {
+            "$ref": "#/$defs/DeviceReason"
+          },
+          "type": "array"
+        },
+        "tools": {
+          "description": "The tools the adapter found, such as `/usr/bin/xcrun`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "family",
+        "available",
+        "reasons",
+        "tools",
+        "permissions"
+      ],
+      "type": "object"
+    },
+    "DeviceHost": {
+      "description": "The physical host whose devices these are.",
+      "properties": {
+        "host_id": {
+          "description": "Stable across restarts and renames: `host-` and 16 hex digits.",
+          "type": "string"
+        },
+        "host_name": {
+          "type": "string"
+        },
+        "platform": {
+          "description": "`macos`, `linux` or another Rust target OS name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_id",
+        "host_name",
+        "platform"
+      ],
+      "type": "object"
+    },
+    "DeviceInventory": {
+      "description": "The `device.list` reply.",
+      "properties": {
+        "devices": {
+          "items": {
+            "$ref": "#/$defs/DeviceSummary"
+          },
+          "type": "array"
+        },
+        "families": {
+          "items": {
+            "$ref": "#/$defs/DeviceFamilyStatus"
+          },
+          "type": "array"
+        },
+        "host": {
+          "$ref": "#/$defs/DeviceHost"
+        },
+        "observed_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `device_inventory` type tag.",
+          "enum": [
+            "device_inventory"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "host",
+        "families",
+        "devices",
+        "observed_at_ms"
+      ],
+      "type": "object"
+    },
+    "DeviceKind": {
+      "description": "What kind of target a device is.",
+      "enum": [
+        "display",
+        "simulator",
+        "emulator",
+        "physical"
+      ],
+      "type": "string"
+    },
+    "DeviceListRequest": {
+      "additionalProperties": false,
+      "description": "`device.list`: discover the host's devices and why any are unavailable.",
+      "properties": {
+        "family": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceFamily"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Probe only this family; every family when absent."
+        },
+        "op": {
+          "const": "device.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "DevicePermission": {
+      "description": "An operating-system permission a family needs.",
+      "enum": [
+        "screen_recording",
+        "accessibility"
+      ],
+      "type": "string"
+    },
+    "DevicePermissionState": {
+      "description": "What the operating system reports for a permission.",
+      "oneOf": [
+        {
+          "enum": [
+            "granted",
+            "denied"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The host's operating system has no such permission check.",
+          "type": "string"
+        }
+      ]
+    },
+    "DevicePermissionStatus": {
+      "description": "One permission as the operating system reports it to the daemon.",
+      "properties": {
+        "permission": {
+          "$ref": "#/$defs/DevicePermission"
+        },
+        "state": {
+          "$ref": "#/$defs/DevicePermissionState"
+        },
+        "subject": {
+          "description": "Which process the answer is for. macOS attributes the daemon's\npermission to the application that launched it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "permission",
+        "state",
+        "subject"
+      ],
+      "type": "object"
+    },
+    "DeviceReason": {
+      "description": "A reason with the plain-language detail to show a user.",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/DeviceReasonCode"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "DeviceReasonCode": {
+      "description": "Why a family or capability is unavailable.",
+      "oneOf": [
+        {
+          "enum": [
+            "device_booting",
+            "device_offline",
+            "device_unauthorized",
+            "device_no_permissions"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "platform_unsupported",
+          "description": "This host's operating system has no adapter for the family.",
+          "type": "string"
+        },
+        {
+          "const": "tool_missing",
+          "description": "A required tool is not installed or not selected.",
+          "type": "string"
+        },
+        {
+          "const": "tool_failed",
+          "description": "A required tool ran and failed.",
+          "type": "string"
+        },
+        {
+          "const": "permission_denied",
+          "description": "The operating system has not granted a required permission.",
+          "type": "string"
+        },
+        {
+          "const": "runtime_missing",
+          "description": "The simulator's runtime or device type is not installed.",
+          "type": "string"
+        },
+        {
+          "const": "device_not_booted",
+          "description": "The device must be booted first.",
+          "type": "string"
+        },
+        {
+          "const": "device_booted",
+          "description": "The device is already booted.",
+          "type": "string"
+        },
+        {
+          "const": "target_unverified",
+          "description": "ADE cannot prove it would act on this exact target.",
+          "type": "string"
+        },
+        {
+          "const": "not_supported",
+          "description": "The family's adapter does not implement this capability.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeviceScreenshot": {
+      "description": "The `device.screenshot` reply.",
+      "properties": {
+        "bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bytes_base64": {
+          "description": "Standard base64 of the PNG, at most 16 MiB before encoding.",
+          "type": "string"
+        },
+        "captured_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "device_id": {
+          "type": "string"
+        },
+        "height": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "mime": {
+          "description": "The `image/png` type tag.",
+          "enum": [
+            "image/png"
+          ],
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the PNG bytes.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The `device_screenshot` type tag.",
+          "enum": [
+            "device_screenshot"
+          ],
+          "type": "string"
+        },
+        "width": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "host_id",
+        "device_id",
+        "mime",
+        "width",
+        "height",
+        "bytes",
+        "sha256",
+        "captured_at_ms",
+        "bytes_base64"
+      ],
+      "type": "object"
+    },
+    "DeviceScreenshotRequest": {
+      "additionalProperties": false,
+      "description": "`device.screenshot`: capture one exact device as a PNG.",
+      "properties": {
+        "device_id": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "device.screenshot"
+        }
+      },
+      "required": [
+        "op",
+        "host_id",
+        "device_id"
+      ],
+      "type": "object"
+    },
+    "DeviceState": {
+      "description": "The device's observed state.",
+      "oneOf": [
+        {
+          "enum": [
+            "booted",
+            "booting",
+            "shutting_down",
+            "shutdown",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "connected",
+          "description": "A display the host reports as active.",
+          "type": "string"
+        },
+        {
+          "const": "offline",
+          "description": "adb sees the device but cannot talk to it.",
+          "type": "string"
+        },
+        {
+          "const": "unauthorized",
+          "description": "The device has not accepted this host's adb key.",
+          "type": "string"
+        },
+        {
+          "const": "no_permissions",
+          "description": "The host user lacks USB permission for the device.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeviceSummary": {
+      "description": "One device on the host.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/DeviceCapabilityStatus"
+          },
+          "type": "array"
+        },
+        "device_id": {
+          "description": "The stable identity every targeted operation names.",
+          "type": "string"
+        },
+        "family": {
+          "$ref": "#/$defs/DeviceFamily"
+        },
+        "kind": {
+          "$ref": "#/$defs/DeviceKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "runtime": {
+          "description": "The simulator runtime, such as `iOS 26.4`, or the AVD's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serial": {
+          "description": "The current adb serial of a running Android device. It can change\nbetween boots and is never a target.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/DeviceState"
+        }
+      },
+      "required": [
+        "device_id",
+        "family",
+        "kind",
+        "name",
+        "state",
+        "runtime",
+        "serial",
+        "capabilities"
+      ],
+      "type": "object"
+    },
     "DiagnosticClaims": {
       "description": "Lease and claim state.",
       "properties": {
@@ -18793,6 +19489,41 @@
       "request": "BrowserRecordingGetRequest",
       "response": "BrowserRecording",
       "tier": "query"
+    },
+    {
+      "domain": "devices",
+      "name": "device.list",
+      "request": "DeviceListRequest",
+      "response": "DeviceInventory",
+      "tier": "query"
+    },
+    {
+      "domain": "devices",
+      "name": "device.screenshot",
+      "request": "DeviceScreenshotRequest",
+      "response": "DeviceScreenshot",
+      "tier": "query"
+    },
+    {
+      "domain": "devices",
+      "name": "device.boot",
+      "request": "DeviceBootRequest",
+      "response": "DeviceBooted",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "devices",
+      "name": "device.app.install",
+      "request": "DeviceAppInstallRequest",
+      "response": "DeviceAppInstalled",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "devices",
+      "name": "device.app.launch",
+      "request": "DeviceAppLaunchRequest",
+      "response": "DeviceAppLaunched",
+      "tier": "effect_command"
     }
   ]
 }

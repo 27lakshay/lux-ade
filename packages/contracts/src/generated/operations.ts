@@ -185,6 +185,11 @@ export const operations = {
   "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
   "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
   "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
+  "device.list": { tier: "query", domain: "devices", request: "DeviceListRequest", response: "DeviceInventory" },
+  "device.screenshot": { tier: "query", domain: "devices", request: "DeviceScreenshotRequest", response: "DeviceScreenshot" },
+  "device.boot": { tier: "effect_command", domain: "devices", request: "DeviceBootRequest", response: "DeviceBooted" },
+  "device.app.install": { tier: "effect_command", domain: "devices", request: "DeviceAppInstallRequest", response: "DeviceAppInstalled" },
+  "device.app.launch": { tier: "effect_command", domain: "devices", request: "DeviceAppLaunchRequest", response: "DeviceAppLaunched" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

@@ -140,6 +140,29 @@ export type ContractDefinition =
   | DeliveryOutcome
   | DeliveryStatus
   | Descriptor
+  | DeviceAppInstallRequest
+  | DeviceAppInstalled
+  | DeviceAppLaunchRequest
+  | DeviceAppLaunched
+  | DeviceBootRequest
+  | DeviceBooted
+  | DeviceCapability
+  | DeviceCapabilityStatus
+  | DeviceFamily
+  | DeviceFamilyStatus
+  | DeviceHost
+  | DeviceInventory
+  | DeviceKind
+  | DeviceListRequest
+  | DevicePermission
+  | DevicePermissionState
+  | DevicePermissionStatus
+  | DeviceReason
+  | DeviceReasonCode
+  | DeviceScreenshot
+  | DeviceScreenshotRequest
+  | DeviceState
+  | DeviceSummary
   | DiagnosticClaims
   | DiagnosticCounter
   | DiagnosticCounterKind
@@ -770,6 +793,49 @@ export type DeliveryOutcome = 'shown' | 'failed' | 'suppressed'
  * Where one activity's delivery on one channel stands.
  */
 export type DeliveryStatus = 'claimed' | 'shown' | 'failed' | 'suppressed'
+/**
+ * An operation a device can take.
+ */
+export type DeviceCapability = 'screenshot' | 'boot' | 'install_app' | 'launch_app'
+/**
+ * Why a family or capability is unavailable.
+ */
+export type DeviceReasonCode =
+  | ('device_booting' | 'device_offline' | 'device_unauthorized' | 'device_no_permissions')
+  | 'platform_unsupported'
+  | 'tool_missing'
+  | 'tool_failed'
+  | 'permission_denied'
+  | 'runtime_missing'
+  | 'device_not_booted'
+  | 'device_booted'
+  | 'target_unverified'
+  | 'not_supported'
+/**
+ * A group of devices that share one adapter and its tools.
+ */
+export type DeviceFamily = 'computer' | 'ios_simulator' | 'android'
+/**
+ * An operating-system permission a family needs.
+ */
+export type DevicePermission = 'screen_recording' | 'accessibility'
+/**
+ * What the operating system reports for a permission.
+ */
+export type DevicePermissionState = ('granted' | 'denied') | 'unsupported'
+/**
+ * What kind of target a device is.
+ */
+export type DeviceKind = 'display' | 'simulator' | 'emulator' | 'physical'
+/**
+ * The device's observed state.
+ */
+export type DeviceState =
+  | ('booted' | 'booting' | 'shutting_down' | 'shutdown' | 'unknown')
+  | 'connected'
+  | 'offline'
+  | 'unauthorized'
+  | 'no_permissions'
 /**
  * What a diagnostic counter counts.
  */
@@ -2899,6 +2965,258 @@ export interface DelegateRequest {
    */
   title?: string
   workspace: WorkspaceChoice
+}
+/**
+ * `device.app.install`: install an app bundle on one booted device. The
+ * path is on the device's host: a `.app` directory for a simulator or an
+ * `.apk` file for Android. The daemon reads the app's identity from the
+ * bundle and confirms the device reports it installed at that version.
+ */
+export interface DeviceAppInstallRequest {
+  app_path: string
+  device_id: string
+  host_id: string
+  op: 'device.app.install'
+  operation_id: string
+}
+/**
+ * The `device.app.install` reply.
+ */
+export interface DeviceAppInstalled {
+  /**
+   * The bundle identifier or Android package name.
+   */
+  app_id: string
+  device_id: string
+  host_id: string
+  operation_id: string
+  /**
+   * The `device_app_installed` type tag.
+   */
+  type: 'device_app_installed'
+  /**
+   * `CFBundleVersion` or the Android version code.
+   */
+  version: string
+  [k: string]: unknown
+}
+/**
+ * `device.app.launch`: launch an installed app on one booted device.
+ */
+export interface DeviceAppLaunchRequest {
+  /**
+   * The bundle identifier or Android package name.
+   */
+  app_id: string
+  device_id: string
+  host_id: string
+  op: 'device.app.launch'
+  operation_id: string
+}
+/**
+ * The `device.app.launch` reply. It is sent only once the device reports a
+ * process for the app.
+ */
+export interface DeviceAppLaunched {
+  app_id: string
+  device_id: string
+  host_id: string
+  operation_id: string
+  /**
+   * The app's process ID on the device.
+   */
+  pid: number
+  /**
+   * The `device_app_launched` type tag.
+   */
+  type: 'device_app_launched'
+  [k: string]: unknown
+}
+/**
+ * `device.boot`: boot one simulator or AVD and wait until it is usable.
+ * Booting a booted device records that it already was.
+ */
+export interface DeviceBootRequest {
+  device_id: string
+  host_id: string
+  op: 'device.boot'
+  operation_id: string
+  /**
+   * How long to wait for the boot to finish, 5000 to 300000 milliseconds;
+   * 120000 when absent. A boot still running at the deadline stays open:
+   * repeat the same operation ID to reconcile it.
+   */
+  timeout_ms?: number
+}
+/**
+ * The `device.boot` reply.
+ */
+export interface DeviceBooted {
+  /**
+   * True when the device was booted before this operation ran.
+   */
+  already_booted: boolean
+  device_id: string
+  host_id: string
+  operation_id: string
+  /**
+   * The adb serial of a booted Android device.
+   */
+  serial: string | null
+  /**
+   * The `device_booted` type tag.
+   */
+  type: 'device_booted'
+  [k: string]: unknown
+}
+/**
+ * Whether one capability is available on one device now.
+ */
+export interface DeviceCapabilityStatus {
+  available: boolean
+  capability: DeviceCapability
+  /**
+   * Why it is unavailable; null when available.
+   */
+  reason: DeviceReason | null
+  [k: string]: unknown
+}
+/**
+ * A reason with the plain-language detail to show a user.
+ */
+export interface DeviceReason {
+  code: DeviceReasonCode
+  detail: string
+  [k: string]: unknown
+}
+/**
+ * One family's availability on the host.
+ */
+export interface DeviceFamilyStatus {
+  available: boolean
+  family: DeviceFamily
+  permissions: DevicePermissionStatus[]
+  /**
+   * Why the family, or part of it, is unavailable.
+   */
+  reasons: DeviceReason[]
+  /**
+   * The tools the adapter found, such as `/usr/bin/xcrun`.
+   */
+  tools: string[]
+  [k: string]: unknown
+}
+/**
+ * One permission as the operating system reports it to the daemon.
+ */
+export interface DevicePermissionStatus {
+  permission: DevicePermission
+  state: DevicePermissionState
+  /**
+   * Which process the answer is for. macOS attributes the daemon's
+   * permission to the application that launched it.
+   */
+  subject: string
+  [k: string]: unknown
+}
+/**
+ * The physical host whose devices these are.
+ */
+export interface DeviceHost {
+  /**
+   * Stable across restarts and renames: `host-` and 16 hex digits.
+   */
+  host_id: string
+  host_name: string
+  /**
+   * `macos`, `linux` or another Rust target OS name.
+   */
+  platform: string
+  [k: string]: unknown
+}
+/**
+ * The `device.list` reply.
+ */
+export interface DeviceInventory {
+  devices: DeviceSummary[]
+  families: DeviceFamilyStatus[]
+  host: DeviceHost
+  observed_at_ms: number
+  /**
+   * The `device_inventory` type tag.
+   */
+  type: 'device_inventory'
+  [k: string]: unknown
+}
+/**
+ * One device on the host.
+ */
+export interface DeviceSummary {
+  capabilities: DeviceCapabilityStatus[]
+  /**
+   * The stable identity every targeted operation names.
+   */
+  device_id: string
+  family: DeviceFamily
+  kind: DeviceKind
+  name: string
+  /**
+   * The simulator runtime, such as `iOS 26.4`, or the AVD's name.
+   */
+  runtime: string | null
+  /**
+   * The current adb serial of a running Android device. It can change
+   * between boots and is never a target.
+   */
+  serial: string | null
+  state: DeviceState
+  [k: string]: unknown
+}
+/**
+ * `device.list`: discover the host's devices and why any are unavailable.
+ */
+export interface DeviceListRequest {
+  /**
+   * Probe only this family; every family when absent.
+   */
+  family?: DeviceFamily | null
+  op: 'device.list'
+}
+/**
+ * The `device.screenshot` reply.
+ */
+export interface DeviceScreenshot {
+  bytes: number
+  /**
+   * Standard base64 of the PNG, at most 16 MiB before encoding.
+   */
+  bytes_base64: string
+  captured_at_ms: number
+  device_id: string
+  height: number
+  host_id: string
+  /**
+   * The `image/png` type tag.
+   */
+  mime: 'image/png'
+  /**
+   * Lowercase hex SHA-256 of the PNG bytes.
+   */
+  sha256: string
+  /**
+   * The `device_screenshot` type tag.
+   */
+  type: 'device_screenshot'
+  width: number
+  [k: string]: unknown
+}
+/**
+ * `device.screenshot`: capture one exact device as a PNG.
+ */
+export interface DeviceScreenshotRequest {
+  device_id: string
+  host_id: string
+  op: 'device.screenshot'
 }
 /**
  * Lease and claim state.
@@ -8053,7 +8371,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8239,6 +8557,11 @@ export interface RequestByOperation {
   "browser.recording.start": BrowserRecordingStartRequest
   "browser.recording.stop": BrowserRecordingStopRequest
   "browser.recording.get": BrowserRecordingGetRequest
+  "device.list": DeviceListRequest
+  "device.screenshot": DeviceScreenshotRequest
+  "device.boot": DeviceBootRequest
+  "device.app.install": DeviceAppInstallRequest
+  "device.app.launch": DeviceAppLaunchRequest
 }
 
 export interface ResponseByOperation {
@@ -8425,6 +8748,11 @@ export interface ResponseByOperation {
   "browser.recording.start": BrowserRecording
   "browser.recording.stop": BrowserRecording
   "browser.recording.get": BrowserRecording
+  "device.list": DeviceInventory
+  "device.screenshot": DeviceScreenshot
+  "device.boot": DeviceBooted
+  "device.app.install": DeviceAppInstalled
+  "device.app.launch": DeviceAppLaunched
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

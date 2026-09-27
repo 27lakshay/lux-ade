@@ -33,6 +33,7 @@ mod activity;
 mod agents;
 mod checkpoints;
 mod conversations;
+mod devices;
 mod imports;
 mod inspection;
 mod leases;
@@ -756,6 +757,7 @@ impl Sessions {
             | "window.close" => self.conversation_command(request),
             op if op.starts_with("orchestration.") => self.orchestration_command(request),
             op if op.starts_with("retention.") => self.retention_command(request),
+            op if op.starts_with("device.") => self.device_command(request),
             _ => bail!("Unknown session operation"),
         }
     }
