@@ -493,10 +493,7 @@ fn runtime_command(args: &[String]) -> Result<Value> {
         let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         let fence: (i64,i64) = db.query_row("SELECT worktree_lifecycle_needs_rebind,restored_from_backup FROM restore_fence WHERE id=1", [],
             |row| Ok((row.get(0)?,row.get(1)?)))?;
-        ensure!(
-            version == 17 && fence == (1, 1),
-            "Only a fenced current-schema restore can bind a fresh runtime home"
-        );
+        backup::bind_verdict(version, fence)?;
         let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         ensure!(check == "ok", "Restored profile database is invalid");
         private_write(

@@ -1,4 +1,4 @@
-//! Native backend snapshots. This format intentionally excludes browser state,
+//! Native backend snapshots. This format intentionally excludes browser sessions,
 //! credentials, external projects and running processes. [`coverage`] lists
 //! every profile store and whether a backup copies, rebuilds or excludes it.
 use super::{
@@ -77,6 +77,19 @@ fn supported_schema(name: &str, version: i64, expected: i64) -> Result<()> {
     ensure!(
         version == expected || (expected > 0 && version == expected - 1),
         "Unsupported {name} schema version {version}"
+    );
+    Ok(())
+}
+/// Decides whether a restored profile database may bind a fresh runtime home.
+/// It needs both restore fence marks and a schema restore accepts: the
+/// current one, or one behind, which the daemon migrates when it opens.
+pub(super) fn bind_verdict(version: i64, fence: (i64, i64)) -> Result<()> {
+    let current = coverage::store("sessions.sqlite")
+        .context("Unknown database")?
+        .schema;
+    ensure!(
+        fence == (1, 1) && supported_schema("sessions.sqlite", version, current).is_ok(),
+        "Only a fenced restore of a supported schema can bind a fresh runtime home"
     );
     Ok(())
 }
@@ -698,8 +711,8 @@ fn directory_entry(files: &[FileRecord]) -> Value {
         "files":files.iter().map(FileRecord::to_json).collect::<Vec<_>>()})
 }
 /// Validates a bundle: [`coverage::check_manifest`] rules on the manifest,
-/// then every entry is checked against the files on disk. A format-3 bundle
-/// must also hold no history index and a registry whose plugins all have
+/// then every entry is checked against the files on disk. A format-3 or later
+/// bundle must also hold no history index and a registry whose plugins all have
 /// their artifacts.
 fn validate(source: &Path) -> Result<(Value, Plan)> {
     directory(source)?;
@@ -730,7 +743,7 @@ fn validate(source: &Path) -> Result<(Value, Plan)> {
             );
         }
     }
-    if plan.format >= coverage::FORMAT {
+    if plan.format >= coverage::PROJECTION_EXCLUDED_SINCE {
         projection_excluded(&source.join("sessions.sqlite"))?;
     }
     if plan.has(PLUGINS_DB) {
@@ -1402,6 +1415,31 @@ pub(super) fn profile_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bind_accepts_every_schema_restore_accepts_and_needs_the_fence() {
+        // A bundle from a one-behind profile restores at that schema, because
+        // fence() does not migrate it; bind must then accept it too.
+        let current = coverage::store("sessions.sqlite").unwrap().schema;
+        for version in [current, current - 1] {
+            assert!(supported_schema("sessions.sqlite", version, current).is_ok());
+            assert!(bind_verdict(version, (1, 1)).is_ok(), "{version}");
+        }
+        for (version, fence) in [
+            (current - 2, (1, 1)),
+            (current + 1, (1, 1)),
+            (11, (1, 1)),
+            (current, (0, 1)),
+            (current, (1, 0)),
+            (current - 1, (0, 0)),
+        ] {
+            let error = bind_verdict(version, fence).unwrap_err().to_string();
+            assert!(
+                error.starts_with("Only a fenced restore"),
+                "{version} {fence:?}: {error}"
+            );
+        }
+    }
 
     #[test]
     fn schema_range_is_current_and_one_behind_with_a_named_pre_fence_rejection() {
