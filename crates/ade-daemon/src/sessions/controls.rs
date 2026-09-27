@@ -713,6 +713,8 @@ impl Sessions {
                 "confirm_overwrite": rewind.confirm_overwrite,
             }))
             .map_err(not_confirmed)?;
+        // E2E crash point: the restore's receipt has settled, this one has not.
+        receipts::e2e_pause("conversation.rewind.files.settled");
         let restored: CheckpointRestored = serde_json::from_value(restored)?;
         self.settle_control(&ConversationControlReply {
             reason: (!restored.problems.is_empty()).then(|| restored.problems.join("; ")),
