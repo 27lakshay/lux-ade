@@ -87,3 +87,11 @@ cover one interrupted transaction, explicit SQL failure and unsupported startup;
 they do not simulate power loss, every migration boundary, or full application
 installation rollback. Other migration tests cover successful upgrades from
 older supported fixtures.
+
+## CLI and daemon builds
+
+Browser mutations (`browser.open`, `browser.navigate`, `browser.close` and
+`browser.operation`) send `operation_id` from the CLI as of 2026-09-27. The daemon
+still accepts the older `request_id`, but an older daemon does not accept
+`operation_id`. Use a CLI and daemon from the same build; the macOS app ships
+both together.

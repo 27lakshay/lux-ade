@@ -1,13 +1,14 @@
 # Project instructions
 
 - Use pnpm for JavaScript and TypeScript packages. Keep Rust dependencies in Cargo.
-- Test policy (user decision, 2026-09-27): do no end-to-end work until UI work
-  begins. Write no new E2E specs, and do not run the E2E suite as a gate for
-  backend slices. Verify backend work with `pnpm check:static` (formatting, strict
-  Clippy, the legacy Rust tests, the architecture check, typecheck, Fallow and
-  builds). Deterministic in-process tests are allowed for pure cores only:
-  fingerprints, reducers, codecs, schema round-trips and reconciliation deciders.
-  Keep them beside the code they test. E2E returns when UI work starts.
+- Test policy (user decisions, 2026-09-27): backend behaviour is proven by
+  headless E2E: real daemon and runtime processes driven through the CLI, the
+  SDK or the public protocol, with no Electron, in `e2e/protocol/`, run with
+  `pnpm test:e2e:protocol`. Electron E2E stays paused until the UI phase begins.
+  Every slice still passes `pnpm check:static`. Deterministic in-process tests
+  remain allowed for pure cores: fingerprints, reducers, codecs, schema
+  round-trips and reconciliation deciders, kept beside the code they test.
+  A feature is accepted only when its register acceptance passes as E2E.
 - Existing prototype and E2E tests are legacy coverage. Do not delete them. Keep
   the legacy Rust tests passing, because `check:static` runs them.
 - Operations fall into three tiers: query, idempotent command and effect command.

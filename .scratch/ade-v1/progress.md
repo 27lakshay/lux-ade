@@ -12,19 +12,21 @@ The build now runs as a Claude coordinator plus Workflow workers, following
 the [parallel build map](../parallel-build/README.md). The user was asleep and
 delegated every decision below; the ones that need confirmation are listed first.
 
-**Needs your confirmation**
+**Confirmed by the user (2026-09-27, morning)**
 
-- The accepted-feature stop condition is replaced by slices merged per round,
-  requirement IDs advanced and minutes per slice, because no feature can meet
-  E2E acceptance while E2E is paused
-  ([ticket 15 amendment](../parallel-build/issues/15-handoff-order.md)).
+- Slices merged per round was the stop condition while E2E was paused
+  ([ticket 15 amendment](../parallel-build/issues/15-handoff-order.md)). With
+  headless E2E back, the stop condition returns to accepted features.
 - Backup restore now accepts each versioned database one schema behind the
-  current one (`329f27c`). How far back restores should reach is still D15.
+  current one (`329f27c`); recorded in D15.
 - Browser mutations from the CLI now send `operation_id`. A new CLI needs a
   daemon from the same build for those commands; the old `request_id` is still
-  accepted by the daemon.
+  accepted by the daemon. Recorded in `docs/compatibility.md`.
 - Four legacy Rust tests are ignored because their fixtures predate fail-closed
-  path binding or the current schema ladder (`9e10380`).
+  path binding or the current schema ladder (`9e10380`); they stay ignored,
+  because E2E will cover their behaviour.
+- D03 is decided (the roster is in `decisions.md`), and the next step is option C:
+  headless backend E2E rounds while the user designs the UI in Pen.
 
 **Phase 0 (foundation), all merged green under `pnpm check:static`**
 
