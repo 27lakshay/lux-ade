@@ -104,6 +104,10 @@ for (const name of readdirSync(join(root, 'providers/opencode'))) {
   copyFileSync(join(root, 'providers/opencode', name), join(providers, 'opencode', name))
 }
 for (const name of ['plan.mjs', 'tool.mjs']) copyFileSync(join(root, 'providers', name), join(providers, name))
+// The backend plugin host (F057); the daemon resolves Resources/packages/plugin-host/src/host.mjs.
+const pluginHost = join(stage, 'packages/plugin-host/src')
+mkdirSync(pluginHost, { recursive: true })
+for (const name of ['host.mjs', 'protocol.mjs']) copyFileSync(join(root, 'packages/plugin-host/src', name), join(pluginHost, name))
 
 const bun = realpathSync(process.env.ADE_PACKAGE_BUN_BIN || execFileSync('/bin/sh', ['-c', 'command -v bun'], { encoding: 'utf8' }).trim())
 if (!statSync(bun).isFile()) throw new Error('A Bun executable is required for Oh My Pi and Codex')

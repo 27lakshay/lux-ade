@@ -1,0 +1,20 @@
+{
+  "name": "@ade/plugin-host",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Headless Node host for one plugin backend activation, driven by ade-daemon over JSON-RPC on stdio",
+  "engines": { "node": ">=22" },
+  "bin": { "ade-plugin-host": "./src/host.mjs" },
+  "exports": {
+    ".": "./src/host.mjs"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/protocol.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.6.0",
+    "typescript": "5.9.3"
+  }
+}

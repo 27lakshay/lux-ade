@@ -265,12 +265,20 @@ export type ContractDefinition =
   | PendingSendList
   | PluginActivation
   | PluginCommandContribution
+  | PluginCommandInvokeRequest
+  | PluginCommandOutcome
+  | PluginCommandResult
   | PluginContributions
   | PluginDataRecord
   | PluginDetail
   | PluginDisableRequest
   | PluginEnableRequest
   | PluginEntryPoints1
+  | PluginHostReply
+  | PluginHostRestartRequest
+  | PluginHostState
+  | PluginHostStatus
+  | PluginHostStatusRequest
   | PluginInspectRequest
   | PluginInstallRequest
   | PluginList
@@ -1013,6 +1021,20 @@ export type SendOutcome = 'prepared' | 'accepted' | 'rejected' | 'held' | 'confl
  */
 export type PluginRegistrationKind = 'command' | 'panel'
 /**
+ * What a command handler did.
+ */
+export type PluginCommandOutcome =
+  | {
+      status: 'completed'
+      value: unknown
+      [k: string]: unknown
+    }
+  | {
+      message: string
+      status: 'failed'
+      [k: string]: unknown
+    }
+/**
  * A setting's value type. `credential_ref` holds a reference to a credential
  * kept elsewhere (an account ID or keychain item), never the secret itself.
  */
@@ -1025,6 +1047,10 @@ export type PluginSourceKind = 'local' | 'package' | 'git'
  * Whether the plugin should be active.
  */
 export type PluginStatus = 'enabled' | 'disabled'
+/**
+ * The backend host's state.
+ */
+export type PluginHostState = 'running' | 'no_backend' | 'inactive' | 'idle' | 'backoff' | 'errored' | 'stopped'
 /**
  * Where to install from. Every source ends pinned: a local directory by its
  * content digest, a package by its archive digest, Git by its commit.
@@ -4931,6 +4957,46 @@ export interface PluginCommandContribution {
   title: string
 }
 /**
+ * `plugin.command.invoke`: run a command the plugin's backend registered.
+ * The host starts on first use. A command whose outcome cannot be proven,
+ * because its host crashed or timed out while running it, settles as
+ * `outcome_unknown` and is never run again under the same operation ID.
+ */
+export interface PluginCommandInvokeRequest {
+  /**
+   * JSON arguments passed to the handler, at most 256 KiB.
+   */
+  args?: unknown
+  /**
+   * A command the manifest declares and the current activation registered.
+   */
+  command_id: string
+  op: 'plugin.command.invoke'
+  operation_id: string
+  plugin_id: string
+}
+/**
+ * The `plugin.command.invoke` reply.
+ */
+export interface PluginCommandResult {
+  /**
+   * The host start attempt within that generation.
+   */
+  attempt: number
+  command_id: string
+  /**
+   * The activation generation whose host ran the command.
+   */
+  generation: number
+  outcome: PluginCommandOutcome
+  plugin_id: string
+  /**
+   * The `plugin_command_result` type tag.
+   */
+  type: 'plugin_command_result'
+  [k: string]: unknown
+}
+/**
  * Static contributions the registry records for each activation.
  */
 export interface PluginContributions {
@@ -5128,6 +5194,73 @@ export interface PluginEntryPoints1 {
    * Loaded into the trusted application renderer.
    */
   ui?: string | null
+}
+/**
+ * The `plugin.host.status` and `plugin.host.restart` reply.
+ */
+export interface PluginHostReply {
+  host: PluginHostStatus
+  /**
+   * The `plugin_host` type tag.
+   */
+  type: 'plugin_host'
+  [k: string]: unknown
+}
+/**
+ * One plugin's backend host as the supervisor sees it.
+ */
+export interface PluginHostStatus {
+  /**
+   * The last host start attempt within the generation; 0 before the first.
+   */
+  attempt: number
+  /**
+   * Consecutive crashes counted toward the restart schedule.
+   */
+  crashes: number
+  /**
+   * The activation generation the host serves.
+   */
+  generation: number | null
+  last_error: string | null
+  /**
+   * The last lines the host wrote to stderr, oldest first.
+   */
+  log_tail: string[]
+  pid: number | null
+  plugin_id: string
+  /**
+   * Commands the running host reports as registered.
+   */
+  registered: string[]
+  /**
+   * Whether a running host answered a health probe; null when none ran.
+   */
+  responsive: boolean | null
+  /**
+   * When the next automatic restart is due, in backoff.
+   */
+  retry_at: number | null
+  started_at: number | null
+  state: PluginHostState
+  [k: string]: unknown
+}
+/**
+ * `plugin.host.restart`: clear the crash count and start a fresh host for
+ * the current activation. Invocations running in the old host settle as
+ * `outcome_unknown`.
+ */
+export interface PluginHostRestartRequest {
+  op: 'plugin.host.restart'
+  plugin_id: string
+}
+/**
+ * `plugin.host.status`: the backend host's supervision state. It never
+ * starts a host.
+ */
+export interface PluginHostStatusRequest {
+  op: 'plugin.host.status'
+  plugin_id: string
 }
 /**
  * `plugin.inspect`: one plugin with its manifest and live registrations.
@@ -8468,7 +8601,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8616,6 +8749,9 @@ export interface RequestByOperation {
   "plugin.record.delete": PluginRecordDeleteRequest
   "plugin.setting.list": PluginSettingListRequest
   "plugin.setting.set": PluginSettingSetRequest
+  "plugin.command.invoke": PluginCommandInvokeRequest
+  "plugin.host.status": PluginHostStatusRequest
+  "plugin.host.restart": PluginHostRestartRequest
   "orchestration.delegate": DelegateRequest
   "orchestration.children": ChildrenRequest
   "orchestration.child.get": ChildGetRequest
@@ -8809,6 +8945,9 @@ export interface ResponseByOperation {
   "plugin.record.delete": PluginRecordDeleted
   "plugin.setting.list": PluginSettings
   "plugin.setting.set": PluginSettings
+  "plugin.command.invoke": PluginCommandResult
+  "plugin.host.status": PluginHostReply
+  "plugin.host.restart": PluginHostReply
   "orchestration.delegate": ChildDelegated
   "orchestration.children": ChildList
   "orchestration.child.get": ChildReply
