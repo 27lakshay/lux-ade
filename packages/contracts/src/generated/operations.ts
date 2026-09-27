@@ -108,6 +108,18 @@ export const operations = {
   "browser.navigate": { tier: "effect_command", domain: "daemon", request: "BrowserNavigateRequest", response: "BrowserMutation" },
   "browser.close": { tier: "effect_command", domain: "daemon", request: "BrowserCloseRequest", response: "BrowserMutation" },
   "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
+  "plugin.list": { tier: "query", domain: "plugins", request: "PluginListRequest", response: "PluginList" },
+  "plugin.inspect": { tier: "query", domain: "plugins", request: "PluginInspectRequest", response: "PluginReply" },
+  "plugin.install": { tier: "effect_command", domain: "plugins", request: "PluginInstallRequest", response: "PluginReply" },
+  "plugin.uninstall": { tier: "effect_command", domain: "plugins", request: "PluginUninstallRequest", response: "PluginUninstalled" },
+  "plugin.enable": { tier: "idempotent_command", domain: "plugins", request: "PluginEnableRequest", response: "PluginReply" },
+  "plugin.disable": { tier: "idempotent_command", domain: "plugins", request: "PluginDisableRequest", response: "PluginReply" },
+  "plugin.record.get": { tier: "query", domain: "plugins", request: "PluginRecordGetRequest", response: "PluginRecordReply" },
+  "plugin.record.list": { tier: "query", domain: "plugins", request: "PluginRecordListRequest", response: "PluginRecordList" },
+  "plugin.record.put": { tier: "idempotent_command", domain: "plugins", request: "PluginRecordPutRequest", response: "PluginRecordReply" },
+  "plugin.record.delete": { tier: "idempotent_command", domain: "plugins", request: "PluginRecordDeleteRequest", response: "PluginRecordDeleted" },
+  "plugin.setting.list": { tier: "query", domain: "plugins", request: "PluginSettingListRequest", response: "PluginSettings" },
+  "plugin.setting.set": { tier: "idempotent_command", domain: "plugins", request: "PluginSettingSetRequest", response: "PluginSettings" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

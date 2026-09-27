@@ -108,6 +108,43 @@ export type ContractDefinition =
   | PendingRequest
   | PendingSend
   | PendingSendList
+  | PluginActivation
+  | PluginCommandContribution
+  | PluginContributions
+  | PluginDataRecord
+  | PluginDetail
+  | PluginDisableRequest
+  | PluginEnableRequest
+  | PluginEntryPoints1
+  | PluginInspectRequest
+  | PluginInstallRequest
+  | PluginList
+  | PluginListRequest
+  | PluginManifest
+  | PluginPanelContribution
+  | PluginRecordDeleteRequest
+  | PluginRecordDeleted
+  | PluginRecordGetRequest
+  | PluginRecordList
+  | PluginRecordListRequest
+  | PluginRecordPutRequest
+  | PluginRecordReply
+  | PluginRegistration
+  | PluginRegistrationKind
+  | PluginReply
+  | PluginSettingContribution
+  | PluginSettingKind
+  | PluginSettingListRequest
+  | PluginSettingSetRequest
+  | PluginSettingValue
+  | PluginSettings
+  | PluginSource
+  | PluginSourceKind
+  | PluginSourcePin
+  | PluginStatus
+  | PluginSummary
+  | PluginUninstallRequest
+  | PluginUninstalled
   | PortAssignment
   | PortObservation
   | PreviewKind
@@ -289,6 +326,49 @@ export type OutputCoverageStatus = 'complete' | 'pending' | 'incomplete'
  * What the daemon knows about an unresolved send.
  */
 export type SendOutcome = 'prepared' | 'accepted' | 'rejected' | 'held' | 'conflict'
+/**
+ * A registration kind in the activation registry.
+ */
+export type PluginRegistrationKind = 'command' | 'panel'
+/**
+ * A setting's value type. `credential_ref` holds a reference to a credential
+ * kept elsewhere (an account ID or keychain item), never the secret itself.
+ */
+export type PluginSettingKind = 'string' | 'boolean' | 'number' | 'credential_ref'
+/**
+ * The kind of source a plugin was installed from.
+ */
+export type PluginSourceKind = 'local' | 'package' | 'git'
+/**
+ * Whether the plugin should be active.
+ */
+export type PluginStatus = 'enabled' | 'disabled'
+/**
+ * Where to install from. Every source ends pinned: a local directory by its
+ * content digest, a package by its archive digest, Git by its commit.
+ */
+export type PluginSource =
+  | {
+      kind: 'local'
+      path: string
+    }
+  | {
+      kind: 'package'
+      path: string
+      /**
+       * The expected lowercase hex SHA-256 of the archive.
+       */
+      sha256?: string | null
+    }
+  | {
+      /**
+       * A full 40-character commit ID.
+       */
+      commit?: string | null
+      kind: 'git'
+      ref?: string | null
+      url: string
+    }
 export type ProxyAvailability = 'bound' | 'port_occupied'
 export type ReadinessBasis =
   ('execution_state' | 'identity_changed') | 'direct_process_tcp_listener' | 'process_tree_tcp_listener'
@@ -1693,6 +1773,469 @@ export interface PendingSendList {
    * The `pending_sends` type tag.
    */
   type: 'pending_sends'
+  [k: string]: unknown
+}
+/**
+ * The live activation of an enabled plugin.
+ */
+export interface PluginActivation {
+  activated_at: number
+  generation: number
+  registrations: PluginRegistration[]
+  [k: string]: unknown
+}
+/**
+ * One registration owned by an activation.
+ */
+export interface PluginRegistration {
+  id: string
+  kind: PluginRegistrationKind
+  [k: string]: unknown
+}
+/**
+ * A command. Its ID starts with the plugin ID and a dot.
+ */
+export interface PluginCommandContribution {
+  id: string
+  title: string
+}
+/**
+ * Static contributions the registry records for each activation.
+ */
+export interface PluginContributions {
+  commands: PluginCommandContribution[]
+  panels: PluginPanelContribution[]
+  settings: PluginSettingContribution[]
+}
+/**
+ * A panel for the UI host. Its ID starts with the plugin ID and a dot.
+ */
+export interface PluginPanelContribution {
+  id: string
+  title: string
+}
+/**
+ * A declared setting. Only declared keys may be set.
+ */
+export interface PluginSettingContribution {
+  /**
+   * Must match `kind`. A `credential_ref` setting has no default.
+   */
+  default?: unknown
+  key: string
+  kind: PluginSettingKind
+  title: string
+}
+/**
+ * One namespaced durable record.
+ */
+export interface PluginDataRecord {
+  /**
+   * The plugin data schema in force when the record was written.
+   */
+  data_schema: number
+  key: string
+  namespace: string
+  /**
+   * Starts at 1 and rises by one on every write.
+   */
+  revision: number
+  updated_at: number
+  value: unknown
+  [k: string]: unknown
+}
+/**
+ * An installed plugin with its manifest and artifact.
+ */
+export interface PluginDetail {
+  /**
+   * The live activation; null while disabled or when activation failed.
+   */
+  activation: PluginActivation | null
+  /**
+   * Why an enabled plugin has no activation after a daemon restart.
+   */
+  activation_error: string | null
+  /**
+   * The highest activation generation issued so far; 0 before the first.
+   */
+  activation_generation: number
+  /**
+   * `sha256:<hex>` over the installed artifact's files.
+   */
+  artifact_digest: string
+  artifact_path: string
+  /**
+   * The data schema the installed code declares.
+   */
+  data_schema: number
+  id: string
+  installed_at: number
+  manifest: PluginManifest
+  name: string
+  source: PluginSourcePin
+  status: PluginStatus
+  /**
+   * The highest data schema any installed code has declared. Records may
+   * carry any schema up to this one.
+   */
+  stored_data_schema: number
+  updated_at: number
+  /**
+   * The artifact version from the manifest.
+   */
+  version: string
+  [k: string]: unknown
+}
+/**
+ * `ade-plugin.json`, format version 1. Unknown fields are rejected so a
+ * newer manifest never activates with parts silently ignored.
+ */
+export interface PluginManifest {
+  /**
+   * The plugin API version the code targets.
+   */
+  api_version: number
+  contributes: PluginContributions1
+  /**
+   * The version of the plugin's durable data layout, from 1. It is separate
+   * from the artifact version: code rollback never rolls data back.
+   */
+  data_schema: number
+  description?: string | null
+  entry_points: PluginEntryPoints
+  /**
+   * `publisher.name`: lowercase letters, digits and single hyphens in each
+   * dot-separated part, at least two parts, at most 64 bytes.
+   */
+  id: string
+  /**
+   * Always 1.
+   */
+  manifest_version: number
+  /**
+   * Display name, 1 to 128 characters.
+   */
+  name: string
+  /**
+   * The artifact version, in strict semantic versioning.
+   */
+  version: string
+}
+/**
+ * Static contributions the registry records for each activation.
+ */
+export interface PluginContributions1 {
+  commands: PluginCommandContribution[]
+  panels: PluginPanelContribution[]
+  settings: PluginSettingContribution[]
+}
+/**
+ * At least one entry point, each a relative path inside the artifact.
+ */
+export interface PluginEntryPoints {
+  /**
+   * Loaded by a separate restartable backend host.
+   */
+  backend?: string | null
+  /**
+   * Loaded by a runtime-supervised provider worker.
+   */
+  provider?: string | null
+  /**
+   * Loaded into the trusted application renderer.
+   */
+  ui?: string | null
+}
+/**
+ * The resolved, pinned source of an installed artifact.
+ */
+export interface PluginSourcePin {
+  /**
+   * The requested Git ref, if any.
+   */
+  git_ref: string | null
+  kind: PluginSourceKind
+  /**
+   * The local path, package path or Git URL the artifact came from.
+   */
+  locator: string
+  /**
+   * `sha256:<hex>` for local and package sources; the commit ID for Git.
+   */
+  pin: string
+  [k: string]: unknown
+}
+/**
+ * `plugin.disable`: end the current activation and dispose only its registrations.
+ */
+export interface PluginDisableRequest {
+  op: 'plugin.disable'
+  plugin_id: string
+}
+/**
+ * `plugin.enable`: start a new activation. Enabling an enabled plugin
+ * returns its current state and starts nothing.
+ */
+export interface PluginEnableRequest {
+  op: 'plugin.enable'
+  plugin_id: string
+}
+/**
+ * Where each host loads the plugin from. Paths are relative to the artifact root.
+ */
+export interface PluginEntryPoints1 {
+  /**
+   * Loaded by a separate restartable backend host.
+   */
+  backend?: string | null
+  /**
+   * Loaded by a runtime-supervised provider worker.
+   */
+  provider?: string | null
+  /**
+   * Loaded into the trusted application renderer.
+   */
+  ui?: string | null
+}
+/**
+ * `plugin.inspect`: one plugin with its manifest and live registrations.
+ */
+export interface PluginInspectRequest {
+  op: 'plugin.inspect'
+  plugin_id: string
+}
+/**
+ * `plugin.install`: copy a pinned artifact into the profile and record it.
+ * Replacing an installed plugin requires it to be disabled first.
+ */
+export interface PluginInstallRequest {
+  /**
+   * Refuse the artifact unless its manifest declares exactly this version.
+   */
+  expected_version?: string | null
+  op: 'plugin.install'
+  operation_id: string
+  source: PluginSource
+}
+/**
+ * The `plugin.list` reply.
+ */
+export interface PluginList {
+  plugins: PluginSummary[]
+  /**
+   * The `plugins` type tag.
+   */
+  type: 'plugins'
+  [k: string]: unknown
+}
+/**
+ * An installed plugin as `plugin.list` shows it.
+ */
+export interface PluginSummary {
+  /**
+   * The live activation; null while disabled or when activation failed.
+   */
+  activation: PluginActivation | null
+  /**
+   * Why an enabled plugin has no activation after a daemon restart.
+   */
+  activation_error: string | null
+  /**
+   * The highest activation generation issued so far; 0 before the first.
+   */
+  activation_generation: number
+  /**
+   * The data schema the installed code declares.
+   */
+  data_schema: number
+  id: string
+  installed_at: number
+  name: string
+  source: PluginSourcePin
+  status: PluginStatus
+  /**
+   * The highest data schema any installed code has declared. Records may
+   * carry any schema up to this one.
+   */
+  stored_data_schema: number
+  updated_at: number
+  /**
+   * The artifact version from the manifest.
+   */
+  version: string
+  [k: string]: unknown
+}
+/**
+ * `plugin.list`: every installed plugin.
+ */
+export interface PluginListRequest {
+  op: 'plugin.list'
+}
+/**
+ * `plugin.record.delete`: delete a record; deleting a missing record succeeds.
+ */
+export interface PluginRecordDeleteRequest {
+  /**
+   * Delete only if the record is at this revision.
+   */
+  expected_revision?: number | null
+  key: string
+  namespace: string
+  op: 'plugin.record.delete'
+  plugin_id: string
+}
+/**
+ * The `plugin.record.delete` reply.
+ */
+export interface PluginRecordDeleted {
+  /**
+   * False when there was no record to delete.
+   */
+  deleted: boolean
+  key: string
+  namespace: string
+  plugin_id: string
+  /**
+   * The `plugin_record_deleted` type tag.
+   */
+  type: 'plugin_record_deleted'
+  [k: string]: unknown
+}
+/**
+ * `plugin.record.get`: one namespaced record, or null.
+ */
+export interface PluginRecordGetRequest {
+  key: string
+  namespace: string
+  op: 'plugin.record.get'
+  plugin_id: string
+}
+/**
+ * The `plugin.record.list` reply.
+ */
+export interface PluginRecordList {
+  namespace: string
+  plugin_id: string
+  records: PluginDataRecord[]
+  /**
+   * The `plugin_records` type tag.
+   */
+  type: 'plugin_records'
+  [k: string]: unknown
+}
+/**
+ * `plugin.record.list`: the records in one namespace, by key.
+ */
+export interface PluginRecordListRequest {
+  namespace: string
+  op: 'plugin.record.list'
+  plugin_id: string
+}
+/**
+ * `plugin.record.put`: write a record of at most 64 KiB of JSON.
+ */
+export interface PluginRecordPutRequest {
+  /**
+   * Write only if the record is at this revision; 0 means it must not exist.
+   */
+  expected_revision?: number | null
+  key: string
+  namespace: string
+  op: 'plugin.record.put'
+  plugin_id: string
+  value: unknown
+}
+/**
+ * The `plugin.record.get` and `plugin.record.put` reply.
+ */
+export interface PluginRecordReply {
+  plugin_id: string
+  record: PluginDataRecord | null
+  /**
+   * The `plugin_record` type tag.
+   */
+  type: 'plugin_record'
+  [k: string]: unknown
+}
+/**
+ * The `plugin.inspect`, `plugin.install`, `plugin.enable` and `plugin.disable` reply.
+ */
+export interface PluginReply {
+  plugin: PluginDetail
+  /**
+   * The `plugin` type tag.
+   */
+  type: 'plugin'
+  [k: string]: unknown
+}
+/**
+ * `plugin.setting.list`: every declared setting with its effective value.
+ */
+export interface PluginSettingListRequest {
+  op: 'plugin.setting.list'
+  plugin_id: string
+}
+/**
+ * `plugin.setting.set`: set a declared setting; null restores its default.
+ */
+export interface PluginSettingSetRequest {
+  key: string
+  op: 'plugin.setting.set'
+  plugin_id: string
+  value: unknown
+}
+/**
+ * One declared setting and its effective value.
+ */
+export interface PluginSettingValue {
+  /**
+   * Whether `value` is the declared default.
+   */
+  is_default: boolean
+  key: string
+  kind: PluginSettingKind
+  /**
+   * The stored value, or the default when none is stored; null if neither.
+   */
+  value: unknown
+  [k: string]: unknown
+}
+/**
+ * The `plugin.setting.list` and `plugin.setting.set` reply.
+ */
+export interface PluginSettings {
+  plugin_id: string
+  settings: PluginSettingValue[]
+  /**
+   * The `plugin_settings` type tag.
+   */
+  type: 'plugin_settings'
+  [k: string]: unknown
+}
+/**
+ * `plugin.uninstall`: remove a disabled plugin and its artifacts.
+ */
+export interface PluginUninstallRequest {
+  op: 'plugin.uninstall'
+  operation_id: string
+  plugin_id: string
+  /**
+   * Also delete the plugin's records and settings. Without it they stay
+   * and a reinstall of the same ID finds them.
+   */
+  purge_data?: boolean
+}
+/**
+ * The `plugin.uninstall` reply.
+ */
+export interface PluginUninstalled {
+  data_purged: boolean
+  plugin_id: string
+  /**
+   * The `plugin_uninstalled` type tag.
+   */
+  type: 'plugin_uninstalled'
   [k: string]: unknown
 }
 /**
@@ -3334,7 +3877,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -3443,6 +3986,18 @@ export interface RequestByOperation {
   "browser.navigate": BrowserNavigateRequest
   "browser.close": BrowserCloseRequest
   "browser.operation": BrowserOperationRequest
+  "plugin.list": PluginListRequest
+  "plugin.inspect": PluginInspectRequest
+  "plugin.install": PluginInstallRequest
+  "plugin.uninstall": PluginUninstallRequest
+  "plugin.enable": PluginEnableRequest
+  "plugin.disable": PluginDisableRequest
+  "plugin.record.get": PluginRecordGetRequest
+  "plugin.record.list": PluginRecordListRequest
+  "plugin.record.put": PluginRecordPutRequest
+  "plugin.record.delete": PluginRecordDeleteRequest
+  "plugin.setting.list": PluginSettingListRequest
+  "plugin.setting.set": PluginSettingSetRequest
 }
 
 export interface ResponseByOperation {
@@ -3552,6 +4107,18 @@ export interface ResponseByOperation {
   "browser.navigate": BrowserMutation
   "browser.close": BrowserMutation
   "browser.operation": BrowserOperation
+  "plugin.list": PluginList
+  "plugin.inspect": PluginReply
+  "plugin.install": PluginReply
+  "plugin.uninstall": PluginUninstalled
+  "plugin.enable": PluginReply
+  "plugin.disable": PluginReply
+  "plugin.record.get": PluginRecordReply
+  "plugin.record.list": PluginRecordList
+  "plugin.record.put": PluginRecordReply
+  "plugin.record.delete": PluginRecordDeleted
+  "plugin.setting.list": PluginSettings
+  "plugin.setting.set": PluginSettings
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged

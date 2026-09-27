@@ -9,6 +9,7 @@ import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
+import { pluginUsage, runPluginCommand } from './commands/plugins.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
 import { CliError, jsonObject, object, required, type CommandResult, type ErrorCode } from './shared.js'
@@ -65,6 +66,7 @@ const usage = [
   serviceUsage,
   gitUsage,
   listenerUsage,
+  pluginUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -188,6 +190,7 @@ const commandAreas = [
   runServiceCommand,
   runGitCommand,
   runListenerCommand,
+  runPluginCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {
