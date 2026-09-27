@@ -73,7 +73,7 @@ try {
   };
   websocket.onclose = () => { if (!closing) void close(1); };
   websocket.onerror = () => void close(1);
-  exited.then(() => { if (!closing) void close(1); });
+  void exited.then(() => { if (!closing) void close(1); });
   let pending = '';
   const decoder = new StringDecoder('utf8');
   for await (const chunk of process.stdin) {
@@ -82,7 +82,7 @@ try {
     while ((end = pending.indexOf('\n')) !== -1) {
       const line = pending.slice(0, end); pending = pending.slice(end+1);
       if (Buffer.byteLength(line) > LIMIT) throw new Error('Codex input frame exceeds its bound');
-      const frame = JSON.parse(line);
+      JSON.parse(line); // Rejects a malformed frame before it is forwarded.
         if (websocket.bufferedAmount + Buffer.byteLength(line) > LIMIT) throw new Error('Codex input queue exceeds its bound');
         websocket.send(line);
     }

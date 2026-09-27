@@ -70,8 +70,8 @@ export async function openConversationView(profile: ScratchProfile, conversation
     const next = new clientModule.AdeClient(target.socket)
     snapshotProfile = target
     unsubscribeClient = next.subscribeFeed((frame) => {
-      forwarded.push(frame as SyncFrame)
-      for (const listener of listeners) listener(frame as SyncFrame)
+      forwarded.push(frame)
+      for (const listener of listeners) listener(frame)
     })
     current = next
     next.start()

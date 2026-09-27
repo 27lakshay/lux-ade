@@ -75,7 +75,10 @@ export function xtermView(): XtermView {
   const settle = (error?: Error): void => {
     const current = waiters
     waiters = []
-    for (const waiter of current) error ? waiter.reject(error) : waiter.resolve()
+    for (const waiter of current) {
+      if (error) waiter.reject(error)
+      else waiter.resolve()
+    }
   }
   const feed = new TerminalFeed(terminal, {
     status: (message) => statuses.push(message),

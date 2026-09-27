@@ -1,3 +1,4 @@
+// oxlint-disable react/refs -- prototype shell, not yet approved; fix when rebuilt against the Pen design
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { motion, type Transition } from 'motion/react'
 import { Columns2, Ellipsis, Plus, SquareTerminal, X } from 'lucide-react'

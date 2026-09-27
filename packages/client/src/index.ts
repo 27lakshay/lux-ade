@@ -106,7 +106,7 @@ function parseWorkspace(value: unknown): Workspace | null {
   if (source.needs_rebind !== undefined && typeof source.needs_rebind !== 'boolean') return null
   if (source.worktree_lifecycle_needs_rebind !== undefined && typeof source.worktree_lifecycle_needs_rebind !== 'boolean') return null
   return { id: fields[0], root: fields[1], name: fields[2], terminal_id: fields[3],
-    repository_id: (repositoryId ?? null) as string | null,
+    repository_id: (repositoryId ?? null),
     needs_rebind: source.needs_rebind === true,
     worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true }
 }

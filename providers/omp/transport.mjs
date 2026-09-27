@@ -97,7 +97,7 @@ export class OmpTransport {
       if (frame.command !== request.type || typeof frame.success !== 'boolean') throw new Error('Oh My Pi response does not match its command');
       this.pending.delete(frame.id); clearTimeout(request.timer);
       if (frame.success && request.type === 'negotiate_protocol' && frame.data?.protocolVersion === 2) this.protocol = 2;
-      frame.success ? request.resolve(frame.data) : request.reject(new OmpCommandError(frame));
+      if (frame.success) request.resolve(frame.data); else request.reject(new OmpCommandError(frame));
       return;
     }
     // Includes a later failure response for an already acknowledged prompt.

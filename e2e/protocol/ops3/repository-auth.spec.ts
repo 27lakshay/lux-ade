@@ -86,7 +86,7 @@ test('F062: publish and clone use the configured SSH client, and a refused key i
   expect((await readFile(log, 'utf8')).split('\n').filter((line) => line.includes('denied-host')).length).toBe(calls)
 })
 
-test('F062: a URL carrying a password is refused before Git runs, and the password is never echoed', async ({ ade, profile, repo }) => {
+test('F062: a URL carrying a password is refused before Git runs, and the password is never echoed', async ({ ade, profile, repo: _repo }) => {
   const folder = await plainFolder(ade, 'with-password')
   for (const url of ['https://fixture-user:hunter2-secret@example.invalid/repo.git',
     'ssh://fixture-user:hunter2-secret@example.invalid/repo.git']) {

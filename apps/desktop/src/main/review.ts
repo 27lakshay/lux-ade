@@ -204,8 +204,8 @@ export function registerReviewIpc(): void {
         throw new Error('Invalid review feedback search')
       }
       const response = await dailyUseCommand<'review.feedback.search'>(context.endpoint, { op, workspace_id: workspaceId,
-        ...(args.path !== undefined ? { path: args.path as string } : {}),
-        ...(args.query !== undefined ? { query: args.query as string } : {}),
+        ...(args.path !== undefined ? { path: args.path } : {}),
+        ...(args.query !== undefined ? { query: args.query } : {}),
         ...(args.before !== undefined ? { before: args.before as number } : {}),
         ...(args.limit !== undefined ? { limit: args.limit as number } : {}) })
       assertReviewContext(context, workspaceId)
@@ -292,7 +292,7 @@ export function registerReviewIpc(): void {
       const page: DailyUseRequest<'review.diff_page'> = { op, ...side }
       if (args.cursor !== undefined) {
         if (!validId(args.cursor)) throw new Error('Invalid diff cursor')
-        page.cursor = args.cursor as string
+        page.cursor = args.cursor
       }
       if (args.expected_token !== undefined) {
         if (typeof args.expected_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.expected_token)) {

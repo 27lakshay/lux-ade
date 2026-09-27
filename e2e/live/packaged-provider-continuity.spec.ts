@@ -41,7 +41,7 @@ for (const provider of ['codex', 'claude'] as const) {
     const profilesHome = join(directory, 'profiles')
     const inherited = Object.fromEntries(['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'SHELL',
       'TERM', 'LANG', 'LC_ALL', 'LC_CTYPE', 'SSH_AUTH_SOCK', '__CF_USER_TEXT_ENCODING']
-      .flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]))
+      .flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]]))
     const environment = { ...inherited, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
       ADE_PROFILES_HOME: profilesHome,
       ADE_E2E_USER_DATA_DIR: join(directory, 'electron'),

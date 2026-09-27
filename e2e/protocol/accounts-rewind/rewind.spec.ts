@@ -19,7 +19,7 @@ import { mockDirectory } from '../fixtures/providers'
 type Message = { id: string; role: string; text: string; turn_id: string | null; sequence: number }
 
 async function messages(profile: ScratchProfile, conversationId: string): Promise<Message[]> {
-  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages as Message[]
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages
 }
 
 async function texts(profile: ScratchProfile, conversationId: string): Promise<string[]> {
@@ -72,7 +72,7 @@ async function preview(profile: ScratchProfile, conversationId: string, before: 
 
 test('F039, F043: a Claude rewind forks the session before the turn, removes later turns from ADE, refuses older pages and drops search hits', async ({ profile }) => {
   const { conversationId, all } = await turns(profile, ['first zebracorn', 'second quokkaflux', 'third lemurmint'])
-  const second = all[2]!
+  const second = all[2]
   const original = (await thread(profile, conversationId))!
   await expect.poll(() => hits(profile, 'quokkaflux')).toBe(1)
   await expect.poll(() => hits(profile, 'lemurmint')).toBe(1)
@@ -110,7 +110,7 @@ test('F039, F043: a Claude rewind forks the session before the turn, removes lat
   // Claude forked at the first turn's last entry. Two turns went, so no single-turn check ran.
   const [fork] = await forks(profile)
   expect(fork).toMatchObject({ session: original, forked })
-  expect(fork!.upToMessageId).not.toBe(second.turn_id)
+  expect(fork.upToMessageId).not.toBe(second.turn_id)
   expect(await checks(profile)).toEqual([])
   // The Conversation continues in the fork; the earlier native session is unchanged.
   expect(await thread(profile, conversationId)).toBe(forked)
@@ -131,7 +131,7 @@ test('F039, F043: a Claude rewind forks the session before the turn, removes lat
   expect(await profile.call('conversation.rewind', rewind)).toEqual(reply)
   await profile.restartDaemon('kill')
   expect(await profile.call('conversation.rewind', rewind)).toEqual(reply)
-  await expect(profile.call('conversation.rewind', { ...rewind, before_message_id: all[0]!.id }))
+  await expect(profile.call('conversation.rewind', { ...rewind, before_message_id: all[0].id }))
     .rejects.toThrow(/already used for a different request/)
   expect(await forks(profile)).toHaveLength(1)
 
@@ -156,7 +156,7 @@ test('F039, F043: a Claude rewind forks the session before the turn, removes lat
 test('F039: a fork is rewound again at a prompt it copied, by the ID ADE stored, across an Agent resume', async ({ profile }) => {
   const { conversationId, all } = await turns(profile, ['one alpacarun', 'two bisonleap', 'three civetdash', 'four dingosky'])
   const original = (await thread(profile, conversationId))!
-  const third = all[4]!
+  const third = all[4]
   const first = await profile.call('conversation.rewind', { operation_id: 'rewind-one', conversation_id: conversationId,
     scope: 'conversation', before_message_id: third.id,
     expected_state: (await preview(profile, conversationId, third)).history!.state_token })
@@ -168,8 +168,8 @@ test('F039: a fork is rewound again at a prompt it copied, by the ID ADE stored,
   await waitForIdle(profile, conversationId)
 
   // `two` was copied into the fork under a new UUID; ADE still names it by the first one.
-  const two = (await messages(profile, conversationId))[2]!
-  expect(two).toMatchObject({ id: all[2]!.id, text: 'two bisonleap' })
+  const two = (await messages(profile, conversationId))[2]
+  expect(two).toMatchObject({ id: all[2].id, text: 'two bisonleap' })
   const again = await profile.call('conversation.rewind', { operation_id: 'rewind-two', conversation_id: conversationId,
     scope: 'conversation', before_message_id: two.id,
     expected_state: (await preview(profile, conversationId, two)).history!.state_token })
@@ -186,7 +186,7 @@ test('F039: a fork is rewound again at a prompt it copied, by the ID ADE stored,
   await profile.call('agent.resume', { conversation_id: conversationId })
   await waitForIdle(profile, conversationId)
   expect((await messages(profile, conversationId)).map((message) => [message.id, message.text]))
-    .toEqual([[all[0]!.id, 'one alpacarun'], [expect.any(String), 'Hello Claude'], [expect.any(String), 'six ferretgo'],
+    .toEqual([[all[0].id, 'one alpacarun'], [expect.any(String), 'Hello Claude'], [expect.any(String), 'six ferretgo'],
       [expect.any(String), 'Hello Claude']])
   expect((await messages(profile, conversationId))).toHaveLength(4)
 })
@@ -194,7 +194,7 @@ test('F039: a fork is rewound again at a prompt it copied, by the ID ADE stored,
 test('F039: removing only the last turn asks Claude to check it drops exactly that turn; the CLI drives it', async ({ profile }) => {
   const { conversationId, all } = await turns(profile, ['first zebracorn', 'second quokkaflux', 'third lemurmint'])
   const original = (await thread(profile, conversationId))!
-  const third = all[4]!
+  const third = all[4]
   const shown = await profile.cli('conversation', 'rewind-preview', conversationId, 'conversation', third.id)
   expect(shown.code, shown.stderr).toBe(0)
   const token = (shown.json as { history: { state_token: string; removed_messages: number } }).history
@@ -208,8 +208,8 @@ test('F039: removing only the last turn asks Claude to check it drops exactly th
   const [check] = await checks(profile)
   expect(check).toMatchObject({ resume: original, forkSession: true, resumeDropsTurn: third.turn_id, rejected: false })
   const [fork] = await forks(profile)
-  expect(fork).toMatchObject({ session: original, upToMessageId: check!.resumeSessionAt })
-  expect(await thread(profile, conversationId)).toBe(fork!.forked)
+  expect(fork).toMatchObject({ session: original, upToMessageId: check.resumeSessionAt })
+  expect(await thread(profile, conversationId)).toBe(fork.forked)
   expect(await texts(profile, conversationId))
     .toEqual(['first zebracorn', 'Hello Claude', 'second quokkaflux', 'Hello Claude'])
 })
@@ -220,15 +220,15 @@ test('F039: a rewind is refused while a turn runs, without the Agent, before the
   const base = { conversation_id: conversationId, scope: 'conversation' as const }
 
   // Not a turn's prompt.
-  await expect(profile.call('conversation.rewind.preview', { ...base, before_message_id: all[1]!.id }))
+  await expect(profile.call('conversation.rewind.preview', { ...base, before_message_id: all[1].id }))
     .rejects.toThrow(/user message that started a turn/)
   await expect(profile.call('conversation.rewind.preview', { ...base, before_message_id: 'message_missing' }))
     .rejects.toThrow(/not in this Conversation/)
 
   // Claude cannot fork before its first entry: the adapter refuses and nothing is removed.
-  const first = await profile.call('conversation.rewind.preview', { ...base, before_message_id: all[0]!.id })
+  const first = await profile.call('conversation.rewind.preview', { ...base, before_message_id: all[0].id })
   const refused = await profile.call('conversation.rewind', { ...base, operation_id: 'rewind-first',
-    before_message_id: all[0]!.id, expected_state: first.history!.state_token })
+    before_message_id: all[0].id, expected_state: first.history!.state_token })
   expect(refused).toMatchObject({ outcome: 'refused' })
   expect(refused.history).toBeUndefined()
   // Provider messages reach clients only as safe categories.
@@ -237,17 +237,17 @@ test('F039: a rewind is refused while a turn runs, without the Agent, before the
   expect(await thread(profile, conversationId)).toBe(original)
   // A settled refusal replays; a new request needs a new operation ID.
   expect(await profile.call('conversation.rewind', { ...base, operation_id: 'rewind-first',
-    before_message_id: all[0]!.id, expected_state: first.history!.state_token })).toEqual(refused)
+    before_message_id: all[0].id, expected_state: first.history!.state_token })).toEqual(refused)
 
   // While a turn runs, nothing is rewound and no receipt is kept.
   await send(profile, conversationId, 'hold')
   await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId }))
     .conversation.status).toBe('running')
-  const busy = await profile.call('conversation.rewind.preview', { ...base, before_message_id: all[2]!.id })
+  const busy = await profile.call('conversation.rewind.preview', { ...base, before_message_id: all[2].id })
   expect(busy.history).toBeUndefined()
   expect(busy).toMatchObject({ availability: { available: false,
     reason: 'A turn is running; stop it before rewinding the conversation' } })
-  expect(await profile.call('conversation.rewind', { ...base, operation_id: 'rewind-busy', before_message_id: all[2]!.id,
+  expect(await profile.call('conversation.rewind', { ...base, operation_id: 'rewind-busy', before_message_id: all[2].id,
     expected_state: 'unused' })).toMatchObject({ outcome: 'unavailable' })
   await profile.call('agent.cancel', { conversation_id: conversationId })
   await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId }))
@@ -255,7 +255,7 @@ test('F039: a rewind is refused while a turn runs, without the Agent, before the
 
   // Without a connected Agent, a rewind cannot reach Claude.
   await profile.call('agent.disconnect', { conversation_id: conversationId })
-  const disconnected = await profile.call('conversation.rewind.preview', { ...base, before_message_id: all[2]!.id })
+  const disconnected = await profile.call('conversation.rewind.preview', { ...base, before_message_id: all[2].id })
   expect(disconnected.availability).toMatchObject({ available: false, reason: expect.stringContaining('not connected') })
   expect(await forks(profile)).toEqual([])
   expect(await checks(profile)).toEqual([])
@@ -263,7 +263,7 @@ test('F039: a rewind is refused while a turn runs, without the Agent, before the
 
 test('R001: a rewind whose reply was lost is read back after a daemon crash and reaches Claude once', async ({ profile }) => {
   const { conversationId, all } = await turns(profile, ['first zebracorn', 'second quokkaflux', 'third lemurmint'])
-  const second = all[2]!
+  const second = all[2]
   const rewind = { operation_id: 'rewind-lost', conversation_id: conversationId, scope: 'conversation' as const,
     before_message_id: second.id, expected_state: (await preview(profile, conversationId, second)).history!.state_token }
   await sendAndLoseReply(profile, { op: 'conversation.rewind', ...rewind })
@@ -280,7 +280,7 @@ test('R001: a rewind whose reply was lost is read back after a daemon crash and 
 test('R001: a daemon crash while Claude forks leaves the Agent on the earlier session until the retry settles the move', async ({ profile }) => {
   const { conversationId, all } = await turns(profile, ['hold-fork', 'second quokkaflux', 'third lemurmint'])
   const original = (await thread(profile, conversationId))!
-  const second = all[2]!
+  const second = all[2]
   const rewind = { operation_id: 'rewind-crash', conversation_id: conversationId, scope: 'conversation' as const,
     before_message_id: second.id, expected_state: (await preview(profile, conversationId, second)).history!.state_token }
   await sendAndLoseReply(profile, { op: 'conversation.rewind', ...rewind })
@@ -302,11 +302,11 @@ test('R001: a daemon crash while Claude forks leaves the Agent on the earlier se
   const reply = await profile.call('conversation.rewind', rewind)
   const [fork] = await forks(profile)
   expect(reply).toMatchObject({ outcome: 'acknowledged', history: { removed_messages: 4, history_epoch: 1,
-    native_session: fork!.forked, previous_native_session: original } })
-  expect(await thread(profile, conversationId)).toBe(fork!.forked)
+    native_session: fork.forked, previous_native_session: original } })
+  expect(await thread(profile, conversationId)).toBe(fork.forked)
   expect(await texts(profile, conversationId)).toEqual(['hold-fork', 'Hello Claude'])
   await turn(profile, conversationId, 'fourth ocelotwave')
-  expect(await nativePrompts(profile, fork!.forked as string)).toEqual(['hold-fork', 'fourth ocelotwave'])
+  expect(await nativePrompts(profile, fork.forked as string)).toEqual(['hold-fork', 'fourth ocelotwave'])
   expect(await forks(profile)).toHaveLength(1)
 })
 
@@ -348,7 +348,7 @@ test('F039: a rewind Claude refuses at its fork-time check keeps the session and
   // discarded range is not all from that turn and the CLI refuses the check.
   const { conversationId, all } = await turns(profile, ['first zebracorn', 'second quokkaflux', 'absorbed-notification'])
   const original = await thread(profile, conversationId)
-  const third = all[4]!
+  const third = all[4]
   const rewind = { operation_id: 'rewind-refused', conversation_id: conversationId, scope: 'conversation' as const,
     before_message_id: third.id, expected_state: (await preview(profile, conversationId, third)).history!.state_token }
   const refused = await profile.call('conversation.rewind', rewind)

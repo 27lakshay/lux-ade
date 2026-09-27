@@ -140,7 +140,7 @@ test('F026: stale fences, unverified, disabled and foreign targets are refused w
     /account changed; preview the switch again/)
 
   const { account: unverified } = await profile.call('account.create', { provider: 'codex', name: 'Fresh' })
-  await refuse(switchRequest(conversationId, work, unverified as Account), /not verified/)
+  await refuse(switchRequest(conversationId, work, unverified), /not verified/)
   const claude = await verifiedAccount(profile, clis, 'claude', 'Claude', { email: 'c@example.invalid', account_id: 'org-c' })
   await refuse(switchRequest(conversationId, work, claude), /another provider/)
   await expect(profile.call('account.switch.preview', { conversation_id: conversationId, account_id: claude.id }))
@@ -151,7 +151,7 @@ test('F026: stale fences, unverified, disabled and foreign targets are refused w
   const { account: disabled } = await profile.call('account.disable', { account_id: personal.id })
   expect(disabled.generation).toBeGreaterThan(preview.to_generation)
   await refuse(switchRequest(conversationId, work, { ...personal, generation: preview.to_generation }), /not verified/)
-  await refuse(switchRequest(conversationId, work, disabled as Account), /not verified/)
+  await refuse(switchRequest(conversationId, work, disabled), /not verified/)
 
   expect(await conversation(profile, conversationId)).toMatchObject({ account_id: work.id })
   expect((await profile.call('account.switch.list', { conversation_id: conversationId })).switches).toEqual([])
@@ -208,7 +208,7 @@ test('F026: a legacy conversation on the provider login can move to a managed ac
   const second = await verifiedAccount(profile, clis, 'claude', 'Two', { email: 'two@example.invalid', account_id: 'org-2' })
   const claude = await conversationOn(profile, 'claude', first.id)
   const preview = await profile.call('account.switch.preview', { conversation_id: claude.conversationId, account_id: second.id })
-  expect(preview).toMatchObject({ continuity: 'new_native_session', capability: claudeRecord!.conversation.account_switch })
+  expect(preview).toMatchObject({ continuity: 'new_native_session', capability: claudeRecord.conversation.account_switch })
   expect(preview.disclosure).toMatch(/No native session or transcript exists yet/)
   await expect(profile.call('account.switch', switchRequest(claude.conversationId, first, second, 'native_continuation')))
     .rejects.toThrow(/new_native_session/)

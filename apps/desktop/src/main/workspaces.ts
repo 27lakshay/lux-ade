@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { dailyUseCommand, requestDaemon } from '@ade/client'
+import { dailyUseCommand } from '@ade/client'
 import { getClient, getClientGeneration, getProfileState, getSocket, getStartupProfileSelection, isRestoringBinding,
   isSwitching, managedProfiles, setRestoringBinding } from './profile-connection'
 import { validId } from './validation'
@@ -107,7 +107,7 @@ export function registerWorkspaceIpc(): void {
     if (selectionRequests.get(event.sender.id) !== request) throw new Error('Workspace selection was superseded')
     const prior = selectedWorkspaces.get(event.sender.id)
     if (prior?.workspaceId === workspaceId && prior.conversationId === conversationId && prior.generation === getClientGeneration()) return true
-    selectedWorkspaces.set(event.sender.id, { workspaceId, conversationId: conversationId as string | null,
+    selectedWorkspaces.set(event.sender.id, { workspaceId, conversationId: conversationId,
       generation: getClientGeneration(), epoch: (prior?.epoch ?? 0) + 1 })
     return true
   })

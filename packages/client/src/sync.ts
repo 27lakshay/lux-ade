@@ -67,7 +67,7 @@ export function reduceFrame<C extends { id: string }, M extends SyncMessage, R>(
 function conversationIdOf(frame: SyncFrame): string | undefined {
   const conversation = frame.conversation
   return conversation !== null && typeof conversation === 'object' && 'id' in conversation
-    ? (conversation as { id: unknown }).id as string | undefined
+    ? (conversation).id as string | undefined
     : undefined
 }
 

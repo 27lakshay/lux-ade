@@ -173,8 +173,8 @@ export function createHost(options = {}) {
     state = 'activating'
     generation = requested
     pluginId = id
-    declared = new Set(/** @type {string[]} */ (commands))
-    subscribed = new Set(/** @type {string[]} */ (hooks))
+    declared = new Set((commands))
+    subscribed = new Set((hooks))
     const context = Object.freeze({
       pluginId: id,
       generation: requested,

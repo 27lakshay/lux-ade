@@ -49,7 +49,7 @@ export async function verify(profile: ScratchProfile, accountId: string): Promis
     const inspected = await profile.call('account.inspect', { account_id: accountId })
     expect(inspected.inspection.state, inspected.inspection.reason).toBe('ready')
     verified = (await profile.call('account.verify', { account_id: accountId,
-      expected_generation: inspected.generation, expected_identity: inspected.inspection.identity })).account as Account
+      expected_generation: inspected.generation, expected_identity: inspected.inspection.identity })).account
   }).toPass({ timeout: 20_000 })
   expect(verified!.state).toBe('verified')
   return verified!
@@ -59,7 +59,7 @@ export async function verify(profile: ScratchProfile, accountId: string): Promis
 export async function record(profile: ScratchProfile, provider: string) {
   const { providers } = await profile.call('provider.capabilities', { provider })
   expect(providers).toHaveLength(1)
-  return providers[0]!
+  return providers[0]
 }
 
 /** A conversation in the profile's default workspace, on a managed account when one is given. */

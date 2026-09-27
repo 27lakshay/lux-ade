@@ -3,7 +3,7 @@
 // the same rules and errors, the CLI controls work created elsewhere, and a
 // headless SDK consumer follows the feed without React or Electron.
 import { pathToFileURL } from 'node:url'
-import type { CallRequest, Operation } from '../../../packages/client/dist/index.js'
+import type { Operation } from '../../../packages/client/dist/index.js'
 import { expect, prompts, send, startConversation, test, turnReply, waitForIdle, waitForMessage,
   type ScratchProfile } from '../fixtures'
 import { binaries } from '../fixtures/environment'
@@ -58,14 +58,14 @@ const samples: Record<string, Sample> = {
 /** The SDK's operation catalog. The SDK is an ES module, so it is loaded dynamically. */
 async function sdkOperations(): Promise<Record<string, { domain: string; tier: string }>> {
   const sdk = await import(pathToFileURL(binaries.client).href) as typeof import('../../../packages/client/dist/index.js')
-  return sdk.operations as Record<string, { domain: string; tier: string }>
+  return sdk.operations
 }
 
 type Outcome = { ok: true; type: string } | { ok: false; message: string }
 
 async function viaSdk(profile: ScratchProfile, op: Operation, request: Record<string, unknown>): Promise<Outcome> {
   try {
-    const reply = await profile.call(op, request as CallRequest<Operation>) as { type: string }
+    const reply = await profile.call(op, request) as { type: string }
     return { ok: true, type: reply.type }
   } catch (error) {
     const failure = error as { message: string; delivery?: string }

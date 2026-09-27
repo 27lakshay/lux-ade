@@ -239,7 +239,7 @@ test('F099: without idb, simulator input is unavailable and names the tool', asy
     .toContain('(tool_missing)')
 })
 
-test('F098: display input is offered by no display, and a request for it is refused with its reason', async ({ ade, profile }) => {
+test('F098: display input is offered by no display, and a request for it is refused with its reason', async ({ ade: _ade, profile }) => {
   const list = await inventory(profile, 'computer')
   const id = list.host.host_id
   for (const display of list.devices) {

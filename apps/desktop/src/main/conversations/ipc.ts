@@ -179,7 +179,7 @@ export function registerConversationIpc(): void {
     if (op === 'conversation.get') return requestDaemon(endpoint, op, { conversation_id: args.conversation_id, limit: 200 })
     if (op === 'agent.cancel' || op === 'agent.resume') {
       // The contract check rejects a non-string ID before it reaches the daemon.
-      const conversationId = args.conversation_id as string
+      const conversationId = args.conversation_id
       const result = op === 'agent.cancel'
         ? await dailyUseCommand(endpoint, { op, conversation_id: conversationId })
         : await dailyUseCommand(endpoint, { op, conversation_id: conversationId })
@@ -221,6 +221,7 @@ export function registerConversationIpc(): void {
             selection.generation !== getClientGeneration()) throw new Error('Return to the feedback workspace before retrying')
           entry.send.reviewSelection.epoch = selection.epoch
         } else if (entry.send.reviewAnchor || entry.send.reviewFeedback) {
+          // The branch guarantees one of the two is set.
           const workspaceId = entry.send.reviewAnchor?.workspace_id ?? entry.send.reviewFeedback?.workspace_id as string
           const context = activeReviewContext(event.sender.id, workspaceId)
           assertReviewContext(context, workspaceId, args.conversation_id)

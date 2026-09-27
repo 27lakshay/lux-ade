@@ -183,7 +183,7 @@ export class TerminalFeed {
       if (frame.offset !== this.expectedOffset) this.events.status('Terminal resize order is uncertain.')
       else this.screen.resize(Number(frame.cols), Number(frame.rows))
     } else if (frame.type === 'error' || frame.type === 'warning') {
-      this.events.status(String(frame.message ?? 'Terminal reported an error.'))
+      this.events.status(typeof frame.message === 'string' ? frame.message : 'Terminal reported an error.')
     }
   }
 

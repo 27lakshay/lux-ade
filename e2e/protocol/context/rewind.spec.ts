@@ -161,7 +161,7 @@ test('R001: a file rewind crashed before it wrote files reports its outcome unkn
   const [kept] = await safety()
   const unknown = profile.call('conversation.rewind', rewind)
   await expect(unknown).rejects.toThrow(UNKNOWN)
-  await expect(unknown).rejects.toThrow(`safety checkpoint ${kept!.checkpoint_id}`)
+  await expect(unknown).rejects.toThrow(`safety checkpoint ${kept.checkpoint_id}`)
   await profile.restartDaemon('kill')
   await expect(profile.call('conversation.rewind', rewind)).rejects.toThrow(UNKNOWN)
   expect(await repo.read('src/app.ts')).toBe('export const answer = 41\n')
@@ -193,7 +193,7 @@ test('R001: a file rewind crashed after it wrote files, before it settled, repor
 type Message = { id: string; role: string; text: string; turn_id: string | null; sequence: number }
 
 async function codexMessages(profile: ScratchProfile, conversationId: string): Promise<Message[]> {
-  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages as Message[]
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages
 }
 
 async function codexThread(profile: ScratchProfile, conversationId: string): Promise<string | null> {
@@ -240,11 +240,11 @@ test('F039, F043: a Codex conversation rewind forks the thread before the turn, 
   expect((await profile.call('conversation.get', cursor)).messages).toHaveLength(2)
 
   const shown = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
-    scope: 'conversation', before_message_id: second!.id })
-  expect(shown.history).toMatchObject({ before_message_id: second!.id, turn_id: second!.turn_id, removed_messages: 4,
+    scope: 'conversation', before_message_id: second.id })
+  expect(shown.history).toMatchObject({ before_message_id: second.id, turn_id: second.turn_id, removed_messages: 4,
     removed_turns: 2, kept_messages: 2, history_epoch: 0 })
   const rewind = { operation_id: 'rewind-codex', conversation_id: conversationId, scope: 'conversation' as const,
-    before_message_id: second!.id, expected_state: shown.history!.state_token }
+    before_message_id: second.id, expected_state: shown.history!.state_token }
   const reply = await profile.call('conversation.rewind', rewind)
   expect(reply).toMatchObject({ outcome: 'acknowledged', control: 'rewind_conversation', reason: null,
     history: { removed_messages: 4, removed_turns: 2, kept_messages: 2, history_epoch: 1,
@@ -255,10 +255,10 @@ test('F039, F043: a Codex conversation rewind forks the thread before the turn, 
 
   // Codex forked through the first turn; no history-rewriting method ran.
   expect(await codexCalls(profile, 'thread/fork')).toEqual([expect.objectContaining({ threadId: original,
-    lastTurnId: first!.turn_id })])
+    lastTurnId: first.turn_id })])
   expect(await codexCalls(profile, 'thread/revert')).toEqual([])
   expect(await codexCalls(profile, 'thread/rollback')).toEqual([])
-  expect(await mockTurns(profile, forked)).toEqual([first!.turn_id])
+  expect(await mockTurns(profile, forked)).toEqual([first.turn_id])
   expect(await mockTurns(profile, original)).toEqual(originalTurns)
 
   // ADE dropped the later turns and moved the Conversation to the fork.
@@ -299,13 +299,13 @@ test('F039: a Codex rewind before the first turn is refused and keeps the thread
   const [first] = await codexMessages(profile, conversationId)
   const original = await codexThread(profile, conversationId)
   const shown = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
-    scope: 'conversation', before_message_id: first!.id })
+    scope: 'conversation', before_message_id: first.id })
   const reply = await profile.call('conversation.rewind', { operation_id: 'rewind-first', conversation_id: conversationId,
-    scope: 'conversation', before_message_id: first!.id, expected_state: shown.history!.state_token })
+    scope: 'conversation', before_message_id: first.id, expected_state: shown.history!.state_token })
   expect(reply).toMatchObject({ outcome: 'refused', control: 'rewind_conversation' })
   expect(reply.history).toBeUndefined()
   expect(await codexCalls(profile, 'thread/fork')).toEqual([])
   expect(await codexThread(profile, conversationId)).toBe(original)
   expect((await codexMessages(profile, conversationId)).map((message) => message.text))
-    .toEqual([first!.text, 'Hello world'])
+    .toEqual([first.text, 'Hello world'])
 })

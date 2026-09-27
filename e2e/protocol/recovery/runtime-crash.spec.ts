@@ -75,7 +75,6 @@ test('a quarantined provider tree keeps its lease and refuses admission until it
     return toolPid
   }).toBeGreaterThan(0)
   const record = await waitForAttemptRecord(profile, `agent:${conversationId}`)
-  const before = profile.hello
 
   await profile.killRuntime()
   // The provider is blocked in its tool and keeps running without an owner.

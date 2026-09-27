@@ -34,7 +34,7 @@ function definition(value: string | undefined): Record<string, unknown> {
 async function mcpRequest<O extends DailyUseOperation>(socketPath: string, op: O,
   fields: Record<string, unknown> = {}): Promise<DailyUseResponse<O>> {
   const response = await requestDaemon(socketPath, op, fields)
-  try { return decodeDailyUseResponse(op, response) as DailyUseResponse<O> }
+  try { return decodeDailyUseResponse(op, response) }
   catch (error) { throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`) }
 }
 

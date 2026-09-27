@@ -177,8 +177,8 @@ export async function diagnosticsRead(profileId: string, tabId: unknown, after: 
     throw new Error('invalid_request: limit must be between 1 and 200')
   }
   const { tabId: id, collector } = await existingCollector(profileId, tabId)
-  const page = readPage(collector?.console.items ?? [], collector?.network.items ?? [], (after as number | undefined) ?? 0,
-    (limit as number | undefined) ?? 100, PAGE_BYTES)
+  const page = readPage(collector?.console.items ?? [], collector?.network.items ?? [], (after) ?? 0,
+    (limit) ?? 100, PAGE_BYTES)
   return { type: 'browser_diagnostics', tab_id: id, attachment: attachment(collector), ...page,
     in_flight: collector?.tracker.pending.size ?? 0,
     dropped: { console: collector?.console.dropped ?? 0, network: collector?.network.dropped ?? 0 },

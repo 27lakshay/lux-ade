@@ -82,7 +82,7 @@ test('a feed client that stops reading is evicted while a flood, another provide
   // The fast client saw the whole flood in order on one connection, without reconnecting.
   const last = await fast.waitFor((frame) => frame.type === 'conversation_changed' &&
     JSON.stringify(frame.messages ?? []).includes('flood-') &&
-    (frame.messages as Array<{ provider_item_id?: string }>).some((message) => /-639$/.test(message.provider_item_id ?? '')), 60_000)
+    (frame.messages as Array<{ provider_item_id?: string }>).some((message) => (message.provider_item_id ?? '').endsWith('-639')), 60_000)
   expect(last.boot_id).toBe(profile.hello.boot_id)
   expect(fast.states.filter((state) => state.status === 'reconnecting' || state.status === 'unavailable')).toEqual([])
   expectContiguous(fast.frames.map((frame) => frame.revision))

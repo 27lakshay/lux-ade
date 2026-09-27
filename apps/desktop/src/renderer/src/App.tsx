@@ -1,3 +1,4 @@
+// oxlint-disable react/immutability -- prototype shell, not yet approved; fix when rebuilt against the Pen design
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { ArrowLeftRight, Columns2, Gauge, Layers, MessageSquare, Moon, PanelLeft, PanelRight, Plus, SlidersHorizontal, SquarePen, Sun, Undo2, Wind, X } from 'lucide-react'

@@ -9,7 +9,7 @@ type Listed = { message_id: string; direction: string; receiver_conversation_id:
   operation_id: string; delivery: string }
 
 async function messages(profile: ScratchProfile, child: string): Promise<Listed[]> {
-  return (await profile.call('orchestration.child.messages', { child_conversation_id: child })).messages as Listed[]
+  return (await profile.call('orchestration.child.messages', { child_conversation_id: child })).messages
 }
 
 async function userTexts(profile: ScratchProfile, conversation: string): Promise<string[]> {

@@ -162,7 +162,7 @@ test('a deletion survives a daemon kill: the tombstone holds, the receipt replay
   await waitForIdle(profile, conversationId)
   await expect.poll(() => hits(profile, 'okapiwren'), { timeout: 20_000 }).toBe(1)
   const page = await profile.call('conversation.get', { conversation_id: conversationId, limit: 1 })
-  const olderPage = { conversation_id: conversationId, before: page.messages[0]!.sequence, limit: 50,
+  const olderPage = { conversation_id: conversationId, before: page.messages[0].sequence, limit: 50,
     history_epoch: page.history_epoch }
   const deleted = await profile.call('conversation.delete', { operation_id: 'delete-before-kill', conversation_id: conversationId })
 

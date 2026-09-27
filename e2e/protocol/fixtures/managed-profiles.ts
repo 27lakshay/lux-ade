@@ -196,19 +196,19 @@ export class ManagedProfile {
     await until('runtime.prepare_restart to be accepted', async () => {
       try {
         await rpc(this.socket, { op: 'runtime.prepare_restart', operation_id: `restart-${randomUUID()}`,
-          boot_id: hello!.boot_id }, 5_000)
+          boot_id: hello.boot_id }, 5_000)
         return true
       } catch (error) {
         if (/retry shortly|retry after completion/.test(String(error))) return undefined
         throw error
       }
     })
-    await until('the daemon to exit', async () => (await isRunning(hello!.pid)) ? undefined : true)
+    await until('the daemon to exit', async () => (await isRunning(hello.pid)) ? undefined : true)
     const runtime = await this.runtimeHello(hello.runtime_socket)
     if (runtime) {
       await until('runtime.stop to be accepted', async () => {
         try {
-          await rpc(hello!.runtime_socket, { op: 'runtime.stop', instance_id: runtime.instance_id, stop_active: true }, 5_000)
+          await rpc(hello.runtime_socket, { op: 'runtime.stop', instance_id: runtime.instance_id, stop_active: true }, 5_000)
           return true
         } catch (error) {
           if (!(await isRunning(runtime.pid as number))) return true

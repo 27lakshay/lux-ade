@@ -11,6 +11,7 @@ import { workspaces } from './workspaces'
 // Flat names the existing E2E specs still call through `window.evaluate`. The
 // renderer and its `Window.adeHost` type use only the domain namespaces. Remove
 // an alias once no spec under e2e/ calls it.
+/* oxlint-disable typescript/unbound-method -- the preload domain modules never use `this` */
 const e2eAliases = {
   getClientState: profiles.getClientState,
   getProfileState: profiles.getState,
@@ -24,6 +25,7 @@ const e2eAliases = {
   requestConversation: conversations.request,
   rebindRestored: workspaces.rebindRestored,
 }
+/* oxlint-enable typescript/unbound-method */
 
 contextBridge.exposeInMainWorld('adeHost', {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('ade:app-version'),

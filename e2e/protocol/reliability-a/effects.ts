@@ -62,7 +62,7 @@ async function reviewOutcome(context: Context, state: Review, id: string) {
   let operation: Record<string, unknown> = {}
   await expect.poll(async () => {
     const reply = await context.profile.call('review.operation', { workspace_id: state.workspaceId, operation_id: id })
-    operation = reply.operation as unknown as Record<string, unknown>
+    operation = reply.operation
     return operation.status
   }, { timeout: 30_000 }).not.toBe('running')
   return operation
@@ -86,7 +86,7 @@ async function lifecycleOutcome(context: Context, state: Lifecycle, id: string) 
   let operation: Record<string, unknown> = {}
   await expect.poll(async () => {
     const reply = await context.profile.call('worktree.operation', { repository_id: state.repositoryId, operation_id: id })
-    operation = reply.operation as unknown as Record<string, unknown>
+    operation = reply.operation
     return operation.status
   }, { timeout: 30_000 }).not.toBe('running')
   return operation

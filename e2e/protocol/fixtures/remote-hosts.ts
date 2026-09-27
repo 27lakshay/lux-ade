@@ -17,7 +17,7 @@ import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/p
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { CallRequest, Operation } from '../../../packages/client/dist/index.js'
-import type { Request, Response } from '../../../packages/contracts/dist/index.js'
+import type { Response } from '../../../packages/contracts/dist/index.js'
 import { rpc } from '../../fixtures/daemon'
 import { binaries, repositoryRoot, scratchEnvironment, scratchGitConfig } from './environment'
 import { ScratchRepo } from './git'

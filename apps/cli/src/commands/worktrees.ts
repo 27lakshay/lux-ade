@@ -44,7 +44,7 @@ function fetchSource(options: Record<string, string>): { remote: string, ref: st
   if (!pr && !ref) return undefined
   if (options['--base']) throw new CliError('usage', 'worktree new takes --base or a fetched source, not both.')
   if (pr && !/^[1-9][0-9]{0,9}$/.test(pr)) throw new CliError('usage', '--pr takes a positive number.')
-  return { remote: options['--fetch-remote'] ?? 'origin', ref: pr ? `refs/pull/${pr}/head` : ref! }
+  return { remote: options['--fetch-remote'] ?? 'origin', ref: pr ? `refs/pull/${pr}/head` : ref }
 }
 
 /** Parses `REPOSITORY_ID SOURCE TARGET [PATH...] [--expect-head COMMIT] [--clean-source]`. */

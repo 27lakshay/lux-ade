@@ -271,7 +271,7 @@ export class RemoteDaemonTransport {
     const { fields } = encodeCall(requested, body)
     const op = requested
     const response = await this.request(op, fields, options)
-    try { return decodeResponse(op, response) as Response<O> }
+    try { return decodeResponse(op, response) }
     catch (error) {
       throw new DaemonRequestError('protocol', `Remote ${op} reply failed its contract: ${String(error)}`, 'unknown')
     }

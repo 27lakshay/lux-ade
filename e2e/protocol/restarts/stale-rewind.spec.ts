@@ -12,7 +12,7 @@ type Message = { id: string; role: string; text: string; sequence: number; turn_
 const removedWords = ['quokkaflux', 'lemurmint']
 
 async function messages(profile: ScratchProfile, conversationId: string): Promise<Message[]> {
-  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages as Message[]
+  return (await profile.call('conversation.get', { conversation_id: conversationId, limit: 200 })).messages
 }
 
 async function turn(profile: ScratchProfile, conversationId: string, text: string): Promise<void> {
@@ -34,7 +34,7 @@ async function threeTurns(profile: ScratchProfile) {
   expect(all.map((message) => message.text)).toEqual(['first zebracorn', 'Hello Claude', 'second quokkaflux',
     'Hello Claude', 'third lemurmint', 'Hello Claude'])
   const rewind = async (operationId: string) => {
-    const second = all[2]!
+    const second = all[2]
     const preview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
       scope: 'conversation', before_message_id: second.id })
     const reply = await profile.call('conversation.rewind', { operation_id: operationId, conversation_id: conversationId,
@@ -97,31 +97,31 @@ test('R011: a search reply, an older page and a search cursor read before a rewi
   // Replies the caller holds while the rewind runs.
   const lateSearch = await profile.call('history.search', { query: 'quokkaflux', limit: 50 })
   const [lateMatch] = lateSearch.results
-  expect(lateMatch).toMatchObject({ message_id: all[2]!.id, sequence: all[2]!.sequence, history_epoch: 0,
+  expect(lateMatch).toMatchObject({ message_id: all[2].id, sequence: all[2].sequence, history_epoch: 0,
     provenance: { conversation_id: conversationId } })
   const newestReply = await profile.call('history.search', { query: 'Claude', limit: 1 })
-  expect(newestReply.results[0]!.message_id).toBe(all[5]!.id)
+  expect(newestReply.results[0].message_id).toBe(all[5].id)
   expect(newestReply.next_cursor).toBeTruthy()
   const page = await profile.call('conversation.get', { conversation_id: conversationId, limit: 2 })
-  const olderPage = { conversation_id: conversationId, before: page.messages[0]!.sequence, limit: 50,
+  const olderPage = { conversation_id: conversationId, before: page.messages[0].sequence, limit: 50,
     history_epoch: page.history_epoch }
 
   await rewind('rewind-late-search')
   // The next turn takes the removed prompt's sequence number, with another message.
   await turn(profile, conversationId, 'fourth ocelotwave')
   const now = await messages(profile, conversationId)
-  const reused = now.find((message) => message.sequence === lateMatch!.sequence)!
+  const reused = now.find((message) => message.sequence === lateMatch.sequence)!
   expect(reused.text).toBe('fourth ocelotwave')
-  expect(reused.id).not.toBe(lateMatch!.message_id)
+  expect(reused.id).not.toBe(lateMatch.message_id)
 
   // Opening the late match at its position is refused rather than landing on the new message.
-  await expect(profile.call('conversation.get', { conversation_id: conversationId, before: lateMatch!.sequence + 1,
-    limit: 1, history_epoch: lateMatch!.history_epoch })).rejects.toThrow(/History changed since that page was read/)
+  await expect(profile.call('conversation.get', { conversation_id: conversationId, before: lateMatch.sequence + 1,
+    limit: 1, history_epoch: lateMatch.history_epoch })).rejects.toThrow(/History changed since that page was read/)
   // Its message is gone by ID too, so nothing resurrects it.
-  expect(now.map((message) => message.id)).not.toContain(lateMatch!.message_id)
+  expect(now.map((message) => message.id)).not.toContain(lateMatch.message_id)
   // A fresh match for the new text carries the new epoch and opens on the new message.
   await expect.poll(() => hits(profile, 'ocelotwave')).toBe(1)
-  const fresh = (await profile.call('history.search', { query: 'ocelotwave', limit: 50 })).results[0]!
+  const fresh = (await profile.call('history.search', { query: 'ocelotwave', limit: 50 })).results[0]
   expect(fresh).toMatchObject({ message_id: reused.id, sequence: reused.sequence, history_epoch: 1 })
   const opened = await profile.call('conversation.get', { conversation_id: conversationId, before: fresh.sequence + 1,
     limit: 1, history_epoch: fresh.history_epoch })
@@ -132,7 +132,7 @@ test('R011: a search reply, an older page and a search cursor read before a rewi
 
   // The search cursor from before the rewind pages only messages that still exist.
   const rest = await profile.call('history.search', { query: 'Claude', limit: 50, cursor: newestReply.next_cursor! })
-  expect(rest.results.map((match) => match.message_id)).toEqual([all[1]!.id])
+  expect(rest.results.map((match) => match.message_id)).toEqual([all[1].id])
   expect(rest.results.every((match) => match.history_epoch === 1)).toBe(true)
   for (const word of removedWords) expect(await hits(profile, word)).toBe(0)
 })
@@ -149,11 +149,11 @@ test('R011: a result delayed across a conversation delete cannot resurrect it', 
 
   // Replies the caller holds while the deletion runs.
   const [lateMatch] = (await profile.call('history.search', { query: 'quokkaflux', limit: 50 })).results
-  expect(lateMatch).toMatchObject({ message_id: all[2]!.id, provenance: { conversation_id: conversationId } })
+  expect(lateMatch).toMatchObject({ message_id: all[2].id, provenance: { conversation_id: conversationId } })
   const newestReply = await profile.call('history.search', { query: 'Claude', limit: 1 })
   expect(newestReply.next_cursor).toBeTruthy()
   const page = await profile.call('conversation.get', { conversation_id: conversationId, limit: 2 })
-  const olderPage = { conversation_id: conversationId, before: page.messages[0]!.sequence, limit: 50,
+  const olderPage = { conversation_id: conversationId, before: page.messages[0].sequence, limit: 50,
     history_epoch: page.history_epoch }
 
   const view = await openConversationView(profile, conversationId)
@@ -188,8 +188,8 @@ test('R011: a result delayed across a conversation delete cannot resurrect it', 
 
   // Opening the late match, or the older page, is refused as deleted.
   const deleted = new RegExp(`Conversation ${conversationId} was deleted`)
-  await expect(profile.call('conversation.get', { conversation_id: conversationId, before: lateMatch!.sequence + 1,
-    limit: 1, history_epoch: lateMatch!.history_epoch })).rejects.toThrow(deleted)
+  await expect(profile.call('conversation.get', { conversation_id: conversationId, before: lateMatch.sequence + 1,
+    limit: 1, history_epoch: lateMatch.history_epoch })).rejects.toThrow(deleted)
   await expect(profile.call('conversation.get', olderPage)).rejects.toThrow(deleted)
   // The search cursor from before the deletion pages nothing of it, and no word of it is found.
   const rest = await profile.call('history.search', { query: 'Claude', limit: 50, cursor: newestReply.next_cursor! })
@@ -200,7 +200,7 @@ test('R011: a result delayed across a conversation delete cannot resurrect it', 
   const again = (await startConversation(profile, 'claude')).conversationId
   await turn(profile, again, 'second quokkaflux')
   await expect.poll(() => hits(profile, 'quokkaflux')).toBe(1)
-  const fresh = (await profile.call('history.search', { query: 'quokkaflux', limit: 50 })).results[0]!
+  const fresh = (await profile.call('history.search', { query: 'quokkaflux', limit: 50 })).results[0]
   expect(fresh.provenance.conversation_id).toBe(again)
-  expect(fresh.message_id).not.toBe(lateMatch!.message_id)
+  expect(fresh.message_id).not.toBe(lateMatch.message_id)
 })

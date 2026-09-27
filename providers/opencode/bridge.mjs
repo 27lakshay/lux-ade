@@ -97,7 +97,7 @@ export class Bridge {
           } catch (error) { await this.fail(error); return; }
           if (!['session.text.delta', 'session.reasoning.delta', 'session.tool.input.delta'].includes(event.type)) this.schedule();
         }
-      } catch (error) {
+      } catch {
         if (this.closed.signal.aborted) return;
         this.epoch++; this.text.disconnected();
         if (++failures > 5) throw new Error('OpenCode event connection could not recover');

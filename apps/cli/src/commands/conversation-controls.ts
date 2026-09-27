@@ -72,7 +72,7 @@ export async function runConversationControlCommand(socketPath: string, area: st
     if (confirm.length > 1) throw new CliError('usage', '--confirm-overwrite may be supplied only once.')
     const words = rest.filter((word) => word !== '--confirm-overwrite')
     if (words[1] === 'conversation') {
-      const positional = words.length > 2 && !words[2]!.startsWith('--') ? 4 : 2
+      const positional = words.length > 2 && !words[2].startsWith('--') ? 4 : 2
       const { args, options } = split(words, positional, ['--request-id'], 'rewind')
       return settled(await dailyUseCommand<'conversation.rewind'>(socketPath, { op: 'conversation.rewind',
         operation_id: required(options['--request-id'], '--request-id'), conversation_id: args[0],

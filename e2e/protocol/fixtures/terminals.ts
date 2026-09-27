@@ -235,8 +235,8 @@ export async function attachThroughTty(profile: ScratchProfile, ledger: ProcessL
     stdio: ['pipe', 'pipe', 'pipe'] })
   if (typeof child.pid === 'number') await ledger.own(child.pid, 'terminal attach under a pty')
   let output = ''
-  child.stdout!.setEncoding('utf8').on('data', (chunk: string) => { output += chunk })
-  child.stderr!.setEncoding('utf8').on('data', (chunk: string) => { output += chunk })
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => { output += chunk })
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { output += chunk })
   const exited = new Promise<number | null>((resolveExit) => child.once('exit', (code) => resolveExit(code)))
   return { child, output: () => output, exited }
 }

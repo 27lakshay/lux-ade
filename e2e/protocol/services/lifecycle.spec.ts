@@ -111,7 +111,7 @@ test('a duplicate start returns the live run instead of launching a second one',
 
   const repeated = await profile.call('service.start', { workspace_id: workspace.id, name: 'api' })
   expect(repeated.service.terminal_owner).toEqual(running.terminal_owner)
-  const owners = new Set(fulfilled.map((result) => JSON.stringify((result as PromiseFulfilledResult<typeof repeated>).value
+  const owners = new Set(fulfilled.map((result) => JSON.stringify((result).value
     .service.terminal_owner)))
   expect(owners).toEqual(new Set([JSON.stringify(running.terminal_owner)]))
   const listeners = (await profile.call('listener.list', {})).listeners.filter((row) => row.port === running.ports.PORT)

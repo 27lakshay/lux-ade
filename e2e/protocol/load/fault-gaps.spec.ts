@@ -99,7 +99,7 @@ test('fault class 5: concurrent verifications of one account converge, and a sig
   }
   const verify = (inspected: Inspection) => profile.call('account.verify', {
     account_id: account.id, expected_generation: inspected.generation,
-    expected_identity: inspected.inspection.identity as never })
+    expected_identity: inspected.inspection.identity })
   const current = async () => (await profile.call('account.list', {})).accounts
     .find((entry) => entry.id === account.id)!
 

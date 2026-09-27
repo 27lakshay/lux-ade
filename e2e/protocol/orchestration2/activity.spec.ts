@@ -13,7 +13,7 @@ type Activity = { id: string; sequence: number; kind: string; state: string; tit
   target: { conversation_id: string; workspace_id: string; request_id: string | null; turn_id: string | null } }
 
 async function activities(profile: ScratchProfile, request: Record<string, unknown> = {}): Promise<Activity[]> {
-  return (await profile.call('activity.list', { limit: 200, include_dismissed: true, ...request })).activities as Activity[]
+  return (await profile.call('activity.list', { limit: 200, include_dismissed: true, ...request })).activities
 }
 
 async function completedTurns(profile: ScratchProfile, conversationId: string, count: number): Promise<void> {
@@ -54,7 +54,7 @@ test('activity cursors stay valid across a restart and a crash: catch-up returns
   expect(rest.activities).toHaveLength(1)
   expect(rest.next_cursor).toBeNull()
   const newer = [...caughtUp.activities, ...rest.activities]
-  expect(newer.map((item) => item.sequence)).toEqual([...newer.map((item) => item.sequence)].sort((a, b) => a - b))
+  expect(newer.map((item) => item.sequence)).toEqual(newer.map((item) => item.sequence).sort((a, b) => a - b))
   expect(new Set([...first.activities, ...newer].map((item) => item.id)).size).toBe(4)
 
   // A crash after that keeps every sequence and the newest position.

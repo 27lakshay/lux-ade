@@ -212,7 +212,7 @@ async function writeOwner(directory: string, id: string): Promise<void> {
   } finally { await handle.close() }
   await syncDirectory(directory)
 }
-async function readSmallJson(file: string, limit = 4096): Promise<unknown | null> {
+async function readSmallJson(file: string, limit = 4096): Promise<unknown> {
   let info: Awaited<ReturnType<typeof lstat>>
   try { info = await lstat(file) }
   catch (error) {
@@ -295,7 +295,7 @@ async function migrateBrowserStorage(id: string): Promise<void> {
       if (!name.startsWith(prefix)) continue
       const stage = join(parent, name)
       if (!(await directoryExists(stage))) throw new Error('Interrupted browser migration needs review; preserve its temporary copy')
-      let claim: unknown | null = null
+      let claim: unknown = null
       try { claim = await readSmallJson(join(stage, stageName)) }
       catch { /* A partial claim is recoverable only before any session data was copied. */ }
       const candidate = claim && typeof claim === 'object' && !Array.isArray(claim) ? claim as Record<string, unknown> : null
@@ -1237,7 +1237,7 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
       receipt.target = randomUUID()
       receipt.url = url as string
       receipt.priorUrl = null
-      if (partitionId !== undefined) receipt.partitionId = partitionId as string
+      if (partitionId !== undefined) receipt.partitionId = partitionId
     } else {
       const tab = exact(state, browserProfileId, tabId)
       receipt.target = tab.id

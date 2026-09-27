@@ -57,7 +57,7 @@ test('F030: a managed account shows the limits its turns reported, with source a
     windows: [expect.objectContaining({ provider: 'codex', account_id: work.id, source: 'account/rateLimits/updated',
       used_percent: 42, window_minutes: 300, resets_at: farFutureMs, plan: 'pro', reset_since_observed: false })] })
   expect(reported!.reason).toMatch(/last reported/)
-  expect(reported!.observed_at).toBe(reported!.windows[0]!.observed_at)
+  expect(reported!.observed_at).toBe(reported!.windows[0].observed_at)
   expect(reported!.age_ms).toBeGreaterThanOrEqual(0)
 
   // The report belongs to the account that ran the turn, not to its neighbours.
@@ -67,7 +67,7 @@ test('F030: a managed account shows the limits its turns reported, with source a
 
   // Freshness is measured against the report, so a later query shows an older age.
   const first = reported!.age_ms!
-  await expect.poll(async () => (await quota(profile, { account_id: work.id })).entries[0]!.age_ms!).toBeGreaterThan(first)
+  await expect.poll(async () => (await quota(profile, { account_id: work.id })).entries[0].age_ms!).toBeGreaterThan(first)
 
   // A daemon crash keeps the recorded limits.
   await profile.restartDaemon('kill')
@@ -90,7 +90,7 @@ test('F030: an exhausted limit is shown, and the next turn stays on the same acc
   await clis.exhaustCodexLimits()
   await turn(profile, conversationId, 'usage')
   await expect.poll(async () => (await quota(profile, { account_id: work.id })).entries[0]?.exhausted).toBe(true)
-  expect((await quota(profile, { account_id: work.id })).entries[0]!.windows[0]).toMatchObject({ used_percent: 100 })
+  expect((await quota(profile, { account_id: work.id })).entries[0].windows[0]).toMatchObject({ used_percent: 100 })
 
   // ADE keeps using what the user chose; it does not fall back to the spare account or another model.
   await turn(profile, conversationId, 'hello')

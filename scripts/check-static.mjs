@@ -20,6 +20,8 @@ const steps = [
   // Dependent packages typecheck against the SDK's built declarations.
   ['sdk build', ['pnpm', 'build:sdk']],
   ['typecheck', ['pnpm', 'typecheck']],
+  // Type-aware lint of every TypeScript and JavaScript file (.oxlintrc.json).
+  ['lint', ['pnpm', 'lint']],
   ['fallow', ['pnpm', 'deadcode']],
   ['js build', ['pnpm', 'build']],
   // In-process tests of pure TypeScript cores, beside their modules.

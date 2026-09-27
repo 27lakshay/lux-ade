@@ -160,7 +160,7 @@ test('a viewer slower than the flood is resynchronized from fresh snapshots, nev
   const limit = before.viewer_queue_limit_bytes as number
   expect(limit).toBeGreaterThan(0)
   expect(before.viewer_resyncs).toBe(0)
-  const runtimePid = profile.hello.runtime_pid as number
+  const runtimePid = profile.hello.runtime_pid
   const baseline = residentBytes(runtimePid)
 
   // About 16 MiB of output, several MiB of frames per second. The slow viewer

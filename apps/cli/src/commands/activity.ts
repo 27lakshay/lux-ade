@@ -63,7 +63,7 @@ export async function runActivityCommand(socketPath: string, area: string | unde
     }
     if (desktop !== 'on' && desktop !== 'off') throw new CliError('usage', '--desktop must be on or off.')
     const kinds = muted === 'none' ? [] : muted.split(',')
-    if (kinds.some((kind) => !activityKinds.includes(kind as ActivityKind))) {
+    if (kinds.some((kind) => !activityKinds.includes(kind))) {
       throw new CliError('usage', `--muted must be none or a comma-separated list of ${activityKinds.join(', ')}.`)
     }
     return call(socketPath, 'notification.preferences.set', { desktop: desktop === 'on',

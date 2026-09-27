@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { call, dailyUseCommand, formatReviewFeedback, requestDaemon, type DailyUseRequest,
   type ReviewFeedback } from '@ade/client'
-import { boundedInteger, CliError, jsonObject, namedOptions, object, parseWords, positionals, required,
+import { boundedInteger, CliError, jsonObject, namedOptions, parseWords, positionals, required,
   requestIdOption, type CommandResult } from '../shared.js'
 import { decodeReply, type Fields } from './conversations.js'
 

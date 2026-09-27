@@ -68,7 +68,7 @@ async function call<O extends DailyUseOperation>(socketPath: string, request: Da
   decodeDailyUseRequest(request)
   const { op, ...fields } = request
   const response = await requestDaemon(socketPath, op, fields, { timeoutMs })
-  try { return decodeDailyUseResponse(op, response) as unknown as Record<string, unknown> }
+  try { return decodeDailyUseResponse(op, response) }
   catch (error) { throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`) }
 }
 

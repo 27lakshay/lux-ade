@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { expect, remoteCall, type RemoteLab, type RemoteTarget } from '../fixtures/remote-hosts'
 import { repositoryRoot } from '../fixtures/environment'
 import type { ScratchProfile } from '../fixtures'
-import { startedHost } from '../remote/steps'
+import type { startedHost } from '../remote/steps'
 
 export { addAndPair, operationId, startRunning, startedHost, targetOf } from '../remote/steps'
 

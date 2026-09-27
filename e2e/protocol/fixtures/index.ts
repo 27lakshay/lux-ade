@@ -108,7 +108,6 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures>({
   // Playwright requires the first fixture argument to be a destructuring pattern.
-  // eslint-disable-next-line no-empty-pattern
   ade: async ({}, use, testInfo) => {
     const harness = await AdeHarness.create(testInfo)
     try {

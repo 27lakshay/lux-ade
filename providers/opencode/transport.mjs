@@ -80,7 +80,7 @@ export class OpenCodeTransport {
           transport.#closed.signal.removeEventListener('abort', onAbort);
           child.stdout.off('data', onData);
           child.stdout.resume();
-          error ? reject(error) : resolve(origin);
+          if (error) reject(error); else resolve(origin);
         };
         const onAbort = () => finish(transport.#closed.signal.reason);
         const onData = (chunk) => {
@@ -126,7 +126,7 @@ export class OpenCodeTransport {
           await delay(100, undefined, { signal: readySignal });
         }
       }
-      if (info.pid !== child.pid || !/^2\./.test(info.version)) {
+      if (info.pid !== child.pid || !info.version.startsWith('2.')) {
         throw new Error('OpenCode endpoint identity or v2 version does not match the owned server');
       }
       transport.#info = Object.freeze({ version: info.version, pid: info.pid, healthPath });
@@ -157,6 +157,7 @@ export class OpenCodeTransport {
     const response = await fetch(url, {
       method,
       headers: { authorization: this.#authorization, 'content-type': 'application/json', accept: stream ? 'text/event-stream' : 'application/json' },
+      // oxlint-disable-next-line unicorn/no-invalid-fetch-options -- body is undefined for GET; only POST sends one
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.any(signals),
       redirect: 'error',

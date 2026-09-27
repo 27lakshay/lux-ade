@@ -180,6 +180,7 @@ export class Bridge {
         // Full content overwrites partial text using the same provider message ID.
         for(const item of this.content(message,active.turn,message.uuid===active.message_id?active.submission:null))this.event({type:'item',session:this.session,item});
       } else if(message.type==='result') {
+        // oxlint-disable-next-line unicorn/no-useless-spread -- copy first: resolving a request can change the map
         for(const request of [...this.permissions.values()])request.resolve({behavior:'deny',message:'Turn ended'});
         this.permissions.clear();this.partial.clear();
         this.active=null;
@@ -368,6 +369,7 @@ export class Bridge {
     this.watch(query);
     return attempt;
   }
+  // oxlint-disable-next-line unicorn/no-useless-spread -- copy first: resolving a request can change the map
   close() {this.closed=true;for(const request of [...this.permissions.values()])request.resolve({behavior:'deny',message:'lux-ade disconnected'});this.query?.close();this.wake?.();}
 }
 

@@ -1,3 +1,4 @@
+// oxlint-disable react/immutability -- prototype shell, not yet approved; fix when rebuilt against the Pen design
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { createPortal } from 'react-dom'

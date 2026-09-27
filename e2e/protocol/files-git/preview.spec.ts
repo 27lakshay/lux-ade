@@ -28,7 +28,7 @@ test('previews text and the supported image formats with their MIME type and siz
   const preview = (path: string) => profile.call('file.preview', { workspace_id, path })
 
   expect(await preview('notes.md')).toEqual({ type: 'file_preview', path: 'notes.md', kind: 'text', mime: 'text/plain',
-    text: files['notes.md'], size: Buffer.byteLength(files['notes.md'] as string), truncated: false })
+    text: files['notes.md'], size: Buffer.byteLength(files['notes.md']), truncated: false })
   expect(await preview('src/main.ts')).toMatchObject({ kind: 'text', text: 'export const answer = 42\n', truncated: false })
   expect(await preview('empty.txt')).toMatchObject({ kind: 'text', text: '', size: 0, truncated: false })
 

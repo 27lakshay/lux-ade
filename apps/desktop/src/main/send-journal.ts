@@ -38,7 +38,6 @@ export type SendJournalRecord = SendJournalIdentity & {
     note: string }[] }
 }
 
-type JournalFile = { version: 1; records: SendJournalRecord[] }
 type TransferBundle = { format: 'ade-send-journal-bundle-v1'; scope: 'profile-pending-sends-only';
   sourceProfileId: string; capturedAt: string; records: { bytes: number; sha256: string; value: SendJournalRecord[] };
   excluded: string[] }
@@ -73,7 +72,7 @@ function jsonValue(value: unknown, depth = 0): boolean {
 function validIdentity(value: unknown): value is SendJournalIdentity {
   if (!plainObject(value)) return false
   return ['profileId', 'windowId', 'conversationId', 'requestId'].every((field) =>
-    typeof value[field] === 'string' && idPattern.test(value[field] as string))
+    typeof value[field] === 'string' && idPattern.test(value[field]))
 }
 
 function validRecord(value: unknown): value is SendJournalRecord {

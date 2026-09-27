@@ -31,7 +31,7 @@ export async function waitOnce(profile: ScratchProfile, child: string,
     ...(options.messageId ? { message_id: options.messageId } : {}),
     ...(options.timeoutMs !== undefined ? { timeout_ms: options.timeoutMs } : {}),
     ...(options.deadlineMs !== undefined ? { deadline_ms: options.deadlineMs } : {}),
-  }) as unknown as Wait
+  })
 }
 
 /** Repeat the wait until it reports `state` (and `outcome`, when given), and return that reply. */

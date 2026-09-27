@@ -40,15 +40,15 @@ test('F028: every bundled adapter serves a sealed, revisioned record that matche
 
   const cli = await profile.cli('provider', 'capabilities', 'codex')
   expect(cli.code).toBe(0)
-  expect(cli.json).toMatchObject({ type: 'provider_capabilities', providers: [{ provider: 'codex', fingerprint: codex!.fingerprint }] })
+  expect(cli.json).toMatchObject({ type: 'provider_capabilities', providers: [{ provider: 'codex', fingerprint: codex.fingerprint }] })
 })
 
 test('F028: a supported model and permission mode reach the provider; native-only and unknown modes are refused before launch', async ({ profile }) => {
   const { providers: [codex] } = await profile.call('provider.capabilities', { provider: 'codex' })
-  expect(codex!.models.selection.support).toBe('supported')
-  const readOnly = codex!.permission_modes.find((mode) => mode.id === 'read-only')!
+  expect(codex.models.selection.support).toBe('supported')
+  const readOnly = codex.permission_modes.find((mode) => mode.id === 'read-only')!
   expect(readOnly.support).toBe('supported')
-  const fullAccess = codex!.permission_modes.find((mode) => mode.id === 'danger-full-access')!
+  const fullAccess = codex.permission_modes.find((mode) => mode.id === 'danger-full-access')!
   expect(fullAccess.support).toBe('native_only')
 
   const { conversationId } = await conversationOn(profile, 'codex', undefined,
@@ -57,7 +57,7 @@ test('F028: a supported model and permission mode reach the provider; native-onl
   await waitForIdle(profile, conversationId)
   const started = (await profile.mockCalls('codex')).filter((call) => call.method === 'thread/start')
   expect(started).toHaveLength(1)
-  expect(started[0]!.params).toMatchObject({ model: 'gpt-fixture', sandbox: 'read-only' })
+  expect(started[0].params).toMatchObject({ model: 'gpt-fixture', sandbox: 'read-only' })
 
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   for (const mode of ['danger-full-access', 'no-such-mode']) {
@@ -66,7 +66,7 @@ test('F028: a supported model and permission mode reach the provider; native-onl
   }
   // Claude's native bypass mode is not offered either.
   const { providers: [claude] } = await profile.call('provider.capabilities', { provider: 'claude' })
-  for (const mode of claude!.permission_modes.filter((candidate) => candidate.support !== 'supported')) {
+  for (const mode of claude.permission_modes.filter((candidate) => candidate.support !== 'supported')) {
     await expect(profile.call('conversation.create', { workspace_id: workspace.id, provider: 'claude',
       provider_config: { permission_mode: mode.id } })).rejects.toThrow(/Unsupported permission mode/)
   }
@@ -74,9 +74,9 @@ test('F028: a supported model and permission mode reach the provider; native-onl
 
 test('F028: an approval keeps its once-only meaning; a session-wide grant the record marks native-only is never sent', async ({ profile }) => {
   const { providers: [codex] } = await profile.call('provider.capabilities', { provider: 'codex' })
-  expect(codex!.grants.once.support).toBe('supported')
-  expect(codex!.grants.session.support).toBe('native_only')
-  expect(codex!.grants.persistent.support).toBe('native_only')
+  expect(codex.grants.once.support).toBe('supported')
+  expect(codex.grants.session.support).toBe('native_only')
+  expect(codex.grants.persistent.support).toBe('native_only')
 
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.approval)

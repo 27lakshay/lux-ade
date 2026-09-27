@@ -75,7 +75,7 @@ test('failures carrying credentials are readable and correlated, and no secret r
     .not.toMatch(/^(starting|ready|running|waiting|idle)$/)
   const failed = await profile.call('conversation.get', { conversation_id: conversationId })
   expect(failed.conversation.error ?? '').toMatch(/Provider connection was lost/)
-  replies.push(failed.conversation as unknown as Record<string, unknown>)
+  replies.push(failed.conversation)
 
   for (const reply of replies) {
     const text = JSON.stringify(reply)

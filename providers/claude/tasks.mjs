@@ -45,6 +45,7 @@ export class TaskPlans {
         writeFileSync(temporary, data, { mode: 0o600, flag: 'wx' });
         fd = openSync(temporary, 'r'); fsyncSync(fd); closeSync(fd); fd = undefined;
         renameSync(temporary, this.file);
+      // oxlint-disable-next-line no-unsafe-finally -- a cleanup failure other than a missing file must surface
       } finally { if (fd !== undefined) closeSync(fd); try { unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
     }
     this.receipts = next;

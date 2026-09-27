@@ -11,7 +11,7 @@ export type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
 
 /** Check a daemon reply against its contract; a mismatch is a protocol error. */
 export function decodeReply<O extends DailyUseOperation>(op: O, response: unknown): DailyUseResponse<O> {
-  try { return decodeDailyUseResponse(op, response) as DailyUseResponse<O> }
+  try { return decodeDailyUseResponse(op, response) }
   catch (error) { throw new CliError('protocol', `Daemon ${op} reply failed its contract: ${String(error)}`) }
 }
 
@@ -134,7 +134,7 @@ export async function runConversationCommand(socketPath: string, area: string | 
     const flags: Record<string, string> = {}
     const positionals: string[] = []
     for (let index = 0; index < rest.length; index++) {
-      const word = rest[index]!
+      const word = rest[index]
       if (word === '--account' || word === '--preset') {
         const value = rest[index + 1]
         if (!value || value.startsWith('--') || word in flags) throw new CliError('usage', usage)

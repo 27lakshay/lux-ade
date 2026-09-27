@@ -11,68 +11,6 @@ import { rpc, startDaemon } from '../fixtures/daemon'
 const execFileAsync = promisify(execFile)
 const cli = resolve('apps/cli/dist/index.js')
 
-const attachThroughPty = `import fcntl, hashlib, json, os, pty, select, signal, struct, subprocess, sys, termios, time
-node, cli, socket, workspace, terminal = sys.argv[1:]
-master, slave = pty.openpty()
-fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
-tty_flags = termios.ICANON | termios.ECHO
-before_flags = termios.tcgetattr(slave)[3] & tty_flags
-child = subprocess.Popen([node, cli, '--socket', socket, 'terminal', 'attach', workspace, terminal],
-                         stdin=slave, stdout=slave, stderr=subprocess.PIPE, close_fds=True)
-output = bytearray()
-deadline = time.monotonic() + 16
-ready_at = None
-output_at = None
-last_probe = 0
-paste_command_at = None
-paste_command_sent = False
-paste_sent = False
-hash_at = None
-payload = (b'ABCDEFGHIJKLMNOPQRSTUVWXYZ' * 3000)[:70000]
-expected_hash = hashlib.sha256(payload).hexdigest().encode()
-try:
-    while time.monotonic() < deadline:
-        ready, _, _ = select.select([master], [], [], 0.1)
-        if ready:
-            try: output.extend(os.read(master, 65536))
-            except OSError: break
-        if ready_at is None and b'__ADE_CLI_SHARED_TERMINAL__' in output:
-            ready_at = time.monotonic()
-        if ready_at is not None and time.monotonic() - ready_at > 0.5 and time.monotonic() - last_probe > 0.5 and b'29 91' not in output:
-            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 29, 91, 0, 0))
-            os.kill(child.pid, signal.SIGWINCH)
-            os.write(master, b'stty size; echo __ADE_ATTACH_OUTPUT__\\n')
-            last_probe = time.monotonic()
-        if output_at is None and b'__ADE_ATTACH_OUTPUT__' in output and b'29 91' in output:
-            output_at = time.monotonic()
-        if not paste_command_sent and output_at is not None and time.monotonic() - output_at > 0.2:
-            os.write(master, b"stty -echo -icanon min 1 time 0; echo __ADE_PASTE_READY__; python3 -c 'import sys,hashlib; d=sys.stdin.buffer.read(70000); print(hashlib.sha256(d).hexdigest())'; stty sane\\n")
-            paste_command_sent = True
-        if paste_command_at is None and b'__ADE_PASTE_READY__' in output:
-            paste_command_at = time.monotonic()
-        if not paste_sent and paste_command_at is not None and time.monotonic() - paste_command_at > 0.3:
-            cursor = 0
-            while cursor < len(payload): cursor += os.write(master, payload[cursor:])
-            paste_sent = True
-        if hash_at is None and paste_sent and expected_hash in output:
-            hash_at = time.monotonic()
-        if hash_at is not None and time.monotonic() - hash_at > 0.2:
-            os.write(master, b'\\x1d')
-            break
-    try: child.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        print(json.dumps({'code': 'timeout', 'output': output.decode('utf8', 'replace')}))
-        raise
-    print(json.dumps({'code': child.returncode, 'output': output.decode('utf8', 'replace'),
-                      'stderr': child.stderr.read().decode('utf8', 'replace'),
-                      'expected_hash': expected_hash.decode(),
-                      'tty_restored': (termios.tcgetattr(slave)[3] & tty_flags) == before_flags}))
-finally:
-    if child.poll() is None: child.kill(); child.wait()
-    os.close(master)
-    os.close(slave)
-`
-
 const signalAttachedPty = `import json, os, pty, select, signal, subprocess, sys, termios, time
 node, cli, socket, workspace, terminal, signal_name = sys.argv[1:]
 master, slave = pty.openpty()

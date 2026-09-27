@@ -212,7 +212,7 @@ export function networkEvent(tracker: NetworkTracker, method: string, params: un
   } else if (method === 'Network.loadingFailed') {
     tracker.pending.delete(id)
     const outcome: NetworkOutcome = p.canceled === true ? 'canceled' : typeof p.blockedReason === 'string' ? 'blocked' : 'failed'
-    const reason = typeof p.blockedReason === 'string' ? `${String(p.errorText ?? '')} (${p.blockedReason})` : p.errorText
+    const reason = typeof p.blockedReason === 'string' ? `${typeof p.errorText === 'string' ? p.errorText : ''} (${p.blockedReason})` : p.errorText
     ended.push(summary(item, outcome, p.timestamp, null, redactText(reason, 256) || null))
   }
   return ended
@@ -266,8 +266,8 @@ export function readPage(consoleItems: readonly ConsoleEntry[], networkItems: re
   for (const candidate of candidates) {
     const size = entryBytes(candidate.item)
     if (taken >= limit || bytes + size > byteBudget) { page.more = true; break }
-    if (candidate.kind === 'console') page.console.push(candidate.item as ConsoleEntry)
-    else page.network.push(candidate.item as NetworkEntry)
+    if (candidate.kind === 'console') page.console.push(candidate.item)
+    else page.network.push(candidate.item)
     bytes += size
     taken += 1
     page.next = candidate.item.seq

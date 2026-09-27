@@ -61,9 +61,9 @@ test('F098: computer availability is explicit and stable across listings, the CL
   }
   // A refusal keeps no receipt: the same operation ID aimed at a display gets that display's own reason.
   if (displays.length > 0) {
-    const reason = capability(displays[0]!, 'input').reason?.code
+    const reason = capability(displays[0], 'input').reason?.code
     const reused = await send(profile, { op: 'device.input', operation_id: 'f098-app-app:com.apple.TextEdit', host_id: host,
-      device_id: displays[0]!.device_id, caller: { kind: 'user' }, action: { kind: 'tap', x: 1, y: 1 } })
+      device_id: displays[0].device_id, caller: { kind: 'user' }, action: { kind: 'tap', x: 1, y: 1 } })
     expect(reused.message).toContain(`(${reason})`)
   }
 })

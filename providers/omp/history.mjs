@@ -71,7 +71,7 @@ export function projectHistory(snapshot, identities = new Map()) {
   const positions = new Map();
   const calls = new Map();
   let turn = null, bytes = 0;
-  const add = (id, role, kind, text, status = 'completed', client_id = null, content = undefined, itemTurn = turn) => {
+  const add = (id, role, kind, text, status = 'completed', client_id = null, content, itemTurn = turn) => {
     if (typeof text !== 'string' || Buffer.byteLength(text) > (role === 'user' ? 9 : 1) * 1024 * 1024) throw new Error('Oh My Pi item exceeds lux-ade content limits');
     const item = { id, client_id, turn: itemTurn, role, kind, text, status, ...(content ? { content } : {}) };
     const position = positions.get(id);

@@ -349,7 +349,7 @@ export const envelopeCases: EnvelopeCase[] = [
         port_variable: 'PORT' })
       // A foreign process takes the stable port while the runtime is replaced.
       await ctx.profile.killRuntime()
-      const foreign = await startForeignListener(ctx.ade.ledger, route.port!)
+      const foreign = await startForeignListener(ctx.ade.ledger, route.port)
       try {
         await ctx.profile.restartDaemon()
         await expect.poll(() => recoveryStatus(ctx)).toBe('degraded')

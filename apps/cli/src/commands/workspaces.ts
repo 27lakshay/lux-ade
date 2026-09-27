@@ -1,4 +1,4 @@
-import { dailyUseCommand, requestDaemon } from '@ade/client'
+import { dailyUseCommand } from '@ade/client'
 import { catalog, CliError, effectOperationId, required, type CommandResult } from '../shared.js'
 
 export const workspaceUsage = `  workspace list                        List registered workspaces

@@ -477,7 +477,7 @@ test('packaged macOS app keeps two profile daemons, terminals and conversations 
       expect(profile?.name).toBe(name)
       const located = await execFileAsync(nativeControl, ['locate', '--home', profile!.home])
       const socket = (JSON.parse(located.stdout) as { socket: string }).socket
-      const hello = await rpc(socket, { op: 'hello' })
+      await rpc(socket, { op: 'hello' })
       owned.push({ ...await managedProfileOwner(socket), id: profile!.id, home: profile!.home })
 
       await window.getByRole('textbox', { name: 'Open folder' }).fill(folders[index])
@@ -813,7 +813,7 @@ serve(fakeSdk(process.env.ADE_MOCK_CLAUDE_DIR));
     const { promisify } = await import('node:util')
     const located = await promisify(execFile)(nativeControl, ['locate', '--home', profile.home])
     const socket = (JSON.parse(located.stdout) as { socket: string }).socket
-    const hello = await rpc(socket, { op: 'hello' })
+    await rpc(socket, { op: 'hello' })
     owned = await managedProfileOwner(socket)
     await window.getByRole('textbox', { name: 'Open folder' }).fill(folder)
     await window.getByRole('button', { name: 'Open folder' }).click()
