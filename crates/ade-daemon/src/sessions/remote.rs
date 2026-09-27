@@ -464,25 +464,18 @@ fn resolve_token(reference: &TokenReference) -> Result<String> {
         TokenReference::Env(name) => std::env::var(name).with_context(|| {
             format!("The pairing token variable {name} is not set in this daemon's environment")
         })?,
+        // Through the shared secret store, so tests use the file store and never
+        // reach the login keychain (AGENTS.md, machine safety).
         TokenReference::Keychain { service, account } => {
-            let found = run(
-                "/usr/bin/security",
-                &[
-                    "find-generic-password".to_owned(),
-                    "-s".to_owned(),
-                    service.clone(),
-                    "-a".to_owned(),
-                    account.clone(),
-                    "-w".to_owned(),
-                ],
-                Input::Nothing,
-                RESOLVE_TIMEOUT,
-            )?;
-            ensure!(
-                found.code == Some(0),
-                "The Keychain has no pairing token for service {service}, account {account}"
-            );
-            found.stdout.trim_end_matches('\n').to_owned()
+            crate::credentials::resolve(&ade_core::credentials::CredentialReference::Keychain {
+                service: service.clone(),
+                account: account.clone(),
+            })
+            .with_context(|| {
+                format!(
+                    "The Keychain has no pairing token for service {service}, account {account}"
+                )
+            })?
         }
     };
     ensure!(!token.is_empty(), "The pairing token is empty");

@@ -9,6 +9,7 @@
 //
 // Import `test` from this file to get the `remote` fixture. Its teardown stops
 // every remote daemon and runtime before the harness checks for survivors.
+import { secretStoreEnvironment } from './secret-store'
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
@@ -123,6 +124,8 @@ export class RemoteHost {
       GIT_TERMINAL_PROMPT: '0',
       // The remote profile's providers are this host's own mocks.
       ...providerEnvironment(root),
+      // Never the Keychain in tests (AGENTS.md, machine safety).
+      ...secretStoreEnvironment(this.home),
     }
   }
 
