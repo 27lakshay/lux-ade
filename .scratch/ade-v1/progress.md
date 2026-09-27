@@ -143,7 +143,37 @@ started on a scratch profile. Through the CLI, 15 read paths answered correctly:
 status, workspace open, conversations, provider capabilities, MCP, skills,
 plugins, activity, history search, resources, diagnostics, retention preview,
 remote hosts, devices and hooks. Six runtimes left by worker checks in removed
-worktrees were found and stopped. None of these is E2E-verified;
+worktrees were found and stopped.
+
+**Integration audit and fixes, merged green at `317687a`** (708 in-process tests)
+
+Each slice was checked only in isolation, so eight read-only reviewers audited
+the merged code for bugs where slices meet. They reported 40 findings. Each
+serious finding went to an independent skeptic: 19 of 20 were confirmed. Eight
+fix workers fixed all 19, each with review. The confirmed defects were:
+
+- a late runtime control reply read as the reply to the next command (blocker);
+- a quarantined restart attempt settled by `service.stop` without stopping its
+  processes (blocker);
+- a terminal stop with an unverified process tree reported as exited;
+- a worktree lease dropped although the provider stop was unconfirmed;
+- `git`, `lsof` and provider-shutdown calls made while holding the global
+  Sessions lock;
+- a refused steer or compaction that could never settle;
+- a quarantined claim deleted by an unrelated lease after a restart;
+- carry cleanup able to overwrite live edits in the source;
+- plugin hosts re-activated with stale settings;
+- the client's SSH forward ignoring the pinned host key;
+- stale execution placements surviving host removal;
+- restored profiles inheriting the source's runtime incarnations and live
+  queued prompts, which the restored daemon would auto-send;
+- an online backup deadline that large profiles could never meet;
+- a refused Git mutation leaving a desktop outbox record behind.
+
+One fix introduced a new race, in which a provider attached during a failure
+could leak without a lease. The coordinator closed it (`317687a`). The boot
+smoke passed all 15 read paths again afterwards. The 20 minor findings are in
+[the audit record](audit-2026-09-27.md); a verify-then-fix round follows. None of these is E2E-verified;
 each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
 
 ## Scope baseline and daily-use gate
