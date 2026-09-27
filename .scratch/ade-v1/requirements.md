@@ -50,46 +50,46 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F028 | Model, reasoning and permission capabilities | V1 | [02-providers](02-providers/spec.md) | Unverified |
 | F029 | Agent presets | V1 | [02-providers](02-providers/spec.md) | Unverified |
 | F030 | Quota and limit visibility | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F031 | Structured conversations | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F031 | Structured conversations | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
 | F032 | Attachments and media | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
 | F033 | Prompt context capture | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F034 | Message queues | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F035 | Steering active runs | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F034 | Message queues | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
+| F035 | Steering active runs | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
 | F036 | Draft recovery, recall and stash | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
 | F037 | Slash commands and skills | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F038 | Approvals and questions | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F038 | Approvals and questions | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-conversations.md)) |
 | F039 | Conversation and file rewind | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
 | F040 | Context compaction | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F041 | Combined history | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F042 | External session import | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F041 | Combined history | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
+| F042 | External session import | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
 | F043 | Work search | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
 | F044 | Task pins, labels, ordering and archive UI | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F045 | Dashboard | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F046 | Snoozing | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
 | F047 | Automatic settlement | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F048 | Idle hibernation | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
-| F049 | Usage analytics | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F049 | Usage analytics | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
 | F050 | History export and backup | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
-| F051 | Plugin installation and lifecycle | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
+| F051 | Plugin installation and lifecycle | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
 | F052 | Plugin panels, navigation and settings | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F053 | Timeline renderers and transforms | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F054 | Composer extensions | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F055 | Plugin commands and keybindings | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F056 | Theme extension support | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
-| F057 | Backend extensions | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
-| F058 | Lifecycle hooks | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
+| F057 | Backend extensions | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
+| F058 | Lifecycle hooks | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
 | F059 | Plugin state, credentials and settings | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F060 | Plugin development and recovery | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F061 | Projects and ordinary folders | V1 | [05-workspaces](05-workspaces/spec.md) | Verified |
 | F062 | Repository clone and publish | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
-| F063 | Managed worktree creation | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
-| F064 | Carry uncommitted changes | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
-| F065 | Adopt branch, checkout, worktree or PR source | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
-| F066 | Worktree naming and defaults | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
+| F063 | Managed worktree creation | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
+| F064 | Carry uncommitted changes | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
+| F065 | Adopt branch, checkout, worktree or PR source | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
+| F066 | Worktree naming and defaults | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
 | F067 | Workspace setup and teardown hooks | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
-| F068 | Ignored-resource handling | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
-| F069 | Workspace archive and cleanup | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
-| F070 | Checkpoints and restore | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
+| F068 | Ignored-resource handling | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
+| F069 | Workspace archive and cleanup | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
+| F070 | Checkpoints and restore | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-resources.md)) |
 | F071 | File explorer and search | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
 | F072 | Built-in code editor | Not now | [06-files-git](06-files-git/spec.md) | Not scheduled |
 | F073 | File previews | V1 | [06-files-git](06-files-git/spec.md) | Unverified |
@@ -104,8 +104,8 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F082 | Terminal ergonomics | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
 | F083 | Programmatic terminal access | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
 | F084 | Saved commands | Not now | [07-terminals-services](07-terminals-services/spec.md) | Not scheduled |
-| F085 | Dev port discovery | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
-| F086 | Managed dev services | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
+| F085 | Dev port discovery | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-services.md)) |
+| F086 | Managed dev services | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-services.md)) |
 | F087 | Port allocation | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
 | F088 | Stable dev URLs and proxying | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
 | F089 | Peer-service environment wiring | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
@@ -120,11 +120,11 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F098 | Computer and screen access | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
 | F099 | iOS simulator integration | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
 | F100 | Android device and emulator integration | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
-| F101 | Complete application command API | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
-| F102 | CLI support | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
-| F103 | Client SDK | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
+| F101 | Complete application command API | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
+| F102 | CLI support | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
+| F103 | Client SDK | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
 | F104 | Delegation | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
-| F105 | Parallel runs and comparison | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
+| F105 | Parallel runs and comparison | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-orchestration.md)) |
 | F106 | Parent and child tracking | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
 | F107 | Agent messages, waits and questions | V1 | [09-api-orchestration](09-api-orchestration/spec.md) | Unverified |
 | F108 | Task DAG orchestration | Not now | [09-api-orchestration](09-api-orchestration/spec.md) | Not scheduled |
@@ -184,7 +184,7 @@ These apply in addition to the 107 selected features.
 | R011 | Avoid stale results after changing context | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R012 | Retain account identity through credential changes | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R013 | Continue active work while plugins update | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R014 | Restore a complete managed backup | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R014 | Restore a complete managed backup | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-backup.md)) |
 | R015 | Control retention without losing referenced work | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R016 | Keep preview content separate from application authority | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R017 | Keep remote targets stable during connection failure | [Shared reliability](13-reliability/spec.md) | Unverified |

@@ -207,7 +207,43 @@ E2E observation, and E2E is paused. The natural next steps need you:
 Additional additive wire values introduced by the audit fixes, which no current
 client matches exhaustively: `ControlOutcome::Refused` and
 `CommandInvokeOutcome::Cancelled`. After an unconfirmed provider stop, a
-conversation now shows status `interrupted` instead of `error`. None of these is E2E-verified;
+conversation now shows status `interrupted` instead of `error`.
+
+## Headless E2E, round 1 (2026-09-27, option C)
+
+The protocol E2E harness (`e2e/protocol/`) starts a real daemon and runtime for
+each test and fails any test that leaves a process behind. Ten workers proved
+the riskiest backend areas and fixed the product bugs they found. The merged
+suite passes 205 specs in 54 seconds with 6 workers; 13 are `fixme` for named
+gaps. `check:static` passes with 732 in-process tests.
+
+**Accepted in the register (24 features plus R014):** F031, F034, F035, F038,
+F041, F042, F049, F051, F057, F058, F063, F064, F065, F066, F068, F069, F070,
+F085, F086, F101, F102, F103, F105 and R014. Reviews held back acceptances whose
+criteria were not all proven: R001 and R002, F067 (streamed hook status), F083
+(authenticated commands), and F087–F090 (claim timing, secret configuration,
+remote routing).
+
+Product bugs fixed along the way include:
+- carry cleanup never ran, because it used a `git ls-files` option that does
+  not exist;
+- carry read-back failed after deleting a carried file;
+- a link rule under a `node_modules/`-style ignore left trees dirty.
+
+**Found outside their areas; round 2 inputs:**
+- The SDK maps unknown daemon error codes to `daemon` and drops recovery
+  hints (`host_resource_conflict`, `needs_rebind` and the `lifecycle_*` codes);
+  the CLI inherits this.
+- Resuming the queue of an interrupted conversation does not dispatch its
+  queued prompt.
+- A single agent message over 1 MiB fails the conversation.
+- A turn lost to a runtime crash is recorded as `turn_interrupted` or
+  `operation_unknown` depending on timing.
+- Conversations cannot yet launch plugin providers (F023) or generic adapters
+  (F024).
+- Services have no way to mark configuration values secret (F089).
+- A decision is pending on link rules that Git does not ignore: keep refusing
+  them, or remove ADE-created links at teardown. None of these is E2E-verified;
 each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
 
 ## Scope baseline and daily-use gate
