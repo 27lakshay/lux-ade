@@ -3,8 +3,10 @@
 //
 // One host process serves one activation generation of one plugin. The daemon
 // speaks JSON-RPC 2.0 to it, one JSON object per line on stdio. The methods are
-// `activate`, `deactivate`, `invoke` and `health`. The host sends nothing
-// unprompted: plugin output goes to stderr, which the daemon keeps as a bounded
+// `activate`, `deactivate`, `invoke`, `hook` and `health`. `hook` delivers one
+// committed lifecycle event (F058) to the handler the plugin registered with
+// `context.hooks.on`; the plugin treats its `effectId` as an idempotency key.
+// The host sends nothing unprompted: plugin output goes to stderr, which the daemon keeps as a bounded
 // log tail.
 //
 // Error codes tell the daemon whether plugin code ran. Every code below
@@ -29,6 +31,8 @@ export const STALE_GENERATION = -32002
 export const UNKNOWN_COMMAND = -32003
 /** Loading the backend entry or running its `activate` failed. */
 export const ACTIVATION_FAILED = -32004
+/** No handler is registered for the lifecycle event. */
+const UNKNOWN_HOOK = -32005
 /** The command handler ran and threw. */
 export const COMMAND_FAILED = -32010
 
@@ -126,6 +130,10 @@ export function createHost(options = {}) {
   let declared = new Set()
   /** @type {Map<string, (args: unknown, meta: object) => unknown>} */
   const handlers = new Map()
+  /** @type {Set<string>} */
+  let subscribed = new Set()
+  /** @type {Map<string, (payload: unknown, meta: object) => unknown>} */
+  const hookHandlers = new Map()
   /** @type {BackendModule | undefined} */
   let backend
   let pending = 0
@@ -150,17 +158,23 @@ export function createHost(options = {}) {
     if (!Array.isArray(commands) || !commands.every((item) => typeof item === 'string')) {
       throw new RpcError(INVALID_PARAMS, 'commands must be a list of command IDs')
     }
+    const hooks = params.hooks ?? []
+    if (!Array.isArray(hooks) || !hooks.every((item) => typeof item === 'string')) {
+      throw new RpcError(INVALID_PARAMS, 'hooks must be a list of event names')
+    }
     const settings = params.settings ?? {}
     if (!isObject(settings)) throw new RpcError(INVALID_PARAMS, 'settings must be an object')
     state = 'activating'
     generation = requested
     pluginId = id
     declared = new Set(/** @type {string[]} */ (commands))
+    subscribed = new Set(/** @type {string[]} */ (hooks))
     const context = Object.freeze({
       pluginId: id,
       generation: requested,
       settings: Object.freeze({ ...settings }),
       commands: Object.freeze({ register }),
+      hooks: Object.freeze({ on }),
       /** @param {...unknown} parts */
       log: (...parts) => log(parts.map((part) => typeof part === 'string' ? part : describe(part)).join(' ')),
     })
@@ -173,6 +187,7 @@ export function createHost(options = {}) {
     } catch (error) {
       state = 'deactivated'
       handlers.clear()
+      hookHandlers.clear()
       throw new RpcError(ACTIVATION_FAILED, `Plugin ${id} backend failed to activate: ${describe(error)}`)
     }
     // A deactivate that arrived while `activate` ran wins; stay deactivated
@@ -203,6 +218,44 @@ export function createHost(options = {}) {
     })
   }
 
+  /**
+   * The lifecycle hook API a plugin receives: one handler per event the
+   * manifest subscribes to. A handle only removes the handler it registered.
+   * @param {string} event @param {(payload: unknown, meta: object) => unknown} handler
+   */
+  function on(event, handler) {
+    if (state !== 'activating' && state !== 'active') throw new Error(`Plugin ${pluginId} is ${state}; it cannot register hooks`)
+    if (typeof handler !== 'function') throw new Error(`Hook ${event} needs a handler function`)
+    if (!subscribed.has(event)) throw new Error(`Hook ${event} is not declared in the plugin manifest`)
+    if (hookHandlers.has(event)) throw new Error(`Hook ${event} already has a handler`)
+    hookHandlers.set(event, handler)
+    return Object.freeze({
+      dispose() {
+        if (hookHandlers.get(event) === handler) hookHandlers.delete(event)
+      },
+    })
+  }
+
+  /** @param {Record<string, unknown>} params */
+  async function hook(params) {
+    const requested = fence(params)
+    if (state !== 'active') throw new RpcError(NOT_ACTIVE, `Host is ${state}`)
+    const event = text(params, 'event')
+    const effectId = text(params, 'effect_id')
+    const handler = hookHandlers.get(event)
+    if (!handler) throw new RpcError(UNKNOWN_HOOK, `No handler is registered for hook ${event}`)
+    const attempt = typeof params.attempt === 'number' ? params.attempt : 1
+    pending++
+    try {
+      await handler(params.payload ?? null, Object.freeze({ generation: requested, effectId, event, attempt }))
+      return { delivered: true }
+    } catch (error) {
+      throw new RpcError(COMMAND_FAILED, describe(error))
+    } finally {
+      pending--
+    }
+  }
+
   /** @param {Record<string, unknown>} params */
   async function invoke(params) {
     const requested = fence(params)
@@ -231,6 +284,7 @@ export function createHost(options = {}) {
     }
     state = 'deactivated'
     handlers.clear()
+    hookHandlers.clear()
     await runDeactivateHook()
     return { deactivated: true }
   }
@@ -257,7 +311,7 @@ export function createHost(options = {}) {
   }
 
   /** @type {Record<string, (params: Record<string, unknown>) => unknown>} */
-  const methods = { activate, deactivate, invoke, health }
+  const methods = { activate, deactivate, invoke, hook, health }
 
   /**
    * Handles one request object. Returns the response, or null for a

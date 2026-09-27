@@ -36,7 +36,7 @@ mod supervision;
 
 use crate::receipts::{self, Admission, Status};
 use activation::{Activation, Registry};
-use ade_core::contract::hooks::HookSubscription;
+use ade_core::contract::hooks::{HookDispatch, HookHostStatus, HookSubscription, HookVerdict};
 use ade_core::contract::plugins::{
     PluginActivation, PluginCommandInvokeRequest, PluginCommandOutcome, PluginCommandResult,
     PluginDataRecord, PluginDetail, PluginDisableRequest, PluginEnableRequest,
@@ -183,10 +183,33 @@ impl Plugins {
         self.0.command(request)
     }
 
+    /// The hook dispatcher's view of the backend hosts (F058).
+    pub fn hook_host(&self) -> Box<dyn crate::hooks::HookHost> {
+        Box::new(HookHost(self.0.clone()))
+    }
+
     /// Whether a development-mode reload changed an activation since the
     /// last call. Hook subscriptions follow activations.
     pub fn take_activation_change(&self) -> bool {
         self.0.activation_changed.swap(false, Ordering::SeqCst)
+    }
+}
+
+/// Delivers lifecycle hooks through each plugin's backend host. The registry
+/// is open, so the dispatcher always sends; each delivery then learns whether
+/// its plugin can take it.
+struct HookHost(Arc<Core>);
+
+impl crate::hooks::HookHost for HookHost {
+    fn status(&self) -> HookHostStatus {
+        HookHostStatus {
+            available: true,
+            detail: None,
+        }
+    }
+
+    fn deliver(&self, dispatch: &HookDispatch) -> HookVerdict {
+        self.0.deliver_hook(dispatch)
     }
 }
 
@@ -464,6 +487,14 @@ impl Core {
                 .filter(|registration| registration.kind == PluginRegistrationKind::Command)
                 .map(|registration| registration.id)
                 .collect(),
+            hooks: plugin
+                .detail
+                .manifest
+                .contributes
+                .hooks
+                .iter()
+                .map(|event| event.as_str().to_owned())
+                .collect(),
             settings,
         })
     }
@@ -555,6 +586,51 @@ impl Core {
             tracing::warn!(target: "ade", event = "plugin_receipt_settle_failed", error = %error);
         }
         Ok(response)
+    }
+
+    /// Hands one committed hook delivery to the plugin's backend host. Only a
+    /// host that proves the handler never started yields `not_started`; a host
+    /// that crashes or stops answering while the handler may be running
+    /// yields `unknown`, and the host is killed so the supervisor restarts it.
+    fn deliver_hook(&self, dispatch: &HookDispatch) -> HookVerdict {
+        let not_started = |reason: String| HookVerdict::NotStarted { reason };
+        let spec = match self.launch_spec(&dispatch.plugin_id) {
+            Ok(spec) => spec,
+            Err(error) => return not_started(error.to_string()),
+        };
+        if !spec
+            .hooks
+            .iter()
+            .any(|event| event == dispatch.event.as_str())
+        {
+            return not_started(format!(
+                "Plugin {} activation {} does not subscribe to {}",
+                dispatch.plugin_id,
+                spec.generation,
+                dispatch.event.as_str()
+            ));
+        }
+        let process = match self.hosts.ensure(&spec) {
+            Ok(process) => process,
+            Err(message) => return not_started(message),
+        };
+        let called = process.call(
+            "hook",
+            json!({
+                "generation": process.key.generation,
+                "effect_id": dispatch.effect_id,
+                "event": dispatch.event.as_str(),
+                "payload": dispatch.payload,
+                "attempt": dispatch.attempt,
+            }),
+            host::INVOKE_TIMEOUT,
+        );
+        let verdict = host::hook_verdict(&called);
+        if matches!(verdict, HookVerdict::Unknown { .. }) {
+            // A host that stopped answering is killed; the supervisor restarts it.
+            self.hosts.kill(&dispatch.plugin_id, process.key);
+        }
+        verdict
     }
 
     /// Records an invocation whose outcome cannot be proven. The receipt

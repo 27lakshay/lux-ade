@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "id": "e2e.agent",
+  "name": "E2E agent",
+  "version": "1.0.0",
+  "api_version": 1,
+  "data_schema": 1,
+  "description": "Protocol E2E fixture: a provider worker that speaks the provider worker protocol.",
+  "entry_points": { "provider": "worker.mjs" }
+}
