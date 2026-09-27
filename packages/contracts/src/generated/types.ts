@@ -162,12 +162,18 @@ export type ContractDefinition =
   | CheckpointRestoreVerdict
   | CheckpointRestored
   | CheckpointSummary
+  | ChildAnswerRequest
+  | ChildAnswered
   | ChildDelegated
   | ChildGetRequest
   | ChildList
+  | ChildMessage
   | ChildMessageQueued
+  | ChildMessages
+  | ChildMessagesRequest
   | ChildRecord
   | ChildReply
+  | ChildRequest
   | ChildSendRequest
   | ChildTranscriptPage
   | ChildWait
@@ -406,6 +412,8 @@ export type ContractDefinition =
   | McpServerUpdateRequest
   | McpServers
   | Message
+  | MessageDelivery
+  | MessageDirection
   | ModelCapabilities
   | ModelFormat
   | NotificationDeliveries
@@ -415,6 +423,9 @@ export type ContractDefinition =
   | NotificationDeliveryListRequest
   | NotificationDeliveryReply
   | NotificationDeliveryReportRequest
+  | NotificationPreferences
+  | NotificationPreferencesGetRequest
+  | NotificationPreferencesSetRequest
   | OmpIdentity
   | Outcome
   | OutputCoverage
@@ -422,6 +433,8 @@ export type ContractDefinition =
   | OutputCoverageStatus
   | PackageRegistry
   | PairingState
+  | ParentMessageQueued
+  | ParentSendRequest
   | PartForm
   | PathOverlap
   | PeerEndpoint
@@ -597,6 +610,7 @@ export type ContractDefinition =
   | RepositoryRebindRequest
   | RepositoryRecord
   | RepositoryTransport
+  | RequestKind
   | ResourceClaim
   | ResourceKind
   | ResourceKind2
@@ -1008,9 +1022,21 @@ export type CheckpointRestoreOutcome = 'unchanged' | 'restored' | 'partial'
  */
 export type CheckpointRestoreVerdict = 'unchanged' | 'ready' | 'needs_confirmation' | 'blocked'
 /**
+ * What a pending request asks for.
+ */
+export type RequestKind = 'approval' | 'question'
+/**
  * How the child's workspace was chosen.
  */
 export type WorkspaceMode = 'same' | 'new_worktree'
+/**
+ * Where a message stands in its receiver's prompt queue.
+ */
+export type MessageDelivery = 'queued' | 'submitted' | 'cancelled' | 'missing'
+/**
+ * Which way a message travelled.
+ */
+export type MessageDirection = 'to_child' | 'to_parent'
 /**
  * The `orchestration.child.wait` reply.
  */
@@ -4416,6 +4442,41 @@ export interface CheckpointRestored {
   [k: string]: unknown
 }
 /**
+ * `orchestration.child.answer`: answer a question or approval a child is
+ * waiting on, from the parent's view.
+ */
+export interface ChildAnswerRequest {
+  /**
+   * Structured answers; required by the `answer` decision.
+   */
+  answers?: unknown
+  caller: Caller
+  child_conversation_id: string
+  /**
+   * As for `agent.answer`: accept, decline, cancel or answer.
+   */
+  decision: string
+  op: 'orchestration.child.answer'
+  /**
+   * One of the child's `pending_requests`.
+   */
+  request_id: string
+}
+/**
+ * The `orchestration.child.answer` reply: the answer is on its way to the
+ * child's Agent.
+ */
+export interface ChildAnswered {
+  attribution: string
+  child_conversation_id: string
+  request_id: string
+  /**
+   * The `child_answered` type tag.
+   */
+  type: 'child_answered'
+  [k: string]: unknown
+}
+/**
  * The `orchestration.delegate` reply: the child is admitted and its task is
  * queued. It says nothing about completion; wait for that.
  */
@@ -4448,6 +4509,11 @@ export interface ChildRecord {
    */
   operation_id: string
   parent_conversation_id: string
+  /**
+   * Questions and approvals the child waits on, oldest first. Answer each
+   * once with `orchestration.child.answer`.
+   */
+  pending_requests: ChildRequest[]
   provider: string
   /**
    * The child Conversation's status, or `unavailable` when it is gone.
@@ -4460,6 +4526,22 @@ export interface ChildRecord {
   workspace_id: string
   workspace_mode: WorkspaceMode
   worktree_operation_id: string | null
+  [k: string]: unknown
+}
+/**
+ * A question or approval the child waits on, as its parent sees it.
+ */
+export interface ChildRequest {
+  kind: RequestKind
+  /**
+   * The provider's request method.
+   */
+  method: string
+  /**
+   * The provider's request, including its questions or command.
+   */
+  params: unknown
+  request_id: string
   [k: string]: unknown
 }
 /**
@@ -4482,6 +4564,25 @@ export interface ChildList {
   [k: string]: unknown
 }
 /**
+ * One message between a child and its parent.
+ */
+export interface ChildMessage {
+  /**
+   * `user`, or `agent:` followed by the sending Conversation ID.
+   */
+  attribution: string
+  created_at: number
+  delivery: MessageDelivery
+  direction: MessageDirection
+  message_id: string
+  operation_id: string
+  /**
+   * The Conversation that receives it.
+   */
+  receiver_conversation_id: string
+  [k: string]: unknown
+}
+/**
  * The `orchestration.child.send` reply: the message is durably queued.
  */
 export interface ChildMessageQueued {
@@ -4493,6 +4594,27 @@ export interface ChildMessageQueued {
    */
   type: 'child_message_queued'
   [k: string]: unknown
+}
+/**
+ * The `orchestration.child.messages` reply.
+ */
+export interface ChildMessages {
+  child_conversation_id: string
+  messages: ChildMessage[]
+  parent_conversation_id: string
+  /**
+   * The `child_messages` type tag.
+   */
+  type: 'child_messages'
+  [k: string]: unknown
+}
+/**
+ * `orchestration.child.messages`: every message between a child and its
+ * parent, oldest first.
+ */
+export interface ChildMessagesRequest {
+  child_conversation_id: string
+  op: 'orchestration.child.messages'
 }
 /**
  * The `orchestration.child.get` reply.
@@ -5323,6 +5445,13 @@ export interface DaemonHello {
 export interface DelegateRequest {
   account: AccountChoice
   caller: Caller
+  /**
+   * Context for the child, stated explicitly: live attachments of the
+   * parent Conversation, at most 8. The daemon copies them to the child
+   * under new IDs and sends them with the task; the child's provider must
+   * accept each. None when absent.
+   */
+  context_attachments?: Attachment[]
   op: 'orchestration.delegate'
   /**
    * Caller-owned operation ID; a retry with the same payload returns the same child.
@@ -6812,6 +6941,11 @@ export interface ChildRecord1 {
    */
   operation_id: string
   parent_conversation_id: string
+  /**
+   * Questions and approvals the child waits on, oldest first. Answer each
+   * once with `orchestration.child.answer`.
+   */
+  pending_requests: ChildRequest[]
   provider: string
   /**
    * The child Conversation's status, or `unavailable` when it is gone.
@@ -7938,7 +8072,8 @@ export interface NotificationDelivery {
 }
 /**
  * The `notification.delivery.claim` reply. `granted` is false when another
- * client or an earlier outcome already holds the delivery.
+ * client or an earlier outcome already holds the delivery, or when the
+ * profile's preferences or a snooze suppressed it.
  */
 export interface NotificationDeliveryClaim {
   delivery: NotificationDelivery
@@ -7998,6 +8133,46 @@ export interface NotificationDeliveryReportRequest {
   reason?: string | null
 }
 /**
+ * The profile's notification preferences. A profile that never set them
+ * notifies desktop for every activity kind.
+ */
+export interface NotificationPreferences {
+  desktop: boolean
+  /**
+   * In the order they were set, without repeats.
+   */
+  muted_kinds: ActivityKind[]
+  /**
+   * The `notification_preferences` type tag.
+   */
+  type: 'notification_preferences'
+  /**
+   * When the preferences were last set; null for the defaults.
+   */
+  updated_at: number | null
+  [k: string]: unknown
+}
+/**
+ * `notification.preferences.get`: the profile's notification preferences.
+ */
+export interface NotificationPreferencesGetRequest {
+  op: 'notification.preferences.get'
+}
+/**
+ * `notification.preferences.set`: replace the profile's notification preferences.
+ */
+export interface NotificationPreferencesSetRequest {
+  /**
+   * Whether any activity notifies on the desktop.
+   */
+  desktop: boolean
+  /**
+   * Activity kinds that never notify; repeats are ignored.
+   */
+  muted_kinds: ActivityKind[]
+  op: 'notification.preferences.set'
+}
+/**
  * How much of a run's output the durable spool holds and the reply returns.
  */
 export interface OutputCoverage {
@@ -8010,6 +8185,54 @@ export interface OutputCoverage {
   returned_start_offset: number | null
   status: OutputCoverageStatus
   [k: string]: unknown
+}
+/**
+ * The `orchestration.parent.send` reply: the message is durably queued for
+ * the parent.
+ */
+export interface ParentMessageQueued {
+  attribution: string
+  child_conversation_id: string
+  message_id: string
+  parent_conversation_id: string
+  /**
+   * The `parent_message_queued` type tag.
+   */
+  type: 'parent_message_queued'
+  [k: string]: unknown
+}
+/**
+ * `orchestration.parent.send`: queue a message from a delegated child to
+ * its parent Conversation.
+ */
+export interface ParentSendRequest {
+  /**
+   * Who asks. An Agent caller names its own Conversation; the daemon records
+   * the attribution and refuses an Agent that acts as another Conversation.
+   */
+  caller:
+    | {
+        kind: 'user'
+        [k: string]: unknown
+      }
+    | {
+        conversation_id: string
+        kind: 'agent'
+        [k: string]: unknown
+      }
+  /**
+   * The child that sends; its parent receives.
+   */
+  child_conversation_id: string
+  op: 'orchestration.parent.send'
+  /**
+   * Caller-owned operation ID; a retry with the same payload returns the same message.
+   */
+  operation_id: string
+  /**
+   * At most 64 KiB. The parent receives it after a line naming the child.
+   */
+  text: string
 }
 export interface PeerEndpoint {
   port_variable: string
@@ -12655,7 +12878,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -12804,6 +13027,8 @@ export interface RequestByOperation {
   "notification.delivery.claim": NotificationDeliveryClaimRequest
   "notification.delivery.report": NotificationDeliveryReportRequest
   "notification.delivery.list": NotificationDeliveryListRequest
+  "notification.preferences.get": NotificationPreferencesGetRequest
+  "notification.preferences.set": NotificationPreferencesSetRequest
   "mcp.server.list": McpServerListRequest
   "mcp.server.inspect": McpServerInspectRequest
   "mcp.server.add": McpServerAddRequest
@@ -12839,6 +13064,9 @@ export interface RequestByOperation {
   "orchestration.child.get": ChildGetRequest
   "orchestration.child.send": ChildSendRequest
   "orchestration.child.wait": ChildWaitRequest
+  "orchestration.child.answer": ChildAnswerRequest
+  "orchestration.parent.send": ParentSendRequest
+  "orchestration.child.messages": ChildMessagesRequest
   "orchestration.group.start": GroupStartRequest
   "orchestration.groups": GroupsRequest
   "orchestration.group.get": GroupGetRequest
@@ -13075,6 +13303,8 @@ export interface ResponseByOperation {
   "notification.delivery.claim": NotificationDeliveryClaim
   "notification.delivery.report": NotificationDeliveryReply
   "notification.delivery.list": NotificationDeliveries
+  "notification.preferences.get": NotificationPreferences
+  "notification.preferences.set": NotificationPreferences
   "mcp.server.list": McpServers
   "mcp.server.inspect": McpServerInspection
   "mcp.server.add": McpServerReply
@@ -13110,6 +13340,9 @@ export interface ResponseByOperation {
   "orchestration.child.get": ChildReply
   "orchestration.child.send": ChildMessageQueued
   "orchestration.child.wait": ChildWait
+  "orchestration.child.answer": ChildAnswered
+  "orchestration.parent.send": ParentMessageQueued
+  "orchestration.child.messages": ChildMessages
   "orchestration.group.start": GroupStarted
   "orchestration.groups": GroupList
   "orchestration.group.get": GroupReply

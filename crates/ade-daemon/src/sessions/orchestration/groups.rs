@@ -294,6 +294,7 @@ impl Sessions {
                         worktree_operation: placement.worktree_operation.as_deref(),
                         title: &title,
                         task: &start.task,
+                        context: &[],
                         now,
                     },
                 )?;

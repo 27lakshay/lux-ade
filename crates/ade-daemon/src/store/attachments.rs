@@ -143,6 +143,31 @@ impl Store {
         tx.commit()?;
         Ok(attachment)
     }
+
+    /// Copies live attachments of Conversation `from` to Conversation `to`
+    /// under new IDs, inside the caller's transaction on this store's
+    /// connection. Used to hand a delegated child its context. Each copy
+    /// counts against `to`'s storage limit.
+    pub fn copy_attachments(
+        &self,
+        tx: &Connection,
+        from: &str,
+        to: &str,
+        attachments: &[Attachment],
+    ) -> Result<Vec<Attachment>> {
+        validate_attachments(tx, from, attachments)?;
+        attachments
+            .iter()
+            .map(|attachment| {
+                let bytes: Vec<u8> = tx.query_row(
+                    "SELECT data FROM attachments WHERE id=?1 AND state='live'",
+                    [&attachment.id],
+                    |row| row.get(0),
+                )?;
+                store_attachment(tx, to, &new_id("attachment"), &attachment.name, &bytes)
+            })
+            .collect()
+    }
 }
 
 /// Stores one attachment inside the caller's transaction, which has checked

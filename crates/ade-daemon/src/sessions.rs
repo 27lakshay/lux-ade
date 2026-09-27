@@ -789,7 +789,9 @@ impl Sessions {
             | "activity.mark"
             | "notification.delivery.claim"
             | "notification.delivery.report"
-            | "notification.delivery.list" => self.activity_command(request),
+            | "notification.delivery.list"
+            | "notification.preferences.get"
+            | "notification.preferences.set" => self.activity_command(request),
             op if op.starts_with("mcp.") => self.mcp_command(request),
             op if op.starts_with("checkpoint.") => self.checkpoint_command(request),
             op if op.starts_with("remote.") => self.remote_command(request),

@@ -1,6 +1,11 @@
 //! Delegation, parent and child tracking, child messages and waits (F104,
 //! F106, F107).
 //!
+//! Messages travel both ways through the receiver's durable prompt queue: the
+//! parent (or the user) messages a child, and a child (or the user) messages
+//! its parent. A child's pending questions show on its record, and its parent
+//! answers each once through the same answer path as `agent.answer`.
+//!
 //! The parent and child link lives in `state.sqlite` beside the Conversations
 //! it joins, so it outlives both Agents' processes. Delegation and child
 //! messages are effect commands: the receipt, the link and the queued prompt
@@ -11,9 +16,11 @@
 use super::*;
 use crate::receipts::{self, Admission};
 use ade_core::contract::orchestration::{
-    ChildDelegated, ChildGetRequest, ChildList, ChildMessageQueued, ChildRecord, ChildReply,
+    ChildAnswerRequest, ChildAnswered, ChildDelegated, ChildGetRequest, ChildList, ChildMessage,
+    ChildMessageQueued, ChildMessages, ChildMessagesRequest, ChildRecord, ChildReply, ChildRequest,
     ChildSendRequest, ChildWait, ChildWaitRequest, ChildrenRequest, DelegateRequest,
-    WorkspaceChoice, WorkspaceMode,
+    MessageDelivery, MessageDirection, ParentMessageQueued, ParentSendRequest, WorkspaceChoice,
+    WorkspaceMode,
 };
 use ade_core::contract::worktrees::WorktreeOperationReply;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -24,11 +31,14 @@ mod policy;
 
 const DELEGATE: &str = "orchestration.delegate";
 const CHILD_SEND: &str = "orchestration.child.send";
+const PARENT_SEND: &str = "orchestration.parent.send";
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS orchestration_children(child_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, operation_id TEXT NOT NULL UNIQUE, attribution TEXT NOT NULL, depth INTEGER NOT NULL CHECK(depth>0), provider TEXT NOT NULL, account_id TEXT, workspace_id TEXT NOT NULL, workspace_mode TEXT NOT NULL CHECK(workspace_mode IN ('same','new_worktree')), worktree_operation_id TEXT, task_message_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS orchestration_children_parent ON orchestration_children(parent_id);
 CREATE TABLE IF NOT EXISTS orchestration_messages(id TEXT PRIMARY KEY, child_id TEXT NOT NULL, operation_id TEXT NOT NULL, attribution TEXT NOT NULL, created_at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS orchestration_messages_child ON orchestration_messages(child_id);";
+CREATE INDEX IF NOT EXISTS orchestration_messages_child ON orchestration_messages(child_id);
+CREATE TABLE IF NOT EXISTS orchestration_parent_messages(id TEXT PRIMARY KEY, child_id TEXT NOT NULL, parent_id TEXT NOT NULL, operation_id TEXT NOT NULL, attribution TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS orchestration_parent_messages_child ON orchestration_parent_messages(child_id);";
 
 const CHILD_COLUMNS: &str = "child_id,parent_id,operation_id,attribution,depth,provider,account_id,workspace_id,workspace_mode,worktree_operation_id,task_message_id,created_at";
 
@@ -60,6 +70,7 @@ fn link_row(row: &rusqlite::Row) -> rusqlite::Result<ChildRecord> {
         created_at: row.get(11)?,
         status: String::new(),
         error: None,
+        pending_requests: Vec::new(),
     })
 }
 
@@ -84,10 +95,30 @@ fn conversation(connection: &Connection, id: &str) -> Result<Option<Conversation
         .transpose()
 }
 
-/// Fills a link with its child's current status.
+/// The provider requests a Conversation still waits on, oldest first.
+fn pending_requests(connection: &Connection, id: &str) -> Result<Vec<ChildRequest>> {
+    let mut statement = connection.prepare(
+        "SELECT data FROM requests WHERE conversation_id=?1 AND status='pending' ORDER BY rowid",
+    )?;
+    let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+    rows.map(|data| {
+        let request: PendingRequest =
+            serde_json::from_str(&data?).context("Stored request is invalid")?;
+        Ok(ChildRequest {
+            request_id: request.id,
+            kind: policy::request_kind(&request.method),
+            method: request.method,
+            params: request.params,
+        })
+    })
+    .collect()
+}
+
+/// Fills a link with its child's current status and pending requests.
 fn with_state(connection: &Connection, mut record: ChildRecord) -> Result<ChildRecord> {
     match conversation(connection, &record.child_conversation_id)? {
         Some(child) => {
+            record.pending_requests = pending_requests(connection, &child.id)?;
             record.status = child.status;
             record.error = child.error;
         }
@@ -98,6 +129,17 @@ fn with_state(connection: &Connection, mut record: ChildRecord) -> Result<ChildR
 
 /// Queues a prompt inside the caller's transaction, under the same bound as `queue.enqueue`.
 fn enqueue(connection: &Connection, conversation: &str, id: &str, text: &str) -> Result<()> {
+    enqueue_with(connection, conversation, id, text, &[])
+}
+
+/// Queues a prompt with attachments the Conversation already owns.
+fn enqueue_with(
+    connection: &Connection,
+    conversation: &str,
+    id: &str,
+    text: &str,
+    attachments: &[ade_core::model::Attachment],
+) -> Result<()> {
     let queued: i64 = connection.query_row(
         "SELECT count(*) FROM queued_prompts WHERE conversation_id=?1 AND status='queued'",
         [conversation],
@@ -105,8 +147,8 @@ fn enqueue(connection: &Connection, conversation: &str, id: &str, text: &str) ->
     )?;
     ensure!(queued < 32, "Limit of 32 queued prompts reached");
     connection.execute(
-        "INSERT INTO queued_prompts(id,conversation_id,text,status,attachments) VALUES(?1,?2,?3,'queued','[]')",
-        params![id, conversation, text],
+        "INSERT INTO queued_prompts(id,conversation_id,text,status,attachments) VALUES(?1,?2,?3,'queued',?4)",
+        params![id, conversation, text, serde_json::to_string(attachments)?],
     )?;
     Ok(())
 }
@@ -130,6 +172,8 @@ struct NewChild<'a> {
     worktree_operation: Option<&'a str>,
     title: &'a str,
     task: &'a str,
+    /// Attachments of the parent to copy to the child and send with the task.
+    context: &'a [ade_core::model::Attachment],
     now: i64,
 }
 
@@ -152,7 +196,12 @@ fn insert_child(tx: &Connection, store: &Store, child: NewChild) -> Result<Conve
         )?,
     };
     let task = new_id("message");
-    enqueue(tx, &created.id, &task, child.task)?;
+    let context = store.copy_attachments(tx, child.parent_id, &created.id, child.context)?;
+    if !context.is_empty() {
+        let prompt = store.prompt(&created.id, child.task, &context)?;
+        ade_core::prompt_context::admit(&created.provider, &prompt)?;
+    }
+    enqueue_with(tx, &created.id, &task, child.task, &context)?;
     tx.execute(
         &format!("INSERT INTO orchestration_children({CHILD_COLUMNS}) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
         params![created.id, child.parent_id, child.operation_id, child.attribution, child.depth,
@@ -311,6 +360,9 @@ impl Sessions {
             }
             CHILD_SEND => self.child_send(decode(request)?),
             "orchestration.child.wait" => self.child_wait(decode(request)?),
+            "orchestration.child.answer" => self.child_answer(decode(request)?),
+            PARENT_SEND => self.parent_send(decode(request)?),
+            "orchestration.child.messages" => self.child_messages(decode(request)?),
             groups::START => self.group_start(decode(request)?),
             "orchestration.groups" => self.groups(decode(request)?),
             "orchestration.group.get" => self.group_get(decode(request)?),
@@ -378,6 +430,12 @@ impl Sessions {
 
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
+        if !delegate.context_attachments.is_empty() {
+            // Name a missing, foreign or changed attachment plainly, before the
+            // transaction reports any database refusal as a failed save.
+            d.store
+                .prompt(parent_id, &delegate.task, &delegate.context_attachments)?;
+        }
         let now = now_ms();
         let (created, result) = persistence_result((|| -> Result<_> {
             let db = &d.store.connection;
@@ -437,6 +495,7 @@ impl Sessions {
                     worktree_operation: worktree_operation.as_deref(),
                     title: &title,
                     task: &delegate.task,
+                    context: &delegate.context_attachments,
                     now,
                 },
             )?;
@@ -555,6 +614,151 @@ impl Sessions {
             self.changed(&mut d, &child, &[])?;
         }
         Ok(result)
+    }
+
+    /// Answers a child's pending request for its parent Agent or the user.
+    /// The request must be the child's own; `answer` refuses a stale one and
+    /// a second, different answer.
+    fn child_answer(&self, answer: ChildAnswerRequest) -> Result<Value> {
+        let child_id = non_empty("child_conversation_id", &answer.child_conversation_id)?;
+        let request_id = non_empty("request_id", &answer.request_id)?;
+        let attribution = {
+            let d = self.data.lock().unwrap();
+            ensure_schema(&d.store.connection)?;
+            let record = link(&d.store.connection, child_id)?
+                .context("Conversation is not a delegated child")?;
+            policy::authorize_message(&answer.caller, &record.parent_conversation_id)?
+        };
+        self.answer(
+            child_id,
+            request_id,
+            non_empty("decision", &answer.decision)?,
+            answer.answers.as_ref(),
+        )?;
+        reply(&ChildAnswered {
+            tag: Default::default(),
+            child_conversation_id: child_id.to_owned(),
+            request_id: request_id.to_owned(),
+            attribution,
+        })
+    }
+
+    /// Queues a child's message for its parent, in the same transaction as
+    /// its receipt and its record.
+    fn parent_send(self: &Arc<Self>, send: ParentSendRequest) -> Result<Value> {
+        policy::check_id("operation_id", &send.operation_id)?;
+        let child_id = non_empty("child_conversation_id", &send.child_conversation_id)?;
+        policy::check_text(&send.text)?;
+        let payload = serde_json::to_value(&send)?;
+        let operation_id = send.operation_id.as_str();
+        let mut d = self.data.lock().unwrap();
+        ensure!(!d.draining, "Application daemon is restarting");
+        let now = now_ms();
+        let (parent, result) = persistence_result((|| -> Result<_> {
+            let db = &d.store.connection;
+            ensure_schema(db)?;
+            let tx = db.unchecked_transaction()?;
+            let record = link(&tx, child_id)?.context("Conversation is not a delegated child")?;
+            let attribution = policy::authorize_parent_message(&send.caller, child_id)?;
+            let admission = receipts::begin(
+                &tx,
+                operation_id,
+                PARENT_SEND,
+                &payload,
+                Some(&attribution),
+                now,
+            )?;
+            if let Some(result) = replay(admission, "parent message")? {
+                return Ok((None, result));
+            }
+            let parent_id = record.parent_conversation_id.as_str();
+            let parent = conversation(&tx, parent_id)?
+                .context("The parent Conversation no longer exists")?;
+            let prompt = policy::parent_prompt(child_id, &send.text);
+            policy::check_text(&prompt)?;
+            let message = new_id("message");
+            enqueue(&tx, parent_id, &message, &prompt)?;
+            tx.execute(
+                "INSERT INTO orchestration_parent_messages(id,child_id,parent_id,operation_id,attribution,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![message, child_id, parent_id, operation_id, attribution, now],
+            )?;
+            let result = reply(&ParentMessageQueued {
+                tag: Default::default(),
+                parent_conversation_id: parent_id.to_owned(),
+                child_conversation_id: child_id.to_owned(),
+                message_id: message,
+                attribution,
+            })?;
+            receipts::settle(
+                &tx,
+                operation_id,
+                receipts::Status::Settled,
+                Some(&result),
+                now,
+            )?;
+            tx.commit()?;
+            Ok((Some(parent), result))
+        })())?;
+        if let Some(parent) = parent {
+            self.changed(&mut d, &parent, &[])?;
+        }
+        Ok(result)
+    }
+
+    /// Both directions of a child's messages, oldest first, with where each
+    /// stands in its receiver's queue.
+    fn child_messages(&self, request: ChildMessagesRequest) -> Result<Value> {
+        let child_id = non_empty("child_conversation_id", &request.child_conversation_id)?;
+        let d = self.data.lock().unwrap();
+        let db = &d.store.connection;
+        ensure_schema(db)?;
+        let record = link(db, child_id)?.context("Conversation is not a delegated child")?;
+        let mut statement = db.prepare(
+            "SELECT id,'to_child',child_id,operation_id,attribution,created_at,rowid FROM orchestration_messages WHERE child_id=?1
+             UNION ALL
+             SELECT id,'to_parent',parent_id,operation_id,attribution,created_at,rowid FROM orchestration_parent_messages WHERE child_id=?1
+             ORDER BY 6,7",
+        )?;
+        let rows = statement
+            .query_map([child_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut messages = Vec::with_capacity(rows.len());
+        for (id, direction, receiver, operation_id, attribution, created_at) in rows {
+            let delivery = match d.store.queue_entry(&id)? {
+                Some(crate::store::QueueEntry::Delivered) => MessageDelivery::Submitted,
+                Some(crate::store::QueueEntry::Cancelled) => MessageDelivery::Cancelled,
+                Some(crate::store::QueueEntry::Queued) => MessageDelivery::Queued,
+                None => MessageDelivery::Missing,
+            };
+            messages.push(ChildMessage {
+                message_id: id,
+                direction: if direction == "to_parent" {
+                    MessageDirection::ToParent
+                } else {
+                    MessageDirection::ToChild
+                },
+                receiver_conversation_id: receiver,
+                operation_id,
+                attribution,
+                created_at,
+                delivery,
+            });
+        }
+        reply(&ChildMessages {
+            tag: Default::default(),
+            child_conversation_id: child_id.to_owned(),
+            parent_conversation_id: record.parent_conversation_id,
+            messages,
+        })
     }
 
     fn child_wait(&self, wait: ChildWaitRequest) -> Result<Value> {

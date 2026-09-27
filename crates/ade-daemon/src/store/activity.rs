@@ -5,13 +5,15 @@
 //! second entry. Delivery rows are keyed by activity and channel: one client
 //! claims a delivery, then reports what the OS said. A claim that was never
 //! reported stays `claimed`: the notification may or may not have appeared, so
-//! nobody delivers it again. The tables live in the profile state database and
-//! are created idempotently before first use.
+//! nobody delivers it again. A claim for activity that the profile's
+//! preferences or a snooze exclude records a `suppressed` delivery with the
+//! reason instead, so no client presents it later either. The tables live in
+//! the profile state database and are created idempotently before first use.
 use super::*;
 use ade_core::contract::activity::{
     Activity, ActivityKind, ActivityList, ActivityListRequest, ActivityMark, ActivityState,
     ActivityTarget, DeliveryChannel, DeliveryOutcome, DeliveryStatus, NotificationDelivery,
-    NotificationDeliveryClaimRequest, NotificationDeliveryReportRequest,
+    NotificationDeliveryClaimRequest, NotificationDeliveryReportRequest, NotificationPreferences,
 };
 use anyhow::bail;
 
@@ -19,6 +21,7 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS activity(sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, source_key TEXT NOT NULL UNIQUE, state TEXT NOT NULL, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS activity_by_state ON activity(state, sequence);
 CREATE TABLE IF NOT EXISTS notification_deliveries(activity_id TEXT NOT NULL REFERENCES activity(id), channel TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(activity_id, channel));
+CREATE TABLE IF NOT EXISTS notification_preferences(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
 ";
 
 /// The largest `activity.list` or `notification.delivery.list` page.
@@ -167,6 +170,46 @@ pub(crate) fn next_state(current: ActivityState, mark: ActivityMark) -> Activity
 /// the same client's own unreported claim, is granted.
 pub(crate) fn claim_granted(existing: Option<&NotificationDelivery>, client: &str) -> bool {
     existing.is_none_or(|d| d.status == DeliveryStatus::Claimed && d.client_id == client)
+}
+
+/// Why a delivery of `kind` must not be presented, if it must not. Turning
+/// the desktop off wins over a muted kind, which wins over a snooze.
+pub(crate) fn suppression(
+    preferences: &NotificationPreferences,
+    kind: ActivityKind,
+    snoozed: bool,
+) -> Option<&'static str> {
+    if !preferences.desktop {
+        Some("desktop_disabled")
+    } else if preferences.muted_kinds.contains(&kind) {
+        Some("kind_muted")
+    } else if snoozed {
+        Some("conversation_snoozed")
+    } else {
+        None
+    }
+}
+
+/// The preferences a profile that never set them has: everything notifies.
+fn default_preferences() -> NotificationPreferences {
+    NotificationPreferences {
+        tag: Default::default(),
+        desktop: true,
+        muted_kinds: Vec::new(),
+        updated_at: None,
+    }
+}
+
+fn preferences(db: &Connection) -> Result<NotificationPreferences> {
+    db.query_row(
+        "SELECT data FROM notification_preferences WHERE id=1",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .optional()?
+    .map(decode)
+    .transpose()
+    .map(|stored| stored.unwrap_or_else(default_preferences))
 }
 
 /// The status a report moves a delivery to, or `None` when it repeats the
@@ -452,12 +495,14 @@ impl Store {
         check_id(&request.activity_id)?;
         check_client(&request.client_id)?;
         ensure(&self.connection)?;
+        let snooze = match one_activity(&self.connection, &request.activity_id)? {
+            Some(activity) => self.snooze_of(&activity.target.conversation_id)?,
+            None => None,
+        };
+        let snoozed = |now: i64| snooze.as_ref().is_some_and(|snooze| snooze.until > now);
         let tx = self.transaction()?;
-        ensure!(
-            one_activity(&tx, &request.activity_id)?.is_some(),
-            "Unknown activity ID: {}",
-            request.activity_id
-        );
+        let activity = one_activity(&tx, &request.activity_id)?
+            .with_context(|| format!("Unknown activity ID: {}", request.activity_id))?;
         let existing = delivery(&tx, &request.activity_id, request.channel)?;
         if !claim_granted(existing.as_ref(), &request.client_id) {
             return Ok((false, existing.context("Delivery claim is missing")?));
@@ -466,6 +511,21 @@ impl Store {
             Some(existing) => existing,
             None => {
                 let now = now_ms();
+                let reason = suppression(&preferences(&tx)?, activity.kind, snoozed(now));
+                if let Some(reason) = reason {
+                    let suppressed = NotificationDelivery {
+                        activity_id: request.activity_id.clone(),
+                        channel: request.channel,
+                        status: DeliveryStatus::Suppressed,
+                        client_id: request.client_id.clone(),
+                        reason: Some(reason.to_owned()),
+                        claimed_at: now,
+                        updated_at: now,
+                    };
+                    write_delivery(&tx, &suppressed)?;
+                    tx.commit()?;
+                    return Ok((false, suppressed));
+                }
                 let claimed = NotificationDelivery {
                     activity_id: request.activity_id.clone(),
                     channel: request.channel,
@@ -519,6 +579,48 @@ impl Store {
         write_delivery(&tx, &updated)?;
         tx.commit()?;
         Ok(updated)
+    }
+
+    /// The profile's notification preferences, or the defaults.
+    pub fn notification_preferences(&self) -> Result<NotificationPreferences> {
+        ensure(&self.connection)?;
+        preferences(&self.connection)
+    }
+
+    /// Replaces the profile's notification preferences. Setting what is
+    /// stored again keeps its time.
+    pub fn set_notification_preferences(
+        &self,
+        desktop: bool,
+        muted_kinds: &[ActivityKind],
+    ) -> Result<NotificationPreferences> {
+        let mut muted = Vec::with_capacity(muted_kinds.len());
+        for kind in muted_kinds {
+            if !muted.contains(kind) {
+                muted.push(*kind);
+            }
+        }
+        ensure(&self.connection)?;
+        let tx = self.transaction()?;
+        let current = preferences(&tx)?;
+        if current.updated_at.is_some()
+            && current.desktop == desktop
+            && current.muted_kinds == muted
+        {
+            return Ok(current);
+        }
+        let next = NotificationPreferences {
+            tag: Default::default(),
+            desktop,
+            muted_kinds: muted,
+            updated_at: Some(now_ms()),
+        };
+        tx.execute(
+            "INSERT INTO notification_preferences(id,data) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+            [encode(&next)?],
+        )?;
+        tx.commit()?;
+        Ok(next)
     }
 
     /// Deliveries newest first, optionally in one status.
@@ -738,6 +840,33 @@ mod tests {
         ] {
             assert!(!claim_granted(Some(&delivery(status, "a")), "a"));
         }
+    }
+
+    #[test]
+    fn preferences_and_snoozes_suppress_in_a_fixed_order() {
+        let mut preferences = default_preferences();
+        assert_eq!(
+            suppression(&preferences, ActivityKind::TurnCompleted, false),
+            None
+        );
+        assert_eq!(
+            suppression(&preferences, ActivityKind::TurnCompleted, true),
+            Some("conversation_snoozed")
+        );
+        preferences.muted_kinds = vec![ActivityKind::TurnCompleted];
+        assert_eq!(
+            suppression(&preferences, ActivityKind::TurnCompleted, true),
+            Some("kind_muted")
+        );
+        assert_eq!(
+            suppression(&preferences, ActivityKind::TurnFailed, false),
+            None
+        );
+        preferences.desktop = false;
+        assert_eq!(
+            suppression(&preferences, ActivityKind::TurnFailed, false),
+            Some("desktop_disabled")
+        );
     }
 
     #[test]

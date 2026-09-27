@@ -4,7 +4,9 @@
 //!
 //! The bounded wait follows Herdr's `src/api/wait.rs` (studied, not copied):
 //! answer at once when the condition already holds, and time out otherwise.
-use ade_core::contract::orchestration::{AccountChoice, Caller, Outcome, PendingPhase, WaitState};
+use ade_core::contract::orchestration::{
+    AccountChoice, Caller, Outcome, PendingPhase, RequestKind, WaitState,
+};
 use ade_core::contract::worktrees::WorktreeOperationStatus;
 use anyhow::{Result, bail, ensure};
 
@@ -72,6 +74,32 @@ pub fn authorize_message(caller: &Caller, parent: &str) -> Result<String> {
         );
     }
     attribution(caller)
+}
+
+/// Only the child's own Agent, or the user, may message the child's parent.
+pub fn authorize_parent_message(caller: &Caller, child: &str) -> Result<String> {
+    if let Caller::Agent { conversation_id } = caller {
+        ensure!(
+            conversation_id == child,
+            "Only the child Conversation can message its parent"
+        );
+    }
+    attribution(caller)
+}
+
+/// The prompt a parent receives: a line naming the sending child, then the text.
+pub fn parent_prompt(child: &str, text: &str) -> String {
+    format!("Message from delegated child {child}:\n\n{text}")
+}
+
+/// Whether a provider request asks for an approval or answers to questions,
+/// by the same rule activity uses.
+pub fn request_kind(method: &str) -> RequestKind {
+    if method.to_ascii_lowercase().contains("approval") {
+        RequestKind::Approval
+    } else {
+        RequestKind::Question
+    }
 }
 
 /// The child's account. `Inherit` needs the parent's provider, because an
@@ -341,6 +369,33 @@ mod tests {
         assert_eq!(authorize_message(&agent("p"), "p").unwrap(), "agent:p");
         assert!(authorize_message(&agent("child"), "p").is_err());
         assert_eq!(authorize_message(&Caller::User, "p").unwrap(), "user");
+        // A message to the parent comes from the child itself or the user.
+        assert_eq!(
+            authorize_parent_message(&agent("child"), "child").unwrap(),
+            "agent:child"
+        );
+        assert!(authorize_parent_message(&agent("p"), "child").is_err());
+        assert!(authorize_parent_message(&agent("sibling"), "child").is_err());
+        assert_eq!(
+            authorize_parent_message(&Caller::User, "child").unwrap(),
+            "user"
+        );
+    }
+
+    #[test]
+    fn a_parent_sees_who_sent_a_message_and_what_a_request_asks() {
+        assert_eq!(
+            parent_prompt("c2", "done"),
+            "Message from delegated child c2:\n\ndone"
+        );
+        assert_eq!(
+            request_kind("item/commandExecution/requestApproval"),
+            RequestKind::Approval
+        );
+        assert_eq!(
+            request_kind("item/tool/requestUserInput"),
+            RequestKind::Question
+        );
     }
 
     #[test]
