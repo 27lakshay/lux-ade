@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test src/sync.test.mjs src/outbox.test.mjs"
+    "test": "tsc && node --test src/sync.test.mjs src/outbox.test.mjs src/remote-state.test.mjs"
   },
   "dependencies": {
     "@ade/contracts": "workspace:*"
@@ -23,6 +23,10 @@
     "./sync": {
       "types": "./dist/sync.d.ts",
       "default": "./dist/sync.js"
+    },
+    "./remote": {
+      "types": "./dist/remote.d.ts",
+      "default": "./dist/remote.js"
     },
     "./outbox": {
       "types": "./dist/outbox.d.ts",

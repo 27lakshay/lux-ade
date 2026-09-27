@@ -8,6 +8,7 @@ import { accountUsage, runAccountCommand } from './commands/accounts.js'
 import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
+import { remoteUsage, runRemoteCommand } from './commands/remote.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
 import { mcpUsage, runMcpCommand } from './commands/mcp.js'
 import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestration.js'
@@ -77,6 +78,7 @@ const usage = [
   pluginUsage,
   orchestrationUsage,
   diagnosticsUsage,
+  remoteUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -234,6 +236,7 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify(await managedProfiles())}\n`)
       return
     }
+    if (words[0] === 'remote') return void process.stdout.write(`${JSON.stringify(await runRemoteCommand(words.slice(1)))}\n`)
     const endpoint = profileId ? await profileSocket(profileId) : socketPath
     if (!endpoint) throw new CliError('usage', 'Select a profile with --profile ID, --socket PATH or ADE_SOCKET.')
     if (words[0] === 'terminal' && words[1] === 'attach') {
