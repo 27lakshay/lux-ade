@@ -1086,7 +1086,7 @@ Fixed and proven:
 - R001 and R002: the evidence over-claimed again.
 - F039 (rewind) was not claimed.
 - F098–F100 and F131/F132/F043/F136–F138 were proven only partly; see
-  `evidence/e2e-devices.md` and `evidence/e2e-ops-leftovers.md`.
+  `evidence/e2e-devices.md` and `evidence/e2e-ops.md`.
 
 A fix round covers the two blockers and the delegation provider gap. Browser
 automation and diagnostics (F091–F097) live in Electron main and wait for
