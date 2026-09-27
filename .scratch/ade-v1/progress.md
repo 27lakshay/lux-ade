@@ -80,7 +80,27 @@ Known gaps from round B:
 - Legacy E2E `desktop-send-recovery` assertions will fail by design after the
   outbox change; the evidence file lists them for the UI-phase E2E rewrite.
 - New stores (plugins database and artifacts, skill bundles) are not yet in
-  backups; round C adds them. None of these is E2E-verified;
+  backups; round C adds them.
+
+**Phase 2 round C, merged green at `5a95b2c`** (439 in-process tests)
+
+| Slice | Result | Requirements advanced |
+|---|---|---|
+| backup-coverage | Backup format 3 covers plugin database and artifacts and verifies skill blobs; the history index is rebuilt after restore; the host registry is excluded with a reason; format 2 still restores | F050, F059, R014 |
+| worktree-lifecycle | Managed creation with naming defaults, supervised setup and teardown hooks, archive and cleanup that protect dirty, locked, active and uncertain trees | F063, F066, F067, F069 |
+| checkpoints | Checkpoints as private Git refs; restore refuses to overwrite unsaved changes (adapted from t3code, MIT) | F070 |
+| session-import | Read-only import of native Claude Code and Codex sessions with provenance, searchable | F042 |
+| usage-analytics | Provider-reported tokens, cost and limits recorded per turn; unreported figures marked unavailable (adapted from t3code, MIT) | F049, F030 |
+| browser-diagnostics | Bounded, redacted console and network capture and recording for an explicitly owned tab | F096, F097 |
+| remote-bootstrap | Remote host registry, pinned host keys, SSH bootstrap that reports missing backend artifacts, pairing and revocation | F122, F124 |
+| remote-transport | `@ade/client/remote` over an SSH-forwarded socket; a disconnect reports unknown and never falls back to local | F121, F125 |
+| retention | Scheduled receipt pruning, blob and log retention with a preview-then-apply generation | F138 |
+| parallel-runs | Sibling runs across providers or accounts with a group identity and diff comparison | F105 |
+
+Coordinator fix: the retention sweep was deleting unreferenced uploads older
+than 24 hours, a guess about abandonment. It now keeps them; explicit reclaim
+still removes them (`5a95b2c`). Legacy E2E `native-control.spec.ts:39` expects
+backup format 2 and needs a one-line update when E2E returns. None of these is E2E-verified;
 each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
 
 ## Scope baseline and daily-use gate
