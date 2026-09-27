@@ -2,6 +2,7 @@
 // under the `out_dir` setting, so a spec can observe plugin effects without
 // sleeping. Commands and hooks that must pause wait for a release file the
 // spec creates.
+import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -31,7 +32,11 @@ function released(name) {
 
 export function activate(ctx) {
   context = ctx
-  record('lifecycle.jsonl', { event: 'activate' })
+  // The `token` credential: its reference from settings, and a digest of the
+  // value the daemon resolved for this activation, so no file holds the value.
+  const token = ctx.credentials?.token
+  record('lifecycle.jsonl', { event: 'activate', token_reference: ctx.settings.token ?? null,
+    token_sha256: typeof token === 'string' ? createHash('sha256').update(token).digest('hex') : null })
   ctx.commands.register('e2e.backend.echo', (args, meta) => {
     console.log(`fixture echo ${VERSION}`)
     return { args, version: VERSION, generation: meta.generation, pid: process.pid }

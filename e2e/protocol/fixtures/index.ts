@@ -22,16 +22,18 @@ export class AdeHarness {
   readonly ledger = new ProcessLedger()
   private readonly profiles: ScratchProfile[] = []
   private repositories = 0
-  private constructor(readonly root: string, private readonly testInfo: TestInfo) {}
+  private constructor(readonly root: string, private readonly testInfo: TestInfo,
+    private readonly keychain: boolean) {}
 
-  static async create(testInfo: TestInfo): Promise<AdeHarness> {
+  static async create(testInfo: TestInfo, keychain = false): Promise<AdeHarness> {
     // Short prefix: Unix socket paths under it must stay below 104 bytes on macOS.
-    return new AdeHarness(await mkdtemp(join(tmpdir(), 'ade-p-')), testInfo)
+    return new AdeHarness(await mkdtemp(join(tmpdir(), 'ade-p-')), testInfo, keychain)
   }
 
   /** Start another scratch profile with its own daemon and runtime. */
   async profile(options: ProfileOptions = {}): Promise<ScratchProfile> {
-    return ScratchProfile.start(join(this.root, `p${this.profiles.length + 1}`), this.ledger, options,
+    return ScratchProfile.start(join(this.root, `p${this.profiles.length + 1}`), this.ledger,
+      { keychain: this.keychain, ...options },
       (profile) => this.profiles.push(profile))
   }
 
@@ -98,6 +100,11 @@ export class AdeHarness {
 }
 
 type Fixtures = {
+  /**
+   * Give every profile of the test a scratch keychain (fixtures/keychain.ts).
+   * Set with `test.use({ keychain: true })` in specs that store secrets.
+   */
+  keychain: boolean
   /** The test's harness; use it for extra profiles or repositories. */
   ade: AdeHarness
   /** A started scratch profile with deterministic provider mocks. Started on first use. */
@@ -107,10 +114,9 @@ type Fixtures = {
 }
 
 export const test = base.extend<Fixtures>({
-  // Playwright requires the first fixture argument to be a destructuring pattern.
-  // eslint-disable-next-line no-empty-pattern
-  ade: async ({}, use, testInfo) => {
-    const harness = await AdeHarness.create(testInfo)
+  keychain: [false, { option: true }],
+  ade: async ({ keychain }, use, testInfo) => {
+    const harness = await AdeHarness.create(testInfo, keychain)
     try {
       await use(harness)
     } finally {

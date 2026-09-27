@@ -10,6 +10,9 @@ import { writeEnvEchoPrograms } from '../fixtures/env-echo'
 import { httpGet, waitForReadiness } from '../fixtures/services'
 import { copyBundle, createBackup, readManifest, restoreIntoNewProfile, rewriteDatabase } from './helpers'
 
+// A secret value moves into each profile's scratch keychain.
+test.use({ keychain: true })
+
 const SECRET = 'bundle-secret-7f3a9c'
 const REDACTED = '[redacted]'
 

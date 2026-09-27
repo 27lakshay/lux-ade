@@ -230,6 +230,7 @@ export type ContractDefinition =
   | ConversationSteerRequest
   | ConversationUnsnoozeRequest
   | CostBasis
+  | CredentialReference
   | DaemonHello
   | DelegateRequest
   | DeliveryChannel
@@ -1206,6 +1207,20 @@ export type RewindScope = 'conversation' | 'files'
  * Where a cost figure came from.
  */
 export type CostBasis = 'agent_estimate'
+/**
+ * Where a secret lives. Serialized as `{"env": "NAME"}` or
+ * `{"keychain": {"service": "...", "account": "..."}}`.
+ */
+export type CredentialReference =
+  | {
+      env: string
+    }
+  | {
+      keychain: {
+        account: string
+        service: string
+      }
+    }
 /**
  * Where the child works, stated explicitly. Parallel children in the same
  * workspace share its files; ADE never merges their edits.
@@ -10772,10 +10787,21 @@ export interface Service {
     ports: string[]
     program: string
     /**
-     * Names of `env` entries whose values are secret. Replies show each one
-     * as [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.
+     * Names of `env` entries whose values are secret. ADE never stores or
+     * returns their values: each shows as [`REDACTED`], and sending
+     * [`REDACTED`] back keeps the stored reference. A value sent here is
+     * moved into the Keychain and replaced by a reference in `secret_refs`.
      */
     secret_env?: string[]
+    /**
+     * Where each secret's value lives. Resolved only when the service
+     * launches; a reference that cannot be resolved refuses the start before
+     * anything is reserved. A secret with no reference was withheld by a
+     * backup and must be sent again.
+     */
+    secret_refs?: {
+      [k: string]: CredentialReference
+    }
   }
   hostname: string
   /**
@@ -10843,10 +10869,21 @@ export interface ServiceConfigureRequest {
     ports?: string[]
     program: string
     /**
-     * Names of `env` entries whose values are secret. Replies show each one
-     * as [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.
+     * Names of `env` entries whose values are secret. ADE never stores or
+     * returns their values: each shows as [`REDACTED`], and sending
+     * [`REDACTED`] back keeps the stored reference. A value sent here is
+     * moved into the Keychain and replaced by a reference in `secret_refs`.
      */
     secret_env?: string[]
+    /**
+     * Where each secret's value lives. Resolved only when the service
+     * launches; a reference that cannot be resolved refuses the start before
+     * anything is reserved. A secret with no reference was withheld by a
+     * backup and must be sent again.
+     */
+    secret_refs?: {
+      [k: string]: CredentialReference
+    }
   }
   name: string
   op: 'service.configure'

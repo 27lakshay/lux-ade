@@ -234,8 +234,9 @@ pub fn setting_value_problem(kind: PluginSettingKind, value: &Value) -> Option<S
         (PluginSettingKind::String, Value::String(text)) => text.len() <= 16 * 1024,
         (PluginSettingKind::Boolean, Value::Bool(_)) => true,
         (PluginSettingKind::Number, Value::Number(_)) => true,
-        (PluginSettingKind::CredentialRef, Value::String(reference)) => {
-            (1..=256).contains(&reference.len()) && !reference.chars().any(char::is_control)
+        (PluginSettingKind::CredentialRef, reference @ Value::Object(_)) => {
+            serde_json::from_value::<ade_core::credentials::CredentialReference>(reference.clone())
+                .is_ok_and(|reference| reference.validate().is_ok())
         }
         _ => false,
     };
@@ -243,9 +244,10 @@ pub fn setting_value_problem(kind: PluginSettingKind, value: &Value) -> Option<S
         PluginSettingKind::String => "must be a string of at most 16 KiB".into(),
         PluginSettingKind::Boolean => "must be true or false".into(),
         PluginSettingKind::Number => "must be a number".into(),
-        PluginSettingKind::CredentialRef => {
-            "must be a credential reference of 1 to 256 characters".into()
-        }
+        PluginSettingKind::CredentialRef => "must be a credential reference, {\"env\": \"NAME\"} \
+             or {\"keychain\": {\"service\": \"...\", \"account\": \"...\"}}, or {\"secret\": \"...\"} \
+             to move a value into the Keychain"
+            .into(),
     })
 }
 
@@ -403,6 +405,33 @@ mod tests {
         assert!(setting_value_problem(PluginSettingKind::Number, &json!(2.5)).is_none());
         assert!(setting_value_problem(PluginSettingKind::Number, &json!("2")).is_some());
         assert!(setting_value_problem(PluginSettingKind::CredentialRef, &json!("")).is_some());
+        // A credential is a typed reference; a bare string may be the secret itself.
+        assert!(
+            setting_value_problem(PluginSettingKind::CredentialRef, &json!("keychain:a/b"))
+                .is_some()
+        );
+        assert!(
+            setting_value_problem(
+                PluginSettingKind::CredentialRef,
+                &json!({"env": "API_TOKEN"})
+            )
+            .is_none()
+        );
+        assert!(
+            setting_value_problem(
+                PluginSettingKind::CredentialRef,
+                &json!({"keychain": {"service": "s", "account": "a"}})
+            )
+            .is_none()
+        );
+        assert!(
+            setting_value_problem(PluginSettingKind::CredentialRef, &json!({"env": "ghp_x"}))
+                .is_some()
+        );
+        assert!(
+            setting_value_problem(PluginSettingKind::CredentialRef, &json!({"secret": "x"}))
+                .is_some()
+        );
         assert!(setting_value_problem(PluginSettingKind::String, &Value::Null).is_none());
     }
 

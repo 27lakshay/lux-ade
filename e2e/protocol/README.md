@@ -48,6 +48,7 @@ test('a Codex turn reaches the transcript', async ({ profile, repo }) => {
 | `startConversation`, `send`, `waitForIdle`, `waitForMessage`, `waitForPendingRequest`, `fixtureAnswers` | Conversation steps over the SDK. |
 | `profile.mockCalls(provider)`, `profile.releaseMock(provider, file)` | Reads what a mock received. Creates the file a scripted mock waits for. |
 | `isRunning(pid)` | Process liveness. It treats an unreaped zombie as exited. |
+| `test.use({ keychain: true })`, `profile.keychain` | A scratch macOS keychain per profile, made with `security create-keychain` inside the scratch `HOME` (`fixtures/keychain.ts`). Every daemon gets `ADE_KEYCHAIN` naming that path, so ADE never reaches the user's login keychain; without the option the file does not exist and every keychain call fails. `add(service, account, value, readers)` adds an item as a user would and trusts `readers`; `accounts(service)` lists items without reading values. Items the daemon made are readable only by the daemon. Every keychain call goes through the machine's one `securityd`, so opt in only in specs that store secrets. |
 
 The provider mocks are `scripts/fixtures/codex_mock.py` and
 `scripts/fixtures/claude_mock.mjs`, which serves `providers/claude/fake-sdk.mjs`.

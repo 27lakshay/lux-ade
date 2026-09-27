@@ -8,6 +8,9 @@ import { subscribeFeed } from '../fixtures/feed'
 import { printedEnv, writeEnvEchoPrograms } from '../fixtures/env-echo'
 import { httpGet, logText, waitForReadiness } from '../fixtures/services'
 
+// A secret value moves into the profile's scratch keychain.
+test.use({ keychain: true })
+
 const SECRET = 's3cret-token-value'
 const REDACTED = '[redacted]'
 

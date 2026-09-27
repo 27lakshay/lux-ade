@@ -104,7 +104,37 @@ impl Store {
         let tx =
             rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
         let before = load(&tx, &workspace.id, name)?;
-        config.keep_secrets(before.as_ref().map(|s| &s.config))?;
+        let stored = before.as_ref().map(|s| &s.config);
+        let values = config.plan_secrets(stored)?;
+        config.validate()?;
+        // A value already in the item this secret names is kept there, so a
+        // repeated save converges. Any other value goes into a new item: the
+        // stored one stays intact until the new configuration commits.
+        let mut writes = Vec::new();
+        for (key, value) in values {
+            match stored.and_then(|stored| stored.secret_refs.get(&key)) {
+                Some(kept) if crate::credentials::owned_holds(kept, &value) => {
+                    config.secret_refs.insert(key, kept.clone());
+                }
+                _ => writes.push((key, value)),
+            }
+        }
+        if !writes.is_empty() {
+            ensure!(
+                before.as_ref().is_none_or(|s| s.terminal_owner.is_none()),
+                "Stop the service before editing it"
+            );
+            ensure!(
+                before.as_ref().map_or(0, |s| s.revision) == revision,
+                "Service changed; reload before saving"
+            );
+        }
+        let mut pending = crate::credentials::Pending::default();
+        for (key, value) in writes {
+            let scope = format!("service/{}/{name}/{key}", workspace.id);
+            let reference = pending.store(&scope, &value)?;
+            config.secret_refs.insert(key, reference);
+        }
         for peer in config.peers.values() {
             ensure!(
                 !reaches_service(&tx, &workspace.id, &peer.service, name, &mut Vec::new())?,
@@ -217,18 +247,31 @@ impl Store {
             params![service.workspace_id, name, serde_json::to_string(&service)?],
         )?;
         tx.commit()?;
+        pending.commit();
         drop(held);
+        // Items the saved configuration no longer names are ADE's to delete.
+        if let Some(before) = &before {
+            crate::credentials::delete_owned_quietly(
+                before
+                    .config
+                    .secret_refs
+                    .values()
+                    .filter(|old| !service.config.secret_refs.values().any(|kept| kept == *old)),
+            );
+        }
         Ok(service)
     }
     pub fn remove_service(&self, workspace: &str, name: &str, revision: i64) -> Result<()> {
         self.workspace(workspace)?;
         let tx =
             rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        let mut removed = None;
         if let Some(service) = load(&tx, workspace, name)? {
             ensure!(
                 service.terminal_owner.is_none(),
                 "Stop the service before removing it"
             );
+            removed = Some(service.config.secret_refs.clone());
             if let Some(terminal) = &service.terminal_id {
                 let mut w = self.workspace(workspace)?;
                 w.extra_terminals.retain(|id| id != terminal);
@@ -248,7 +291,91 @@ impl Store {
             )?;
         }
         tx.commit()?;
+        if let Some(references) = removed {
+            crate::credentials::delete_owned_quietly(references.values());
+        }
         Ok(())
+    }
+    /// Moves every secret value a service record still holds in plain text
+    /// (saved before references existed) into the Keychain, and rewrites
+    /// the database so no copy of it is left in its free pages or journal.
+    /// Opening the profile calls it; a value that cannot be moved stays, is
+    /// never launched, and is tried again on the next open. Returns how many
+    /// values moved.
+    pub fn migrate_service_secrets(&self) -> Result<usize> {
+        let rows = {
+            let mut query = self
+                .connection
+                .prepare("SELECT workspace_id,name,data FROM services")?;
+            query
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut moved = 0;
+        let mut failed = Vec::new();
+        for (workspace, name, data) in rows {
+            let Ok(mut service) = serde_json::from_str::<Service>(&data) else {
+                continue;
+            };
+            let legacy = service.config.legacy_secret_values();
+            let count = legacy.len();
+            if legacy.is_empty() {
+                continue;
+            }
+            let mut pending = crate::credentials::Pending::default();
+            let mut stored = true;
+            for (key, value) in legacy {
+                let scope = format!("service/{workspace}/{name}/{key}");
+                match pending.store(&scope, &value) {
+                    Ok(reference) => {
+                        service.config.secret_refs.insert(key.clone(), reference);
+                        service
+                            .config
+                            .env
+                            .insert(key, ade_core::services::REDACTED.into());
+                    }
+                    Err(error) => {
+                        failed.push(format!("{workspace}/{name} {key}: {error:#}"));
+                        stored = false;
+                        break;
+                    }
+                }
+            }
+            if !stored {
+                continue;
+            }
+            self.connection.pragma_update(None, "secure_delete", "ON")?;
+            let updated = self.connection.execute(
+                "UPDATE services SET data=?3 WHERE workspace_id=?1 AND name=?2 AND data=?4",
+                params![workspace, name, serde_json::to_string(&service)?, data],
+            )?;
+            if updated == 1 {
+                pending.commit();
+                moved += count;
+            }
+        }
+        if moved > 0 {
+            // Rebuild the file so no earlier revision of a record keeps a
+            // plain-text value in a free page, then empty the journal.
+            self.connection.execute_batch("VACUUM")?;
+            self.connection
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        }
+        self.connection
+            .pragma_update(None, "secure_delete", "OFF")?;
+        if !failed.is_empty() {
+            bail!(
+                "Service secrets stayed in plain text because the Keychain refused them: {}",
+                failed.join("; ")
+            );
+        }
+        Ok(moved)
     }
 }
 
@@ -258,6 +385,7 @@ pub trait ServiceExt {
         root: &str,
         host: &ade_core::contract::placement::ExecutionHost,
         peer_endpoints: &BTreeMap<String, String>,
+        secrets: &BTreeMap<String, String>,
     ) -> Result<crate::terminal_launch::Launch>;
     fn check_ports(&self) -> Result<()>;
 }
@@ -267,6 +395,7 @@ impl ServiceExt for Service {
         root: &str,
         host: &ade_core::contract::placement::ExecutionHost,
         peer_endpoints: &BTreeMap<String, String>,
+        secrets: &BTreeMap<String, String>,
     ) -> Result<crate::terminal_launch::Launch> {
         self.config.directory(root)?;
         ensure!(
@@ -274,7 +403,14 @@ impl ServiceExt for Service {
                 && peer_endpoints.keys().eq(self.config.peers.keys()),
             "Service peer endpoints were not resolved"
         );
+        // Every secret launches with the value its reference resolved to,
+        // never with the placeholder the configuration stores.
+        ensure!(
+            secrets.keys().eq(self.config.secret_env.iter()),
+            "Service secrets were not resolved"
+        );
         let mut env = self.config.env.clone();
+        env.extend(secrets.clone());
         env.extend(
             self.ports
                 .iter()

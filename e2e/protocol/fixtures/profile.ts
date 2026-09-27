@@ -12,6 +12,7 @@ import type { CallRequest, Operation } from '../../../packages/client/dist/index
 import type { Response } from '../../../packages/contracts/dist/index.js'
 import { rpc } from '../../fixtures/daemon'
 import { binaries, scratchEnvironment } from './environment'
+import { ScratchKeychain } from './keychain'
 import { isRunning, type ProcessLedger } from './processes'
 import { mockCalls, providerEnvironment, releaseMock, type MockCall, type MockProvider } from './providers'
 
@@ -36,6 +37,14 @@ export type CliResult = {
 export type ProfileOptions = {
   /** Extra daemon environment, applied over the scratch and provider environment. */
   env?: Record<string, string>
+  /**
+   * Create the scratch keychain the daemon's ADE_KEYCHAIN names. Off by
+   * default: every keychain call goes through the machine's one securityd,
+   * so only specs that store secrets pay for it. Without it, the daemon's
+   * ADE_KEYCHAIN still names a path in the scratch HOME that does not exist,
+   * so a keychain call fails and never reaches the user's keychains.
+   */
+  keychain?: boolean
 }
 
 type ClientModule = typeof import('../../../packages/client/dist/index.js')
@@ -95,6 +104,8 @@ export class ScratchProfile {
   readonly defaultWorkspaceRoot: string
   readonly logsDirectory: string
   readonly env: Record<string, string>
+  /** The scratch keychain inside `home`; the daemon's ADE_KEYCHAIN confines it there. */
+  readonly keychain: ScratchKeychain
   private daemon: ChildProcess | null = null
   private current: Hello | null = null
   private launches = 0
@@ -107,8 +118,10 @@ export class ScratchProfile {
     this.home = join(root, 'home')
     this.defaultWorkspaceRoot = join(root, 'workspace')
     this.logsDirectory = join(root, 'logs')
+    this.keychain = new ScratchKeychain(this.home)
     this.env = scratchEnvironment(this.home, {
       ...providerEnvironment(root),
+      ADE_KEYCHAIN: this.keychain.path,
       ADE_DATA_DIR: this.dataDirectory,
       ADE_SOCKET: this.socket,
       ADE_RUNTIME_SOCKET: this.runtimeSocket,
@@ -131,6 +144,7 @@ export class ScratchProfile {
       await mkdir(directory, { recursive: true, mode: 0o700 })
     }
     await writeFile(join(profile.home, '.gitconfig'), '[user]\n\tname = ADE E2E\n\temail = e2e@example.invalid\n')
+    if (options.keychain && process.platform === 'darwin') await profile.keychain.create()
     await profile.launchDaemon()
     return profile
   }

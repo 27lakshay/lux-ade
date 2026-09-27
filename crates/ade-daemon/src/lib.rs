@@ -8,6 +8,7 @@ pub mod adapters;
 pub mod browser_library;
 pub mod capabilities;
 pub mod checkpoints;
+pub mod credentials;
 pub mod devices;
 pub mod files;
 pub mod history;

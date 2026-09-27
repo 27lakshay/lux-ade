@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod contract;
+pub mod credentials;
 pub mod model;
 pub mod prompt;
 pub mod prompt_context;
