@@ -1,6 +1,10 @@
 //! Stable owner of PTYs, parser state and provider processes. This process never
 //! opens the application database or executes worktree lifecycle requests.
 use super::{service_proxy, terminal_host};
+use ade_core::runtime_protocol::{
+    self as protocol, AgentOp, AgentRequest, Connect, Control, Owner as OwnerCommand, Proxy,
+    terminal::{self, Command as TerminalCommand},
+};
 use ade_runtime::{
     model::{WorkspaceRecord, now_ms},
     runtime::{self, PROTOCOL, read_frame, write_frame},
@@ -47,8 +51,19 @@ struct Host {
     stop: AtomicBool,
 }
 impl Host {
-    fn hello(&self) -> Value {
-        json!({"type":"hello","runtime_protocol":PROTOCOL,"build_id":std::env::var("ADE_RUNTIME_BUILD_ID").ok(),"pid":std::process::id(),"instance_id":self.instance,"data_directory":self.directory})
+    fn hello(&self) -> Result<Value> {
+        let directory = self
+            .directory
+            .to_str()
+            .context("Runtime data directory is not UTF-8")?;
+        Ok(serde_json::to_value(protocol::Hello {
+            tag: Default::default(),
+            runtime_protocol: PROTOCOL.into(),
+            build_id: std::env::var("ADE_RUNTIME_BUILD_ID").ok(),
+            pid: std::process::id(),
+            instance_id: self.instance.clone(),
+            data_directory: directory.into(),
+        })?)
     }
     fn release(&self, token: &str) {
         let mut data = self.data.lock().unwrap();
@@ -66,271 +81,23 @@ impl Host {
         }
     }
     fn command(&self, token: &str, request: &Value) -> Result<Value> {
+        // The state lock is held for the whole command, as before typing.
         let mut data = self.data.lock().unwrap();
         ensure!(
             data.owner.as_ref().is_some_and(|o| o.token == token),
             "Runtime owner changed"
         );
-        match request["op"].as_str().unwrap_or("") {
-            "proxy.ensure" => self.proxies.ensure(
-                request["workspace_id"]
-                    .as_str()
-                    .context("Missing workspace ID")?,
-                request["service_name"]
-                    .as_str()
-                    .context("Missing service name")?,
-                request["port_variable"]
-                    .as_str()
-                    .context("Missing port variable")?,
-                request["service_identity"]
-                    .as_str()
-                    .context("Missing service identity")?,
-                u16::try_from(
-                    request["target_port"]
-                        .as_u64()
-                        .context("Missing target port")?,
-                )?,
-                request["remap"] == true,
-                request["expected_route_identity"].as_str().unwrap_or(""),
-                u16::try_from(request["expected_route_port"].as_u64().unwrap_or(0))?,
-                std::path::Path::new(
-                    request["daemon_socket"]
-                        .as_str()
-                        .context("Missing daemon socket")?,
-                ),
-            ),
-            "proxy.inspect" => self.proxies.inspect(
-                request["workspace_id"]
-                    .as_str()
-                    .context("Missing workspace ID")?,
-                request["service_name"]
-                    .as_str()
-                    .context("Missing service name")?,
-                request["port_variable"]
-                    .as_str()
-                    .context("Missing port variable")?,
-            ),
-            "proxy.retire" => self.proxies.retire(
-                request["workspace_id"]
-                    .as_str()
-                    .context("Missing workspace ID")?,
-                request["service_name"]
-                    .as_str()
-                    .context("Missing service name")?,
-                request["port_variable"]
-                    .as_str()
-                    .context("Missing port variable")?,
-                request["expected_route_id"]
-                    .as_str()
-                    .context("Missing expected route ID")?,
-                request["expected_service_identity"]
-                    .as_str()
-                    .context("Missing expected service identity")?,
-                u16::try_from(
-                    request["expected_target_port"]
-                        .as_u64()
-                        .context("Missing expected target port")?,
-                )?,
-                u16::try_from(
-                    request["expected_proxy_port"]
-                        .as_u64()
-                        .context("Missing expected proxy port")?,
-                )?,
-            ),
-            "proxy.recovery.inspect" => Ok(self.proxies.recovery_inspect()),
-            "proxy.recovery.retry" => self.proxies.recovery_retry(
-                request["workspace_id"]
-                    .as_str()
-                    .context("Missing workspace ID")?,
-                request["service_name"]
-                    .as_str()
-                    .context("Missing service name")?,
-                request["port_variable"]
-                    .as_str()
-                    .context("Missing port variable")?,
-                request["expected_route_id"]
-                    .as_str()
-                    .context("Missing expected route ID")?,
-                request["expected_service_identity"]
-                    .as_str()
-                    .context("Missing expected service identity")?,
-                u16::try_from(
-                    request["expected_target_port"]
-                        .as_u64()
-                        .context("Missing expected target port")?,
-                )?,
-                u16::try_from(
-                    request["expected_proxy_port"]
-                        .as_u64()
-                        .context("Missing expected proxy port")?,
-                )?,
-                std::path::Path::new(
-                    request["daemon_socket"]
-                        .as_str()
-                        .context("Missing daemon socket")?,
-                ),
-            ),
-            "proxy.recovery.reset" => self.proxies.recovery_reset(
-                request["expected_registry_sha256"]
-                    .as_str()
-                    .context("Missing expected registry SHA-256")?,
-            ),
-            "terminal.list" => Ok(
-                json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics()})).collect::<Vec<_>>()}),
-            ),
-            "terminal.tail" => {
-                let workspace = request["workspace_id"]
-                    .as_str()
-                    .context("Missing workspace_id")?;
-                let terminal_id = request["terminal_id"]
-                    .as_str()
-                    .context("Missing terminal_id")?;
-                let limit = request["limit_bytes"]
-                    .as_u64()
-                    .context("Missing tail limit")?;
-                ensure!(
-                    (1..=32768).contains(&limit),
-                    "Tail limit must be 1 to 32768 bytes"
-                );
-                let terminal = data
-                    .terminals
-                    .values()
-                    .find(|terminal| {
-                        terminal.workspace.id == workspace
-                            && terminal.workspace.terminal_id == terminal_id
-                    })
-                    .context("Service terminal is unavailable")?;
-                Ok(terminal.runtime.tail(limit as usize))
-            }
-            "terminal.stop" | "terminal.retire" => {
-                ensure!(
-                    !data.owner.as_ref().unwrap().draining,
-                    "Runtime handoff is in progress"
-                );
-                let key = data
-                    .terminals
-                    .iter()
-                    .find(|(_, terminal)| {
-                        request["workspace_id"] == terminal.workspace.id
-                            && request["terminal_id"] == terminal.workspace.terminal_id
-                    })
-                    .map(|(key, _)| key.clone());
-                if let Some(key) = key {
-                    let terminal = &data.terminals[&key];
-                    if request["op"] == "terminal.stop" {
-                        terminal.runtime.stop()?;
-                    } else {
-                        ensure!(
-                            terminal.runtime.metrics()["shell_running"] != true,
-                            "Stop the shell before retiring its terminal"
-                        );
-                        for (id, stream, admitted) in data.owner.as_ref().unwrap().streams.values()
-                        {
-                            if id == &key {
-                                admitted.store(false, Ordering::Release);
-                                let _ = stream.shutdown(std::net::Shutdown::Both);
-                            }
-                        }
-                        data.terminals.remove(&key);
-                    }
-                }
-                if request["op"] == "terminal.retire" {
-                    let workspace = request["workspace_id"]
-                        .as_str()
-                        .context("Missing workspace_id")?;
-                    let terminal = request["terminal_id"]
-                        .as_str()
-                        .context("Missing terminal_id")?;
-                    ade_runtime::service_logs::remove(&self.directory, workspace, terminal)?;
-                }
-                Ok(json!({"type":"ack"}))
-            }
-            "terminal.ensure" | "terminal.restart" | "terminal.launch" => {
-                ensure!(
-                    !data.owner.as_ref().unwrap().draining,
-                    "Runtime handoff is in progress"
-                );
-                let workspace: WorkspaceRecord =
-                    serde_json::from_value(request["workspace"].clone())?;
-                let launch = if request["op"] == "terminal.launch" {
-                    let launch: ade_runtime::terminal_launch::Launch =
-                        serde_json::from_value(request["launch"].clone())?;
-                    launch.validate()?;
-                    Some(launch)
-                } else {
-                    None
-                };
-                let key = request["terminal_key"]
-                    .as_str()
-                    .unwrap_or(&workspace.id)
-                    .to_owned();
-                if request["op"] == "terminal.restart" {
-                    if let Some(terminal) = data.terminals.get(&key) {
-                        ensure!(
-                            terminal.launch.is_none(),
-                            "Return this Conversation from its terminal before restarting"
-                        );
-                        ensure!(
-                            terminal.runtime.metrics()["shell_running"] != true,
-                            "Exit the current shell before starting a new one"
-                        );
-                    }
-                    data.terminals.remove(&key);
-                    for (id, stream, admitted) in data.owner.as_ref().unwrap().streams.values() {
-                        if id == &key {
-                            admitted.store(false, Ordering::Release);
-                            let _ = stream.shutdown(std::net::Shutdown::Both);
-                        }
-                    }
-                }
-                if let Some(terminal) = data.terminals.get(&key) {
-                    ensure!(
-                        launch.is_none() || terminal.launch == launch,
-                        "Terminal transfer identity changed"
-                    );
-                    ensure!(
-                        terminal.workspace.root == workspace.root
-                            && terminal.workspace.terminal_id == workspace.terminal_id,
-                        "Terminal identity does not match the durable workspace"
-                    );
-                    terminal.runtime.set_session_subscribers(
-                        request["session_subscribers"].as_u64().unwrap_or(0) as usize,
-                    );
-                    return Ok(json!({"type":"ack","metrics":terminal.runtime.metrics()}));
-                }
-                ensure!(
-                    request["existing_only"] != true,
-                    "Managed terminal is unavailable; start its service or return its Conversation to the GUI"
-                );
-                ensure!(
-                    data.terminals.len() < 64,
-                    "Limit of 64 workspace terminals reached"
-                );
-                ensure!(
-                    std::path::Path::new(&workspace.root).is_dir(),
-                    "Workspace directory is unavailable"
-                );
-                let terminal = Terminal {
-                    runtime: Arc::new(terminal_host::spawn_runtime(
-                        &workspace,
-                        launch.as_ref(),
-                        &self.directory,
-                    )?),
-                    launch,
-                    workspace,
-                };
-                let metrics = terminal.runtime.metrics();
-                data.terminals.insert(key, terminal);
-                Ok(json!({"type":"ack","metrics":metrics}))
-            }
-            "owner.check" => {
+        match protocol::decode::<Control>(request).map_err(anyhow::Error::msg)? {
+            Control::Proxy(command) => self.proxy(command),
+            Control::Terminal(command) => self.terminal(&mut data, command),
+            Control::Owner(OwnerCommand::Check) => {
                 ensure!(
                     !data.owner.as_ref().unwrap().draining,
                     "Runtime handoff is still in progress"
                 );
                 Ok(json!({"type":"ack"}))
             }
-            "owner.prepare" => {
+            Control::Owner(OwnerCommand::Prepare) => {
                 data.owner.as_mut().unwrap().draining = true;
                 let handoff = data.handoff.get_or_insert_with(|| Handoff {
                     ticket: uuid::Uuid::new_v4().to_string(),
@@ -340,17 +107,235 @@ impl Host {
                     handoff.expires > now_ms(),
                     "Handoff expired; abort it before retrying"
                 );
-                Ok(
-                    json!({"type":"handoff","instance_id":self.instance,"ticket":handoff.ticket,"expires_at":handoff.expires}),
-                )
+                Ok(serde_json::to_value(protocol::Handoff {
+                    tag: Default::default(),
+                    instance_id: self.instance.clone(),
+                    ticket: handoff.ticket.clone(),
+                    expires_at: handoff.expires,
+                })?)
             }
-            "owner.abort" => {
+            Control::Owner(OwnerCommand::Abort) => {
                 data.handoff = None;
                 data.owner.as_mut().unwrap().draining = false;
                 Ok(json!({"type":"ack"}))
             }
-            _ => anyhow::bail!("Unknown runtime control operation"),
         }
+    }
+    fn proxy(&self, command: Proxy) -> Result<Value> {
+        match command {
+            Proxy::Ensure(ensure) => self.proxies.ensure(
+                &ensure.target.workspace_id,
+                &ensure.target.service_name,
+                &ensure.target.port_variable,
+                &ensure.service_identity,
+                ensure.target_port,
+                ensure.remap,
+                &ensure.expected_route_identity,
+                ensure.expected_route_port,
+                std::path::Path::new(&ensure.daemon_socket),
+            ),
+            Proxy::Inspect(target) => self.proxies.inspect(
+                &target.workspace_id,
+                &target.service_name,
+                &target.port_variable,
+            ),
+            Proxy::Retire(route) => self.proxies.retire(
+                &route.target.workspace_id,
+                &route.target.service_name,
+                &route.target.port_variable,
+                &route.expected_route_id,
+                &route.expected_service_identity,
+                route.expected_target_port,
+                route.expected_proxy_port,
+            ),
+            Proxy::RecoveryInspect => Ok(self.proxies.recovery_inspect()),
+            Proxy::RecoveryRetry(retry) => self.proxies.recovery_retry(
+                &retry.route.target.workspace_id,
+                &retry.route.target.service_name,
+                &retry.route.target.port_variable,
+                &retry.route.expected_route_id,
+                &retry.route.expected_service_identity,
+                retry.route.expected_target_port,
+                retry.route.expected_proxy_port,
+                std::path::Path::new(&retry.daemon_socket),
+            ),
+            Proxy::RecoveryReset {
+                expected_registry_sha256,
+            } => self.proxies.recovery_reset(&expected_registry_sha256),
+        }
+    }
+    fn terminal(&self, data: &mut State, command: TerminalCommand) -> Result<Value> {
+        match command {
+            TerminalCommand::List => Ok(
+                json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics()})).collect::<Vec<_>>()}),
+            ),
+            TerminalCommand::Tail {
+                workspace_id,
+                terminal_id,
+                limit_bytes,
+            } => {
+                ensure!(
+                    (1..=32768).contains(&limit_bytes),
+                    "Tail limit must be 1 to 32768 bytes"
+                );
+                let terminal = data
+                    .terminals
+                    .values()
+                    .find(|terminal| {
+                        terminal.workspace.id == workspace_id
+                            && terminal.workspace.terminal_id == terminal_id
+                    })
+                    .context("Service terminal is unavailable")?;
+                Ok(terminal.runtime.tail(limit_bytes as usize))
+            }
+            TerminalCommand::Stop {
+                workspace_id,
+                terminal_id,
+            } => self.stop_terminal(data, &workspace_id, &terminal_id, false),
+            TerminalCommand::Retire {
+                workspace_id,
+                terminal_id,
+            } => self.stop_terminal(data, &workspace_id, &terminal_id, true),
+            TerminalCommand::Ensure(ensure) => self.start_terminal(data, ensure, None, false),
+            TerminalCommand::Restart(ensure) => self.start_terminal(data, ensure, None, true),
+            TerminalCommand::Launch {
+                workspace,
+                terminal_key,
+                launch,
+                session_subscribers,
+            } => {
+                launch.validate()?;
+                let ensure = terminal::Ensure {
+                    workspace,
+                    terminal_key,
+                    existing_only: false,
+                    session_subscribers,
+                };
+                self.start_terminal(data, ensure, Some(launch), false)
+            }
+        }
+    }
+    /// `terminal.stop` stops the shell; `terminal.retire` removes a stopped
+    /// terminal and its service log.
+    fn stop_terminal(
+        &self,
+        data: &mut State,
+        workspace_id: &str,
+        terminal_id: &str,
+        retire: bool,
+    ) -> Result<Value> {
+        ensure!(
+            !data.owner.as_ref().unwrap().draining,
+            "Runtime handoff is in progress"
+        );
+        let key = data
+            .terminals
+            .iter()
+            .find(|(_, terminal)| {
+                terminal.workspace.id == workspace_id
+                    && terminal.workspace.terminal_id == terminal_id
+            })
+            .map(|(key, _)| key.clone());
+        if let Some(key) = key {
+            let terminal = &data.terminals[&key];
+            if !retire {
+                terminal.runtime.stop()?;
+            } else {
+                ensure!(
+                    terminal.runtime.metrics()["shell_running"] != true,
+                    "Stop the shell before retiring its terminal"
+                );
+                for (id, stream, admitted) in data.owner.as_ref().unwrap().streams.values() {
+                    if id == &key {
+                        admitted.store(false, Ordering::Release);
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                    }
+                }
+                data.terminals.remove(&key);
+            }
+        }
+        if retire {
+            ade_runtime::service_logs::remove(&self.directory, workspace_id, terminal_id)?;
+        }
+        Ok(json!({"type":"ack"}))
+    }
+    /// `terminal.ensure`, `terminal.restart` and `terminal.launch`.
+    fn start_terminal(
+        &self,
+        data: &mut State,
+        ensure: terminal::Ensure,
+        launch: Option<ade_runtime::terminal_launch::Launch>,
+        restart: bool,
+    ) -> Result<Value> {
+        ensure!(
+            !data.owner.as_ref().unwrap().draining,
+            "Runtime handoff is in progress"
+        );
+        let terminal::Ensure {
+            workspace,
+            terminal_key,
+            existing_only,
+            session_subscribers,
+        } = ensure;
+        let key = terminal_key.unwrap_or_else(|| workspace.id.clone());
+        if restart {
+            if let Some(terminal) = data.terminals.get(&key) {
+                ensure!(
+                    terminal.launch.is_none(),
+                    "Return this Conversation from its terminal before restarting"
+                );
+                ensure!(
+                    terminal.runtime.metrics()["shell_running"] != true,
+                    "Exit the current shell before starting a new one"
+                );
+            }
+            data.terminals.remove(&key);
+            for (id, stream, admitted) in data.owner.as_ref().unwrap().streams.values() {
+                if id == &key {
+                    admitted.store(false, Ordering::Release);
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                }
+            }
+        }
+        if let Some(terminal) = data.terminals.get(&key) {
+            ensure!(
+                launch.is_none() || terminal.launch == launch,
+                "Terminal transfer identity changed"
+            );
+            ensure!(
+                terminal.workspace.root == workspace.root
+                    && terminal.workspace.terminal_id == workspace.terminal_id,
+                "Terminal identity does not match the durable workspace"
+            );
+            terminal
+                .runtime
+                .set_session_subscribers(session_subscribers);
+            return Ok(json!({"type":"ack","metrics":terminal.runtime.metrics()}));
+        }
+        ensure!(
+            !existing_only,
+            "Managed terminal is unavailable; start its service or return its Conversation to the GUI"
+        );
+        ensure!(
+            data.terminals.len() < 64,
+            "Limit of 64 workspace terminals reached"
+        );
+        ensure!(
+            std::path::Path::new(&workspace.root).is_dir(),
+            "Workspace directory is unavailable"
+        );
+        let terminal = Terminal {
+            runtime: Arc::new(terminal_host::spawn_runtime(
+                &workspace,
+                launch.as_ref(),
+                &self.directory,
+            )?),
+            launch,
+            workspace,
+        };
+        let metrics = terminal.runtime.metrics();
+        data.terminals.insert(key, terminal);
+        Ok(json!({"type":"ack","metrics":metrics}))
     }
 }
 struct OwnerGuard {
@@ -376,86 +361,85 @@ impl Drop for StreamGuard {
     }
 }
 fn agent_command(host: &Host, request: &Value) -> Result<Value> {
-    use ade_core::contract::agents::{
-        AgentAccountInspectRequest, AgentAccountInspection, AgentList, AgentListRequest, AgentRun,
-    };
+    use ade_core::contract::agents::{AgentAccountInspection, AgentList, AgentRun};
     use ade_runtime::agent_runtime::{Run, Spec};
-    let op = request["op"].as_str().unwrap_or("");
+    let AgentRequest { token, op } = protocol::decode(request).map_err(anyhow::Error::msg)?;
     let (run, admission) = {
         let mut data = host.data.lock().unwrap();
         let owner = data.owner.as_ref().context("No runtime owner")?;
-        if request["token"] != owner.token || owner.draining {
+        if token != owner.token || owner.draining {
             return Err(runtime::OwnerFenced.into());
         }
-        if op == "agent.account_inspect" {
-            let inspect: AgentAccountInspectRequest = serde_json::from_value(request.clone())?;
-            let account: ade_core::model::AccountExecution =
-                serde_json::from_value(inspect.account)?;
-            drop(data);
-            let inspection = if account.provider == "omp" {
-                ade_runtime::provider::omp_probe::inspect(&account)
-            } else if account.provider == "codex" {
-                ade_runtime::provider::codex_probe::inspect(&account)
-            } else {
-                ade_runtime::provider::account_probe::inspect(&account)
-            };
-            return Ok(serde_json::to_value(AgentAccountInspection {
-                state: inspection.state,
-                reason: inspection.reason,
-                version: inspection.version,
-                identity: inspection.identity,
-            })?);
-        }
-        if op == "agent.list" {
-            let _: AgentListRequest = serde_json::from_value(request.clone())?;
-            let agents: Vec<_> = data.agents.values().cloned().collect();
-            drop(data);
-            let agents = agents
-                .iter()
-                .map(|r| serde_json::from_value::<AgentRun>(r.describe()))
-                .collect::<Result<_, _>>()?;
-            return Ok(serde_json::to_value(AgentList {
-                tag: Default::default(),
-                agents,
-            })?);
-        }
-        if op == "agent.create" {
-            let spec: Spec = serde_json::from_value(request["spec"].clone())?;
-            ensure!(
-                !spec.run.is_empty() && !spec.conversation.is_empty(),
-                "Missing Agent identity"
-            );
-            if let Some(run) = data.agents.get(&spec.run) {
-                ensure!(
-                    serde_json::to_value(&run.spec)? == request["spec"],
-                    "Agent identity changed"
-                );
-            } else {
-                ensure!(
-                    data.agents.len() < 16,
-                    "Limit of 16 connected Agents reached"
-                );
-                ensure!(
-                    !data
-                        .agents
-                        .values()
-                        .any(|r| r.spec.conversation == spec.conversation),
-                    "Conversation already has a live Agent"
-                );
-                let run = Run::spawn(spec)?;
-                if ade_core::diagnostics::valid_run_id(&run.spec.run) {
-                    let run_id = run.spec.run.as_str();
-                    let pid = run.describe()["pid"].as_u64().unwrap_or(0);
-                    tracing::info!(target: "ade", event = "agent_run_started", run_id, pid);
-                }
-                data.agents.insert(run.spec.run.clone(), run);
+        match &op {
+            AgentOp::AccountInspect { account } => {
+                let account: ade_core::model::AccountExecution =
+                    serde_json::from_value(account.clone())?;
+                drop(data);
+                let inspection = if account.provider == "omp" {
+                    ade_runtime::provider::omp_probe::inspect(&account)
+                } else if account.provider == "codex" {
+                    ade_runtime::provider::codex_probe::inspect(&account)
+                } else {
+                    ade_runtime::provider::account_probe::inspect(&account)
+                };
+                return Ok(serde_json::to_value(AgentAccountInspection {
+                    state: inspection.state,
+                    reason: inspection.reason,
+                    version: inspection.version,
+                    identity: inspection.identity,
+                })?);
             }
-            return Ok(json!({"type":"ack"}));
+            AgentOp::List => {
+                let agents: Vec<_> = data.agents.values().cloned().collect();
+                drop(data);
+                let agents = agents
+                    .iter()
+                    .map(|r| serde_json::from_value::<AgentRun>(r.describe()))
+                    .collect::<Result<_, _>>()?;
+                return Ok(serde_json::to_value(AgentList {
+                    tag: Default::default(),
+                    agents,
+                })?);
+            }
+            AgentOp::Create { spec: raw } => {
+                let spec: Spec = serde_json::from_value(raw.clone())?;
+                ensure!(
+                    !spec.run.is_empty() && !spec.conversation.is_empty(),
+                    "Missing Agent identity"
+                );
+                if let Some(run) = data.agents.get(&spec.run) {
+                    ensure!(
+                        serde_json::to_value(&run.spec)? == *raw,
+                        "Agent identity changed"
+                    );
+                } else {
+                    ensure!(
+                        data.agents.len() < 16,
+                        "Limit of 16 connected Agents reached"
+                    );
+                    ensure!(
+                        !data
+                            .agents
+                            .values()
+                            .any(|r| r.spec.conversation == spec.conversation),
+                        "Conversation already has a live Agent"
+                    );
+                    let run = Run::spawn(spec)?;
+                    if ade_core::diagnostics::valid_run_id(&run.spec.run) {
+                        let run_id = run.spec.run.as_str();
+                        let pid = run.describe()["pid"].as_u64().unwrap_or(0);
+                        tracing::info!(target: "ade", event = "agent_run_started", run_id, pid);
+                    }
+                    data.agents.insert(run.spec.run.clone(), run);
+                }
+                return Ok(json!({"type":"ack"}));
+            }
+            _ => (),
         }
-        let id = request["run"].as_str().context("Missing Agent run")?;
+        let id = op.run().context("Missing Agent run")?;
         let run = data.agents.get(id).context("Unknown Agent run")?.clone();
-        let admission = if op == "agent.command" {
-            Some(run.admit(&request["command"])?)
+        let admission = if let AgentOp::Command { command, .. } = &op {
+            Some(run.admit(command)?)
         } else {
             None
         };
@@ -463,11 +447,11 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
     };
     // Accepted operations belong to the runtime and finish even if their caller dies.
     match op {
-        "agent.command" => run.perform(admission.context("Missing admitted command")?),
-        "agent.connected" => run.connected(),
-        "agent.events" => run.events(request["after"].as_u64().context("Missing cursor")?),
-        "agent.ack" => run.acknowledge(request["cursor"].as_u64().context("Missing cursor")?),
-        "agent.stop" => {
+        AgentOp::Command { .. } => run.perform(admission.context("Missing admitted command")?),
+        AgentOp::Connected { .. } => run.connected(),
+        AgentOp::Events { after, .. } => run.events(after),
+        AgentOp::Ack { cursor, .. } => run.acknowledge(cursor),
+        AgentOp::Stop { .. } => {
             // Keep the reservation while shutdown is pending or uncertain.
             run.stop_confirmed()?;
             let mut data = host.data.lock().unwrap();
@@ -480,7 +464,9 @@ fn agent_command(host: &Host, request: &Value) -> Result<Value> {
             }
             Ok(json!({"type":"ack"}))
         }
-        _ => anyhow::bail!("Unknown Agent operation"),
+        AgentOp::AccountInspect { .. } | AgentOp::List | AgentOp::Create { .. } => {
+            unreachable!("answered above")
+        }
     }
 }
 fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
@@ -492,20 +478,27 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
         .as_str()
         .is_some_and(|op| op.starts_with("agent."))
     {
-        let value = agent_command(&host, &request)
-            .unwrap_or_else(|e| json!({"type":"error","code":if e.is::<runtime::OwnerFenced>() { Some("owner_fenced") } else { None },"message":e.to_string()}));
+        let value = agent_command(&host, &request).unwrap_or_else(|e| {
+            let fenced = e.is::<runtime::OwnerFenced>();
+            serde_json::to_value(protocol::AgentError {
+                tag: Default::default(),
+                code: fenced.then(|| protocol::OWNER_FENCED.to_owned()),
+                message: e.to_string(),
+            })
+            .expect("agent errors serialize")
+        });
         return ade_runtime::agent_runtime::write(&mut stream, &value);
     }
     ensure!(
         request.to_string().len() < runtime::MAX_CONTROL as usize,
         "Runtime control frame too large"
     );
-    match request["op"].as_str().unwrap_or("") {
-        "hello" => write_frame(&mut stream, &host.hello()),
-        "runtime.stop" => {
+    match protocol::decode::<Connect>(&request).map_err(anyhow::Error::msg)? {
+        Connect::Hello => write_frame(&mut stream, &host.hello()?),
+        Connect::Stop(stop) => {
             let data = host.data.lock().unwrap();
             ensure!(
-                request["instance_id"] == host.instance,
+                stop.instance_id == host.instance,
                 "Runtime identity changed"
             );
             ensure!(
@@ -513,7 +506,7 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
                 "Disconnect the application daemon before stopping its runtime"
             );
             ensure!(
-                request["stop_active"] == true
+                stop.stop_active
                     || (data.agents.is_empty()
                         && !data
                             .terminals
@@ -526,20 +519,17 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
             let _ = UnixStream::connect(runtime::socket_path(&host.directory));
             result
         }
-        "owner.claim" => {
+        Connect::Claim(claim) => {
             ensure!(
-                request["runtime_protocol"] == PROTOCOL,
+                claim.runtime_protocol == PROTOCOL,
                 "Incompatible runtime protocol"
             );
             ensure!(
-                request["instance_id"] == host.instance,
+                claim.instance_id == host.instance,
                 "Runtime identity changed"
             );
-            let token = request["token"]
-                .as_str()
-                .filter(|s| s.len() == 36)
-                .context("Invalid owner token")?
-                .to_owned();
+            ensure!(claim.token.len() == 36, "Invalid owner token");
+            let token = claim.token;
             {
                 let mut data = host.data.lock().unwrap();
                 ensure!(!host.stop.load(Ordering::Acquire), "Runtime is stopping");
@@ -551,7 +541,7 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
                     && handoff.expires > now_ms()
                 {
                     ensure!(
-                        request["ticket"].as_str() == Some(&handoff.ticket),
+                        claim.ticket.as_deref() == Some(handoff.ticket.as_str()),
                         "A valid handoff ticket is required"
                     );
                 }
@@ -571,17 +561,15 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
             reader.get_mut().set_read_timeout(None)?;
             loop {
                 let request = read_frame(&mut reader)?;
-                let value = host
-                    .command(&token, &request)
-                    .unwrap_or_else(|e| json!({"type":"error","message":e.to_string()}));
+                let value = host.command(&token, &request).unwrap_or_else(|e| {
+                    serde_json::to_value(protocol::Error::new(e.to_string()))
+                        .expect("errors serialize")
+                });
                 write_frame(&mut stream, &value)?;
             }
         }
-        "terminal.connect" => {
-            let token = request["token"]
-                .as_str()
-                .context("Missing owner token")?
-                .to_owned();
+        Connect::TerminalConnect(connect) => {
+            let token = connect.token;
             let id = uuid::Uuid::new_v4().to_string();
             let admitted = Arc::new(AtomicBool::new(true));
             let terminal = {
@@ -595,9 +583,7 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
                     "Terminal connection belongs to a stale or draining owner"
                 );
                 ensure!(owner.streams.len() < 256, "Too many terminal connections");
-                let workspace = request["workspace_id"]
-                    .as_str()
-                    .context("Missing workspace ID")?;
+                let workspace = connect.workspace_id.as_str();
                 let terminal = data
                     .terminals
                     .get(workspace)
@@ -617,7 +603,6 @@ fn connection(mut stream: UnixStream, host: Arc<Host>) -> Result<()> {
             terminal.serve(stream, reader, first, admitted)?;
             Ok(())
         }
-        _ => anyhow::bail!("Unknown runtime operation"),
     }
 }
 pub(super) fn serve(directory: PathBuf) -> Result<()> {
@@ -655,7 +640,8 @@ pub(super) fn serve(directory: PathBuf) -> Result<()> {
                     {
                         let _ = write_frame(
                             stream,
-                            &json!({"type":"error","message":error.to_string()}),
+                            &serde_json::to_value(protocol::Error::new(error.to_string()))
+                                .expect("errors serialize"),
                         );
                     }
                 });

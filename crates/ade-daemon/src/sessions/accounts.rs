@@ -146,7 +146,9 @@ impl Sessions {
             omp_identity: account.omp_identity.clone(),
         };
         Ok(serde_json::from_value(self.runtime.agent(
-            json!({"op":"agent.account_inspect","account":context}),
+            AgentOp::AccountInspect {
+                account: serde_json::to_value(context)?,
+            },
         )?)?)
     }
     pub(super) fn ensure_account_current(

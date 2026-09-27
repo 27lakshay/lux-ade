@@ -6,6 +6,7 @@ pub mod model;
 pub mod prompt;
 pub mod protocol;
 pub mod provider;
+pub mod runtime_protocol;
 pub mod transcript;
 
 pub mod scripts;

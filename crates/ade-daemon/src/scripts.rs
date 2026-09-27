@@ -1,6 +1,7 @@
 //! Workspace package scripts run as supervised PTYs and retain bounded output in
 //! the runtime's existing service spool. The public run ID is also the runtime
 //! terminal key, so a daemon handoff can inspect and stop the same process.
+use ade_core::runtime_protocol::terminal::Command as TerminalCommand;
 use ade_core::{
     contract::scripts::{
         OutputCoverage, OutputCoverageReason, OutputCoverageStatus, ScriptInspectRequest,
@@ -137,7 +138,7 @@ pub fn command(
         }
         "script.runs" => {
             let _: ScriptRunsRequest = decode(request, &[])?;
-            let catalogue = runtime.command(json!({"op":"terminal.list"}))?;
+            let catalogue = runtime.command(TerminalCommand::List)?;
             let runs = catalogue["terminals"]
                 .as_array()
                 .context("Invalid terminal catalogue")?
@@ -208,15 +209,18 @@ pub fn command(
             let mut workspace = workspace;
             workspace.terminal_id = run_id.clone();
             register(&run_id)?;
-            let result = match runtime.command(json!({"op":"terminal.launch","workspace":workspace,
-                "terminal_key":run_id,"launch":launch,"session_subscribers":subscribers}))
-            {
+            let result = match runtime.command(TerminalCommand::Launch {
+                workspace: workspace.clone(),
+                terminal_key: Some(run_id.clone()),
+                launch,
+                session_subscribers: subscribers,
+            }) {
                 Ok(result) => result,
                 Err(error) => {
                     // A failed response is not proof the runtime did not admit
                     // the launch. Preserve any observed run for recovery.
                     let observed_absent = runtime
-                        .command(json!({"op":"terminal.list"}))
+                        .command(TerminalCommand::List)
                         .ok()
                         .and_then(|catalogue| catalogue["terminals"].as_array().cloned())
                         .is_some_and(|items| {
@@ -252,14 +256,17 @@ pub fn command(
                 (1..=32768).contains(&limit),
                 "Tail limit must be 1 to 32768 bytes"
             );
-            let catalogue = runtime.command(json!({"op":"terminal.list"}))?;
+            let catalogue = runtime.command(TerminalCommand::List)?;
             let item = terminal(&catalogue, &workspace.id, run_id)?;
             let run = run_state(item, run_id);
             let transfer_id = item["metrics"]["transfer_id"]
                 .as_str()
                 .context("Script transfer identity is unavailable")?;
-            let tail = runtime.command(json!({"op":"terminal.tail","workspace_id":workspace.id,
-                "terminal_id":run_id,"limit_bytes":limit}))?;
+            let tail = runtime.command(TerminalCommand::Tail {
+                workspace_id: workspace.id.clone(),
+                terminal_id: run_id.to_string(),
+                limit_bytes: limit,
+            })?;
             ensure!(
                 tail["transfer_id"] == transfer_id,
                 "Script run changed during inspection"
@@ -288,7 +295,7 @@ pub fn command(
                 workspace.extra_terminals.iter().any(|id| id == run_id),
                 "Script run is unavailable"
             );
-            let catalogue = runtime.command(json!({"op":"terminal.list"}))?;
+            let catalogue = runtime.command(TerminalCommand::List)?;
             let item = terminal(&catalogue, &workspace.id, run_id)?;
             let transfer_id = item["metrics"]["transfer_id"]
                 .as_str()
@@ -298,12 +305,14 @@ pub fn command(
                 return script_run(&workspace.id, run_state(item, run_id), None);
             }
             if item["metrics"]["shell_running"] == true {
-                runtime.command(json!({"op":"terminal.stop","workspace_id":workspace.id,
-                    "terminal_id":run_id}))?;
+                runtime.command(TerminalCommand::Stop {
+                    workspace_id: workspace.id.clone(),
+                    terminal_id: run_id.to_string(),
+                })?;
             }
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                let catalogue = runtime.command(json!({"op":"terminal.list"}))?;
+                let catalogue = runtime.command(TerminalCommand::List)?;
                 let item = terminal(&catalogue, &workspace.id, run_id)?;
                 ensure!(
                     item["metrics"]["transfer_id"] == transfer_id,
@@ -328,7 +337,7 @@ pub fn command(
                 workspace.extra_terminals.iter().any(|id| id == run_id),
                 "Script run is unavailable"
             );
-            let catalogue = runtime.command(json!({"op":"terminal.list"}))?;
+            let catalogue = runtime.command(TerminalCommand::List)?;
             let item = catalogue["terminals"]
                 .as_array()
                 .context("Invalid terminal catalogue")?
@@ -345,8 +354,10 @@ pub fn command(
                 // The runtime owns the PTY and spool. Keep the durable handle
                 // until that owner confirms cleanup. A later retry or daemon
                 // restore can finish the metadata removal after a crash.
-                runtime.command(json!({"op":"terminal.retire","workspace_id":workspace.id,
-                    "terminal_id":run_id}))?;
+                runtime.command(TerminalCommand::Retire {
+                    workspace_id: workspace.id.clone(),
+                    terminal_id: run_id.to_string(),
+                })?;
                 pause_retirement_for_e2e(run_id)?;
             }
             retire(run_id)?;

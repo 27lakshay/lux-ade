@@ -17,6 +17,10 @@ use ade_core::contract::services::{
 use ade_core::contract::terminals::{
     TerminalRestartRequest, TerminalRetireRequest, TerminalStopRequest, runtime as terminal_runtime,
 };
+use ade_core::runtime_protocol::{
+    AgentOp, Proxy, ProxyEnsure, ProxyRecoveryRetry, ProxyRoute, ProxyTarget,
+    terminal::Command as TerminalCommand,
+};
 use ade_daemon::{
     receipts::{self, Admission, Status},
     runtime::{self, Supervisor},
@@ -102,6 +106,11 @@ fn runtime_reply<T: serde::de::DeserializeOwned + serde::Serialize>(
     let typed: T = serde_json::from_value(reply)
         .map_err(|error| anyhow::anyhow!("Runtime proxy reply failed its contract: {error}"))?;
     Ok(serde_json::to_value(typed)?)
+}
+
+/// Narrows a port the daemon already bounded to the runtime protocol's `u16`.
+fn port(value: u64) -> anyhow::Result<u16> {
+    u16::try_from(value).map_err(|_| anyhow::anyhow!("Port {value} is out of range"))
 }
 
 /// Checks the reviewed route a retire or retry must still match.
@@ -927,6 +936,15 @@ impl Host {
 
     /// Reads the workspace's service list after checking that the service has
     /// the port variable.
+    /// This daemon's socket, which a stable proxy dials for its current target.
+    fn daemon_socket(&self) -> anyhow::Result<String> {
+        Ok(self
+            .socket
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Daemon socket path is not UTF-8"))?
+            .into())
+    }
+
     fn proxy_service(&self, workspace: &str, name: &str, variable: &str) -> anyhow::Result<Value> {
         self.sessions.ensure_workspace_bound(workspace)?;
         let listed = self
@@ -1013,14 +1031,19 @@ impl Host {
             }
             None => ("", 0),
         };
-        runtime_reply::<ServiceProxy>(self.runtime.command(
-            json!({"op":"proxy.ensure","workspace_id":workspace,
-            "service_name":name,"port_variable":variable,"service_identity":identity,
-            "target_port":target_port,"remap":remap,
-            "expected_route_identity":expected_route_identity,
-            "expected_route_port":expected_route_port,
-            "daemon_socket":self.socket}),
-        )?)
+        runtime_reply::<ServiceProxy>(self.runtime.command(Proxy::Ensure(ProxyEnsure {
+            target: ProxyTarget {
+                workspace_id: workspace,
+                service_name: name,
+                port_variable: variable,
+            },
+            service_identity: identity.into(),
+            target_port: port(target_port)?,
+            remap,
+            expected_route_identity: expected_route_identity.into(),
+            expected_route_port: port(expected_route_port)?,
+            daemon_socket: self.daemon_socket()?,
+        }))?)
     }
 
     fn proxy_inspect(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1028,10 +1051,11 @@ impl Host {
             decode_request(request, &[SERVICE_NAME, PORT_VARIABLE])?;
         self.sessions
             .ensure_workspace_bound(&inspect.workspace_id)?;
-        runtime_reply::<ServiceProxy>(self.runtime.command(
-            json!({"op":"proxy.inspect","workspace_id":inspect.workspace_id,
-            "service_name":inspect.name,"port_variable":inspect.port_variable}),
-        )?)
+        runtime_reply::<ServiceProxy>(self.runtime.command(Proxy::Inspect(ProxyTarget {
+            workspace_id: inspect.workspace_id,
+            service_name: inspect.name,
+            port_variable: inspect.port_variable,
+        }))?)
     }
 
     fn proxy_retire(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1043,20 +1067,22 @@ impl Host {
             retire.expected_target_port,
             retire.expected_proxy_port,
         )?;
-        runtime_reply::<ServiceProxyRetired>(self.runtime.command(
-            json!({"op":"proxy.retire","workspace_id":retire.workspace_id,
-            "service_name":retire.name,"port_variable":retire.port_variable,"expected_route_id":route_id,
-            "expected_service_identity":identity,"expected_target_port":target_port,
-            "expected_proxy_port":proxy_port}),
-        )?)
+        runtime_reply::<ServiceProxyRetired>(self.runtime.command(Proxy::Retire(ProxyRoute {
+            target: ProxyTarget {
+                workspace_id: retire.workspace_id,
+                service_name: retire.name,
+                port_variable: retire.port_variable,
+            },
+            expected_route_id: route_id.into(),
+            expected_service_identity: identity.into(),
+            expected_target_port: port(target_port)?,
+            expected_proxy_port: port(proxy_port)?,
+        }))?)
     }
 
     fn proxy_recovery_inspect(&self, request: &Value) -> anyhow::Result<Value> {
         let ServiceProxyRecoveryInspectRequest {} = decode_request(request, &[])?;
-        runtime_reply::<ServiceProxyRecovery>(
-            self.runtime
-                .command(json!({"op":"proxy.recovery.inspect"}))?,
-        )
+        runtime_reply::<ServiceProxyRecovery>(self.runtime.command(Proxy::RecoveryInspect)?)
     }
 
     fn proxy_recovery_retry(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1068,12 +1094,23 @@ impl Host {
             retry.expected_target_port,
             retry.expected_proxy_port,
         )?;
-        runtime_reply::<ServiceProxy>(self.runtime.command(
-            json!({"op":"proxy.recovery.retry","workspace_id":retry.workspace_id,
-            "service_name":retry.name,"port_variable":retry.port_variable,"expected_route_id":route_id,
-            "expected_service_identity":identity,"expected_target_port":target_port,
-            "expected_proxy_port":proxy_port,"daemon_socket":self.socket}),
-        )?)
+        let route = ProxyRoute {
+            target: ProxyTarget {
+                workspace_id: retry.workspace_id,
+                service_name: retry.name,
+                port_variable: retry.port_variable,
+            },
+            expected_route_id: route_id.into(),
+            expected_service_identity: identity.into(),
+            expected_target_port: port(target_port)?,
+            expected_proxy_port: port(proxy_port)?,
+        };
+        runtime_reply::<ServiceProxy>(self.runtime.command(Proxy::RecoveryRetry(
+            ProxyRecoveryRetry {
+                route,
+                daemon_socket: self.daemon_socket()?,
+            },
+        ))?)
     }
 
     fn proxy_recovery_reset(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1084,10 +1121,9 @@ impl Host {
                 "Missing expected registry SHA-256",
             )],
         )?;
-        runtime_reply::<ServiceProxyRecoveryReset>(
-            self.runtime.command(json!({"op":"proxy.recovery.reset",
-            "expected_registry_sha256":reset.expected_registry_sha256}))?,
-        )
+        runtime_reply::<ServiceProxyRecoveryReset>(self.runtime.command(Proxy::RecoveryReset {
+            expected_registry_sha256: reset.expected_registry_sha256,
+        })?)
     }
 
     fn proxy_target(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1198,13 +1234,10 @@ impl Host {
                 if stored.terminal_id != workspace.terminal_id
                     && !stored.extra_terminals.contains(&workspace.terminal_id)
                 {
-                    self.runtime.command(
-                        terminal_runtime::Command::Retire {
-                            workspace_id: workspace.id,
-                            terminal_id: workspace.terminal_id,
-                        }
-                        .to_value(),
-                    )?;
+                    self.runtime.command(terminal_runtime::Command::Retire {
+                        workspace_id: workspace.id,
+                        terminal_id: workspace.terminal_id,
+                    })?;
                 }
                 continue;
             }
@@ -1264,7 +1297,7 @@ impl Host {
         self.sessions.ensure_workspace_bound(id)?;
         let ensure = terminal_runtime::Ensure {
             workspace,
-            terminal_key: key,
+            terminal_key: Some(key),
             existing_only: reserved,
             session_subscribers: self.sessions.subscribers.load(Ordering::Relaxed),
         };
@@ -1274,7 +1307,7 @@ impl Host {
             terminal_runtime::Command::Ensure(ensure)
         };
         let result: terminal_runtime::Ensured =
-            serde_json::from_value(self.runtime.command(command.to_value())?)?;
+            serde_json::from_value(self.runtime.command(command)?)?;
         if result.metrics["shell_running"] == true
             && let Some(lease) = lease
         {
@@ -1284,8 +1317,8 @@ impl Host {
     }
     fn status(&self, request: &Value) -> anyhow::Result<Value> {
         let RuntimeStatusRequest {} = decode(request)?;
-        let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
-        let mut agents = self.runtime.agent(json!({"op":"agent.list"}))?;
+        let terminals = self.runtime.command(TerminalCommand::List)?;
+        let mut agents = self.runtime.agent(AgentOp::List)?;
         if let Some(runs) = agents["agents"].as_array_mut() {
             for run in runs {
                 run.as_object_mut().unwrap().remove("commands");
@@ -1331,9 +1364,7 @@ impl Host {
     }
     /// The runtime's terminal catalogue.
     fn runtime_terminals(&self) -> anyhow::Result<Vec<terminal_runtime::Terminal>> {
-        let state = self
-            .runtime
-            .command(terminal_runtime::Command::List.to_value())?;
+        let state = self.runtime.command(terminal_runtime::Command::List)?;
         let state: terminal_runtime::Terminals = serde_json::from_value(state)
             .map_err(|_| anyhow::anyhow!("Invalid terminal catalogue"))?;
         Ok(state.terminals)
@@ -1375,13 +1406,10 @@ impl Host {
                 stored.terminal_id == terminal || stored.extra_terminals.contains(&terminal),
                 "Unknown workspace terminal"
             );
-            self.runtime.command(
-                terminal_runtime::Command::Stop {
-                    workspace_id: workspace,
-                    terminal_id: terminal,
-                }
-                .to_value(),
-            )?;
+            self.runtime.command(terminal_runtime::Command::Stop {
+                workspace_id: workspace,
+                terminal_id: terminal,
+            })?;
             return Ok(serde_json::to_value(Ack::default())?);
         }
         anyhow::ensure!(
@@ -1399,13 +1427,10 @@ impl Host {
         // Commit retirement before releasing runtime storage. If the daemon
         // dies between these steps, refresh_leases reaps the exited orphan.
         self.sessions.retire_terminal(&workspace, &terminal)?;
-        self.runtime.command(
-            terminal_runtime::Command::Retire {
-                workspace_id: workspace,
-                terminal_id: terminal,
-            }
-            .to_value(),
-        )?;
+        self.runtime.command(terminal_runtime::Command::Retire {
+            workspace_id: workspace,
+            terminal_id: terminal,
+        })?;
         Ok(serde_json::to_value(Ack::default())?)
     }
     fn prepare_restart(&self, request: &Value) -> anyhow::Result<Value> {
