@@ -181,6 +181,19 @@ pub struct ContextNodeReply {
     pub node: ContextNode,
     /// False when an attachment was reclaimed; attach the context again.
     pub available: bool,
+    /// Each live attachment in order. A text attachment carries the exact
+    /// document the provider receives after its plan's `text_prefix`.
+    #[serde(default)]
+    pub previews: Vec<ContextPreview>,
+}
+
+/// What one node attachment holds, for a preview before sending.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ContextPreview {
+    pub attachment_id: String,
+    pub media_type: String,
+    /// The UTF-8 document of a `text/plain` attachment; null for an image.
+    pub text: Option<String>,
 }
 
 /// How one attachment reaches a provider.

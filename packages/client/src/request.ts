@@ -70,7 +70,8 @@ export function requestDaemon(
     return Promise.reject(new DaemonRequestError('invalid_request', 'A profile socket and valid operation are required.'))
   }
   const request = JSON.stringify({ ...fields, op })
-  if (Buffer.byteLength(request) > MAX_REQUEST_BYTES && op !== 'attachment.put') {
+  // Attachments and client-supplied context text are the only large requests.
+  if (Buffer.byteLength(request) > MAX_REQUEST_BYTES && op !== 'attachment.put' && op !== 'context.capture') {
     return Promise.reject(new DaemonRequestError('invalid_request', 'Request exceeds 128 KiB.'))
   }
   const timeoutMs = options.timeoutMs ?? 30_000

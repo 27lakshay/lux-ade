@@ -248,6 +248,10 @@ pub struct DraftGetRequest {
 pub struct DraftSaveRequest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Context nodes the window attached, such as `context.capture` nodes.
+    /// They are kept with this revision and restored after a crash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_nodes: Vec<DraftContextNode>,
     pub text: String,
     pub revision: i64,
     pub conversation_id: String,
@@ -435,6 +439,8 @@ struct DraftSchema {
     revision: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<Attachment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    context_nodes: Vec<DraftContextNode>,
 }
 
 /// The reply to `draft.get`, `draft.save`, `draft.send.complete` and `draft.send.abort`.
@@ -1034,6 +1040,7 @@ mod tests {
                 tag: Default::default(),
                 outcome: DraftRestoreOutcome::Conflict,
                 draft: Draft {
+                    context_nodes: Vec::new(),
                     text: "newer".into(),
                     revision: 7,
                     attachments: vec![],
@@ -1137,6 +1144,7 @@ mod tests {
         let full = DraftReply {
             tag: DraftTag::Tag,
             draft: Draft {
+                context_nodes: Vec::new(),
                 text: "hi".into(),
                 revision: 3,
                 attachments: vec![attachment()],
@@ -1271,6 +1279,7 @@ mod tests {
                 conversation_id: "c".into(),
                 resolution: SendResolution::Completed,
                 draft: Draft {
+                    context_nodes: Vec::new(),
                     text: String::new(),
                     revision: 3,
                     attachments: vec![],

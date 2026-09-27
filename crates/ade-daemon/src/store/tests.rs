@@ -83,6 +83,7 @@ fn attachment_migration_preserves_v5_drafts_and_queued_prompts() {
             &c.id,
             "window",
             &Draft {
+                context_nodes: Vec::new(),
                 text: "Draft before upgrade".into(),
                 revision: 4,
                 attachments: vec![],
@@ -110,6 +111,7 @@ fn attachment_migration_preserves_v5_drafts_and_queued_prompts() {
             &c.id,
             "window",
             &Draft {
+                context_nodes: Vec::new(),
                 text: draft.text,
                 revision: 5,
                 attachments: vec![attachment.clone()],
@@ -139,6 +141,7 @@ fn queue_migration_preserves_drafts_and_conversations() {
             &c.id,
             "window",
             &Draft {
+                context_nodes: Vec::new(),
                 attachments: vec![],
                 text: "Keep".into(),
                 revision: 1,
@@ -165,6 +168,7 @@ fn drafts_are_scoped_durable_and_ignore_late_writes() {
             &first.id,
             "window-a",
             &Draft {
+                context_nodes: Vec::new(),
                 attachments: vec![],
                 text: "First draft".into(),
                 revision: 2,
@@ -176,6 +180,7 @@ fn drafts_are_scoped_durable_and_ignore_late_writes() {
             &first.id,
             "window-a",
             &Draft {
+                context_nodes: Vec::new(),
                 attachments: vec![],
                 text: "late stale draft".into(),
                 revision: 1,
@@ -187,6 +192,7 @@ fn drafts_are_scoped_durable_and_ignore_late_writes() {
             &first.id,
             "window-b",
             &Draft {
+                context_nodes: Vec::new(),
                 attachments: vec![],
                 text: "Independent draft".into(),
                 revision: 1,
@@ -209,6 +215,7 @@ fn drafts_are_scoped_durable_and_ignore_late_writes() {
             &first.id,
             "window-a",
             &Draft {
+                context_nodes: Vec::new(),
                 attachments: vec![],
                 text: String::new(),
                 revision: 3,
@@ -220,6 +227,7 @@ fn drafts_are_scoped_durable_and_ignore_late_writes() {
             &first.id,
             "window-a",
             &Draft {
+                context_nodes: Vec::new(),
                 attachments: vec![],
                 text: "stale retry".into(),
                 revision: 2,
@@ -246,6 +254,7 @@ fn pristine_draft_is_read_only_and_revisioned_empty_save_still_clears() {
             &conversation.id,
             "window",
             &Draft {
+                context_nodes: Vec::new(),
                 text: "saved text".into(),
                 revision: 1,
                 attachments: vec![],
@@ -266,6 +275,7 @@ fn pristine_draft_is_read_only_and_revisioned_empty_save_still_clears() {
             &conversation.id,
             "window",
             &Draft {
+                context_nodes: Vec::new(),
                 text: String::new(),
                 revision: 2,
                 attachments: vec![],
@@ -282,6 +292,7 @@ fn draft_resolution_rejects_intervening_writer_and_preserves_text() {
     let store = db.open();
     let (_, conversation) = fixture(&store);
     let draft = |text: &str, revision| Draft {
+        context_nodes: Vec::new(),
         text: text.into(),
         revision,
         attachments: vec![],
@@ -820,6 +831,7 @@ fn migration_v5_fixture() -> (Database, String) {
             &conversation.id,
             "migration-window",
             &Draft {
+                context_nodes: Vec::new(),
                 text: "unsent migration draft".into(),
                 revision: 8,
                 attachments: vec![],

@@ -118,11 +118,9 @@ test('F036: a stash keeps text and context, transfers a draft between windows, a
   expect((await profile.call('draft.stash.list', { conversation_id: conversationId })).stashes).toEqual([])
 })
 
-// Gap: the live window draft stores text and attachments only. draft.save has
-// no context_nodes field and the drafts table has no column for them (a
-// migration the coordinator owns), so context captured into a draft is lost
-// when its window crashes. Only stashes keep context nodes today.
-test.fixme('F036: a live draft restores its context nodes after a window crash', async ({ profile }) => {
+// The live draft keeps its context nodes beside the text, at the revision that
+// saved them (e2e/protocol/context/drafts.spec.ts covers recall and transfer).
+test('F036: a live draft restores its context nodes after a window crash', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   const context = [{ id: 'node-1', kind: 'diff_selection', data: { path: 'README.md' } }]
   await profile.rpc({ op: 'draft.save', conversation_id: conversationId, window_id: 'window-context',

@@ -305,6 +305,7 @@ impl Sessions {
                 let save: DraftSaveRequest = decode(request)?;
                 let draft = crate::model::Draft {
                     attachments: save.attachments,
+                    context_nodes: save.context_nodes,
                     text: save.text,
                     revision: save.revision,
                 };
@@ -352,6 +353,7 @@ impl Sessions {
                     text: prepare.draft_text,
                     revision: prepare.revision,
                     attachments: prepare.attachments,
+                    context_nodes: Vec::new(),
                 };
                 let data = self.data.lock().unwrap();
                 let intent = persistence_result(

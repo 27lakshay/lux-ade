@@ -57,6 +57,17 @@ fn settled_outcome(entry: QueueEntry) -> (CommandInvokeOutcome, Option<&'static 
     }
 }
 
+/// A settled invocation's stored reply, updated when its queued prompt was
+/// cancelled after the reply was recorded.
+fn replayed(mut stored: Value, current: Option<QueueEntry>) -> Value {
+    if current == Some(QueueEntry::Cancelled) {
+        let (outcome, reason) = settled_outcome(QueueEntry::Cancelled);
+        stored["outcome"] = json!(outcome);
+        stored["reason"] = json!(reason);
+    }
+    stored
+}
+
 /// The derived prompt queue ID of an invocation.
 fn queue_id(operation_id: &str) -> String {
     format!("{operation_id}:command")
@@ -326,7 +337,15 @@ impl Sessions {
                         Status::Settled | Status::Acknowledged
                             if stored["type"] == "command_invoked" =>
                         {
-                            return Ok(stored);
+                            // A queued invocation the user has since cancelled
+                            // will never run; the replay must not say queued.
+                            let current = match stored["queue_id"].as_str() {
+                                Some(id) if stored["outcome"] == "queued" => {
+                                    d.store.queue_entry(id)?
+                                }
+                                _ => None,
+                            };
+                            return Ok(replayed(stored, current));
                         }
                         Status::Dispatched if stored["text"].is_string() => (
                             stored["text"].as_str().unwrap_or_default().to_owned(),
@@ -412,5 +431,23 @@ mod tests {
             settled_outcome(QueueEntry::Delivered).0,
             CommandInvokeOutcome::Queued
         );
+    }
+
+    #[test]
+    fn a_settled_reply_reports_a_later_cancellation_and_nothing_else() {
+        let stored = json!({"type": "command_invoked", "outcome": "queued", "reason": null,
+            "queue_id": "op:command", "native_text": "/review"});
+        let cancelled = replayed(stored.clone(), Some(QueueEntry::Cancelled));
+        assert_eq!(cancelled["outcome"], "cancelled");
+        assert!(
+            cancelled["reason"]
+                .as_str()
+                .unwrap()
+                .contains("will not run")
+        );
+        assert_eq!(cancelled["native_text"], "/review");
+        for current in [None, Some(QueueEntry::Queued), Some(QueueEntry::Delivered)] {
+            assert_eq!(replayed(stored.clone(), current), stored);
+        }
     }
 }

@@ -1649,7 +1649,9 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
         if let Some(diagnostic_id) = diagnostic_id {
             tracing::info!(target: "ade", event = "rpc_started", diagnostic_id, operation_family);
         }
-        if first.len() > 128 * 1024 && op != "attachment.put" {
+        // Attachments and client-supplied context text (up to 1 MiB before
+        // JSON escaping) are the only large requests.
+        if first.len() > 128 * 1024 && !matches!(op, "attachment.put" | "context.capture") {
             writeln!(
                 stream,
                 "{}",

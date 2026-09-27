@@ -27,6 +27,7 @@ use ade_core::contract::conversations::{
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS draft_history(id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id TEXT NOT NULL, window_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('sent','discarded')), text TEXT NOT NULL, attachments TEXT NOT NULL, context_nodes TEXT NOT NULL, draft_revision INTEGER NOT NULL, source TEXT NOT NULL, recorded_at INTEGER NOT NULL, UNIQUE(conversation_id, window_id, source));
 CREATE INDEX IF NOT EXISTS draft_history_by_window ON draft_history(conversation_id, window_id, id);
+CREATE TABLE IF NOT EXISTS draft_context(conversation_id TEXT NOT NULL, window_id TEXT NOT NULL, revision INTEGER NOT NULL, context_nodes TEXT NOT NULL, PRIMARY KEY(conversation_id, window_id));
 CREATE TABLE IF NOT EXISTS draft_stashes(conversation_id TEXT NOT NULL, name TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), text TEXT NOT NULL, attachments TEXT NOT NULL, context_nodes TEXT NOT NULL, window_id TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY(conversation_id, name));
 ";
 
@@ -62,13 +63,20 @@ fn is_blank(text: &str, attachments: &[Attachment]) -> bool {
 /// non-empty draft became an empty one. A send clears its draft through its
 /// own path and is recorded as sent there.
 pub(crate) fn discarded_by(previous: &Draft, next: &Draft) -> bool {
-    !is_blank(&previous.text, &previous.attachments) && is_blank(&next.text, &next.attachments)
+    draft_kept(previous) && !draft_kept(next)
+}
+
+/// Whether a window draft holds anything worth recalling.
+fn draft_kept(draft: &Draft) -> bool {
+    !is_blank(&draft.text, &draft.attachments) || !draft.context_nodes.is_empty()
 }
 
 /// Whether a restore of `content` over `stored` loses anything worth keeping.
 pub(crate) fn displaces(stored: &Draft, content: &DraftContent) -> bool {
-    !is_blank(&stored.text, &stored.attachments)
-        && (stored.text != content.text || stored.attachments != content.attachments)
+    draft_kept(stored)
+        && (stored.text != content.text
+            || stored.attachments != content.attachments
+            || stored.context_nodes != content.context_nodes)
 }
 
 /// What a restore does with the window's stored draft.
@@ -187,6 +195,71 @@ fn context_row(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<Vec<D
     })
 }
 
+/// The context nodes a window draft keeps. They live beside the `drafts`
+/// row and belong to the revision that saved them, so any later write of the
+/// draft that does not carry them (a send clearing it, an older schema's
+/// save) leaves them behind without a separate delete.
+pub(crate) fn context_for(
+    stored: Option<(i64, Vec<DraftContextNode>)>,
+    revision: i64,
+) -> Vec<DraftContextNode> {
+    match stored {
+        Some((saved, nodes)) if saved == revision => nodes,
+        _ => Vec::new(),
+    }
+}
+
+/// Reads the context nodes of a window draft at `revision`. Reads nothing
+/// when no draft ever kept context.
+pub(super) fn draft_context(
+    db: &Connection,
+    conversation: &str,
+    window: &str,
+    revision: i64,
+) -> Result<Vec<DraftContextNode>> {
+    let exists: i64 = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_context')",
+        [],
+        |row| row.get(0),
+    )?;
+    if exists == 0 {
+        return Ok(Vec::new());
+    }
+    let stored = db
+        .query_row(
+            "SELECT revision,context_nodes FROM draft_context WHERE conversation_id=?1 AND window_id=?2",
+            params![conversation, window],
+            |row| Ok((row.get(0)?, context_row(row, 1)?)),
+        )
+        .optional()?;
+    Ok(context_for(stored, revision))
+}
+
+/// Keeps `nodes` as the context of the window draft at `revision`, inside
+/// the caller's transaction.
+pub(super) fn write_draft_context(
+    db: &Connection,
+    conversation: &str,
+    window: &str,
+    revision: i64,
+    nodes: &[DraftContextNode],
+) -> Result<()> {
+    check_context_nodes(nodes)?;
+    ensure_tables(db)?;
+    if nodes.is_empty() {
+        db.execute(
+            "DELETE FROM draft_context WHERE conversation_id=?1 AND window_id=?2",
+            params![conversation, window],
+        )?;
+    } else {
+        db.execute(
+            "INSERT INTO draft_context(conversation_id,window_id,revision,context_nodes) VALUES(?1,?2,?3,?4) ON CONFLICT(conversation_id,window_id) DO UPDATE SET revision=excluded.revision,context_nodes=excluded.context_nodes",
+            params![conversation, window, revision, encode(&nodes)?],
+        )?;
+    }
+    Ok(())
+}
+
 fn kind_name(kind: DraftHistoryKind) -> &'static str {
     match kind {
         DraftHistoryKind::Sent => "sent",
@@ -264,8 +337,8 @@ pub(super) fn record_history(
 ) -> Result<i64> {
     ensure_tables(db)?;
     db.execute(
-        "INSERT OR IGNORE INTO draft_history(conversation_id,window_id,kind,text,attachments,context_nodes,draft_revision,source,recorded_at) VALUES(?1,?2,?3,?4,?5,'[]',?6,?7,?8)",
-        params![conversation, window, kind_name(kind), draft.text, encode(&draft.attachments)?, draft.revision, source, now_ms()],
+        "INSERT OR IGNORE INTO draft_history(conversation_id,window_id,kind,text,attachments,context_nodes,draft_revision,source,recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![conversation, window, kind_name(kind), draft.text, encode(&draft.attachments)?, encode(&draft.context_nodes)?, draft.revision, source, now_ms()],
     )?;
     let id: i64 = db.query_row(
         "SELECT id FROM draft_history WHERE conversation_id=?1 AND window_id=?2 AND source=?3",
@@ -573,12 +646,15 @@ fn restore(
                 "INSERT INTO drafts(conversation_id,window_id,revision,text,attachments) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation_id,window_id) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachments=excluded.attachments",
                 params![conversation, window, revision, content.text, encode(&content.attachments)?],
             )?;
+            // The restored context becomes the live draft's context.
+            write_draft_context(tx, conversation, window, revision, &content.context_nodes)?;
             Ok(Restored {
                 outcome: DraftRestoreOutcome::Restored,
                 draft: Draft {
                     text: content.text,
                     revision,
                     attachments: content.attachments,
+                    context_nodes: content.context_nodes.clone(),
                 },
                 context_nodes: content.context_nodes,
                 displaced_entry_id,
@@ -594,6 +670,7 @@ mod tests {
 
     fn draft(text: &str, revision: i64) -> Draft {
         Draft {
+            context_nodes: Vec::new(),
             text: text.into(),
             revision,
             attachments: vec![],
@@ -711,6 +788,28 @@ mod tests {
         assert!(!decide_stash_drop(None, 3).unwrap());
         assert!(decide_stash_drop(Some(3), 3).unwrap());
         assert!(decide_stash_drop(Some(4), 3).is_err());
+    }
+
+    #[test]
+    fn a_draft_keeps_context_only_at_the_revision_that_saved_it() {
+        assert_eq!(
+            context_for(Some((3, vec![node("n1")])), 3),
+            vec![node("n1")]
+        );
+        // A later write that carried no context, such as a send clearing the
+        // draft, leaves the stored context behind.
+        assert!(context_for(Some((3, vec![node("n1")])), 4).is_empty());
+        assert!(context_for(None, 3).is_empty());
+        let mut with_context = draft("", 2);
+        with_context.context_nodes.push(node("n1"));
+        // Clearing a draft that held only context keeps it recallable.
+        assert!(discarded_by(&with_context, &draft("", 3)));
+        let content = DraftContent {
+            text: String::new(),
+            attachments: vec![],
+            context_nodes: vec![node("n2")],
+        };
+        assert!(displaces(&with_context, &content));
     }
 
     #[test]

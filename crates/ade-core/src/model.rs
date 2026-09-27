@@ -122,6 +122,10 @@ pub struct Draft {
     pub revision: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Context the window attached besides its text and attachments, kept
+    /// with the draft revision that saved it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_nodes: Vec<crate::contract::conversations::DraftContextNode>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct Attachment {
