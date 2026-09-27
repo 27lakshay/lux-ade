@@ -31,7 +31,15 @@
     "shiki",
     "sonner",
     "streamdown",
-    "zod"
+    "zod",
+    "@codemirror/state",
+    "@codemirror/view",
+    "@pierre/trees",
+    "codemirror",
+    "electron-context-menu",
+    "jsonc-parser",
+    "jszip",
+    "turndown"
   ],
   "boundaries": {
     "zones": [

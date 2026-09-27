@@ -31,6 +31,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",
+    "@shadcn/lint": "0.2.0",
     "@types/node": "24.6.0",
     "ajv": "8.20.0",
     "electron-builder": "26.15.3",
@@ -40,6 +41,7 @@
     "lint-staged": "17.6.0",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
+    "oxlint-plugin-react-doctor": "0.9.14",
     "oxlint-tsgolint": "7.0.2003",
     "typescript": "7.0.2"
   }
