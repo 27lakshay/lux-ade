@@ -365,7 +365,8 @@ test('F039: a rewind Claude refuses at its fork-time check keeps the session and
   expect((await profile.call('conversation.get', { conversation_id: conversationId })).history_epoch).toBe(0)
   expect(await profile.call('conversation.rewind', rewind)).toEqual(refused)
   expect(await checks(profile)).toHaveLength(1)
-  expect(await hits(profile, 'quokkaflux')).toBe(1)
+  // The history indexer runs on its own schedule, so wait for it to catch up.
+  await expect.poll(() => hits(profile, 'quokkaflux')).toBe(1)
 
   // The live query was never replaced: the next turn runs, and a resume reads Claude's kept history back.
   await turn(profile, conversationId, 'fourth ocelotwave')
