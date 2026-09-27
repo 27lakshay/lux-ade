@@ -59,7 +59,7 @@ export function registerTerminalIpc(): void {
   ipcMain.on('ade:terminal-detach', (event, connectionId: unknown) => {
     if (!validId(connectionId)) return
     const key = terminalKey(event.sender.id, connectionId)
-    terminals.get(key)?.dispose()
+    terminals.get(key)?.detach()
     terminals.delete(key)
   })
 }

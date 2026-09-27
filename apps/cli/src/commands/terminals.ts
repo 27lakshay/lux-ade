@@ -125,6 +125,8 @@ export async function attachTerminal(socketPath: string, words: string[]): Promi
     const detach = (): void => {
       if (settled) return
       settled = true
+      // Release viewport ownership explicitly; cleanup() then has nothing to close.
+      terminal?.detach()
       cleanup()
       resolve()
     }
