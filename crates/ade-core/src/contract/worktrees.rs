@@ -1,11 +1,12 @@
 //! Worktree lifecycle contracts: repository registration, linked-tree listing,
-//! switch, adopt, remove, refresh, configuration, operation receipts and rebind.
+//! switch, create, setup, adopt, remove, cleanup, refresh, configuration,
+//! operation receipts, archive records and rebind.
 //!
 //! Effect commands carry `operation_id`; `request_id` is accepted as an alias
 //! for callers written before the rename. Replies describe exactly what the
 //! lifecycle daemon sends.
 use super::{FrameSpec, OperationSpec, Tier};
-use crate::worktrees::Config;
+use crate::worktrees::{Config, Hook};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,6 +48,26 @@ pub fn operations() -> Vec<OperationSpec> {
         ),
         OperationSpec::new::<WorktreeRebindListRequest, WorktreeRebindCatalog>(
             "worktree.rebind.list",
+            Tier::Query,
+        ),
+        OperationSpec::new::<WorktreeCreateRequest, WorktreeState>(
+            "worktree.create",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<WorktreeSetupRequest, WorktreeState>(
+            "worktree.setup",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<WorktreeCleanupPlanRequest, WorktreeCleanupPlan>(
+            "worktree.cleanup.plan",
+            Tier::Query,
+        ),
+        OperationSpec::new::<WorktreeCleanupRequest, WorktreeState>(
+            "worktree.cleanup",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<WorktreeArchivedRequest, WorktreeArchive>(
+            "worktree.archived",
             Tier::Query,
         ),
     ]
@@ -155,6 +176,19 @@ pub struct WorktreeConfigInput {
     pub directory: Option<String>,
     /// Git command timeout; the daemon accepts 5 to 300.
     pub timeout_seconds: u64,
+    /// Prefix for branches `worktree.create` names: letters, digits, `.`,
+    /// `_`, `-` and `/`, at most 64 bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_prefix: Option<String>,
+    /// Start point for `worktree.create` when the request names none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_base: Option<String>,
+    /// Setup hooks, at most 8, run in order inside each tree ADE creates.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub setup: Vec<Hook>,
+    /// Teardown hooks, at most 8, run in order before ADE removes a tree.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub teardown: Vec<Hook>,
 }
 
 impl Default for WorktreeConfigInput {
@@ -162,10 +196,18 @@ impl Default for WorktreeConfigInput {
         let Config {
             directory,
             timeout_seconds,
+            branch_prefix,
+            default_base,
+            setup,
+            teardown,
         } = Config::default();
         Self {
             directory,
             timeout_seconds,
+            branch_prefix,
+            default_base,
+            setup,
+            teardown,
         }
     }
 }
@@ -175,8 +217,75 @@ impl From<WorktreeConfigInput> for Config {
         Self {
             directory: input.directory,
             timeout_seconds: input.timeout_seconds,
+            branch_prefix: input.branch_prefix,
+            default_base: input.default_base,
+            setup: input.setup,
+            teardown: input.teardown,
         }
     }
+}
+
+/// `worktree.create`: create a branch and a linked tree from the repository's
+/// naming defaults, then run its setup hooks. With neither `name` nor
+/// `branch`, the daemon generates the first free `wt-N` name.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCreateRequest {
+    pub repository_id: String,
+    /// Caller-owned operation ID; `request_id` is accepted as an alias.
+    #[serde(alias = "request_id")]
+    pub operation_id: String,
+    /// A workspace name; the branch is the configured prefix plus its slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// An exact branch name, used without the prefix. Conflicts with `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Start point; the configured `default_base`, then `HEAD`, when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// Absolute path for the tree, directly inside the configured directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// `worktree.setup`: run the setup hooks again in an ADE-owned tree, such as
+/// one whose setup failed or was interrupted. Only a full success makes it ready.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeSetupRequest {
+    pub repository_id: String,
+    /// Caller-owned operation ID; `request_id` is accepted as an alias.
+    #[serde(alias = "request_id")]
+    pub operation_id: String,
+    pub path: String,
+}
+
+/// `worktree.cleanup.plan`: classify every linked tree for cleanup without
+/// changing anything.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCleanupPlanRequest {
+    pub repository_id: String,
+}
+
+/// `worktree.cleanup`: run teardown hooks, remove and archive the named
+/// trees. Each tree is classified again before its exclusive removal claim;
+/// a blocked tree is skipped, never forced.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCleanupRequest {
+    pub repository_id: String,
+    /// Caller-owned operation ID; `request_id` is accepted as an alias.
+    #[serde(alias = "request_id")]
+    pub operation_id: String,
+    /// One to 32 tree paths, each from `worktree.cleanup.plan`.
+    pub paths: Vec<String>,
+    /// Branch policy for every removed tree; `keep` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_branch: Option<BranchPolicy>,
+}
+
+/// `worktree.archived`: list the archive records of removed trees.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeArchivedRequest {
+    pub repository_id: String,
 }
 
 /// `worktree.operation`: read one lifecycle operation receipt in full.
@@ -202,6 +311,8 @@ pub struct WorktreeRebindListRequest {}
 wire_tag!(WorktreeStateTag, "worktree_state");
 wire_tag!(WorktreeOperationTag, "worktree_operation");
 wire_tag!(WorktreeRebindCatalogTag, "worktree_rebind_catalog");
+wire_tag!(WorktreeCleanupPlanTag, "worktree_cleanup_plan");
+wire_tag!(WorktreeArchiveTag, "worktree_archive");
 
 /// A repository's lifecycle state: the reply to every command except
 /// `worktree.operation` and `worktree.rebind.list`.
@@ -270,6 +381,181 @@ pub struct WorktreeItem {
     /// Whether ADE holds removal authority over this tree.
     pub ade_owned: bool,
     pub setup_state: SetupState,
+    /// The tree's lifecycle phase, for trees ADE created or ran hooks in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<WorktreePhase>,
+}
+
+/// Where a tree stands in ADE's setup and teardown lifecycle. Only `ready`
+/// admits an Agent.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreePhase {
+    /// Names are recorded and Git is creating the tree.
+    Creating,
+    /// Setup hooks are running.
+    SettingUp,
+    Ready,
+    /// A setup hook failed or timed out. The tree is kept; retry `worktree.setup`.
+    SetupFailed,
+    /// Setup stopped with an unknown outcome. Inspect the tree before retrying.
+    SetupInterrupted,
+    /// Teardown hooks or the removal are running.
+    TearingDown,
+    /// A teardown hook failed or timed out. The tree is kept.
+    TeardownFailed,
+    /// Teardown or removal stopped with an unknown outcome.
+    TeardownInterrupted,
+}
+
+/// Whether a hook ran as a setup or a teardown hook.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookPhase {
+    Setup,
+    Teardown,
+}
+
+/// How one hook run ended.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookVerdict {
+    Succeeded,
+    /// Exited with a non-zero status, or could not start.
+    Failed,
+    /// Killed at its time limit; descendants that left its process group may
+    /// still run.
+    TimedOut,
+    /// Its output pipes stayed open after it exited, or its state could not
+    /// be read; descendants may still run.
+    Unknown,
+}
+
+/// One hook run, as recorded in an operation's `result.hooks` or in a
+/// cleanup tree's `hooks`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeHookRun {
+    pub name: String,
+    pub phase: HookPhase,
+    pub verdict: HookVerdict,
+    pub exit_code: Option<i32>,
+    pub elapsed_ms: u64,
+    /// The last 64 KiB of stdout, then of stderr. `worktree_state` omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    /// Whether earlier output was dropped.
+    pub truncated: bool,
+}
+
+/// Why a tree cannot be cleaned up now.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupBlocker {
+    /// The repository's primary checkout is never removed.
+    PrimaryCheckout,
+    /// ADE has no removal authority; adopt the tree first.
+    External,
+    /// The ownership marker no longer matches.
+    AuthorityChanged,
+    Locked,
+    /// Git reports the tree missing or prunable.
+    Unavailable,
+    /// Uncommitted or untracked files.
+    Dirty,
+    /// Git status could not be read.
+    StatusUnknown,
+    /// A terminal, Agent, service or script of this profile uses the tree.
+    ActiveWork,
+    /// Another claim, possibly another profile's, holds the tree.
+    ClaimHeld,
+    /// A quarantined claim marks the tree's execution ownership uncertain.
+    ClaimUncertain,
+    /// The host resource registry cannot confirm claims.
+    RegistryUnavailable,
+    /// Another lifecycle operation runs in this repository.
+    LifecycleRunning,
+    /// Setup failed or was interrupted; recover with `worktree.setup` or an
+    /// explicit `worktree.remove`.
+    SetupIncomplete,
+    /// Teardown failed or was interrupted; recover with an explicit `worktree.remove`.
+    TeardownIncomplete,
+    /// Git's listing does not contain the path.
+    NotListed,
+}
+
+/// One linked tree's cleanup classification.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCleanupCandidate {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<WorktreePhase>,
+    /// True only when `blockers` is empty.
+    pub eligible: bool,
+    pub blockers: Vec<CleanupBlocker>,
+}
+
+/// The `worktree.cleanup.plan` reply: every linked tree, primary excluded.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCleanupPlan {
+    #[serde(rename = "type")]
+    pub tag: WorktreeCleanupPlanTag,
+    pub repository_id: String,
+    pub trees: Vec<WorktreeCleanupCandidate>,
+}
+
+/// What `worktree.cleanup` did with one tree.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupOutcome {
+    /// Teardown ran, the tree was removed and an archive record was written.
+    Archived,
+    /// A blocker kept the tree; nothing ran.
+    Skipped,
+    /// Teardown or removal failed; the tree is kept. See `error`.
+    Failed,
+    /// The outcome could not be confirmed; the removal claim stays quarantined.
+    Unknown,
+}
+
+/// One tree in a cleanup operation's `result.trees`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeCleanupTree {
+    pub path: String,
+    pub outcome: CleanupOutcome,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<CleanupBlocker>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<WorktreeHookRun>,
+    /// Whether the merged branch was deleted, when the policy asked for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_deleted: Option<bool>,
+}
+
+/// The record ADE keeps for a tree it removed. The branch, unless deleted,
+/// is the way back to the work.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeArchiveEntry {
+    pub path: String,
+    pub branch: Option<String>,
+    /// The commit the tree had checked out when it was removed.
+    pub head: Option<String>,
+    pub branch_deleted: bool,
+    /// The `worktree.remove` or `worktree.cleanup` operation that removed it.
+    pub operation_id: String,
+    pub archived_at: i64,
+}
+
+/// The `worktree.archived` reply, newest first, at most 200 records.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeArchive {
+    #[serde(rename = "type")]
+    pub tag: WorktreeArchiveTag,
+    pub repository_id: String,
+    pub entries: Vec<WorktreeArchiveEntry>,
 }
 
 /// A lifecycle operation's status in its ledger.
@@ -278,7 +564,8 @@ pub struct WorktreeItem {
 pub enum WorktreeOperationStatus {
     Running,
     Succeeded,
-    /// The tree was removed but its branch was kept.
+    /// The tree was removed but its branch was kept, or a cleanup archived
+    /// some of its trees and not others.
     Partial,
     Failed,
     /// The daemon stopped while the operation ran; inspect before retrying.
@@ -540,6 +827,77 @@ mod tests {
                 {"id": "repository_1", "root": "/tmp/repo", "common_dir": "/tmp/repo/.git",
                     "needs_rebind": true, "rebindable": true, "binding_generation": 2}]}),
         );
+    }
+
+    #[test]
+    fn lifecycle_requests_round_trip() {
+        let create: WorktreeCreateRequest = request(
+            "worktree.create",
+            json!({"repository_id": "r", "request_id": "k", "name": "Login page",
+                "base": "main"}),
+        );
+        assert_eq!(create.operation_id, "k");
+        assert!(create.branch.is_none() && create.path.is_none());
+        let setup: WorktreeSetupRequest = request(
+            "worktree.setup",
+            json!({"repository_id": "r", "operation_id": "k", "path": "/tmp/t"}),
+        );
+        assert_eq!(setup.path, "/tmp/t");
+        let cleanup: WorktreeCleanupRequest = request(
+            "worktree.cleanup",
+            json!({"repository_id": "r", "operation_id": "k", "paths": ["/tmp/a", "/tmp/b"],
+                "delete_branch": "merged"}),
+        );
+        assert_eq!(cleanup.delete_branch, Some(BranchPolicy::Merged));
+        request::<WorktreeCleanupPlanRequest>(
+            "worktree.cleanup.plan",
+            json!({"repository_id": "r"}),
+        );
+        request::<WorktreeArchivedRequest>("worktree.archived", json!({"repository_id": "r"}));
+        let configure: WorktreeConfigureRequest = request(
+            "worktree.configure",
+            json!({"repository_id": "r", "config": {"branch_prefix": "ade/",
+                "default_base": "main",
+                "setup": [{"name": "install", "command": ["pnpm", "install"]}],
+                "teardown": [{"name": "stop", "command": ["sh", "-c", "exit 0"],
+                    "timeout_seconds": 30}]}}),
+        );
+        let config = Config::from(configure.config);
+        assert_eq!(config.setup[0].timeout_seconds, 300);
+        assert_eq!(config.teardown[0].timeout_seconds, 30);
+        assert!(
+            serde_json::from_value::<WorktreeConfigureRequest>(json!({"repository_id": "r",
+                "config": {"setup": [{"name": "x", "command": ["y"], "shell": true}]}}))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn lifecycle_replies_round_trip() {
+        let mut with_phase = state();
+        with_phase["worktrees"][1]["phase"] = json!("setup_failed");
+        with_phase["repository"]["config"]["setup"] =
+            json!([{"name": "install", "command": ["pnpm", "install"]}]);
+        reply::<WorktreeState>("worktree.create", with_phase);
+        reply::<WorktreeCleanupPlan>(
+            "worktree.cleanup.plan",
+            json!({"type": "worktree_cleanup_plan", "repository_id": "r", "trees": [
+                {"path": "/tmp/a", "branch": "ade/wt-1", "phase": "ready", "eligible": true,
+                    "blockers": []},
+                {"path": "/tmp/b", "eligible": false, "blockers": ["dirty", "claim_uncertain"]}]}),
+        );
+        reply::<WorktreeArchive>(
+            "worktree.archived",
+            json!({"type": "worktree_archive", "repository_id": "r", "entries": [
+                {"path": "/tmp/a", "branch": "ade/wt-1", "head": "abc", "branch_deleted": false,
+                    "operation_id": "k", "archived_at": 5}]}),
+        );
+        let tree: WorktreeCleanupTree = serde_json::from_value(json!({"path": "/tmp/a",
+            "outcome": "failed", "error": "Teardown hook stop failed",
+            "hooks": [{"name": "stop", "phase": "teardown", "verdict": "timed_out",
+                "exit_code": null, "elapsed_ms": 30000, "truncated": false}]}))
+        .unwrap();
+        assert_eq!(tree.hooks[0].verdict, HookVerdict::TimedOut);
     }
 
     #[test]

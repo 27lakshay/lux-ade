@@ -17,6 +17,7 @@ import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
+import { runWorktreeLifecycleCommand, worktreeLifecycleUsage } from './commands/worktrees.js'
 import { CliError, jsonObject, object, required, type CommandResult, type ErrorCode } from './shared.js'
 
 const usageHeader = `ADE local command line
@@ -64,6 +65,7 @@ ADE never receives the login token.
 const usage = [
   usageHeader,
   workspaceUsage,
+  worktreeLifecycleUsage,
   conversationUsage,
   historyUsage,
   accountUsage,
@@ -193,6 +195,7 @@ async function profileSocket(profileId: string): Promise<string> {
 // Each command area in the order `run` consults it; an area returns undefined when it does not match.
 const commandAreas = [
   runWorkspaceCommand,
+  runWorktreeLifecycleCommand,
   runConversationCommand,
   runHistoryCommand,
   runAccountCommand,

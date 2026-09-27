@@ -2484,6 +2484,87 @@
       ],
       "type": "object"
     },
+    "CleanupBlocker": {
+      "description": "Why a tree cannot be cleaned up now.",
+      "oneOf": [
+        {
+          "enum": [
+            "locked"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "primary_checkout",
+          "description": "The repository's primary checkout is never removed.",
+          "type": "string"
+        },
+        {
+          "const": "external",
+          "description": "ADE has no removal authority; adopt the tree first.",
+          "type": "string"
+        },
+        {
+          "const": "authority_changed",
+          "description": "The ownership marker no longer matches.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Git reports the tree missing or prunable.",
+          "type": "string"
+        },
+        {
+          "const": "dirty",
+          "description": "Uncommitted or untracked files.",
+          "type": "string"
+        },
+        {
+          "const": "status_unknown",
+          "description": "Git status could not be read.",
+          "type": "string"
+        },
+        {
+          "const": "active_work",
+          "description": "A terminal, Agent, service or script of this profile uses the tree.",
+          "type": "string"
+        },
+        {
+          "const": "claim_held",
+          "description": "Another claim, possibly another profile's, holds the tree.",
+          "type": "string"
+        },
+        {
+          "const": "claim_uncertain",
+          "description": "A quarantined claim marks the tree's execution ownership uncertain.",
+          "type": "string"
+        },
+        {
+          "const": "registry_unavailable",
+          "description": "The host resource registry cannot confirm claims.",
+          "type": "string"
+        },
+        {
+          "const": "lifecycle_running",
+          "description": "Another lifecycle operation runs in this repository.",
+          "type": "string"
+        },
+        {
+          "const": "setup_incomplete",
+          "description": "Setup failed or was interrupted; recover with `worktree.setup` or an\nexplicit `worktree.remove`.",
+          "type": "string"
+        },
+        {
+          "const": "teardown_incomplete",
+          "description": "Teardown failed or was interrupted; recover with an explicit `worktree.remove`.",
+          "type": "string"
+        },
+        {
+          "const": "not_listed",
+          "description": "Git's listing does not contain the path.",
+          "type": "string"
+        }
+      ]
+    },
     "CodexIdentity": {
       "properties": {
         "chatgpt_account_id": {
@@ -2501,8 +2582,22 @@
     },
     "Config": {
       "additionalProperties": false,
-      "description": "A repository's stored lifecycle configuration.",
+      "description": "A repository's stored lifecycle configuration. Fields added after the\nfirst release are omitted from the wire while they hold their defaults.",
       "properties": {
+        "branch_prefix": {
+          "description": "Prefix for branches that `worktree.create` names, such as `ade/`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_base": {
+          "description": "Start point for `worktree.create` when the request names none; `HEAD`\nwhen absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "directory": {
           "default": null,
           "description": "Parent directory for new trees; the repository's parent when absent.",
@@ -2510,6 +2605,20 @@
             "string",
             "null"
           ]
+        },
+        "setup": {
+          "description": "Hooks run in order inside a new tree after Git creates it. The tree is\nready for an Agent only after every hook exits 0.",
+          "items": {
+            "$ref": "#/$defs/Hook"
+          },
+          "type": "array"
+        },
+        "teardown": {
+          "description": "Hooks run in order inside a tree before ADE removes it. A failed hook\nkeeps the tree.",
+          "items": {
+            "$ref": "#/$defs/Hook"
+          },
+          "type": "array"
         },
         "timeout_seconds": {
           "default": 60,
@@ -5077,6 +5186,33 @@
       "required": [
         "op",
         "query"
+      ],
+      "type": "object"
+    },
+    "Hook": {
+      "additionalProperties": false,
+      "description": "One setup or teardown hook. `command` is an argument vector run without a\nshell; write `[\"sh\", \"-c\", \"…\"]` to use one.",
+      "properties": {
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "description": "A short label shown in operation results.",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "description": "The hook's time limit; the daemon accepts 1 to 3600 and uses 300 when absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "command"
       ],
       "type": "object"
     },
@@ -12258,10 +12394,235 @@
       ],
       "type": "object"
     },
+    "WorktreeArchive": {
+      "description": "The `worktree.archived` reply, newest first, at most 200 records.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/WorktreeArchiveEntry"
+          },
+          "type": "array"
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `worktree_archive` type tag.",
+          "enum": [
+            "worktree_archive"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repository_id",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "WorktreeArchiveEntry": {
+      "description": "The record ADE keeps for a tree it removed. The branch, unless deleted,\nis the way back to the work.",
+      "properties": {
+        "archived_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch_deleted": {
+          "type": "boolean"
+        },
+        "head": {
+          "description": "The commit the tree had checked out when it was removed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation_id": {
+          "description": "The `worktree.remove` or `worktree.cleanup` operation that removed it.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "branch",
+        "head",
+        "branch_deleted",
+        "operation_id",
+        "archived_at"
+      ],
+      "type": "object"
+    },
+    "WorktreeArchivedRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.archived`: list the archive records of removed trees.",
+      "properties": {
+        "op": {
+          "const": "worktree.archived"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id"
+      ],
+      "type": "object"
+    },
+    "WorktreeCleanupCandidate": {
+      "description": "One linked tree's cleanup classification.",
+      "properties": {
+        "blockers": {
+          "items": {
+            "$ref": "#/$defs/CleanupBlocker"
+          },
+          "type": "array"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "eligible": {
+          "description": "True only when `blockers` is empty.",
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorktreePhase"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "eligible",
+        "blockers"
+      ],
+      "type": "object"
+    },
+    "WorktreeCleanupPlan": {
+      "description": "The `worktree.cleanup.plan` reply: every linked tree, primary excluded.",
+      "properties": {
+        "repository_id": {
+          "type": "string"
+        },
+        "trees": {
+          "items": {
+            "$ref": "#/$defs/WorktreeCleanupCandidate"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `worktree_cleanup_plan` type tag.",
+          "enum": [
+            "worktree_cleanup_plan"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "repository_id",
+        "trees"
+      ],
+      "type": "object"
+    },
+    "WorktreeCleanupPlanRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.cleanup.plan`: classify every linked tree for cleanup without\nchanging anything.",
+      "properties": {
+        "op": {
+          "const": "worktree.cleanup.plan"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id"
+      ],
+      "type": "object"
+    },
+    "WorktreeCleanupRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.cleanup`: run teardown hooks, remove and archive the named\ntrees. Each tree is classified again before its exclusive removal claim;\na blocked tree is skipped, never forced.",
+      "properties": {
+        "delete_branch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BranchPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Branch policy for every removed tree; `keep` when absent."
+        },
+        "op": {
+          "const": "worktree.cleanup"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "paths": {
+          "description": "One to 32 tree paths, each from `worktree.cleanup.plan`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id",
+        "paths"
+      ],
+      "type": "object"
+    },
     "WorktreeConfigInput": {
       "additionalProperties": false,
       "description": "The configuration a caller sends. Absent fields take their defaults; the\nstored form is [`Config`].",
       "properties": {
+        "branch_prefix": {
+          "description": "Prefix for branches `worktree.create` names: letters, digits, `.`,\n`_`, `-` and `/`, at most 64 bytes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_base": {
+          "description": "Start point for `worktree.create` when the request names none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "directory": {
           "default": null,
           "description": "Parent directory for new trees; the repository's parent when absent.",
@@ -12269,6 +12630,20 @@
             "string",
             "null"
           ]
+        },
+        "setup": {
+          "description": "Setup hooks, at most 8, run in order inside each tree ADE creates.",
+          "items": {
+            "$ref": "#/$defs/Hook"
+          },
+          "type": "array"
+        },
+        "teardown": {
+          "description": "Teardown hooks, at most 8, run in order before ADE removes a tree.",
+          "items": {
+            "$ref": "#/$defs/Hook"
+          },
+          "type": "array"
         },
         "timeout_seconds": {
           "default": 60,
@@ -12298,6 +12673,56 @@
         "op",
         "repository_id",
         "config"
+      ],
+      "type": "object"
+    },
+    "WorktreeCreateRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.create`: create a branch and a linked tree from the repository's\nnaming defaults, then run its setup hooks. With neither `name` nor\n`branch`, the daemon generates the first free `wt-N` name.",
+      "properties": {
+        "base": {
+          "description": "Start point; the configured `default_base`, then `HEAD`, when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch": {
+          "description": "An exact branch name, used without the prefix. Conflicts with `name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "A workspace name; the branch is the configured prefix plus its slug.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "worktree.create"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute path for the tree, directly inside the configured directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id"
       ],
       "type": "object"
     },
@@ -12357,6 +12782,17 @@
         },
         "path": {
           "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorktreePhase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The tree's lifecycle phase, for trees ADE created or ran hooks in."
         },
         "prunable": {
           "type": [
@@ -12508,12 +12944,58 @@
         },
         {
           "const": "partial",
-          "description": "The tree was removed but its branch was kept.",
+          "description": "The tree was removed but its branch was kept, or a cleanup archived\nsome of its trees and not others.",
           "type": "string"
         },
         {
           "const": "interrupted",
           "description": "The daemon stopped while the operation ran; inspect before retrying.",
+          "type": "string"
+        }
+      ]
+    },
+    "WorktreePhase": {
+      "description": "Where a tree stands in ADE's setup and teardown lifecycle. Only `ready`\nadmits an Agent.",
+      "oneOf": [
+        {
+          "enum": [
+            "ready"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "creating",
+          "description": "Names are recorded and Git is creating the tree.",
+          "type": "string"
+        },
+        {
+          "const": "setting_up",
+          "description": "Setup hooks are running.",
+          "type": "string"
+        },
+        {
+          "const": "setup_failed",
+          "description": "A setup hook failed or timed out. The tree is kept; retry `worktree.setup`.",
+          "type": "string"
+        },
+        {
+          "const": "setup_interrupted",
+          "description": "Setup stopped with an unknown outcome. Inspect the tree before retrying.",
+          "type": "string"
+        },
+        {
+          "const": "tearing_down",
+          "description": "Teardown hooks or the removal are running.",
+          "type": "string"
+        },
+        {
+          "const": "teardown_failed",
+          "description": "A teardown hook failed or timed out. The tree is kept.",
+          "type": "string"
+        },
+        {
+          "const": "teardown_interrupted",
+          "description": "Teardown or removal stopped with an unknown outcome.",
           "type": "string"
         }
       ]
@@ -12803,6 +13285,32 @@
       },
       "required": [
         "op",
+        "path"
+      ],
+      "type": "object"
+    },
+    "WorktreeSetupRequest": {
+      "additionalProperties": false,
+      "description": "`worktree.setup`: run the setup hooks again in an ADE-owned tree, such as\none whose setup failed or was interrupted. Only a full success makes it ready.",
+      "properties": {
+        "op": {
+          "const": "worktree.setup"
+        },
+        "operation_id": {
+          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "repository_id",
+        "operation_id",
         "path"
       ],
       "type": "object"
@@ -13507,6 +14015,41 @@
       "name": "worktree.rebind.list",
       "request": "WorktreeRebindListRequest",
       "response": "WorktreeRebindCatalog",
+      "tier": "query"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.create",
+      "request": "WorktreeCreateRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.setup",
+      "request": "WorktreeSetupRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.cleanup.plan",
+      "request": "WorktreeCleanupPlanRequest",
+      "response": "WorktreeCleanupPlan",
+      "tier": "query"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.cleanup",
+      "request": "WorktreeCleanupRequest",
+      "response": "WorktreeState",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "worktrees",
+      "name": "worktree.archived",
+      "request": "WorktreeArchivedRequest",
+      "response": "WorktreeArchive",
       "tier": "query"
     },
     {

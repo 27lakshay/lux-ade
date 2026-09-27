@@ -85,6 +85,7 @@ export type ContractDefinition =
   | ClaimPurpose
   | ClaimState
   | ClaudeIdentity
+  | CleanupBlocker
   | CodexIdentity
   | Config
   | Conversation
@@ -159,6 +160,7 @@ export type ContractDefinition =
   | HistoryProvenance
   | HistorySearch
   | HistorySearchRequest
+  | Hook
   | HostResourcesState
   | Inspection
   | Installation
@@ -389,14 +391,23 @@ export type ContractDefinition =
   | WorkspaceRebindRequest
   | WorkspaceRecord
   | WorktreeAdoptRequest
+  | WorktreeArchive
+  | WorktreeArchiveEntry
+  | WorktreeArchivedRequest
+  | WorktreeCleanupCandidate
+  | WorktreeCleanupPlan
+  | WorktreeCleanupPlanRequest
+  | WorktreeCleanupRequest
   | WorktreeConfigInput
   | WorktreeConfigureRequest
+  | WorktreeCreateRequest
   | WorktreeGetRequest
   | WorktreeItem
   | WorktreeOperation
   | WorktreeOperationReply
   | WorktreeOperationRequest
   | WorktreeOperationStatus
+  | WorktreePhase
   | WorktreeRebindCandidate
   | WorktreeRebindCatalog
   | WorktreeRebindListRequest
@@ -405,6 +416,7 @@ export type ContractDefinition =
   | WorktreeRemoveRequest
   | WorktreeRepository
   | WorktreeRepositoryRequest
+  | WorktreeSetupRequest
   | WorktreeState
   | WorktreeSwitchRequest
 /**
@@ -535,6 +547,25 @@ export type ClaimMode = 'shared' | 'exclusive'
 export type ClaimPhase = 'reserved' | 'dispatched' | 'bound' | 'active'
 export type ClaimPurpose = 'use' | 'create' | 'remove'
 export type ClaimState = 'active' | 'quarantined'
+/**
+ * Why a tree cannot be cleaned up now.
+ */
+export type CleanupBlocker =
+  | 'locked'
+  | 'primary_checkout'
+  | 'external'
+  | 'authority_changed'
+  | 'unavailable'
+  | 'dirty'
+  | 'status_unknown'
+  | 'active_work'
+  | 'claim_held'
+  | 'claim_uncertain'
+  | 'registry_unavailable'
+  | 'lifecycle_running'
+  | 'setup_incomplete'
+  | 'teardown_incomplete'
+  | 'not_listed'
 /**
  * Where the child works, stated explicitly. Parallel children in the same
  * workspace share its files; ADE never merges their edits.
@@ -807,6 +838,19 @@ export type SkillObservedPlacement =
  * How a bundle entered the catalog.
  */
 export type SkillSourceKind = 'local_directory' | 'adopted'
+/**
+ * Where a tree stands in ADE's setup and teardown lifecycle. Only `ready`
+ * admits an Agent.
+ */
+export type WorktreePhase =
+  | 'ready'
+  | 'creating'
+  | 'setting_up'
+  | 'setup_failed'
+  | 'setup_interrupted'
+  | 'tearing_down'
+  | 'teardown_failed'
+  | 'teardown_interrupted'
 /**
  * A lifecycle operation's status in its ledger.
  */
@@ -1836,17 +1880,52 @@ export interface ChildrenRequest {
   parent_conversation_id: string
 }
 /**
- * A repository's stored lifecycle configuration.
+ * A repository's stored lifecycle configuration. Fields added after the
+ * first release are omitted from the wire while they hold their defaults.
  */
 export interface Config {
+  /**
+   * Prefix for branches that `worktree.create` names, such as `ade/`.
+   */
+  branch_prefix?: string | null
+  /**
+   * Start point for `worktree.create` when the request names none; `HEAD`
+   * when absent.
+   */
+  default_base?: string | null
   /**
    * Parent directory for new trees; the repository's parent when absent.
    */
   directory: string | null
   /**
+   * Hooks run in order inside a new tree after Git creates it. The tree is
+   * ready for an Agent only after every hook exits 0.
+   */
+  setup?: Hook[]
+  /**
+   * Hooks run in order inside a tree before ADE removes it. A failed hook
+   * keeps the tree.
+   */
+  teardown?: Hook[]
+  /**
    * Git command timeout in seconds.
    */
   timeout_seconds: number
+}
+/**
+ * One setup or teardown hook. `command` is an argument vector run without a
+ * shell; write `["sh", "-c", "…"]` to use one.
+ */
+export interface Hook {
+  command: string[]
+  /**
+   * A short label shown in operation results.
+   */
+  name: string
+  /**
+   * The hook's time limit; the daemon accepts 1 to 3600 and uses 300 when absent.
+   */
+  timeout_seconds?: number
 }
 /**
  * The `conversation_changed` feed frame.
@@ -5674,14 +5753,124 @@ export interface WorktreeAdoptRequest {
   repository_id: string
 }
 /**
+ * The `worktree.archived` reply, newest first, at most 200 records.
+ */
+export interface WorktreeArchive {
+  entries: WorktreeArchiveEntry[]
+  repository_id: string
+  /**
+   * The `worktree_archive` type tag.
+   */
+  type: 'worktree_archive'
+  [k: string]: unknown
+}
+/**
+ * The record ADE keeps for a tree it removed. The branch, unless deleted,
+ * is the way back to the work.
+ */
+export interface WorktreeArchiveEntry {
+  archived_at: number
+  branch: string | null
+  branch_deleted: boolean
+  /**
+   * The commit the tree had checked out when it was removed.
+   */
+  head: string | null
+  /**
+   * The `worktree.remove` or `worktree.cleanup` operation that removed it.
+   */
+  operation_id: string
+  path: string
+  [k: string]: unknown
+}
+/**
+ * `worktree.archived`: list the archive records of removed trees.
+ */
+export interface WorktreeArchivedRequest {
+  op: 'worktree.archived'
+  repository_id: string
+}
+/**
+ * One linked tree's cleanup classification.
+ */
+export interface WorktreeCleanupCandidate {
+  blockers: CleanupBlocker[]
+  branch?: string | null
+  /**
+   * True only when `blockers` is empty.
+   */
+  eligible: boolean
+  path: string
+  phase?: WorktreePhase | null
+  [k: string]: unknown
+}
+/**
+ * The `worktree.cleanup.plan` reply: every linked tree, primary excluded.
+ */
+export interface WorktreeCleanupPlan {
+  repository_id: string
+  trees: WorktreeCleanupCandidate[]
+  /**
+   * The `worktree_cleanup_plan` type tag.
+   */
+  type: 'worktree_cleanup_plan'
+  [k: string]: unknown
+}
+/**
+ * `worktree.cleanup.plan`: classify every linked tree for cleanup without
+ * changing anything.
+ */
+export interface WorktreeCleanupPlanRequest {
+  op: 'worktree.cleanup.plan'
+  repository_id: string
+}
+/**
+ * `worktree.cleanup`: run teardown hooks, remove and archive the named
+ * trees. Each tree is classified again before its exclusive removal claim;
+ * a blocked tree is skipped, never forced.
+ */
+export interface WorktreeCleanupRequest {
+  /**
+   * Branch policy for every removed tree; `keep` when absent.
+   */
+  delete_branch?: BranchPolicy | null
+  op: 'worktree.cleanup'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  /**
+   * One to 32 tree paths, each from `worktree.cleanup.plan`.
+   */
+  paths: string[]
+  repository_id: string
+}
+/**
  * The configuration a caller sends. Absent fields take their defaults; the
  * stored form is [`Config`].
  */
 export interface WorktreeConfigInput {
   /**
+   * Prefix for branches `worktree.create` names: letters, digits, `.`,
+   * `_`, `-` and `/`, at most 64 bytes.
+   */
+  branch_prefix?: string | null
+  /**
+   * Start point for `worktree.create` when the request names none.
+   */
+  default_base?: string | null
+  /**
    * Parent directory for new trees; the repository's parent when absent.
    */
   directory?: string | null
+  /**
+   * Setup hooks, at most 8, run in order inside each tree ADE creates.
+   */
+  setup?: Hook[]
+  /**
+   * Teardown hooks, at most 8, run in order before ADE removes a tree.
+   */
+  teardown?: Hook[]
   /**
    * Git command timeout; the daemon accepts 5 to 300.
    */
@@ -5693,6 +5882,35 @@ export interface WorktreeConfigInput {
 export interface WorktreeConfigureRequest {
   config: WorktreeConfigInput
   op: 'worktree.configure'
+  repository_id: string
+}
+/**
+ * `worktree.create`: create a branch and a linked tree from the repository's
+ * naming defaults, then run its setup hooks. With neither `name` nor
+ * `branch`, the daemon generates the first free `wt-N` name.
+ */
+export interface WorktreeCreateRequest {
+  /**
+   * Start point; the configured `default_base`, then `HEAD`, when absent.
+   */
+  base?: string | null
+  /**
+   * An exact branch name, used without the prefix. Conflicts with `name`.
+   */
+  branch?: string | null
+  /**
+   * A workspace name; the branch is the configured prefix plus its slug.
+   */
+  name?: string | null
+  op: 'worktree.create'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  /**
+   * Absolute path for the tree, directly inside the configured directory.
+   */
+  path?: string | null
   repository_id: string
 }
 /**
@@ -5716,6 +5934,10 @@ export interface WorktreeItem {
   lock_reason?: string | null
   locked?: boolean | null
   path: string
+  /**
+   * The tree's lifecycle phase, for trees ADE created or ran hooks in.
+   */
+  phase?: WorktreePhase | null
   prunable?: boolean | null
   setup_state: SetupState
   [k: string]: unknown
@@ -5880,6 +6102,19 @@ export interface WorktreeRepositoryRequest {
   path: string
 }
 /**
+ * `worktree.setup`: run the setup hooks again in an ADE-owned tree, such as
+ * one whose setup failed or was interrupted. Only a full success makes it ready.
+ */
+export interface WorktreeSetupRequest {
+  op: 'worktree.setup'
+  /**
+   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   */
+  operation_id: string
+  path: string
+  repository_id: string
+}
+/**
  * A repository's lifecycle state: the reply to every command except
  * `worktree.operation` and `worktree.rebind.list`.
  */
@@ -5929,7 +6164,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -6016,6 +6251,11 @@ export interface RequestByOperation {
   "worktree.operation": WorktreeOperationRequest
   "worktree.rebind": WorktreeRebindRequest
   "worktree.rebind.list": WorktreeRebindListRequest
+  "worktree.create": WorktreeCreateRequest
+  "worktree.setup": WorktreeSetupRequest
+  "worktree.cleanup.plan": WorktreeCleanupPlanRequest
+  "worktree.cleanup": WorktreeCleanupRequest
+  "worktree.archived": WorktreeArchivedRequest
   "script.list": ScriptListRequest
   "script.inspect": ScriptInspectRequest
   "script.start": ScriptStartRequest
@@ -6168,6 +6408,11 @@ export interface ResponseByOperation {
   "worktree.operation": WorktreeOperationReply
   "worktree.rebind": WorktreeState
   "worktree.rebind.list": WorktreeRebindCatalog
+  "worktree.create": WorktreeState
+  "worktree.setup": WorktreeState
+  "worktree.cleanup.plan": WorktreeCleanupPlan
+  "worktree.cleanup": WorktreeState
+  "worktree.archived": WorktreeArchive
   "script.list": ScriptList
   "script.inspect": ScriptInspection
   "script.start": ScriptRun
