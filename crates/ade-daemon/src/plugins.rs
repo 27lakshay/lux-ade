@@ -42,6 +42,7 @@ use ade_core::contract::plugins::{
     PluginSettingSetRequest, PluginSettingValue, PluginSettings, PluginSourceKind, PluginSourcePin,
     PluginStatus, PluginSummary, PluginUninstallRequest, PluginUninstalled,
 };
+use ade_core::contract::providers::{ProviderWorker, ProviderWorkerPin};
 use ade_core::model::now_ms;
 use anyhow::{Context, Result, anyhow, ensure};
 use manifest::SchemaAdmission;
@@ -242,6 +243,38 @@ impl Plugins {
                     activation_generation: generation,
                 });
             }
+        }
+        Ok(out)
+    }
+
+    /// The provider worker each live activation with a `provider` entry point
+    /// publishes, with the plugin's name, ordered by plugin ID (F023). The pin
+    /// is the verified artifact the activation runs; a session started on it
+    /// leases that artifact, not whatever is installed later.
+    pub fn provider_workers(&self) -> Result<Vec<(String, ProviderWorker)>> {
+        let state = self.state.lock().unwrap();
+        let mut ids: Vec<&String> = state.live.keys().collect();
+        ids.sort();
+        let mut out = Vec::new();
+        for id in ids {
+            let plugin = installed(&state, id)?.detail;
+            let Some(entry) = plugin.manifest.entry_points.provider.clone() else {
+                continue;
+            };
+            out.push((
+                plugin.summary.name.clone(),
+                ProviderWorker {
+                    provider: ade_runtime::provider::registry::plugin_provider_id(id),
+                    pin: ProviderWorkerPin {
+                        plugin_id: id.clone(),
+                        version: plugin.summary.version.clone(),
+                        artifact_digest: plugin.artifact_digest.clone(),
+                        activation_generation: state.live[id].activation.generation,
+                    },
+                    artifact_path: plugin.artifact_path.clone(),
+                    entry,
+                },
+            ));
         }
         Ok(out)
     }

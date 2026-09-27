@@ -14,6 +14,9 @@
 //! ADE never switches account or model when a limit is exhausted.
 //!
 //! [`adapters`] holds the profile-scoped generic adapter definitions (F024).
+//!
+//! `provider.registrations` reports every provider registered through the
+//! runtime's one provider interface: bundled, adapter and plugin (F023).
 use super::usage::{UsageLimitWindow, UsageRecording};
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
@@ -34,6 +37,12 @@ pub fn operations() -> Vec<OperationSpec> {
             Tier::Query,
         ),
         OperationSpec::new::<ProviderQuotaRequest, ProviderQuota>("provider.quota", Tier::Query),
+        // Replays every provider registration through the runtime's provider
+        // registry and reports each outcome. Starts no worker.
+        OperationSpec::new::<ProviderRegistrationsRequest, ProviderRegistrations>(
+            "provider.registrations",
+            Tier::Query,
+        ),
         OperationSpec::new::<PresetListRequest, PresetList>("preset.list", Tier::Query),
         OperationSpec::new::<PresetGetRequest, PresetView>("preset.get", Tier::Query),
         // Guarded by the expected revision; saving the settings a preset
@@ -315,6 +324,83 @@ pub struct ProviderQuota {
     pub recording: UsageRecording,
 }
 
+/// The artifact a provider worker runs. A session started on one pin stays
+/// on it: a newer version serves new sessions only (architecture section 8).
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorkerPin {
+    pub plugin_id: String,
+    pub version: String,
+    /// `sha256:<hex>` over the installed artifact's files.
+    pub artifact_digest: String,
+    /// The plugin activation that published the registration. A lease does
+    /// not depend on it: re-enabling the same artifact does not change code.
+    pub activation_generation: u64,
+}
+
+/// What the runtime needs to start one plugin provider worker.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderWorker {
+    /// `plugin:<plugin_id>`.
+    pub provider: String,
+    pub pin: ProviderWorkerPin,
+    /// The absolute, version-addressed artifact directory.
+    pub artifact_path: String,
+    /// The manifest's `entry_points.provider`, relative to `artifact_path`.
+    pub entry: String,
+}
+
+/// Who registered a provider. Every origin goes through the same registry
+/// and the same provider interface; none has a privileged path.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderOrigin {
+    /// Shipped with ADE.
+    Bundled,
+    /// A profile's generic ACP or custom executable adapter definition.
+    Adapter { adapter_id: String, revision: u64 },
+    /// An installed plugin's `provider` entry point.
+    Plugin { pin: ProviderWorkerPin },
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationState {
+    /// The provider is registered under this ID.
+    Registered,
+    /// The registry refused it; `reason` says why.
+    Refused,
+}
+
+/// One registration and its outcome.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ProviderRegistrationView {
+    pub provider: String,
+    pub name: String,
+    pub origin: ProviderOrigin,
+    pub state: RegistrationState,
+    /// Null when registered.
+    pub reason: Option<String>,
+}
+
+/// `provider.registrations`: every registered provider and its origin.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct ProviderRegistrationsRequest {}
+
+wire_tag!(ProviderRegistrationsTag, "provider_registrations");
+
+/// The `provider.registrations` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProviderRegistrations {
+    #[serde(rename = "type")]
+    pub tag: ProviderRegistrationsTag,
+    pub providers: Vec<ProviderRegistrationView>,
+    /// Why the plugin registry could not be read, when it could not. Plugin
+    /// providers are then missing from `providers`, not reported as absent.
+    pub plugins_unavailable: Option<String>,
+}
+
 /// A preset's launch settings.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 pub struct PresetSettings {
@@ -527,6 +613,10 @@ mod tests {
             json!({"op": "provider.readiness", "provider": "claude", "account_id": "a"}),
         );
         request::<ProviderQuotaRequest>("provider.quota", json!({"op": "provider.quota"}));
+        request::<ProviderRegistrationsRequest>(
+            "provider.registrations",
+            json!({"op": "provider.registrations"}),
+        );
         request::<PresetListRequest>("preset.list", json!({"op": "preset.list"}));
         request::<PresetGetRequest>("preset.get", json!({"op": "preset.get", "name": "Fast"}));
         request::<PresetSaveRequest>(
@@ -583,6 +673,19 @@ mod tests {
                 "state": "unavailable", "reason": "r", "windows": [], "exhausted": false,
                 "observed_at": null, "age_ms": null}],
                 "recording": {"dropped_batches": 0, "last_error": null}}),
+        );
+        response::<ProviderRegistrations>(
+            "provider.registrations",
+            json!({"type": "provider_registrations", "providers": [
+                {"provider": "claude", "name": "Claude Code", "origin": {"kind": "bundled"},
+                    "state": "registered", "reason": null},
+                {"provider": "adapter:x", "name": "X", "origin": {"kind": "adapter",
+                    "adapter_id": "x", "revision": 2}, "state": "registered", "reason": null},
+                {"provider": "plugin:acme.agent", "name": "Agent", "origin": {"kind": "plugin",
+                    "pin": {"plugin_id": "acme.agent", "version": "1.0.0",
+                        "artifact_digest": "sha256:ab", "activation_generation": 3}},
+                    "state": "refused", "reason": "r"}],
+                "plugins_unavailable": null}),
         );
         let checked = json!({"preset": preset(), "capability_change": "revised",
             "conflicts": [{"field": "reasoning", "message": "m"}]});

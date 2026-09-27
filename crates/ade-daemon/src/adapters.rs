@@ -150,6 +150,23 @@ impl Adapters {
         })
     }
 
+    /// Every stored definition with its revision, ordered by ID.
+    pub fn definitions(&self) -> Result<Vec<(AdapterDefinition, u64)>> {
+        let db = self.db.lock().unwrap();
+        let mut statement =
+            db.prepare("SELECT definition, revision FROM provider_adapters ORDER BY id")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(definition, revision)| {
+                Ok((serde_json::from_str(&definition)?, u64::try_from(revision)?))
+            })
+            .collect()
+    }
+
     fn list(&self) -> Result<Value> {
         let ids: Vec<String> = {
             let db = self.db.lock().unwrap();

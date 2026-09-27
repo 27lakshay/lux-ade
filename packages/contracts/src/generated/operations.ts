@@ -217,6 +217,7 @@ export const operations = {
   "provider.capabilities": { tier: "query", domain: "providers", request: "ProviderCapabilitiesRequest", response: "ProviderCapabilities" },
   "provider.readiness": { tier: "query", domain: "providers", request: "ProviderReadinessRequest", response: "ProviderReadiness" },
   "provider.quota": { tier: "query", domain: "providers", request: "ProviderQuotaRequest", response: "ProviderQuota" },
+  "provider.registrations": { tier: "query", domain: "providers", request: "ProviderRegistrationsRequest", response: "ProviderRegistrations" },
   "preset.list": { tier: "query", domain: "providers", request: "PresetListRequest", response: "PresetList" },
   "preset.get": { tier: "query", domain: "providers", request: "PresetGetRequest", response: "PresetView" },
   "preset.save": { tier: "idempotent_command", domain: "providers", request: "PresetSaveRequest", response: "PresetSaved" },

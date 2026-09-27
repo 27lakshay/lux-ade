@@ -23,23 +23,17 @@ pub struct Executable {
 /// Every adapter's declaration, in catalogue order. Fingerprints are empty;
 /// the daemon computes them.
 pub fn records() -> Vec<CapabilityRecord> {
-    vec![
-        crate::omp::capabilities(),
-        crate::opencode::capabilities(),
-        crate::codex::capabilities(),
-        crate::claude::capabilities(),
-    ]
+    crate::provider::registry::bundled()
+        .iter()
+        .filter_map(|registered| registered.entry.capabilities())
+        .collect()
 }
 
 /// The executables `provider` needs, or `None` for an unknown provider.
 pub fn installation(provider: &str) -> Option<&'static [Executable]> {
-    match provider {
-        "claude" => Some(crate::claude::INSTALLATION),
-        "codex" => Some(crate::codex::INSTALLATION),
-        "omp" => Some(crate::omp::INSTALLATION),
-        "opencode" => Some(crate::opencode::INSTALLATION),
-        _ => None,
-    }
+    crate::provider::registry::bundled()
+        .get(provider)
+        .map(|registered| registered.entry.installation())
 }
 
 pub(crate) fn capability(support: Support, note: &str) -> Capability {

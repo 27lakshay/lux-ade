@@ -7,6 +7,10 @@ pub mod account_probe;
 pub mod codex_probe;
 #[path = "omp_probe.rs"]
 pub mod omp_probe;
+#[path = "provider_registry.rs"]
+pub mod registry;
+#[path = "provider_worker.rs"]
+pub mod worker;
 use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 use std::sync::{Arc, mpsc};
@@ -74,28 +78,15 @@ pub trait Provider: Send + Sync {
         bail!("Provider does not support confirmed shutdown")
     }
 }
+/// Starts a bundled provider through the same registry and entry interface
+/// installed providers use; see [`registry`].
 pub fn spawn(
     provider: &str,
     cwd: &str,
     account: Option<&AccountExecution>,
     events: mpsc::SyncSender<Event>,
 ) -> Result<Arc<dyn Provider>> {
-    if let Some(account) = account {
-        ensure!(
-            account.provider == provider,
-            "Agent account belongs to another provider"
-        );
-    }
-    match provider {
-        "codex" if account.is_some() => Ok(crate::codex::Adapter::spawn(cwd, account, events)?),
-        "omp" if account.is_some() => Ok(crate::omp::Adapter::spawn(cwd, account, events)?),
-        "opencode" if account.is_some() => bail!("Managed OpenCode accounts are not supported yet"),
-        "codex" => Ok(crate::codex::Adapter::spawn(cwd, None, events)?),
-        "claude" => Ok(crate::claude::Adapter::spawn(cwd, account, events)?),
-        "opencode" => Ok(crate::opencode::Adapter::spawn(cwd, events)?),
-        "omp" => Ok(crate::omp::Adapter::spawn(cwd, None, events)?),
-        _ => bail!("Unsupported provider {provider}"),
-    }
+    registry::bundled().launch(provider, cwd, account, events)
 }
 pub fn catalogue() -> Value {
     json!({"type":"providers","providers":descriptors()})
