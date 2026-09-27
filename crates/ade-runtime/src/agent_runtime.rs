@@ -1,6 +1,8 @@
 //! Process ownership and acknowledged event replay. No application database access.
 //! Command receipts live for a run; replacing the application cannot replay side effects.
+//! Replay overflow is an output failure, not an exit; see `agent_budget`.
 use crate::{
+    agent_budget::{self, CommandClass, Journaling},
     model::PendingRequest,
     provider::{self, Config, Connected, Event, Provider},
     runtime,
@@ -21,7 +23,6 @@ use std::{
     time::Duration,
 };
 
-const LIMIT: usize = 32 * 1024 * 1024;
 pub const FRAME: u64 = 17 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Spec {
@@ -42,8 +43,24 @@ struct Journal {
     next: u64,
     acknowledged: u64,
     bytes: usize,
+    /// Set once output overflowed. Ordinary events are discarded from then on,
+    /// but the run is not exited until an exit is observed or confirmed.
+    output_failure: Option<String>,
     closed: bool,
 }
+impl Journal {
+    fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+            next: 1,
+            acknowledged: 0,
+            bytes: 0,
+            output_failure: None,
+            closed: false,
+        }
+    }
+}
+const OUTPUT_FAILURE: &str = "Agent output exceeded the replay buffer while the daemon was unavailable; later output was not retained. Stopping the Agent; resume explicitly";
 struct Receipt {
     fingerprint: [u8; 32],
     result: Mutex<Option<Value>>,
@@ -62,6 +79,7 @@ impl Receipt {
     }
 }
 pub struct Admission {
+    class: CommandClass,
     request: Value,
     receipt: Option<Arc<Receipt>>,
     deliver: bool,
@@ -81,13 +99,7 @@ impl Run {
         let run = Arc::new(Self {
             spec,
             adapter,
-            journal: Mutex::new(Journal {
-                events: VecDeque::new(),
-                next: 1,
-                acknowledged: 0,
-                bytes: 0,
-                closed: false,
-            }),
+            journal: Mutex::new(Journal::new()),
             changed: Condvar::new(),
             receipts: Mutex::new(HashMap::new()),
             receipt_bytes: AtomicUsize::new(0),
@@ -96,36 +108,66 @@ impl Run {
         std::thread::spawn(move || {
             while let Ok(event) = rx.recv() {
                 let Some(run) = weak.upgrade() else { break };
-                if !run.append(event) {
-                    run.adapter.stop();
-                    break;
+                match run.append(event) {
+                    Journaling::Accept | Journaling::Discard => {}
+                    // Keep draining so the provider never blocks, and stop it off
+                    // this thread. Exit is journaled only once shutdown is confirmed.
+                    Journaling::Overflow => {
+                        std::thread::spawn(move || {
+                            if let Err(error) = run.stop_confirmed() {
+                                tracing::warn!(target: "ade", event = "agent_overflow_stop_unconfirmed", error = %error);
+                            }
+                        });
+                    }
+                    Journaling::Closed => {
+                        run.adapter.stop();
+                        break;
+                    }
                 }
             }
         });
         Ok(run)
     }
-    fn append(&self, event: Event) -> bool {
+    fn append(&self, event: Event) -> Journaling {
         let mut journal = self.journal.lock().unwrap();
-        if journal.closed {
-            return false;
-        }
-        let bytes = serde_json::to_vec(&event).map(|v| v.len()).unwrap_or(LIMIT);
-        let (event, bytes, healthy) = if bytes >= FRAME as usize - 65536
-            || journal.bytes + bytes > LIMIT
-        {
-            (Event::Exited { error: "Agent event replay buffer exhausted while the daemon was unavailable; resume explicitly".into() }, 256, false)
-        } else {
-            (event, bytes, true)
+        let exit = matches!(event, Event::Exited { .. });
+        let size = serde_json::to_vec(&event).map_or(usize::MAX, |v| v.len());
+        let decision = agent_budget::journal(
+            journal.bytes,
+            size,
+            FRAME as usize - 65536,
+            journal.output_failure.is_some(),
+            journal.closed,
+            exit,
+        );
+        let (event, bytes) = match decision {
+            Journaling::Closed | Journaling::Discard => return decision,
+            Journaling::Overflow => {
+                journal.output_failure = Some(OUTPUT_FAILURE.into());
+                let failure = Event::OperationFailed {
+                    submission: None,
+                    error: OUTPUT_FAILURE.into(),
+                };
+                (failure, agent_budget::MARKER_BYTES)
+            }
+            // An oversized exit reason is replaced; the exit itself was observed.
+            Journaling::Accept if exit && size > agent_budget::MARKER_BYTES * 4 => (
+                Event::Exited {
+                    error: ade_core::error::Failure::ProcessExited.to_string(),
+                },
+                agent_budget::MARKER_BYTES,
+            ),
+            Journaling::Accept => (event, size),
         };
         let sequence = journal.next;
         journal.next += 1;
         journal.bytes += bytes;
-        journal.closed = matches!(event, Event::Exited { .. });
+        journal.closed = exit;
         journal
             .events
             .push_back((Envelope { sequence, event }, bytes));
         self.changed.notify_all();
-        healthy
+        decision
     }
     pub fn events(&self, after: u64) -> Result<Value> {
         let mut journal = self.journal.lock().unwrap();
@@ -158,7 +200,9 @@ impl Run {
             })
             .map(|(e, _)| e.clone())
             .collect();
-        Ok(json!({"type":"events","events":events,"closed":journal.closed}))
+        Ok(
+            json!({"type":"events","events":events,"closed":journal.closed,"output_failure":journal.output_failure}),
+        )
     }
     pub fn acknowledge(&self, cursor: u64) -> Result<Value> {
         let mut journal = self.journal.lock().unwrap();
@@ -196,6 +240,7 @@ impl Run {
         let method = request["method"].as_str().context("Missing Agent method")?;
         if method == "validate" || method == "child_transcript" {
             return Ok(Admission {
+                class: CommandClass::Normal,
                 request: request.clone(),
                 receipt: None,
                 deliver: true,
@@ -220,14 +265,23 @@ impl Run {
                 "Agent command identity reused with different content"
             );
             return Ok(Admission {
+                class: agent_budget::classify(method),
                 request: json!({"method":method}),
                 receipt: Some(receipt.clone()),
                 deliver: false,
             });
         }
         let bytes = std::mem::size_of::<Receipt>() + key.len();
+        // Cancel and reject draw on reserved capacity, so saturation by ordinary
+        // commands never prevents stopping existing work.
+        let class = agent_budget::classify(method);
         ensure!(
-            receipts.len() < 4096 && self.receipt_bytes.load(Ordering::Relaxed) + bytes <= LIMIT,
+            agent_budget::admit_receipt(
+                class,
+                receipts.len(),
+                self.receipt_bytes.load(Ordering::Relaxed),
+                bytes
+            ),
             "Agent command receipt limit reached; disconnect and resume before continuing"
         );
         self.receipt_bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -238,6 +292,7 @@ impl Run {
         });
         receipts.insert(key.into(), receipt.clone());
         Ok(Admission {
+            class,
             request: request.clone(),
             receipt: Some(receipt),
             deliver: true,
@@ -306,7 +361,7 @@ impl Run {
         let previous = self
             .receipt_bytes
             .fetch_add(result_bytes, Ordering::Relaxed);
-        if result_bytes >= FRAME as usize || previous + result_bytes > LIMIT {
+        if !agent_budget::store_result(admission.class, previous, result_bytes, FRAME as usize) {
             self.receipt_bytes
                 .fetch_sub(result_bytes, Ordering::Relaxed);
             result = json!({"type":"error","message":"Agent receipt storage limit reached; outcome retained as failed, never replay automatically"});
@@ -568,13 +623,7 @@ mod tests {
                     account: None,
                 },
                 adapter: fake.clone(),
-                journal: Mutex::new(Journal {
-                    events: VecDeque::new(),
-                    next: 1,
-                    acknowledged: 0,
-                    bytes: 0,
-                    closed: false,
-                }),
+                journal: Mutex::new(Journal::new()),
                 changed: Condvar::new(),
                 receipts: Mutex::new(HashMap::new()),
                 receipt_bytes: AtomicUsize::new(0),
@@ -668,18 +717,39 @@ mod tests {
     #[test]
     fn overflow_preserves_earlier_events_and_reports_failure() {
         let (run, _) = fixture();
+        let big = || Event::Error {
+            error: "x".repeat(12 * 1024 * 1024),
+        };
         for _ in 0..2 {
-            assert!(run.append(Event::Error {
-                error: "x".repeat(12 * 1024 * 1024)
-            }));
+            assert_eq!(run.append(big()), Journaling::Accept);
         }
-        assert!(!run.append(Event::Error {
-            error: "x".repeat(12 * 1024 * 1024)
-        }));
-        let journal = run.journal.lock().unwrap();
-        assert_eq!(journal.events.len(), 3);
-        assert_eq!(journal.events[0].0.sequence, 1);
-        assert!(matches!(journal.events[2].0.event, Event::Exited { .. }));
-        assert!(journal.closed);
+        assert_eq!(run.append(big()), Journaling::Overflow);
+        assert_eq!(run.append(big()), Journaling::Discard);
+        {
+            let journal = run.journal.lock().unwrap();
+            assert_eq!(journal.events.len(), 3);
+            assert_eq!(journal.events[0].0.sequence, 1);
+            // Overflow is an output failure, never a substituted exit.
+            assert!(matches!(
+                journal.events[2].0.event,
+                Event::OperationFailed {
+                    submission: None,
+                    ..
+                }
+            ));
+            assert!(!journal.closed);
+        }
+        assert!(run.events(0).unwrap()["output_failure"].is_string());
+        // The fake provider cannot confirm shutdown, so no exit is published.
+        assert!(run.stop_confirmed().is_err());
+        assert!(!run.journal.lock().unwrap().closed);
+        // An observed exit still reaches the full, degraded journal.
+        assert_eq!(
+            run.append(Event::Exited {
+                error: "exited".into()
+            }),
+            Journaling::Accept
+        );
+        assert!(run.journal.lock().unwrap().closed);
     }
 }
