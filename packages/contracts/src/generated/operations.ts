@@ -185,6 +185,13 @@ export const operations = {
   "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
   "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
   "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
+  "provider.capabilities": { tier: "query", domain: "providers", request: "ProviderCapabilitiesRequest", response: "ProviderCapabilities" },
+  "provider.readiness": { tier: "query", domain: "providers", request: "ProviderReadinessRequest", response: "ProviderReadiness" },
+  "provider.quota": { tier: "query", domain: "providers", request: "ProviderQuotaRequest", response: "ProviderQuota" },
+  "preset.list": { tier: "query", domain: "providers", request: "PresetListRequest", response: "PresetList" },
+  "preset.get": { tier: "query", domain: "providers", request: "PresetGetRequest", response: "PresetView" },
+  "preset.save": { tier: "idempotent_command", domain: "providers", request: "PresetSaveRequest", response: "PresetSaved" },
+  "preset.delete": { tier: "idempotent_command", domain: "providers", request: "PresetDeleteRequest", response: "PresetDeleted" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

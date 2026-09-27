@@ -2608,6 +2608,115 @@
         }
       ]
     },
+    "Capability": {
+      "description": "One capability and why it has that support.",
+      "properties": {
+        "note": {
+          "description": "The native mechanism, or what is missing.",
+          "type": "string"
+        },
+        "support": {
+          "$ref": "#/$defs/Support"
+        }
+      },
+      "required": [
+        "support",
+        "note"
+      ],
+      "type": "object"
+    },
+    "CapabilityChange": {
+      "description": "How the provider's capability record changed since a preset was saved.",
+      "oneOf": [
+        {
+          "enum": [
+            "unchanged"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "revised",
+          "description": "The adapter published a newer revision.",
+          "type": "string"
+        },
+        {
+          "const": "drifted",
+          "description": "The record changed without a new revision.",
+          "type": "string"
+        },
+        {
+          "const": "downgraded",
+          "description": "The adapter is older than the one the preset was saved with.",
+          "type": "string"
+        }
+      ]
+    },
+    "CapabilityRecord": {
+      "description": "What an adapter declares about its provider.",
+      "properties": {
+        "checked_against": {
+          "description": "The provider version or document the record was checked against.",
+          "type": "string"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ConversationCapabilities"
+        },
+        "fingerprint": {
+          "description": "SHA-256 of this record with an empty fingerprint. A change without a\nnew revision means the declaration drifted.",
+          "type": "string"
+        },
+        "grants": {
+          "$ref": "#/$defs/GrantCapabilities"
+        },
+        "managed_accounts": {
+          "$ref": "#/$defs/Capability",
+          "description": "Whether ADE can manage several accounts for this provider."
+        },
+        "models": {
+          "$ref": "#/$defs/ModelCapabilities"
+        },
+        "name": {
+          "type": "string"
+        },
+        "permission_modes": {
+          "items": {
+            "$ref": "#/$defs/PermissionModeCapability"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "quota": {
+          "$ref": "#/$defs/Capability",
+          "description": "Whether the provider reports quota or rate-limit windows."
+        },
+        "reasoning": {
+          "$ref": "#/$defs/ReasoningCapabilities"
+        },
+        "revision": {
+          "description": "Raised by the adapter whenever the declared capabilities change.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider",
+        "name",
+        "revision",
+        "fingerprint",
+        "checked_against",
+        "models",
+        "reasoning",
+        "permission_modes",
+        "grants",
+        "conversation",
+        "quota",
+        "managed_accounts"
+      ],
+      "type": "object"
+    },
     "CatalogFrame": {
       "description": "The `catalog.get` reply and the `catalog` feed frame.",
       "properties": {
@@ -2681,6 +2790,38 @@
         "workspaces",
         "conversations",
         "windows"
+      ],
+      "type": "object"
+    },
+    "CheckState": {
+      "enum": [
+        "passed",
+        "failed",
+        "skipped"
+      ],
+      "type": "string"
+    },
+    "CheckedPreset": {
+      "description": "A preset checked against the current capability record.",
+      "properties": {
+        "capability_change": {
+          "$ref": "#/$defs/CapabilityChange"
+        },
+        "conflicts": {
+          "description": "Empty when the preset can be applied as saved.",
+          "items": {
+            "$ref": "#/$defs/PresetConflict"
+          },
+          "type": "array"
+        },
+        "preset": {
+          "$ref": "#/$defs/Preset"
+        }
+      },
+      "required": [
+        "preset",
+        "capability_change",
+        "conflicts"
       ],
       "type": "object"
     },
@@ -4154,6 +4295,48 @@
         "active_turn_id",
         "error",
         "updated_at"
+      ],
+      "type": "object"
+    },
+    "ConversationCapabilities": {
+      "properties": {
+        "account_switch": {
+          "$ref": "#/$defs/Capability",
+          "description": "Changing account inside one conversation."
+        },
+        "compaction": {
+          "$ref": "#/$defs/Capability",
+          "description": "Summarizing earlier context on request."
+        },
+        "fork": {
+          "$ref": "#/$defs/Capability",
+          "description": "Branching a native session into a new one."
+        },
+        "import": {
+          "$ref": "#/$defs/Capability",
+          "description": "Importing native history that ADE did not create."
+        },
+        "resume": {
+          "$ref": "#/$defs/Capability",
+          "description": "Reopening a native session after a restart."
+        },
+        "rewind": {
+          "$ref": "#/$defs/Capability",
+          "description": "Returning the conversation, and possibly files, to an earlier point."
+        },
+        "steering": {
+          "$ref": "#/$defs/Capability",
+          "description": "Adding input to a running turn."
+        }
+      },
+      "required": [
+        "steering",
+        "rewind",
+        "compaction",
+        "resume",
+        "import",
+        "fork",
+        "account_switch"
       ],
       "type": "object"
     },
@@ -6166,6 +6349,29 @@
         }
       ]
     },
+    "GrantCapabilities": {
+      "description": "How long an approval can last. ADE never widens a grant while mapping it.",
+      "properties": {
+        "once": {
+          "$ref": "#/$defs/Capability",
+          "description": "Approving one request only."
+        },
+        "persistent": {
+          "$ref": "#/$defs/Capability",
+          "description": "Approving similar requests in saved native settings."
+        },
+        "session": {
+          "$ref": "#/$defs/Capability",
+          "description": "Approving similar requests for the rest of the session."
+        }
+      },
+      "required": [
+        "once",
+        "session",
+        "persistent"
+      ],
+      "type": "object"
+    },
     "GroupCompareRequest": {
       "additionalProperties": false,
       "description": "`orchestration.group.compare`: each run's outcome and Git changes.",
@@ -8148,6 +8354,50 @@
       ],
       "type": "object"
     },
+    "ModelCapabilities": {
+      "properties": {
+        "aliases": {
+          "description": "Aliases the provider documents. The provider resolves them; ADE does\nnot know which model an alias means today.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "discovery": {
+          "$ref": "#/$defs/Capability",
+          "description": "Listing the models an account can use."
+        },
+        "format": {
+          "$ref": "#/$defs/ModelFormat"
+        },
+        "selection": {
+          "$ref": "#/$defs/Capability",
+          "description": "Choosing a model when a conversation starts."
+        }
+      },
+      "required": [
+        "selection",
+        "format",
+        "aliases",
+        "discovery"
+      ],
+      "type": "object"
+    },
+    "ModelFormat": {
+      "description": "The shape a provider expects a model ID in.",
+      "oneOf": [
+        {
+          "const": "native_id",
+          "description": "Any ID or alias the provider accepts, such as `sonnet` or `gpt-5.5`.",
+          "type": "string"
+        },
+        {
+          "const": "provider_qualified",
+          "description": "`provider/model`, such as `anthropic/claude-sonnet-5`.",
+          "type": "string"
+        }
+      ]
+    },
     "NotificationDeliveries": {
       "description": "The `notification.delivery.list` reply.",
       "properties": {
@@ -8661,6 +8911,27 @@
         "sends",
         "restored_from_backup",
         "next_cursor"
+      ],
+      "type": "object"
+    },
+    "PermissionModeCapability": {
+      "description": "One permission mode and its meaning.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "The value a conversation's `permission_mode` takes.",
+          "type": "string"
+        },
+        "support": {
+          "$ref": "#/$defs/Support"
+        }
+      },
+      "required": [
+        "id",
+        "support",
+        "description"
       ],
       "type": "object"
     },
@@ -9776,6 +10047,311 @@
       ],
       "type": "string"
     },
+    "Preset": {
+      "description": "A stored preset.",
+      "properties": {
+        "capability_fingerprint": {
+          "type": "string"
+        },
+        "capability_revision": {
+          "description": "The capability record the settings were validated against when saved.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "Starts at 1 and rises with each change.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settings": {
+          "$ref": "#/$defs/PresetSettings"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "settings",
+        "revision",
+        "capability_revision",
+        "capability_fingerprint",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "PresetConflict": {
+      "description": "A setting the provider's current capabilities do not allow.",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/PresetField"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "message"
+      ],
+      "type": "object"
+    },
+    "PresetDeleteRequest": {
+      "additionalProperties": false,
+      "description": "`preset.delete`: remove a preset at the revision the caller saw.",
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "preset.delete"
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "PresetDeleted": {
+      "description": "The `preset.delete` reply.",
+      "properties": {
+        "deleted": {
+          "description": "False when no preset had this name.",
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `preset_deleted` type tag.",
+          "enum": [
+            "preset_deleted"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "deleted"
+      ],
+      "type": "object"
+    },
+    "PresetField": {
+      "description": "The preset field a conflict concerns.",
+      "enum": [
+        "name",
+        "provider",
+        "model",
+        "reasoning",
+        "permission_mode"
+      ],
+      "type": "string"
+    },
+    "PresetGetRequest": {
+      "additionalProperties": false,
+      "description": "`preset.get`: one preset and its conflicts.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "preset.get"
+        }
+      },
+      "required": [
+        "op",
+        "name"
+      ],
+      "type": "object"
+    },
+    "PresetList": {
+      "description": "The `preset.list` reply.",
+      "properties": {
+        "presets": {
+          "items": {
+            "$ref": "#/$defs/CheckedPreset"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `presets` type tag.",
+          "enum": [
+            "presets"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "presets"
+      ],
+      "type": "object"
+    },
+    "PresetListRequest": {
+      "additionalProperties": false,
+      "description": "`preset.list`: every preset in the profile, by name.",
+      "properties": {
+        "op": {
+          "const": "preset.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "PresetSaveRequest": {
+      "additionalProperties": false,
+      "description": "`preset.save`: create or replace a preset. The daemon refuses settings the\nprovider's current capabilities do not allow.",
+      "properties": {
+        "expected_revision": {
+          "description": "The revision being replaced. Absent to create a new preset.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Trimmed by the daemon; 1 to 80 characters without control characters.",
+          "type": "string"
+        },
+        "op": {
+          "const": "preset.save"
+        },
+        "permission_mode": {
+          "description": "`default` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "provider"
+      ],
+      "type": "object"
+    },
+    "PresetSaved": {
+      "description": "The `preset.save` reply.",
+      "properties": {
+        "changed": {
+          "description": "False when the preset already had these settings.",
+          "type": "boolean"
+        },
+        "preset": {
+          "$ref": "#/$defs/Preset"
+        },
+        "type": {
+          "description": "The `preset_saved` type tag.",
+          "enum": [
+            "preset_saved"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "preset",
+        "changed"
+      ],
+      "type": "object"
+    },
+    "PresetSettings": {
+      "description": "A preset's launch settings.",
+      "properties": {
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "permission_mode": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "reasoning",
+        "permission_mode"
+      ],
+      "type": "object"
+    },
+    "PresetView": {
+      "description": "The `preset.get` reply.",
+      "properties": {
+        "capability_change": {
+          "$ref": "#/$defs/CapabilityChange"
+        },
+        "conflicts": {
+          "description": "Empty when the preset can be applied as saved.",
+          "items": {
+            "$ref": "#/$defs/PresetConflict"
+          },
+          "type": "array"
+        },
+        "preset": {
+          "$ref": "#/$defs/Preset"
+        },
+        "type": {
+          "description": "The `preset` type tag.",
+          "enum": [
+            "preset"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "preset",
+        "capability_change",
+        "conflicts"
+      ],
+      "type": "object"
+    },
     "PreviewKind": {
       "description": "How a preview presents the file.",
       "enum": [
@@ -9807,6 +10383,49 @@
       ],
       "type": "object"
     },
+    "ProviderCapabilities": {
+      "description": "The `provider.capabilities` reply.",
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/CapabilityRecord"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `provider_capabilities` type tag.",
+          "enum": [
+            "provider_capabilities"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "providers"
+      ],
+      "type": "object"
+    },
+    "ProviderCapabilitiesRequest": {
+      "additionalProperties": false,
+      "description": "`provider.capabilities`: the capability records ADE ships.",
+      "properties": {
+        "op": {
+          "const": "provider.capabilities"
+        },
+        "provider": {
+          "description": "One provider; every provider when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "ProviderListRequest": {
       "additionalProperties": false,
       "description": "`provider.list`: the providers this daemon can launch.",
@@ -9817,6 +10436,145 @@
       },
       "required": [
         "op"
+      ],
+      "type": "object"
+    },
+    "ProviderQuota": {
+      "description": "The `provider.quota` reply.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/QuotaEntry"
+          },
+          "type": "array"
+        },
+        "recording": {
+          "$ref": "#/$defs/UsageRecording"
+        },
+        "type": {
+          "description": "The `provider_quota` type tag.",
+          "enum": [
+            "provider_quota"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "entries",
+        "recording"
+      ],
+      "type": "object"
+    },
+    "ProviderQuotaRequest": {
+      "additionalProperties": false,
+      "description": "`provider.quota`: reported limits per provider and account.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "provider.quota"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "ProviderReadiness": {
+      "description": "The `provider.readiness` reply. It is a snapshot: an external CLI update\nchanges it, so launches check again.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capability_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "checked_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/ReadinessCheck"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "What to do next, in words a person can act on.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ReadinessState2"
+        },
+        "type": {
+          "description": "The `provider_readiness` type tag.",
+          "enum": [
+            "provider_readiness"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "description": "The version the account probe read, when it ran.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "provider",
+        "account_id",
+        "state",
+        "reason",
+        "version",
+        "checks",
+        "capability_revision",
+        "checked_at"
+      ],
+      "type": "object"
+    },
+    "ProviderReadinessRequest": {
+      "additionalProperties": false,
+      "description": "`provider.readiness`: whether a provider, or one of its accounts, can run.",
+      "properties": {
+        "account_id": {
+          "description": "A managed account to probe. Without it ADE checks installation only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "provider.readiness"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "provider"
       ],
       "type": "object"
     },
@@ -10019,6 +10777,85 @@
       ],
       "type": "object"
     },
+    "QuotaEntry": {
+      "description": "The quota picture for one provider and account.",
+      "properties": {
+        "account_id": {
+          "description": "Null for the provider's own login.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "age_ms": {
+          "description": "How old that report is.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "exhausted": {
+          "description": "True when a window that has not yet reset reports exhaustion. ADE does\nnot switch account or model in response.",
+          "type": "boolean"
+        },
+        "observed_at": {
+          "description": "When the newest window was received, in milliseconds since the epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/QuotaState"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/UsageLimitWindow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "provider",
+        "account_id",
+        "state",
+        "reason",
+        "windows",
+        "exhausted",
+        "observed_at",
+        "age_ms"
+      ],
+      "type": "object"
+    },
+    "QuotaState": {
+      "oneOf": [
+        {
+          "const": "reported",
+          "description": "The provider reported at least one window.",
+          "type": "string"
+        },
+        {
+          "const": "not_reported",
+          "description": "The provider reports limits, but none has arrived for this account.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "The provider does not report limits, or nobody has confirmed it does.",
+          "type": "string"
+        }
+      ]
+    },
     "Readiness": {
       "description": "Port readiness; application readiness is never inferred.",
       "properties": {
@@ -10071,6 +10908,27 @@
         }
       ]
     },
+    "ReadinessCheck": {
+      "description": "One step of a readiness check.",
+      "properties": {
+        "check": {
+          "description": "Such as `executable:claude`, `runtime:node` or `account`.",
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/CheckState"
+        }
+      },
+      "required": [
+        "check",
+        "state",
+        "detail"
+      ],
+      "type": "object"
+    },
     "ReadinessState": {
       "description": "What the daemon could observe about a running service's ports.",
       "oneOf": [
@@ -10093,6 +10951,74 @@
           "type": "string"
         }
       ]
+    },
+    "ReadinessState2": {
+      "description": "The overall readiness verdict.",
+      "oneOf": [
+        {
+          "enum": [
+            "missing_executable",
+            "needs_authentication",
+            "account_disabled"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "ready",
+          "description": "Installed, compatible, signed in and matching the pinned identity.",
+          "type": "string"
+        },
+        {
+          "const": "installed_unchecked",
+          "description": "Executables were found; version and sign-in were not checked.",
+          "type": "string"
+        },
+        {
+          "const": "incompatible",
+          "description": "The installed version is outside the validated range, or its output\ncould not be read.",
+          "type": "string"
+        },
+        {
+          "const": "needs_verification",
+          "description": "Signed in, but the account's identity has not been pinned.",
+          "type": "string"
+        },
+        {
+          "const": "identity_changed",
+          "description": "Signed in as someone other than the pinned identity.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "The check itself failed; nothing is known.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReasoningCapabilities": {
+      "properties": {
+        "levels": {
+          "description": "The provider's own level names, weakest first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "selection": {
+          "$ref": "#/$defs/Capability",
+          "description": "Choosing a reasoning level when a conversation starts."
+        },
+        "varies_by_model": {
+          "description": "True when the provider offers a different subset per model.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "selection",
+        "levels",
+        "varies_by_model"
+      ],
+      "type": "object"
     },
     "RecoveryStatus": {
       "enum": [
@@ -15163,6 +16089,31 @@
         }
       ]
     },
+    "Support": {
+      "description": "How far ADE supports one provider capability.",
+      "oneOf": [
+        {
+          "const": "supported",
+          "description": "The provider offers it and ADE can use it through this adapter.",
+          "type": "string"
+        },
+        {
+          "const": "native_only",
+          "description": "The provider offers it, but this adapter does not expose it yet.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The provider does not offer it.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Nobody has confirmed whether the provider offers it.",
+          "type": "string"
+        }
+      ]
+    },
     "TerminalCreateRequest": {
       "additionalProperties": false,
       "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID; `request_id` is accepted as\nits older name. Without one, every call creates a new terminal.",
@@ -18793,6 +19744,55 @@
       "request": "BrowserRecordingGetRequest",
       "response": "BrowserRecording",
       "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "provider.capabilities",
+      "request": "ProviderCapabilitiesRequest",
+      "response": "ProviderCapabilities",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "provider.readiness",
+      "request": "ProviderReadinessRequest",
+      "response": "ProviderReadiness",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "provider.quota",
+      "request": "ProviderQuotaRequest",
+      "response": "ProviderQuota",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "preset.list",
+      "request": "PresetListRequest",
+      "response": "PresetList",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "preset.get",
+      "request": "PresetGetRequest",
+      "response": "PresetView",
+      "tier": "query"
+    },
+    {
+      "domain": "providers",
+      "name": "preset.save",
+      "request": "PresetSaveRequest",
+      "response": "PresetSaved",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "providers",
+      "name": "preset.delete",
+      "request": "PresetDeleteRequest",
+      "response": "PresetDeleted",
+      "tier": "idempotent_command"
     }
   ]
 }

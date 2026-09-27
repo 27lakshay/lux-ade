@@ -1,10 +1,601 @@
-//! Provider capability and preset contracts. A Phase 2 slice fills this module.
-use super::{FrameSpec, OperationSpec};
+//! Provider capabilities, readiness, presets and quota (F027-F030, decision D04).
+//!
+//! Each adapter declares a revisioned [`CapabilityRecord`] of what its provider
+//! actually offers and what ADE can select through it today. A capability the
+//! provider has but the adapter does not expose is `native_only`; one nobody
+//! has confirmed is `unknown`. Neither is ever reported as supported.
+//!
+//! Presets are named combinations of provider, model, reasoning and permission
+//! mode stored in the profile. They never carry an account, so applying one
+//! cannot change account identity. Every read revalidates a preset against the
+//! current record and reports conflicts instead of silently adapting it.
+//!
+//! Quota visibility reads the rate-limit windows the usage domain recorded.
+//! ADE never switches account or model when a limit is exhausted.
+use super::usage::{UsageLimitWindow, UsageRecording};
+use super::{FrameSpec, OperationSpec, Tier};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 pub fn operations() -> Vec<OperationSpec> {
-    vec![]
+    vec![
+        OperationSpec::new::<ProviderCapabilitiesRequest, ProviderCapabilities>(
+            "provider.capabilities",
+            Tier::Query,
+        ),
+        // Reads the filesystem and, with an account, runs the provider's
+        // read-only status probe. Changes no state.
+        OperationSpec::new::<ProviderReadinessRequest, ProviderReadiness>(
+            "provider.readiness",
+            Tier::Query,
+        ),
+        OperationSpec::new::<ProviderQuotaRequest, ProviderQuota>("provider.quota", Tier::Query),
+        OperationSpec::new::<PresetListRequest, PresetList>("preset.list", Tier::Query),
+        OperationSpec::new::<PresetGetRequest, PresetView>("preset.get", Tier::Query),
+        // Guarded by the expected revision; saving the settings a preset
+        // already has converges without a new revision.
+        OperationSpec::new::<PresetSaveRequest, PresetSaved>(
+            "preset.save",
+            Tier::IdempotentCommand,
+        ),
+        // Guarded by the expected revision; deleting an absent preset converges.
+        OperationSpec::new::<PresetDeleteRequest, PresetDeleted>(
+            "preset.delete",
+            Tier::IdempotentCommand,
+        ),
+    ]
 }
 
 pub fn frames() -> Vec<FrameSpec> {
     vec![]
+}
+
+/// How far ADE supports one provider capability.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Support {
+    /// The provider offers it and ADE can use it through this adapter.
+    Supported,
+    /// The provider offers it, but this adapter does not expose it yet.
+    NativeOnly,
+    /// The provider does not offer it.
+    Unsupported,
+    /// Nobody has confirmed whether the provider offers it.
+    Unknown,
+}
+
+/// One capability and why it has that support.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct Capability {
+    pub support: Support,
+    /// The native mechanism, or what is missing.
+    pub note: String,
+}
+
+impl Capability {
+    pub fn new(support: Support, note: &str) -> Self {
+        Self {
+            support,
+            note: note.into(),
+        }
+    }
+}
+
+/// The shape a provider expects a model ID in.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelFormat {
+    /// Any ID or alias the provider accepts, such as `sonnet` or `gpt-5.5`.
+    NativeId,
+    /// `provider/model`, such as `anthropic/claude-sonnet-5`.
+    ProviderQualified,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ModelCapabilities {
+    /// Choosing a model when a conversation starts.
+    pub selection: Capability,
+    pub format: ModelFormat,
+    /// Aliases the provider documents. The provider resolves them; ADE does
+    /// not know which model an alias means today.
+    pub aliases: Vec<String>,
+    /// Listing the models an account can use.
+    pub discovery: Capability,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ReasoningCapabilities {
+    /// Choosing a reasoning level when a conversation starts.
+    pub selection: Capability,
+    /// The provider's own level names, weakest first.
+    pub levels: Vec<String>,
+    /// True when the provider offers a different subset per model.
+    pub varies_by_model: bool,
+}
+
+/// One permission mode and its meaning.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct PermissionModeCapability {
+    /// The value a conversation's `permission_mode` takes.
+    pub id: String,
+    pub support: Support,
+    pub description: String,
+}
+
+/// How long an approval can last. ADE never widens a grant while mapping it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct GrantCapabilities {
+    /// Approving one request only.
+    pub once: Capability,
+    /// Approving similar requests for the rest of the session.
+    pub session: Capability,
+    /// Approving similar requests in saved native settings.
+    pub persistent: Capability,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ConversationCapabilities {
+    /// Adding input to a running turn.
+    pub steering: Capability,
+    /// Returning the conversation, and possibly files, to an earlier point.
+    pub rewind: Capability,
+    /// Summarizing earlier context on request.
+    pub compaction: Capability,
+    /// Reopening a native session after a restart.
+    pub resume: Capability,
+    /// Importing native history that ADE did not create.
+    pub import: Capability,
+    /// Branching a native session into a new one.
+    pub fork: Capability,
+    /// Changing account inside one conversation.
+    pub account_switch: Capability,
+}
+
+/// What an adapter declares about its provider.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityRecord {
+    pub provider: String,
+    pub name: String,
+    /// Raised by the adapter whenever the declared capabilities change.
+    pub revision: u32,
+    /// SHA-256 of this record with an empty fingerprint. A change without a
+    /// new revision means the declaration drifted.
+    pub fingerprint: String,
+    /// The provider version or document the record was checked against.
+    pub checked_against: String,
+    pub models: ModelCapabilities,
+    pub reasoning: ReasoningCapabilities,
+    pub permission_modes: Vec<PermissionModeCapability>,
+    pub grants: GrantCapabilities,
+    pub conversation: ConversationCapabilities,
+    /// Whether the provider reports quota or rate-limit windows.
+    pub quota: Capability,
+    /// Whether ADE can manage several accounts for this provider.
+    pub managed_accounts: Capability,
+}
+
+/// `provider.capabilities`: the capability records ADE ships.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct ProviderCapabilitiesRequest {
+    /// One provider; every provider when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+wire_tag!(ProviderCapabilitiesTag, "provider_capabilities");
+
+/// The `provider.capabilities` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProviderCapabilities {
+    #[serde(rename = "type")]
+    pub tag: ProviderCapabilitiesTag,
+    pub providers: Vec<CapabilityRecord>,
+}
+
+/// `provider.readiness`: whether a provider, or one of its accounts, can run.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProviderReadinessRequest {
+    pub provider: String,
+    /// A managed account to probe. Without it ADE checks installation only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
+/// The overall readiness verdict.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessState {
+    /// Installed, compatible, signed in and matching the pinned identity.
+    Ready,
+    /// Executables were found; version and sign-in were not checked.
+    InstalledUnchecked,
+    MissingExecutable,
+    /// The installed version is outside the validated range, or its output
+    /// could not be read.
+    Incompatible,
+    NeedsAuthentication,
+    /// Signed in, but the account's identity has not been pinned.
+    NeedsVerification,
+    /// Signed in as someone other than the pinned identity.
+    IdentityChanged,
+    AccountDisabled,
+    /// The check itself failed; nothing is known.
+    Unavailable,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckState {
+    Passed,
+    Failed,
+    Skipped,
+}
+
+/// One step of a readiness check.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct ReadinessCheck {
+    /// Such as `executable:claude`, `runtime:node` or `account`.
+    pub check: String,
+    pub state: CheckState,
+    pub detail: String,
+}
+
+wire_tag!(ProviderReadinessTag, "provider_readiness");
+
+/// The `provider.readiness` reply. It is a snapshot: an external CLI update
+/// changes it, so launches check again.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProviderReadiness {
+    #[serde(rename = "type")]
+    pub tag: ProviderReadinessTag,
+    pub provider: String,
+    pub account_id: Option<String>,
+    pub state: ReadinessState,
+    /// What to do next, in words a person can act on.
+    pub reason: String,
+    /// The version the account probe read, when it ran.
+    pub version: Option<String>,
+    pub checks: Vec<ReadinessCheck>,
+    pub capability_revision: u32,
+    pub checked_at: i64,
+}
+
+/// `provider.quota`: reported limits per provider and account.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct ProviderQuotaRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaState {
+    /// The provider reported at least one window.
+    Reported,
+    /// The provider reports limits, but none has arrived for this account.
+    NotReported,
+    /// The provider does not report limits, or nobody has confirmed it does.
+    Unavailable,
+}
+
+/// The quota picture for one provider and account.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct QuotaEntry {
+    pub provider: String,
+    /// Null for the provider's own login.
+    pub account_id: Option<String>,
+    pub state: QuotaState,
+    pub reason: String,
+    pub windows: Vec<UsageLimitWindow>,
+    /// True when a window that has not yet reset reports exhaustion. ADE does
+    /// not switch account or model in response.
+    pub exhausted: bool,
+    /// When the newest window was received, in milliseconds since the epoch.
+    pub observed_at: Option<i64>,
+    /// How old that report is.
+    pub age_ms: Option<i64>,
+}
+
+wire_tag!(ProviderQuotaTag, "provider_quota");
+
+/// The `provider.quota` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProviderQuota {
+    #[serde(rename = "type")]
+    pub tag: ProviderQuotaTag,
+    pub entries: Vec<QuotaEntry>,
+    pub recording: UsageRecording,
+}
+
+/// A preset's launch settings.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct PresetSettings {
+    pub provider: String,
+    pub model: Option<String>,
+    pub reasoning: Option<String>,
+    pub permission_mode: String,
+}
+
+/// A stored preset.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct Preset {
+    pub name: String,
+    pub settings: PresetSettings,
+    /// Starts at 1 and rises with each change.
+    pub revision: u64,
+    /// The capability record the settings were validated against when saved.
+    pub capability_revision: u32,
+    pub capability_fingerprint: String,
+    pub updated_at: i64,
+}
+
+/// The preset field a conflict concerns.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PresetField {
+    Name,
+    Provider,
+    Model,
+    Reasoning,
+    PermissionMode,
+}
+
+/// A setting the provider's current capabilities do not allow.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct PresetConflict {
+    pub field: PresetField,
+    pub message: String,
+}
+
+/// How the provider's capability record changed since a preset was saved.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityChange {
+    Unchanged,
+    /// The adapter published a newer revision.
+    Revised,
+    /// The record changed without a new revision.
+    Drifted,
+    /// The adapter is older than the one the preset was saved with.
+    Downgraded,
+}
+
+/// A preset checked against the current capability record.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct CheckedPreset {
+    pub preset: Preset,
+    pub capability_change: CapabilityChange,
+    /// Empty when the preset can be applied as saved.
+    pub conflicts: Vec<PresetConflict>,
+}
+
+/// `preset.list`: every preset in the profile, by name.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct PresetListRequest {}
+
+/// `preset.get`: one preset and its conflicts.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PresetGetRequest {
+    pub name: String,
+}
+
+/// `preset.save`: create or replace a preset. The daemon refuses settings the
+/// provider's current capabilities do not allow.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PresetSaveRequest {
+    /// Trimmed by the daemon; 1 to 80 characters without control characters.
+    pub name: String,
+    pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    /// `default` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    /// The revision being replaced. Absent to create a new preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+}
+
+/// `preset.delete`: remove a preset at the revision the caller saw.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PresetDeleteRequest {
+    pub name: String,
+    pub expected_revision: u64,
+}
+
+wire_tag!(PresetListTag, "presets");
+wire_tag!(PresetViewTag, "preset");
+wire_tag!(PresetSavedTag, "preset_saved");
+wire_tag!(PresetDeletedTag, "preset_deleted");
+
+/// The `preset.list` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PresetList {
+    #[serde(rename = "type")]
+    pub tag: PresetListTag,
+    pub presets: Vec<CheckedPreset>,
+}
+
+/// The `preset.get` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PresetView {
+    #[serde(rename = "type")]
+    pub tag: PresetViewTag,
+    #[serde(flatten)]
+    pub checked: CheckedPreset,
+}
+
+/// The `preset.save` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PresetSaved {
+    #[serde(rename = "type")]
+    pub tag: PresetSavedTag,
+    pub preset: Preset,
+    /// False when the preset already had these settings.
+    pub changed: bool,
+}
+
+/// The `preset.delete` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PresetDeleted {
+    #[serde(rename = "type")]
+    pub tag: PresetDeletedTag,
+    pub name: String,
+    /// False when no preset had this name.
+    pub deleted: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract::bundle;
+    use serde::de::DeserializeOwned;
+    use serde_json::{Value, json};
+
+    fn names(op: &str) -> (String, String) {
+        let bundle = bundle();
+        let spec = bundle["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|spec| spec["name"] == op)
+            .unwrap_or_else(|| panic!("{op} is registered"))
+            .clone();
+        (
+            spec["request"].as_str().unwrap().to_owned(),
+            spec["response"].as_str().unwrap().to_owned(),
+        )
+    }
+
+    fn valid(name: &str, value: &Value) -> bool {
+        let schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": bundle()["$defs"],
+            "$ref": format!("#/$defs/{name}"),
+        });
+        jsonschema::validator_for(&schema).unwrap().is_valid(value)
+    }
+
+    fn request<T: Serialize + DeserializeOwned>(op: &str, wire: Value) {
+        let (name, _) = names(op);
+        assert!(valid(&name, &wire), "{name} rejected {wire}");
+        let decoded: T = serde_json::from_value(wire.clone()).unwrap();
+        let mut again = serde_json::to_value(decoded).unwrap();
+        again["op"] = json!(op);
+        assert_eq!(again, wire);
+    }
+
+    fn response<T: Serialize + DeserializeOwned>(op: &str, wire: Value) {
+        let (_, name) = names(op);
+        assert!(valid(&name, &wire), "{name} rejected {wire}");
+        let decoded: T = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
+    }
+
+    fn capability(support: &str) -> Value {
+        json!({"support": support, "note": "n"})
+    }
+
+    fn preset() -> Value {
+        json!({"name": "Fast", "settings": {"provider": "claude", "model": "sonnet",
+            "reasoning": null, "permission_mode": "default"}, "revision": 2,
+            "capability_revision": 1, "capability_fingerprint": "ab", "updated_at": 5})
+    }
+
+    #[test]
+    fn requests_round_trip_as_callers_send_them() {
+        request::<ProviderCapabilitiesRequest>(
+            "provider.capabilities",
+            json!({"op": "provider.capabilities"}),
+        );
+        request::<ProviderCapabilitiesRequest>(
+            "provider.capabilities",
+            json!({"op": "provider.capabilities", "provider": "codex"}),
+        );
+        request::<ProviderReadinessRequest>(
+            "provider.readiness",
+            json!({"op": "provider.readiness", "provider": "claude", "account_id": "a"}),
+        );
+        request::<ProviderQuotaRequest>("provider.quota", json!({"op": "provider.quota"}));
+        request::<PresetListRequest>("preset.list", json!({"op": "preset.list"}));
+        request::<PresetGetRequest>("preset.get", json!({"op": "preset.get", "name": "Fast"}));
+        request::<PresetSaveRequest>(
+            "preset.save",
+            json!({"op": "preset.save", "name": "Fast", "provider": "codex",
+                "model": "gpt-5.5", "permission_mode": "read-only", "expected_revision": 3}),
+        );
+        request::<PresetDeleteRequest>(
+            "preset.delete",
+            json!({"op": "preset.delete", "name": "Fast", "expected_revision": 1}),
+        );
+        let (name, _) = names("provider.readiness");
+        assert!(!valid(&name, &json!({"op": "provider.readiness"})));
+        let (name, _) = names("preset.delete");
+        assert!(!valid(
+            &name,
+            &json!({"op": "preset.delete", "name": "Fast"})
+        ));
+    }
+
+    #[test]
+    fn replies_round_trip_in_the_daemon_shape() {
+        let conversation = json!({"steering": capability("supported"),
+            "rewind": capability("native_only"), "compaction": capability("native_only"),
+            "resume": capability("supported"), "import": capability("unknown"),
+            "fork": capability("unsupported"), "account_switch": capability("unsupported")});
+        response::<ProviderCapabilities>(
+            "provider.capabilities",
+            json!({"type": "provider_capabilities", "providers": [{
+                "provider": "claude", "name": "Claude Code", "revision": 1, "fingerprint": "ab",
+                "checked_against": "SDK 0.3.281",
+                "models": {"selection": capability("supported"), "format": "native_id",
+                    "aliases": ["sonnet"], "discovery": capability("native_only")},
+                "reasoning": {"selection": capability("native_only"),
+                    "levels": ["low", "high"], "varies_by_model": true},
+                "permission_modes": [{"id": "default", "support": "supported",
+                    "description": "Ask"}],
+                "grants": {"once": capability("supported"), "session": capability("native_only"),
+                    "persistent": capability("native_only")},
+                "conversation": conversation, "quota": capability("supported"),
+                "managed_accounts": capability("supported"),
+            }]}),
+        );
+        response::<ProviderReadiness>(
+            "provider.readiness",
+            json!({"type": "provider_readiness", "provider": "codex", "account_id": null,
+                "state": "installed_unchecked", "reason": "r", "version": null,
+                "checks": [{"check": "executable:codex", "state": "passed", "detail": "/bin/codex"}],
+                "capability_revision": 1, "checked_at": 7}),
+        );
+        response::<ProviderQuota>(
+            "provider.quota",
+            json!({"type": "provider_quota", "entries": [{"provider": "omp", "account_id": null,
+                "state": "unavailable", "reason": "r", "windows": [], "exhausted": false,
+                "observed_at": null, "age_ms": null}],
+                "recording": {"dropped_batches": 0, "last_error": null}}),
+        );
+        let checked = json!({"preset": preset(), "capability_change": "revised",
+            "conflicts": [{"field": "reasoning", "message": "m"}]});
+        response::<PresetList>(
+            "preset.list",
+            json!({"type": "presets", "presets": [checked]}),
+        );
+        response::<PresetView>(
+            "preset.get",
+            json!({"type": "preset", "preset": preset(), "capability_change": "unchanged",
+                "conflicts": []}),
+        );
+        response::<PresetSaved>(
+            "preset.save",
+            json!({"type": "preset_saved", "preset": preset(), "changed": true}),
+        );
+        response::<PresetDeleted>(
+            "preset.delete",
+            json!({"type": "preset_deleted", "name": "Fast", "deleted": false}),
+        );
+    }
 }

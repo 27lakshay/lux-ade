@@ -18,6 +18,7 @@ import { runRunsCommand, runsUsage } from './commands/runs.js'
 import { historyUsage, runHistoryCommand } from './commands/history.js'
 import { importUsage, runImportCommand } from './commands/imports.js'
 import { runUsageCommand, usageAnalyticsUsage } from './commands/usage.js'
+import { providerUsage, runProviderCommand } from './commands/providers.js'
 import { retentionUsage, runRetentionCommand } from './commands/retention.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
@@ -78,6 +79,7 @@ const usage = [
   importUsage,
   usageAnalyticsUsage,
   accountUsage,
+  providerUsage,
   terminalUsage,
   browserUsage,
   serviceUsage,
@@ -214,6 +216,7 @@ const commandAreas = [
   runHistoryCommand,
   runImportCommand,
   runUsageCommand,
+  runProviderCommand,
   runAccountCommand,
   runTerminalCommand,
   runBrowserCommand,

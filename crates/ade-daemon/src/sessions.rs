@@ -31,6 +31,7 @@ use std::{
 mod accounts;
 mod activity;
 mod agents;
+mod capabilities;
 mod checkpoints;
 mod conversations;
 mod imports;
@@ -106,6 +107,7 @@ pub struct Sessions {
     pub review: Arc<crate::review::Review>,
     history: Arc<crate::history::History>,
     usage: Arc<crate::usage::Usage>,
+    presets: Arc<crate::capabilities::Presets>,
     pub worktrees: Arc<crate::worktrees::Worktrees>,
     /// The plugin registry, or why it could not open. Its failure never blocks the core.
     plugins: std::result::Result<crate::plugins::Plugins, String>,
@@ -144,9 +146,11 @@ impl Sessions {
         .map_err(|error| format!("{error:#}"));
         let history = crate::history::History::open(path)?;
         let usage = crate::usage::Usage::open(path)?;
+        let presets = crate::capabilities::Presets::open(path)?;
         let sessions = Arc::new(Self {
             history,
             usage,
+            presets,
             runtime,
             queue_wake,
             counters: inspection::Counters::default(),
@@ -756,6 +760,9 @@ impl Sessions {
             | "window.close" => self.conversation_command(request),
             op if op.starts_with("orchestration.") => self.orchestration_command(request),
             op if op.starts_with("retention.") => self.retention_command(request),
+            op if op.starts_with("provider.") || op.starts_with("preset.") => {
+                self.capability_command(request)
+            }
             _ => bail!("Unknown session operation"),
         }
     }
