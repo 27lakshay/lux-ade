@@ -44,7 +44,7 @@ export function FilesPane({ workspace }: { workspace: Workspace }): React.JSX.El
     const op = search ? 'file.search' : 'file.list'
     const fields = search ? { workspace_id: workspace.id, query: search, limit: 100 } :
       { workspace_id: workspace.id, path, limit: 100 }
-    void window.adeHost.requestFile(op, fields).then((result) => {
+    void window.adeHost.files.request(op, fields).then((result) => {
       if (token !== pageRequest.current) return
       const page = entriesFrom(result, Boolean(search))
       setRows(page.results ?? page.entries ?? []); setCursor(page.next_cursor); setIncomplete(page.incomplete)
@@ -58,7 +58,7 @@ export function FilesPane({ workspace }: { workspace: Workspace }): React.JSX.El
     setPreview(null); setPreviewError('')
     if (!selected) { setPreviewBusy(false); return () => { previewRequest.current++ } }
     setPreviewBusy(true)
-    void window.adeHost.requestFile('file.preview', { workspace_id: workspace.id, path: selected }).then((result) => {
+    void window.adeHost.files.request('file.preview', { workspace_id: workspace.id, path: selected }).then((result) => {
       if (token !== previewRequest.current) return
       if (result.path !== selected || !['text', 'image', 'unsupported'].includes(String(result.kind))) {
         throw new Error('Invalid file preview')
@@ -75,7 +75,7 @@ export function FilesPane({ workspace }: { workspace: Workspace }): React.JSX.El
     const next = cursor
     setBusy(true); setError('')
     try {
-      const result = await window.adeHost.requestFile(search ? 'file.search' : 'file.list', search ?
+      const result = await window.adeHost.files.request(search ? 'file.search' : 'file.list', search ?
         { workspace_id: workspace.id, query: search, cursor: next, limit: 100 } :
         { workspace_id: workspace.id, path, cursor: next, limit: 100 })
       if (token !== pageRequest.current) return

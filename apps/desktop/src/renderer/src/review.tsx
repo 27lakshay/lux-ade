@@ -165,7 +165,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
 
   React.useEffect(() => {
     let disposed = false
-    void window.adeHost.readGitJournal(workspace.id).then((result) => {
+    void window.adeHost.review.readGitJournal(workspace.id).then((result) => {
       if (disposed) return
       const pending = result.pending as PendingGit | null
       setPendingGit(pending)
@@ -184,7 +184,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
       if (polling) return
       polling = true
       try {
-        const response = await window.adeHost.requestReview('review.operation', {
+        const response = await window.adeHost.review.request('review.operation', {
           workspace_id: workspace.id, request_id: pendingGit.request_id,
         }) as GitReceipt
         if (disposed) return
@@ -200,7 +200,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
           setGitInterrupted(true)
           setGitMessage(`Git operation ${pendingGit.request_id} was interrupted. Inspect Git history and changes before continuing. It will not be retried automatically.${retained}`)
         } else {
-          await window.adeHost.acknowledgeGitJournal(workspace.id, pendingGit.request_id, 'settle')
+          await window.adeHost.review.acknowledgeGitJournal(workspace.id, pendingGit.request_id, 'settle')
           if (disposed) return
           setPendingGit(null)
           setGitUnknown(false)
@@ -234,11 +234,11 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
       setGitInterrupted(false)
       setGitMessage(`Submitting ${pending.op.slice(7)} · ${pending.request_id}`)
       setGitBusy(true)
-      await window.adeHost.requestReview(pending.op, pending)
+      await window.adeHost.review.request(pending.op, pending)
     } catch (reason) {
       setGitMessage(`Git operation ${pending.request_id} is unconfirmed: ${String(reason)}. Check its receipt before another action.`)
       try {
-        const recorded = await window.adeHost.readGitJournal(workspace.id)
+        const recorded = await window.adeHost.review.readGitJournal(workspace.id)
         const active = recorded.pending as PendingGit | null
         if (!active) { setPendingGit(null); setGitMessage(`Git operation was rejected before admission: ${String(reason)}`) }
         else if (active.request_id !== pending.request_id) {
@@ -254,7 +254,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     setGitBusy(true)
     setGitUnknown(false)
     setGitMessage(`Retrying original Git operation ${pendingGit.request_id}`)
-    try { await window.adeHost.requestReview(pendingGit.op, pendingGit) }
+    try { await window.adeHost.review.request(pendingGit.op, pendingGit) }
     catch (reason) { setGitMessage(`Git operation ${pendingGit.request_id} remains unconfirmed: ${String(reason)}`) }
     finally { setGitBusy(false) }
   }
@@ -264,8 +264,8 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   const acknowledgeInterruptedGit = async (): Promise<void> => {
     if (!pendingGit || !gitInterrupted) return
     try {
-      await window.adeHost.acknowledgeGitJournal(workspace.id, pendingGit.request_id, 'interrupted')
-      const recorded = await window.adeHost.readGitJournal(workspace.id)
+      await window.adeHost.review.acknowledgeGitJournal(workspace.id, pendingGit.request_id, 'interrupted')
+      const recorded = await window.adeHost.review.readGitJournal(workspace.id)
       setAcknowledgedGit(recorded.archived as AcknowledgedGit[])
     } catch (reason) { setGitMessage(`Could not retain Git operation ${pendingGit.request_id}: ${String(reason)}`); return }
     setPendingGit(null)
@@ -278,8 +278,8 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     if (!restoredPending || !conversation) return
     let disposed = false
     void Promise.all([
-      window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id }),
-      window.adeHost.requestConversation('conversation.get', { conversation_id: conversation.id }),
+      window.adeHost.conversations.request('draft.get', { conversation_id: conversation.id }),
+      window.adeHost.conversations.request('conversation.get', { conversation_id: conversation.id }),
     ]).then(([draft, snapshot]) => {
       if (disposed) return
       const pending = draft.send_pending as { request_id?: string } | null
@@ -304,7 +304,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
   React.useEffect(() => {
     if (restoredPending || !conversation) return
     let disposed = false
-    void window.adeHost.requestConversation('draft.get', { conversation_id: conversation.id }).then((draft) => {
+    void window.adeHost.conversations.request('draft.get', { conversation_id: conversation.id }).then((draft) => {
       if (disposed) return
       const pending = draft.send_pending as { request_id?: unknown; review_anchor?: Anchor;
         review_note?: unknown; review_feedback?: ReviewFeedback } | null
@@ -353,7 +353,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     if (!pendingId) setSelected(null)
     setStale(false)
     setLoading(true)
-    void window.adeHost.requestReview('review.status', { workspace_id: workspace.id }).then((response) => {
+    void window.adeHost.review.request('review.status', { workspace_id: workspace.id }).then((response) => {
       if (sequence !== requestSequence.current) return
       setStatus(response as ReviewStatus)
       setError('')
@@ -371,8 +371,8 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     setStale(false)
     setLoading(true)
     try {
-      const latest = await window.adeHost.requestReview('review.status', { workspace_id: workspace.id, force: true }) as ReviewStatus
-      const response = await window.adeHost.requestReview('review.diff_page', { workspace_id: workspace.id, path, staged }) as ReviewDiffPage
+      const latest = await window.adeHost.review.request('review.status', { workspace_id: workspace.id, force: true }) as ReviewStatus
+      const response = await window.adeHost.review.request('review.diff_page', { workspace_id: workspace.id, path, staged }) as ReviewDiffPage
       if (response.revision !== latest.revision) throw new Error('Stale diff: refresh Changes')
       if (sequence === requestSequence.current) { setStatus(latest); setDiffPage(response); setError('') }
     } catch (reason) { if (sequence === requestSequence.current) setError(String(reason)) }
@@ -384,7 +384,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     const sequence = ++requestSequence.current
     setLoading(true)
     try {
-      const response = await window.adeHost.requestReview('review.diff_page', {
+      const response = await window.adeHost.review.request('review.diff_page', {
         workspace_id: workspace.id, path: diffPage.path, staged: diffPage.staged,
         cursor: diffPage.next_cursor, expected_token: diffPage.token,
       }) as ReviewDiffPage
@@ -403,12 +403,12 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     setDiffPage(null)
     setLoading(true)
     try {
-      const latest = await window.adeHost.requestReview('review.status', { workspace_id: workspace.id, force: true }) as ReviewStatus
+      const latest = await window.adeHost.review.request('review.status', { workspace_id: workspace.id, force: true }) as ReviewStatus
       const file = latest.files.find((item) => item.path === path)
       if (!file?.unstaged || file.untracked || file.conflict || file.submodule) {
         throw new Error('This file cannot be discarded; refresh changes')
       }
-      const preview = await window.adeHost.requestReview('review.diff', {
+      const preview = await window.adeHost.review.request('review.diff', {
         workspace_id: workspace.id, path, staged: false,
       }) as ReviewDiff
       if (sequence !== requestSequence.current) return
@@ -441,7 +441,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     const saved: PendingFeedback = { requestId, reviewFeedback }
     sessionStorage.setItem(pendingKey, JSON.stringify(saved))
     try {
-      const response = await window.adeHost.requestConversation('agent.send', {
+      const response = await window.adeHost.conversations.request('agent.send', {
         conversation_id: conversation.id, request_id: requestId, review_feedback: reviewFeedback,
       })
       if (response.type === 'send_pending') {
@@ -464,11 +464,11 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     if (!conversation || !pendingId || busy) return
     setBusy(true)
     try {
-      const current = await window.adeHost.requestConversation('conversation.get', { conversation_id: conversation.id })
+      const current = await window.adeHost.conversations.request('conversation.get', { conversation_id: conversation.id })
       const currentMessages = Array.isArray(current.messages) ? current.messages as Array<{ id?: string }> : []
       if (currentMessages.some((item) => item.id === pendingId)) {
         try {
-          const confirmed = await window.adeHost.requestConversation('agent.retry_send', {
+          const confirmed = await window.adeHost.conversations.request('agent.retry_send', {
             conversation_id: conversation.id, request_id: pendingId,
           })
           if (confirmed.type === 'send_pending') return
@@ -479,17 +479,17 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
         return
       }
       let response: Record<string, unknown>
-      try { response = await window.adeHost.requestConversation('agent.retry_send', {
+      try { response = await window.adeHost.conversations.request('agent.retry_send', {
         conversation_id: conversation.id, request_id: pendingId,
       }) }
       catch (reason) {
         if (!String(reason).includes('No prompt is awaiting confirmation')) throw reason
-        const snapshot = await window.adeHost.requestConversation('conversation.get', { conversation_id: conversation.id })
+        const snapshot = await window.adeHost.conversations.request('conversation.get', { conversation_id: conversation.id })
         const messages = Array.isArray(snapshot.messages) ? snapshot.messages as Array<{ id?: string }> : []
         if (messages.some((item) => item.id === pendingId)) { acceptFeedback(); return }
         const saved = readPending(pendingKey)
         if (!saved || saved.requestId !== pendingId) throw reason
-        response = await window.adeHost.requestConversation('agent.send', {
+        response = await window.adeHost.conversations.request('agent.send', {
           conversation_id: conversation.id, request_id: saved.requestId,
           ...(saved.reviewFeedback ? { review_feedback: saved.reviewFeedback } : { review_anchor: saved.anchor, note: saved.note }),
         })
@@ -529,7 +529,7 @@ export function ReviewPane({ workspace, conversation, profileKey }: {
     setFeedbackSearchBusy(true)
     setFeedbackSearchError('')
     try {
-      const response = await window.adeHost.requestReview('review.feedback.search', {
+      const response = await window.adeHost.review.request('review.feedback.search', {
         workspace_id: workspace.id, ...(path ? { path } : {}), ...(query ? { query } : {}),
         ...(before !== undefined ? { before } : {}), limit: 10,
       }) as FeedbackSearch

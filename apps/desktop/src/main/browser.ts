@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain, session, WebContentsView } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, WebContentsView } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { cp, link, lstat, mkdir, open, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
-import { getProfileState, getStartupProfileSelection, isSwitching, managedProfiles, setSwitching,
-  type Profile } from './profile-connection'
+import { getBrowserOwner, getProfileState, getStartupProfileSelection, isSwitching, managedProfiles, setBrowserOwner,
+  setSwitching, type Profile } from './profile-connection'
+import type { QuitGuard } from './quit-guards'
 
 type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
 type BrowserMutation = 'browser.open' | 'browser.navigate' | 'browser.close'
@@ -912,9 +913,26 @@ export function closeBrowserWindow(window: BrowserWindow): void {
     state.views.clear()
   }
 }
-export async function flushBrowserSessions(): Promise<void> {
+async function flushBrowserSessions(): Promise<void> {
   await Promise.all([...profiles.values()].map((state) => state.writes))
   await Promise.all([...profilePaths.keys()].map(flushProfileSession))
+}
+/** Holds the quit until browser sessions are saved and the browser owner is closed. */
+export const browserQuitGuard: QuitGuard = () => async () => {
+  try {
+    await flushBrowserSessions()
+    await getBrowserOwner()?.close()
+    setBrowserOwner(null)
+    return true
+  } catch (error) {
+    if (process.env.ADE_E2E_USER_DATA_DIR || process.env.ADE_E2E_HIDE_WINDOW === '1') {
+      console.error('Browser state could not be saved', error)
+      return true
+    }
+    void dialog.showMessageBox({ type: 'error', title: 'Browser state was not saved',
+      message: 'ADE is staying open because browser state could not be saved.', detail: String(error) })
+    return false
+  }
 }
 export async function readBrowserOwner(profileId: string, op: 'browser.list' | 'browser.inspect',
   tabId?: string): Promise<Record<string, unknown>> {

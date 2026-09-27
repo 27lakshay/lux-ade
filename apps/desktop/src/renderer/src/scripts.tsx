@@ -37,8 +37,8 @@ export function ScriptPane({ workspace }: { workspace: Workspace }): React.JSX.E
     const load = async (): Promise<void> => {
       try {
         const [listed, active] = await Promise.all([
-          window.adeHost.requestScript('script.list', { workspace_id: workspace.id }),
-          window.adeHost.requestScript('script.runs', { workspace_id: workspace.id }),
+          window.adeHost.services.requestScript('script.list', { workspace_id: workspace.id }),
+          window.adeHost.services.requestScript('script.runs', { workspace_id: workspace.id }),
         ])
         if (!disposed) {
           setScripts(listed.scripts as Script[])
@@ -58,7 +58,7 @@ export function ScriptPane({ workspace }: { workspace: Workspace }): React.JSX.E
     let timer: ReturnType<typeof setTimeout> | undefined
     const load = async (): Promise<void> => {
       try {
-        const current = await window.adeHost.requestScript('script.inspect', {
+        const current = await window.adeHost.services.requestScript('script.inspect', {
           workspace_id: workspace.id, run_id: selected, tail_bytes: 4096,
         })
         if (!disposed) { setInspection(current as Inspection); setError('') }
@@ -74,7 +74,7 @@ export function ScriptPane({ workspace }: { workspace: Workspace }): React.JSX.E
     if (busy) return
     setBusy(true)
     try {
-      const result = await window.adeHost.requestScript(`script.${op}`, {
+      const result = await window.adeHost.services.requestScript(`script.${op}`, {
         workspace_id: workspace.id,
         ...(op === 'start' ? { name: value } : { run_id: value }),
       })

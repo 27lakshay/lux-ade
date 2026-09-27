@@ -17,7 +17,7 @@ export function RestoreBindingsPanel({ bootId, profileKey, onWorkspaceBindings }
   React.useEffect(() => {
     let active = true
     setLoading(true)
-    void window.adeHost.listRestoreBindings().then((next) => {
+    void window.adeHost.workspaces.listRestoreBindings().then((next) => {
       if (active) {
         setBindings(next)
         onWorkspaceBindings(next.workspaces.filter((item) => item.needs_rebind).map((item) => item.id))
@@ -43,7 +43,7 @@ export function RestoreBindingsPanel({ bootId, profileKey, onWorkspaceBindings }
     setBusy(true)
     setError('')
     try {
-      await window.adeHost.rebindRestored(profileKey, next.kind, next.entry.id, targetPath.trim())
+      await window.adeHost.workspaces.rebindRestored(profileKey, next.kind, next.entry.id, targetPath.trim())
       setTargetPath('')
       setRevision((value) => value + 1)
     } catch (reason) { setError(`Could not bind ${next.label}: ${String(reason)}`) }
@@ -52,7 +52,7 @@ export function RestoreBindingsPanel({ bootId, profileKey, onWorkspaceBindings }
   const choose = async (): Promise<void> => {
     if (busy || loading) return
     try {
-      const selected = await window.adeHost.chooseRestoreFolder()
+      const selected = await window.adeHost.workspaces.chooseRestoreFolder()
       if (selected) setTargetPath(selected)
     } catch (reason) { setError(`Could not choose a folder: ${String(reason)}`) }
   }

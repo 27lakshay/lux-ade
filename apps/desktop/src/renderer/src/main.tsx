@@ -45,7 +45,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   React.useEffect(() => {
     if (!workspace) return
     const sequence = ++selectionSequence.current
-    void window.adeHost.selectWorkspace(workspace.id, targetConversationId).then(() => {
+    void window.adeHost.workspaces.select(workspace.id, targetConversationId).then(() => {
       if (sequence === selectionSequence.current) setAcknowledgedSelection(selectionKey)
     }).catch((reason) => { if (sequence === selectionSequence.current) setError(String(reason)) })
     return () => { selectionSequence.current++ }
@@ -53,7 +53,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   const selectVisible = async (workspaceId: string, nextConversationId: string | null): Promise<void> => {
     const request = ++visibleSelectionRequest.current
     ++selectionSequence.current
-    await window.adeHost.selectWorkspace(workspaceId, nextConversationId)
+    await window.adeHost.workspaces.select(workspaceId, nextConversationId)
     if (request !== visibleSelectionRequest.current) return
     setAcknowledgedSelection(`${workspaceId}:${nextConversationId ?? ''}`)
     setWorkspaceId(workspaceId)
@@ -66,7 +66,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
   }, [pendingCreatedId, conversations])
   React.useEffect(() => {
     let disposed = false
-    void window.adeHost.requestConversation('provider.list', {}).then((response) => {
+    void window.adeHost.conversations.request('provider.list', {}).then((response) => {
       if (disposed || !Array.isArray(response.providers)) return
       const found = response.providers.filter((item): item is Provider =>
         typeof item === 'object' && item !== null && typeof item.id === 'string' && typeof item.name === 'string')
@@ -86,7 +86,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     if (!workspace || workspaceFenced || creating || opening || invalidManagedAccount) return
     setCreating(true)
     try {
-      const response = await window.adeHost.requestConversation('conversation.create', {
+      const response = await window.adeHost.conversations.request('conversation.create', {
         workspace_id: workspace.id, title: 'New Conversation', provider,
         ...(selectedManagedAccount ? { account_id: selectedManagedAccount.id } : {}),
       })
@@ -102,7 +102,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     if (opening || creating || !folderPath.trim()) return
     setOpening(true)
     try {
-      const result = await window.adeHost.openWorkspace(folderPath.trim())
+      const result = await window.adeHost.workspaces.open(folderPath.trim())
       const opened = result.workspace as Workspace
       await selectVisible(opened.id, null)
       setFolderPath('')
@@ -114,7 +114,7 @@ function ConnectedContent({ state, profileKey }: { state: ClientState; profileKe
     if (opening || creating) return
     setOpening(true)
     try {
-      const result = await window.adeHost.chooseWorkspace()
+      const result = await window.adeHost.workspaces.choose()
       if (result) {
         const opened = result.workspace as Workspace
         await selectVisible(opened.id, null)
@@ -202,9 +202,9 @@ function App(): React.JSX.Element {
   const [pendingSendError, setPendingSendError] = React.useState('')
   const activeProfileId = React.useRef<string | null>(null)
   React.useEffect(() => {
-    const unsubscribeClient = window.adeHost.onClientState(setState)
+    const unsubscribeClient = window.adeHost.profiles.onClientState(setState)
     const refreshClient = (profileId: string | null): void => {
-      void window.adeHost.getClientState().then((next) => {
+      void window.adeHost.profiles.getClientState().then((next) => {
         if (activeProfileId.current === profileId) setState(next)
       })
     }
@@ -217,18 +217,18 @@ function App(): React.JSX.Element {
       setProfile(next)
     }
     let profileEventSeen = false
-    const unsubscribeProfile = window.adeHost.onProfileState((next) => {
+    const unsubscribeProfile = window.adeHost.profiles.onState((next) => {
       profileEventSeen = true
       updateProfile(next)
     })
-    void window.adeHost.getProfileState().then((next) => { if (!profileEventSeen) updateProfile(next) })
+    void window.adeHost.profiles.getState().then((next) => { if (!profileEventSeen) updateProfile(next) })
     const initialProfileId = activeProfileId.current
     refreshClient(initialProfileId)
     return () => { unsubscribeClient(); unsubscribeProfile() }
   }, [])
   React.useEffect(() => {
     let active = true
-    void window.adeHost.listPendingSends().then((records) => {
+    void window.adeHost.conversations.listPendingSends().then((records) => {
       if (active) { setPendingSends(records); setPendingSendError('') }
     }).catch((error) => { if (active) setPendingSendError(String(error)) })
     return () => { active = false }
@@ -238,7 +238,7 @@ function App(): React.JSX.Element {
     setRequestedProfileId(id)
     setProfileError('')
     setProfileBusy(true)
-    try { await window.adeHost.selectProfile(id); setProfileError(''); setRequestedProfileId(null) }
+    try { await window.adeHost.profiles.select(id); setProfileError(''); setRequestedProfileId(null) }
     catch (error) { setProfileError(String(error)) }
     finally { setProfileBusy(false) }
   }
@@ -251,11 +251,11 @@ function App(): React.JSX.Element {
     setProfileBusy(true)
     try {
       const priorIds = new Set(profile?.profiles.map((item) => item.id))
-      const next = await window.adeHost.createProfile(name)
+      const next = await window.adeHost.profiles.create(name)
       const created = next.profiles.find((item) => !priorIds.has(item.id))
       if (!created) throw new Error('Created profile was not returned by the launcher')
       setRequestedProfileId(created.id)
-      await window.adeHost.selectProfile(created.id)
+      await window.adeHost.profiles.select(created.id)
       setNewProfile('')
       setProfileError('')
       setRequestedProfileId(null)
@@ -272,7 +272,7 @@ function App(): React.JSX.Element {
     if (!window.confirm(warning)) return
     setProfileBusy(true)
     try {
-      const next = await window.adeHost.adoptBrowserSession(adoptionProfile.id)
+      const next = await window.adeHost.browser.adoptSession(adoptionProfile.id)
       setProfile(next)
       setProfileError('')
       setRequestedProfileId(null)
