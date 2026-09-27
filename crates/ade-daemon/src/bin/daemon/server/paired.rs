@@ -172,7 +172,7 @@ impl Paired {
         };
         let result = writeln!(stream, "{}", host.hello())
             .map_err(anyhow::Error::from)
-            .and_then(|()| handle_connection(stream, host));
+            .and_then(|()| handle_connection(stream, host, Lane::Owner));
         self.state.lock().unwrap().connections.remove(&id);
         result
     }

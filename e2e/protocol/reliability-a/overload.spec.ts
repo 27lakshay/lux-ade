@@ -9,6 +9,7 @@
 import { join } from 'node:path'
 import { expect, isRunning, prompts, send, startConversation, turnReply, waitForIdle, waitForMessage,
   type ScratchProfile } from '../fixtures'
+import { connectOutcome, expectNoneLost, fillBacklog } from '../control-lane/backlog'
 import { mockDirectory } from '../fixtures/providers'
 import { recoveryFixtures, waitForPidFile } from '../fixtures/recovery'
 import { volumeTest as test } from '../fixtures/scratch-volume'
@@ -139,17 +140,23 @@ test('an output flood and a burst of ordinary commands do not keep cancellation 
     .toEqual([])
 })
 
-// Gap: cancellation shares the profile socket and its listen backlog (128 on
-// macOS) with every ordinary command. A burst of connections past the backlog
-// is refused with ECONNREFUSED, and a cancel sent during it can be refused the
-// same way. It was never sent, so a retry is safe, but no control lane is
-// reserved for it (architecture section 4: "Reserve capacity for cancellation").
-test.fixme('a cancel sent during a connection flood past the socket backlog is admitted on its first attempt', async ({ ade }) => {
+// The control lane (e2e/protocol/control-lane): cancellation has its own
+// socket and listen backlog, so a connection flood that fills the profile
+// socket's backlog (128 on macOS) cannot refuse it. `fillBacklog` pauses the
+// daemon and floods the profile socket until the kernel refuses connections.
+test('a cancel sent during a connection flood past the socket backlog is admitted on its first attempt', async ({ ade }) => {
   const profile = await ade.profile()
   const { conversationId } = await startConversation(profile, 'codex')
   const turn = await runningTurn(profile, conversationId)
-  const answered = burst(profile, conversationId, 2_000)
-  await profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn })
+  const full = await fillBacklog(profile, conversationId, 2_000)
+  const cancelled = profile.call('agent.cancel', { conversation_id: conversationId, turn_id: turn })
+    .then((reply) => ({ reply }), (error: unknown) => ({ error }))
+  try {
+    expect(await connectOutcome(profile.socket)).toBe('ECONNREFUSED')
+  } finally {
+    full.resume()
+  }
+  expect(await cancelled).toMatchObject({ reply: { type: 'ack' } })
   await expect.poll(() => interrupts(profile)).toEqual([turn])
-  await answered
+  expectNoneLost(await full.replies)
 })

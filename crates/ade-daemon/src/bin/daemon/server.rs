@@ -1,6 +1,7 @@
 mod browser_automation;
 mod browser_context;
 mod browser_tools;
+mod control;
 mod diagnostics;
 mod paired;
 
@@ -1797,7 +1798,15 @@ fn read_request(reader: &mut BufReader<UnixStream>) -> io::Result<Option<String>
     }
     Ok(Some(line))
 }
-fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<()> {
+/// Which socket a connection arrived on. The control lane serves only
+/// `control::CONTROL_OPERATIONS`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lane {
+    Owner,
+    Control,
+}
+
+fn handle_connection(mut stream: UnixStream, host: Arc<Host>, lane: Lane) -> anyhow::Result<()> {
     stream
         .set_write_timeout(Some(Duration::from_secs(2)))
         .or_else(|error| {
@@ -1824,6 +1833,14 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
             }
         };
         let op = request["op"].as_str().unwrap_or("");
+        if lane == Lane::Control && !control::is_control_operation(op) {
+            writeln!(stream, "{}", control::refusal(op))?;
+            let Some(next) = read_request(&mut reader)? else {
+                return Ok(());
+            };
+            first = next;
+            continue;
+        }
         let diagnostic_id = request["diagnostic_id"]
             .as_str()
             .filter(|id| ade_core::diagnostics::valid_id(id));
@@ -2140,6 +2157,9 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
     // start that granted a pairing finds it ready.
     let paired = paired::Paired::start(&host);
     let (listener, _socket) = runtime::SocketGuard::bind(Path::new(&socket))?;
+    // The control lane opens once the owner socket is bound, so a second
+    // daemon refused at the owner socket never takes over the lane.
+    let _control = control::start(&host);
     eprintln!(
         "lux-ade daemon {} listening at {socket}; runtime {}; durable state {}",
         std::process::id(),
@@ -2165,7 +2185,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
                 let host = host.clone();
                 std::thread::spawn(move || {
                     let mut errors = stream.try_clone().ok();
-                    if let Err(error) = handle_connection(stream, host)
+                    if let Err(error) = handle_connection(stream, host, Lane::Owner)
                         && let Some(stream) = errors.as_mut()
                     {
                         let _ = writeln!(stream, "{}", error_response(error));

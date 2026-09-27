@@ -72,12 +72,48 @@ export function helloLine(pairing?: { pairingId: string; token: string } | null)
 
 export type DaemonResponse = Record<string, unknown> & { type: string }
 
-/** One version-checked request over the selected profile's Unix command socket. */
-export function requestDaemon(
+/**
+ * The operations the daemon's control lane serves (R004): hello and health,
+ * stops of existing work, and shutdown. Keep in step with
+ * `crates/ade-daemon/src/bin/daemon/server/control.rs`.
+ */
+export const controlOperations: ReadonlySet<string> = new Set(['hello', 'runtime.status', 'diagnostics.status',
+  'agent.cancel', 'terminal.stop', 'service.stop', 'runtime.prepare_restart'])
+
+/** The control lane's socket beside a profile socket: `/x/ade.sock` becomes `/x/ade.control.sock`. */
+export function controlSocketPath(socketPath: string): string {
+  return socketPath.endsWith('.sock') ? `${socketPath.slice(0, -'.sock'.length)}.control.sock` : `${socketPath}.control`
+}
+
+/**
+ * One version-checked request over the selected profile's Unix command socket.
+ * A control operation goes over the profile's control lane, which ordinary
+ * traffic cannot saturate. It falls back to the profile socket only when the
+ * control lane took nothing: it is absent, as with an older daemon, or
+ * refused or closed the connection before the request was sent.
+ */
+export async function requestDaemon(
   socketPath: string,
   op: string,
   fields: Record<string, unknown> = {},
   options: RequestOptions = {},
+): Promise<DaemonResponse> {
+  if (socketPath && controlOperations.has(op) && !options.pairing) {
+    try {
+      return await requestOnce(controlSocketPath(socketPath), op, fields, options)
+    } catch (error) {
+      if (!(error instanceof DaemonRequestError) || error.code !== 'unavailable' || error.delivery !== 'not_sent'
+        || error.replied) throw error
+    }
+  }
+  return requestOnce(socketPath, op, fields, options)
+}
+
+function requestOnce(
+  socketPath: string,
+  op: string,
+  fields: Record<string, unknown>,
+  options: RequestOptions,
 ): Promise<DaemonResponse> {
   if (!socketPath || !op || (op !== 'hello' && !op.includes('.')) || 'op' in fields) {
     return Promise.reject(new DaemonRequestError('invalid_request', 'A profile socket and valid operation are required.'))
