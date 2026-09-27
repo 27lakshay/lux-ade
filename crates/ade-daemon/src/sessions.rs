@@ -31,6 +31,7 @@ mod accounts;
 mod agents;
 mod conversations;
 mod leases;
+mod mcp;
 mod services;
 mod terminals;
 mod workspaces;
@@ -661,6 +662,7 @@ impl Sessions {
             | "repository.rebind"
             | "workspace.rebind" => self.workspace_command(request),
             "terminal.create" | "terminal.operation" => self.terminal_command(request),
+            op if op.starts_with("mcp.") => self.mcp_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"

@@ -108,6 +108,12 @@ export const operations = {
   "browser.navigate": { tier: "effect_command", domain: "daemon", request: "BrowserNavigateRequest", response: "BrowserMutation" },
   "browser.close": { tier: "effect_command", domain: "daemon", request: "BrowserCloseRequest", response: "BrowserMutation" },
   "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
+  "mcp.server.list": { tier: "query", domain: "mcp", request: "McpServerListRequest", response: "McpServers" },
+  "mcp.server.inspect": { tier: "query", domain: "mcp", request: "McpServerInspectRequest", response: "McpServerInspection" },
+  "mcp.server.add": { tier: "idempotent_command", domain: "mcp", request: "McpServerAddRequest", response: "McpServerReply" },
+  "mcp.server.update": { tier: "idempotent_command", domain: "mcp", request: "McpServerUpdateRequest", response: "McpServerReply" },
+  "mcp.server.remove": { tier: "idempotent_command", domain: "mcp", request: "McpServerRemoveRequest", response: "McpServerRemoved" },
+  "mcp.resolve": { tier: "query", domain: "mcp", request: "McpResolveRequest", response: "McpResolution" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */
