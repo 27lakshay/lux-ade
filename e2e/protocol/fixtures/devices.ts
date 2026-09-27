@@ -32,6 +32,7 @@ export type AndroidDevice = {
 }
 
 export type HoldKey = 'bootstatus' | 'install' | 'launch' | 'adb-install' | 'am-start' | 'emulator'
+  | 'adb-input' | 'idb-input'
 
 export type DeviceHostState = {
   /** `missing` answers like xcrun without Simulator tools; `failed` like a broken CoreSimulator. */
@@ -43,12 +44,16 @@ export type DeviceHostState = {
   launch_without_pid?: boolean
   /** simctl install reports this version instead of the bundle's. */
   install_reports_version?: string
+  /** adb `input` prints this as a device-side `Error:` line. */
+  input_error?: string
   /** simctl install leaves a container the daemon cannot read. */
   install_breaks_container?: boolean
   [key: string]: unknown
 }
 
-export type ToolCall = { tool: string; args: string[]; pid: number; launched_pid?: number; abandoned?: string }
+export type ToolCall = { tool: string; args: string[]; pid: number; launched_pid?: number; abandoned?: string
+  /** An input event: the words after `input` (adb) or `ui` (idb), and the device it went to. */
+  input?: string[]; serial?: string; udid?: string }
 
 /** Recorded sample identities. */
 export const samples = {
@@ -85,20 +90,23 @@ export function sampleState(): DeviceHostState {
 export class DeviceHost {
   readonly bin: string
   readonly sdk: string
-  private constructor(readonly dir: string, readonly tools: { xcrun: boolean; android: boolean }) {
+  private constructor(readonly dir: string, readonly tools: { xcrun: boolean; android: boolean; idb: boolean }) {
     this.bin = join(dir, 'bin')
     this.sdk = join(dir, 'sdk')
   }
 
   /**
    * Create a fixture host under `root`. `tools` leaves out the Android SDK
-   * shims to model a host without it; xcrun is always a shim so the real
-   * one never runs (`simctl: 'missing'` models a host without Xcode).
+   * shims to model a host without it, and `idb: false` leaves out simulator
+   * input; xcrun is always a shim so the real one never runs (`simctl:
+   * 'missing'` models a host without Xcode).
    */
   static async create(root: string, state: DeviceHostState = sampleState(),
-    tools: { android?: boolean } = {}): Promise<DeviceHost> {
-    const host = new DeviceHost(join(root, 'device-host'), { xcrun: true, android: tools.android ?? true })
+    tools: { android?: boolean; idb?: boolean } = {}): Promise<DeviceHost> {
+    const host = new DeviceHost(join(root, 'device-host'),
+      { xcrun: true, android: tools.android ?? true, idb: tools.idb ?? true })
     const shims: Array<[string, string]> = [[join(host.bin, 'xcrun'), 'xcrun']]
+    if (host.tools.idb) shims.push([join(host.bin, 'idb'), 'idb'])
     if (host.tools.android) {
       shims.push([join(host.sdk, 'platform-tools/adb'), 'adb'], [join(host.sdk, 'emulator/emulator'), 'emulator'],
         [join(host.sdk, 'build-tools/35.0.0/aapt2'), 'aapt2'])
@@ -121,8 +129,8 @@ export class DeviceHost {
     return { PATH: `${this.bin}:${inherited}`, ANDROID_HOME: this.sdk, ANDROID_SDK_ROOT: this.sdk }
   }
 
-  path(tool: 'xcrun' | 'adb' | 'emulator' | 'aapt2'): string {
-    return { xcrun: join(this.bin, 'xcrun'), adb: join(this.sdk, 'platform-tools/adb'),
+  path(tool: 'xcrun' | 'idb' | 'adb' | 'emulator' | 'aapt2'): string {
+    return { xcrun: join(this.bin, 'xcrun'), idb: join(this.bin, 'idb'), adb: join(this.sdk, 'platform-tools/adb'),
       emulator: join(this.sdk, 'emulator/emulator'), aapt2: join(this.sdk, 'build-tools/35.0.0/aapt2') }[tool]
   }
 

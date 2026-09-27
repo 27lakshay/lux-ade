@@ -35,6 +35,12 @@ pub fn operations() -> Vec<OperationSpec> {
             "device.app.launch",
             Tier::EffectCommand,
         ),
+        // One input event to one exact device. Whether an interrupted input
+        // was delivered cannot be observed, so its replay is unknown.
+        OperationSpec::new::<DeviceInputRequest, DeviceInputSent>(
+            "device.input",
+            Tier::EffectCommand,
+        ),
     ]
 }
 
@@ -91,6 +97,8 @@ pub enum DeviceCapability {
     Boot,
     InstallApp,
     LaunchApp,
+    /// Send touch, text and key input (`device.input`).
+    Input,
 }
 
 /// Why a family or capability is unavailable.
@@ -217,6 +225,7 @@ wire_tag!(DeviceScreenshotTag, "device_screenshot");
 wire_tag!(DeviceBootedTag, "device_booted");
 wire_tag!(DeviceAppInstalledTag, "device_app_installed");
 wire_tag!(DeviceAppLaunchedTag, "device_app_launched");
+wire_tag!(DeviceInputSentTag, "device_input_sent");
 wire_tag!(PngMime, "image/png");
 
 /// The `device.list` reply.
@@ -334,6 +343,76 @@ pub struct DeviceAppLaunched {
     pub pid: u64,
 }
 
+/// A key `device.input` can press. Not every family has every key: an iOS
+/// simulator has no Back key.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceKey {
+    Home,
+    Back,
+    Enter,
+    Delete,
+    Tab,
+    Escape,
+}
+
+/// One input event. Coordinates are in the device's input space: pixels on
+/// Android (the screenshot's pixels), points on an iOS simulator.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeviceInputAction {
+    Tap {
+        x: u32,
+        y: u32,
+    },
+    Swipe {
+        from_x: u32,
+        from_y: u32,
+        to_x: u32,
+        to_y: u32,
+        /// 1 to 10000 milliseconds; 300 when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(with = "u32")]
+        duration_ms: Option<u32>,
+    },
+    /// Printable ASCII typed into the device's focused field, at most 1000
+    /// characters.
+    Text {
+        text: String,
+    },
+    Key {
+        key: DeviceKey,
+    },
+}
+
+/// `device.input`: send one input event to one exact booted device. The
+/// daemon never sends it to the focused, booted or only device instead, and
+/// records who asked.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DeviceInputRequest {
+    pub operation_id: String,
+    pub host_id: String,
+    pub device_id: String,
+    /// Who asks: the user, or an Agent naming its own Conversation.
+    pub caller: super::orchestration::Caller,
+    pub action: DeviceInputAction,
+}
+
+/// The `device.input` reply, sent once the device's tool accepted the event.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DeviceInputSent {
+    #[serde(rename = "type")]
+    pub tag: DeviceInputSentTag,
+    pub operation_id: String,
+    pub host_id: String,
+    pub device_id: String,
+    pub action: DeviceInputAction,
+    /// `user`, or `agent:<conversation ID>`.
+    pub attribution: String,
+    /// The adb serial the event went to on Android; null for a simulator.
+    pub serial: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,7 +463,12 @@ mod tests {
 
     #[test]
     fn effects_are_declared_as_effect_commands() {
-        for op in ["device.boot", "device.app.install", "device.app.launch"] {
+        for op in [
+            "device.boot",
+            "device.app.install",
+            "device.app.launch",
+            "device.input",
+        ] {
             assert_eq!(names(op).2, json!("effect_command"), "{op}");
         }
         for op in ["device.list", "device.screenshot"] {
@@ -418,6 +502,19 @@ mod tests {
             json!({"op": "device.app.launch", "operation_id": "o", "host_id": "h",
                 "device_id": "ios-sim:A", "app_id": "com.example"}),
         );
+        request::<DeviceInputRequest>(
+            "device.input",
+            json!({"op": "device.input", "operation_id": "o", "host_id": "h",
+                "device_id": "android-avd:Pixel",
+                "caller": {"kind": "agent", "conversation_id": "c"},
+                "action": {"kind": "swipe", "from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4}}),
+        );
+        request::<DeviceInputRequest>(
+            "device.input",
+            json!({"op": "device.input", "operation_id": "o", "host_id": "h",
+                "device_id": "ios-sim:A", "caller": {"kind": "user"},
+                "action": {"kind": "key", "key": "home"}}),
+        );
         // No operation falls back to a focused or default device or host.
         for (op, wire) in [
             (
@@ -436,6 +533,17 @@ mod tests {
                 "device.app.launch",
                 json!({"op": "device.app.launch", "operation_id": "o", "host_id": "h",
                     "device_id": "d"}),
+            ),
+            // Input always names its device and its caller.
+            (
+                "device.input",
+                json!({"op": "device.input", "operation_id": "o", "host_id": "h",
+                    "caller": {"kind": "user"}, "action": {"kind": "tap", "x": 1, "y": 1}}),
+            ),
+            (
+                "device.input",
+                json!({"op": "device.input", "operation_id": "o", "host_id": "h",
+                    "device_id": "d", "action": {"kind": "tap", "x": 1, "y": 1}}),
             ),
         ] {
             let (name, _, _) = names(op);
@@ -482,6 +590,12 @@ mod tests {
             "device.app.launch",
             json!({"type": "device_app_launched", "operation_id": "o", "host_id": "h",
                 "device_id": "d", "app_id": "com.example", "pid": 42}),
+        );
+        response::<DeviceInputSent>(
+            "device.input",
+            json!({"type": "device_input_sent", "operation_id": "o", "host_id": "h",
+                "device_id": "d", "action": {"kind": "text", "text": "hi"},
+                "attribution": "agent:c", "serial": "emulator-5554"}),
         );
     }
 }

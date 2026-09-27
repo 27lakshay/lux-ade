@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "id": "e2e.faulty",
+  "name": "E2E faulty backend",
+  "version": "1.0.0",
+  "api_version": 1,
+  "data_schema": 1,
+  "description": "Protocol E2E fixture: a backend whose activation fails, exits or hangs on request, with a command that freezes its host and one that floods its log.",
+  "entry_points": { "backend": "backend.mjs" },
+  "contributes": {
+    "commands": [
+      { "id": "e2e.faulty.echo", "title": "Echo" },
+      { "id": "e2e.faulty.freeze", "title": "Freeze the host" },
+      { "id": "e2e.faulty.noise", "title": "Write many log lines" }
+    ],
+    "settings": [
+      { "key": "out_dir", "title": "Where the fixture reads its switches and writes what it saw", "kind": "string", "default": "" }
+    ],
+    "hooks": ["workspace.created"]
+  }
+}

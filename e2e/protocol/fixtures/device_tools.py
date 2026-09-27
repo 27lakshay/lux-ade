@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PATH-shim stand-ins for `xcrun simctl`, `adb`, `emulator` and `aapt2`.
+"""PATH-shim stand-ins for `xcrun simctl`, `idb`, `adb`, `emulator` and `aapt2`.
 
 One fixture host directory holds `state.json` (the simulated host's
 simulators, Android devices, AVDs and installed apps), `calls.jsonl` (every
@@ -276,11 +276,35 @@ def adb():
             sys.exit(1)
         print(pid)
         return
+    if rest[:2] == ["shell", "input"]:
+        hold("adb-input", "before")
+        if state.get("input_error"):
+            # adb shell reports a device-side failure on stdout and exits 0.
+            print(f"Error: {state['input_error']}")
+            return
+        record({"serial": serial, "input": rest[2:]})
+        return
     if rest == ["exec-out", "screencap", "-p"]:
         record()
         sys.stdout.buffer.write(png(1080, 2400))
         return
     fail(f"adb fixture does not handle {rest}", 1)
+
+
+# ---- idb ------------------------------------------------------------------------
+
+def idb():
+    state, _ = locked()
+    if args[:1] != ["ui"] or "--udid" not in args:
+        fail(f"idb fixture does not handle {args}", 2)
+    udid = args[args.index("--udid") + 1]
+    sim = simulator(state, udid)
+    if sim is None:
+        fail(f"idb: error: Target with udid {udid} is unknown to idb", 1)
+    if sim["state"] != "Booted":
+        fail(f"idb: error: Target {udid} is not booted (state={sim['state']})", 1)
+    hold("idb-input", "before")
+    record({"udid": udid.upper(), "input": args[1:args.index("--udid")]})
 
 
 # ---- emulator -------------------------------------------------------------------
@@ -323,5 +347,5 @@ def aapt2():
           f"launchable-activity: name='{apk['package']}{apk['activity']}'  label='Fixture' icon=''")
 
 
-tools = {"xcrun": simctl, "adb": adb, "emulator": emulator, "aapt2": aapt2}
+tools = {"xcrun": simctl, "idb": idb, "adb": adb, "emulator": emulator, "aapt2": aapt2}
 tools[tool]()
