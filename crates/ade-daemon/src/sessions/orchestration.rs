@@ -120,6 +120,9 @@ struct NewChild<'a> {
     depth: u32,
     provider: &'a str,
     provider_config: crate::provider::Config,
+    /// The registry descriptor of an adapter or plugin provider; `None` for a
+    /// provider in the static catalogue.
+    registered: Option<&'a crate::provider::Descriptor>,
     account: Option<&'a str>,
     workspace_id: &'a str,
     /// `same` or `new_worktree`.
@@ -133,13 +136,21 @@ struct NewChild<'a> {
 /// Creates the child Conversation, queues its task and records the link, all
 /// in the caller's transaction on the store's connection.
 fn insert_child(tx: &Connection, store: &Store, child: NewChild) -> Result<Conversation> {
-    let created = store.create_with_account(
-        child.workspace_id,
-        child.title,
-        child.provider,
-        child.provider_config,
-        child.account,
-    )?;
+    let created = match child.registered {
+        None => store.create_with_account(
+            child.workspace_id,
+            child.title,
+            child.provider,
+            child.provider_config,
+            child.account,
+        )?,
+        Some(descriptor) => store.create_registered(
+            child.workspace_id,
+            child.title,
+            descriptor,
+            child.provider_config,
+        )?,
+    };
     let task = new_id("message");
     enqueue(tx, &created.id, &task, child.task)?;
     tx.execute(
@@ -361,6 +372,9 @@ impl Sessions {
             }
         };
         self.ensure_workspace_bound(&workspace_id)?;
+        // Adapters and plugin providers are validated through the provider
+        // registry, as `conversation.create` does, outside the store lock.
+        let registered = self.registered_descriptor(&delegate.provider)?;
 
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
@@ -401,6 +415,11 @@ impl Sessions {
                 &parent.provider,
                 parent.account_id.as_deref(),
             )?;
+            policy::registered_account(
+                &delegate.provider,
+                registered.is_some(),
+                account.as_deref(),
+            )?;
             let child = insert_child(
                 &tx,
                 &d.store,
@@ -411,6 +430,7 @@ impl Sessions {
                     depth,
                     provider: &delegate.provider,
                     provider_config,
+                    registered: registered.as_ref(),
                     account: account.as_deref(),
                     workspace_id: &workspace_id,
                     mode,
@@ -439,6 +459,7 @@ impl Sessions {
             Ok((Some(child), result))
         })())?;
         if let Some(child) = created {
+            self.pin_new(&child)?;
             self.catalog_changed(&mut d)?;
             self.changed(&mut d, &child, &[])?;
         }

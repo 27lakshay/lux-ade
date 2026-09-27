@@ -144,6 +144,15 @@ fn leases_by_generation(db: &Connection, id: &str) -> Result<HashMap<u64, u32>> 
 }
 
 /// Provider leases held on any generation of the plugin.
+/// The provider sessions that lease any generation of plugin `id`.
+pub(super) fn leased_sessions(db: &Connection, id: &str) -> Result<Vec<String>> {
+    let mut statement = db.prepare(
+        "SELECT session_id FROM plugin_provider_leases WHERE plugin_id=?1 ORDER BY session_id",
+    )?;
+    let rows = statement.query_map([id], |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 pub(super) fn lease_count(db: &Connection, id: &str) -> Result<u32> {
     Ok(db.query_row(
         "SELECT COUNT(*) FROM plugin_provider_leases WHERE plugin_id=?1",

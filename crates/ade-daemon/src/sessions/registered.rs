@@ -76,6 +76,44 @@ impl Sessions {
         }
     }
 
+    /// The capability record of `provider` when it is registered outside the
+    /// static catalogue, built from the descriptor the catalogue shows (a
+    /// plugin's last handshake, once one has run). `None` for a bundled
+    /// provider; an error when the adapter is not ready or the plugin is not
+    /// enabled.
+    pub(super) fn registered_record(
+        &self,
+        provider: &str,
+    ) -> Result<Option<ade_core::contract::providers::CapabilityRecord>> {
+        if matches!(named(provider), Named::Other) {
+            return Ok(None);
+        }
+        let shown = self
+            .provider_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.id == provider);
+        let descriptor = match shown {
+            Some(descriptor) => descriptor,
+            None => self
+                .registered_descriptor(provider)?
+                .with_context(|| format!("Unknown provider: {provider}"))?,
+        };
+        Ok(Some(crate::capabilities::core::registered_record(
+            &descriptor,
+        )))
+    }
+
+    /// The capability records of every ready adapter and live plugin provider.
+    pub(super) fn registered_records(
+        &self,
+    ) -> Vec<ade_core::contract::providers::CapabilityRecord> {
+        self.provider_descriptors()
+            .iter()
+            .filter(|descriptor| !matches!(named(&descriptor.id), Named::Other))
+            .map(crate::capabilities::core::registered_record)
+            .collect()
+    }
+
     /// Pins a conversation just created on a registered provider. A plugin
     /// lease that cannot be taken now is taken at the first launch instead.
     pub(super) fn pin_new(&self, conversation: &Conversation) -> Result<()> {
@@ -232,7 +270,9 @@ impl Sessions {
 
     /// `plugin.uninstall`: refused while a run uses the plugin's provider.
     /// Once the plugin is disabled, idle conversations give up their leases,
-    /// so their history stays readable but they cannot run again.
+    /// so their history stays readable but they cannot run again. The leases
+    /// end inside the admitted uninstall, never before it: a refused
+    /// uninstall leaves each conversation on the generation it started on.
     pub(super) fn uninstall_plugin(
         &self,
         plugins: &crate::plugins::Plugins,
@@ -250,13 +290,17 @@ impl Sessions {
             .provider_workers()?
             .iter()
             .any(|(_, worker)| worker.pin.plugin_id == id);
-        if !live {
-            for conversation in d.store.catalog()?.conversations {
-                if conversation.provider == provider {
-                    plugins.release_provider(id, &conversation.id)?;
-                }
-            }
-        }
-        plugins.command(request)
+        let idle: Vec<String> = if live {
+            Vec::new()
+        } else {
+            d.store
+                .catalog()?
+                .conversations
+                .into_iter()
+                .filter(|conversation| conversation.provider == provider)
+                .map(|conversation| conversation.id)
+                .collect()
+        };
+        plugins.uninstall_releasing(request, &idle)
     }
 }

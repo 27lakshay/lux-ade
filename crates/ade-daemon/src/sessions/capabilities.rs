@@ -10,9 +10,18 @@ impl Sessions {
         let result = match request["op"].as_str().unwrap_or("") {
             "provider.capabilities" => {
                 let query: ProviderCapabilitiesRequest = decode(request)?;
+                // Adapters and plugin providers are described by the
+                // descriptor their registry entry publishes.
                 let providers = match query.provider.as_deref() {
-                    Some(provider) => vec![caps::record(provider)?],
-                    None => caps::records(),
+                    Some(provider) => match self.registered_record(provider)? {
+                        Some(record) => vec![record],
+                        None => vec![caps::record(provider)?],
+                    },
+                    None => {
+                        let mut records = caps::records();
+                        records.extend(self.registered_records());
+                        records
+                    }
                 };
                 reply(&ProviderCapabilities {
                     tag: Default::default(),
@@ -109,9 +118,12 @@ impl Sessions {
 
     fn readiness(self: &Arc<Self>, request: ProviderReadinessRequest) -> Result<Value> {
         let provider = non_empty("provider", &request.provider)?;
+        let account_id = request.account_id.filter(|id| !id.is_empty());
+        if let Some(record) = self.registered_record(provider)? {
+            return registered_readiness(record, account_id);
+        }
         let record = caps::record(provider)?;
         let mut version = None;
-        let account_id = request.account_id.filter(|id| !id.is_empty());
         let account = match account_id.as_deref() {
             None => None,
             Some(id) => {
@@ -229,4 +241,32 @@ impl Sessions {
             recording: limits.recording,
         })
     }
+}
+
+/// Readiness of an adapter or plugin provider. Its registry entry is ready
+/// (a probed adapter, an enabled plugin), which is all ADE can check before
+/// launch; it runs on the agent's own login, so no account applies.
+fn registered_readiness(record: CapabilityRecord, account_id: Option<String>) -> Result<Value> {
+    ensure!(
+        account_id.is_none(),
+        "{} uses the agent's own login; ADE manages no accounts for it",
+        record.provider
+    );
+    let checks = vec![ReadinessCheck {
+        check: "registration".into(),
+        state: CheckState::Passed,
+        detail: format!("{} is registered and can start", record.name),
+    }];
+    let (state, reason) = core::readiness(&record, &checks, None);
+    reply(&ProviderReadiness {
+        tag: Default::default(),
+        provider: record.provider.clone(),
+        account_id: None,
+        state,
+        reason,
+        version: None,
+        checks,
+        capability_revision: record.revision,
+        checked_at: now_ms(),
+    })
 }

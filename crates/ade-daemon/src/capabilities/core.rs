@@ -21,6 +21,92 @@ pub fn seal(mut record: CapabilityRecord) -> CapabilityRecord {
     record
 }
 
+/// The capability record of a provider registered outside the static
+/// catalogue (a generic adapter or a plugin worker), built from the
+/// descriptor its registry entry publishes. Only what the descriptor states
+/// is claimed: a listed capability is supported, a descriptor capability it
+/// omits is unsupported, and anything the descriptor cannot express is
+/// unknown. ADE manages no accounts for such a provider.
+pub fn registered_record(descriptor: &ade_core::provider::Descriptor) -> CapabilityRecord {
+    let declares = |name: &str| descriptor.capabilities.iter().any(|c| c == name);
+    let unknown = || {
+        Capability::new(
+            Support::Unknown,
+            "The provider's registration does not declare this",
+        )
+    };
+    let declared = |name: &str| {
+        if declares(name) {
+            Capability::new(
+                Support::Supported,
+                "Declared by the provider's registration",
+            )
+        } else {
+            Capability::new(
+                Support::Unsupported,
+                "The provider's registration does not offer this",
+            )
+        }
+    };
+    let approvals = ["tool_approval", "command_approval", "file_approval"];
+    seal(CapabilityRecord {
+        provider: descriptor.id.clone(),
+        name: descriptor.name.clone(),
+        revision: 0,
+        fingerprint: String::new(),
+        checked_against: "Descriptor published by the provider registry".into(),
+        models: ModelCapabilities {
+            selection: unknown(),
+            format: ModelFormat::NativeId,
+            aliases: vec![],
+            discovery: unknown(),
+        },
+        reasoning: ReasoningCapabilities {
+            selection: unknown(),
+            levels: vec![],
+            varies_by_model: false,
+        },
+        permission_modes: descriptor
+            .permission_modes
+            .iter()
+            .map(|mode| PermissionModeCapability {
+                id: mode.clone(),
+                support: Support::Supported,
+                description: "Declared by the provider's registration".into(),
+            })
+            .collect(),
+        grants: GrantCapabilities {
+            once: if approvals.iter().any(|name| declares(name)) {
+                Capability::new(
+                    Support::Supported,
+                    "Declared by the provider's registration",
+                )
+            } else {
+                unknown()
+            },
+            session: unknown(),
+            persistent: unknown(),
+        },
+        conversation: ConversationCapabilities {
+            steering: unknown(),
+            rewind: unknown(),
+            compaction: unknown(),
+            resume: declared("resume"),
+            import: unknown(),
+            fork: unknown(),
+            account_switch: Capability::new(
+                Support::Unsupported,
+                "The provider uses the agent's own login; ADE manages no accounts for it",
+            ),
+        },
+        quota: unknown(),
+        managed_accounts: Capability::new(
+            Support::Unsupported,
+            "The provider uses the agent's own login; ADE manages no accounts for it",
+        ),
+    })
+}
+
 /// How the current record differs from the one a preset was saved against.
 pub fn compare(
     saved_revision: u32,
@@ -398,6 +484,36 @@ mod tests {
     use super::*;
     use ade_core::contract::accounts::Inspection;
     use serde_json::json;
+
+    /// A plugin worker declares streaming and resume only. Its record claims
+    /// those, refuses accounts, and leaves the rest unknown; readiness then
+    /// says ADE cannot check it before launch rather than asking for an account.
+    #[test]
+    fn a_registered_provider_record_claims_only_its_declaration() {
+        let descriptor = ade_core::provider::Descriptor {
+            id: "plugin:e2e.agent".into(),
+            name: "E2E agent".into(),
+            capabilities: vec!["streaming".into(), "resume".into()],
+            permission_modes: vec!["default".into()],
+            setting_sources: vec![],
+        };
+        let record = registered_record(&descriptor);
+        assert_eq!(record.provider, "plugin:e2e.agent");
+        assert_eq!(record.conversation.resume.support, Support::Supported);
+        assert_eq!(record.conversation.steering.support, Support::Unknown);
+        assert_eq!(record.grants.once.support, Support::Unknown);
+        assert_eq!(record.managed_accounts.support, Support::Unsupported);
+        assert_eq!(record.permission_modes.len(), 1);
+        assert_eq!(record, seal(record.clone()));
+        let (state, reason) = readiness(&record, &[], None);
+        assert_eq!(state, ReadinessState::InstalledUnchecked);
+        assert!(reason.contains("cannot check"));
+        let mut without_resume = descriptor.clone();
+        without_resume.capabilities = vec!["tool_approval".into()];
+        let record = registered_record(&without_resume);
+        assert_eq!(record.conversation.resume.support, Support::Unsupported);
+        assert_eq!(record.grants.once.support, Support::Supported);
+    }
 
     fn cap(support: Support) -> Capability {
         Capability::new(support, "note")

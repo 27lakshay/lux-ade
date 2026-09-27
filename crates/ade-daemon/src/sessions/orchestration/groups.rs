@@ -216,6 +216,13 @@ impl Sessions {
                 base_commit,
             });
         }
+        // Adapters and plugin providers are validated through the provider
+        // registry, as `conversation.create` does, outside the store lock.
+        let registered = start
+            .runs
+            .iter()
+            .map(|run| self.registered_descriptor(&run.provider))
+            .collect::<Result<Vec<_>>>()?;
 
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
@@ -249,8 +256,13 @@ impl Sessions {
                 params![group_id, parent_id, operation_id, attribution, title, now],
             )?;
             let mut children = Vec::with_capacity(start.runs.len());
-            for (index, ((run, config), placement)) in
-                start.runs.iter().zip(configs).zip(&placements).enumerate()
+            for (index, (((run, config), placement), registered)) in start
+                .runs
+                .iter()
+                .zip(configs)
+                .zip(&placements)
+                .zip(&registered)
+                .enumerate()
             {
                 let depth = policy::child_depth(parent_depth, siblings as usize + index)?;
                 let account = policy::resolve_account(
@@ -258,6 +270,11 @@ impl Sessions {
                     &run.provider,
                     &parent.provider,
                     parent.account_id.as_deref(),
+                )?;
+                policy::registered_account(
+                    &run.provider,
+                    registered.is_some(),
+                    account.as_deref(),
                 )?;
                 let run_operation = group_policy::run_operation_id(&group_id, index);
                 let child = insert_child(
@@ -270,6 +287,7 @@ impl Sessions {
                         depth,
                         provider: &run.provider,
                         provider_config: config,
+                        registered: registered.as_ref(),
                         account: account.as_deref(),
                         workspace_id: &placement.workspace_id,
                         mode: placement.mode,
@@ -300,6 +318,9 @@ impl Sessions {
             Ok((children, result))
         })())?;
         if !created.is_empty() {
+            for child in &created {
+                self.pin_new(child)?;
+            }
             self.catalog_changed(&mut d)?;
             for child in &created {
                 self.changed(&mut d, child, &[])?;
