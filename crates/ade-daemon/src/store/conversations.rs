@@ -16,7 +16,7 @@ pub enum QueueEntry {
 /// user resumes it, as `agent.send` may. Keep in step with `queue_heads`.
 pub const QUEUE_DISPATCH_STATUSES: &[&str] = &["idle", "ready", "interrupted", "error"];
 
-const HISTORY_EPOCHS: &str = "CREATE TABLE IF NOT EXISTS conversation_history_epochs(conversation_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL CHECK(epoch>=0));";
+pub(crate) const HISTORY_EPOCHS: &str = "CREATE TABLE IF NOT EXISTS conversation_history_epochs(conversation_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL CHECK(epoch>=0));";
 
 pub(super) fn message_by_id(db: &Connection, id: &str) -> Result<Option<Message>> {
     db.query_row("SELECT data FROM messages WHERE id=?1", [id], |r| {

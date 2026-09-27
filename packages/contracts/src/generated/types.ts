@@ -7577,6 +7577,13 @@ export interface HistoryMatch {
    */
   excerpt: string
   has_review_feedback: boolean
+  /**
+   * The conversation's `history_epoch` when this match was read. A rewind
+   * reuses sequence numbers, so pass it with `before` to `conversation.get`
+   * when opening the match: a late match is then refused, not shown at a
+   * position that now holds another message.
+   */
+  history_epoch: number
   kind: string
   message_id: string
   /**

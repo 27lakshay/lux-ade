@@ -12830,6 +12830,12 @@
         "has_review_feedback": {
           "type": "boolean"
         },
+        "history_epoch": {
+          "description": "The conversation's `history_epoch` when this match was read. A rewind\nreuses sequence numbers, so pass it with `before` to `conversation.get`\nwhen opening the match: a late match is then refused, not shown at a\nposition that now holds another message.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "kind": {
           "type": "string"
         },
@@ -12863,6 +12869,7 @@
         "role",
         "kind",
         "sequence",
+        "history_epoch",
         "excerpt",
         "has_review_feedback",
         "observed_at",
