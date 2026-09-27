@@ -16,6 +16,9 @@ test('opens the real Electron desktop with an isolated profile', async () => {
     env: {
       ...process.env,
       ADE_E2E_USER_DATA_DIR: userData,
+      // Without a socket the desktop opens managed profiles; keep that registry
+      // inside the test directory, never the real ~/Library profile registry.
+      ADE_PROFILES_HOME: join(userData, 'profiles'),
     },
   })
 
