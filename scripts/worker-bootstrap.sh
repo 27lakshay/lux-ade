@@ -25,4 +25,5 @@ for dir in native vendor tools; do
 done
 
 pnpm install --frozen-lockfile
+pnpm --filter @ade/client build
 printf 'Worker ready at %s on %s\n' "$(git rev-parse --short HEAD)" "$(git branch --show-current)"

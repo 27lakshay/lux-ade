@@ -13,6 +13,8 @@ const features = ['--features', 'ade-runtime/native-terminal']
 const steps = [
   ['rustfmt', [...cargo, 'fmt', '--all', '--check']],
   ['architecture', ['python3', 'scripts/check_architecture.py']],
+  // Dependent packages typecheck against the SDK's built declarations.
+  ['client build', ['pnpm', '--filter', '@ade/client', 'build']],
   ['typecheck', ['pnpm', 'typecheck']],
   ['fallow', ['pnpm', 'deadcode']],
   ['js build', ['pnpm', 'build']],
