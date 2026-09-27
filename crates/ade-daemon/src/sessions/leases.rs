@@ -381,10 +381,17 @@ impl Sessions {
         Ok(())
     }
 
-    /// Drops an unresolved lease once a control path has settled it.
-    pub(super) fn settle_unresolved(&self, d: &mut Data, key: &LeaseKey) {
+    /// Drops an unresolved lease once a control path has settled it. A lease
+    /// restart reconciliation watches needs the `resolution` that
+    /// [`Sessions::recovery_control_release`] returned first.
+    pub(super) fn settle_unresolved(
+        &self,
+        d: &mut Data,
+        key: &LeaseKey,
+        resolution: Option<String>,
+    ) {
         d.unresolved.remove(key);
-        self.recovery_lease_settled(d, key);
+        self.recovery_lease_settled(d, key, resolution);
     }
 }
 

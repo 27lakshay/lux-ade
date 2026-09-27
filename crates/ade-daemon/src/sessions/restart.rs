@@ -734,9 +734,40 @@ impl Sessions {
         Ok(())
     }
 
+    /// Before a control path (service stop, script retire) releases a lease
+    /// that restart reconciliation watches, observes the attempt again outside
+    /// the data lock. Refuses unless the observation settles it, because the
+    /// replacement runtime's silence is not proof of exit. Returns the
+    /// resolution to record, or `None` when the lease is not watched.
+    pub(super) fn recovery_control_release(&self, lease: &LeaseKey) -> Result<Option<String>> {
+        let key = lease_key(lease);
+        let Some(watch) = self
+            .data
+            .lock()
+            .unwrap()
+            .recovery
+            .watch
+            .get(&key)
+            .filter(|watch| watch.lease.as_ref() == Some(lease))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let outcome = recovery::classify(&watch.facts, &gather(&watch, &mut Listeners::default()));
+        recovery::control_release(&outcome)
+            .map(Some)
+            .map_err(anyhow::Error::msg)
+    }
+
     /// A control path (service stop, script retire) settled a lease that
-    /// restart reconciliation was watching.
-    pub(super) fn recovery_lease_settled(&self, d: &mut Data, lease: &LeaseKey) {
+    /// restart reconciliation was watching, after
+    /// [`Sessions::recovery_control_release`] allowed it.
+    pub(super) fn recovery_lease_settled(
+        &self,
+        d: &mut Data,
+        lease: &LeaseKey,
+        resolution: Option<String>,
+    ) {
         let key = lease_key(lease);
         let Some(watch) = d.recovery.watch.remove(&key) else {
             return;
@@ -745,7 +776,8 @@ impl Sessions {
             .store
             .recovery_report(&watch.report_id)
             .and_then(|mut report| {
-                let resolution = "released through its own stop or retire command".into();
+                let resolution = resolution
+                    .unwrap_or_else(|| "released through its own stop or retire command".into());
                 if resolve_in(&mut report, &key, resolution) {
                     d.store.update_recovery_report(&report)?;
                 }

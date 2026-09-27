@@ -283,6 +283,37 @@ pub(super) fn classify(facts: &Facts, evidence: &Evidence) -> Outcome {
     outcome(Settled, "every recorded process in its tree has exited")
 }
 
+/// Decides whether a control path (`service.stop`, `script.retire`) may
+/// settle an attempt that restart reconciliation still watches, from a fresh
+/// classification. The replacement runtime never saw the attempt, so its
+/// absence there proves nothing: only a settled observation releases it. A
+/// running attempt refuses, and an unverifiable one needs the user's explicit
+/// `runtime.recovery.release`. Returns the resolution to record, or the refusal.
+pub(super) fn control_release(outcome: &Outcome) -> std::result::Result<String, String> {
+    match outcome.classification {
+        RecoveryClassification::Settled => Ok(format!(
+            "released through its own stop or retire command after an observation settled it: {}",
+            outcome.reason
+        )),
+        RecoveryClassification::Quarantined => {
+            let pids = if outcome.pids.is_empty() {
+                String::new()
+            } else {
+                let list: Vec<String> = outcome.pids.iter().map(u32::to_string).collect();
+                format!("; process IDs {}", list.join(", "))
+            };
+            Err(format!(
+                "The run from the replaced runtime is still running ({}{pids}). Stop those processes, then retry",
+                outcome.reason
+            ))
+        }
+        RecoveryClassification::Unknown => Err(format!(
+            "ADE cannot verify that the run from the replaced runtime stopped ({}). Release it with runtime.recovery.release, then retry",
+            outcome.reason
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,5 +535,47 @@ mod tests {
         assert_eq!(turn.classification, Settled);
         assert!(turn.outcome_unknown);
         assert!(turn.reason.contains("not replayed"));
+    }
+
+    #[test]
+    fn a_control_path_settles_a_watched_attempt_only_on_proof_of_exit() {
+        // The runtime crashed and a daemonized child of the service survived
+        // the hangup. service.stop finds no terminal in the replacement
+        // runtime, but the attempt still runs, so the stop must refuse.
+        let running = classify(
+            &facts(RecoveredAttemptKind::Service, true),
+            &evidence(
+                Presence::Gone,
+                Some(Tree::Running(vec![4242])),
+                Ports::NotApplicable,
+            ),
+        );
+        let refusal = control_release(&running).unwrap_err();
+        assert!(refusal.contains("still running") && refusal.contains("4242"));
+        // A live old runtime may still own a script run.
+        let owner = classify(
+            &facts(RecoveredAttemptKind::Script, true),
+            &evidence(Presence::Running, Some(Tree::Gone), Ports::NotApplicable),
+        );
+        assert!(control_release(&owner).is_err());
+        // An unverifiable exit stays unknown; only the explicit release accepts it.
+        for (tree, ports) in [
+            (None, Ports::Free),
+            (Some(Tree::Gone), Ports::Held { port: 3000, pid: 9 }),
+            (Some(Tree::Unreadable("ps".into())), Ports::NotApplicable),
+        ] {
+            let unknown = classify(
+                &facts(RecoveredAttemptKind::Service, true),
+                &evidence(Presence::Gone, tree, ports),
+            );
+            let refusal = control_release(&unknown).unwrap_err();
+            assert!(refusal.contains("runtime.recovery.release"));
+        }
+        // A gone tree with free ports is proof of exit.
+        let settled = classify(
+            &facts(RecoveredAttemptKind::Service, true),
+            &evidence(Presence::Gone, Some(Tree::Gone), Ports::Free),
+        );
+        assert!(control_release(&settled).is_ok());
     }
 }
