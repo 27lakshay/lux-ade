@@ -59,7 +59,28 @@ coordinator merging.
 | service-ports | The actual listener verified to belong to the service's process tree; bind failure reported explicitly | F085–F089 |
 
 The coordinator fixed one review blocker: a terminal stop could be dropped
-while the process-tree lock was busy (`a1d4219`). None of these is E2E-verified;
+while the process-tree lock was busy (`a1d4219`).
+
+**Phase 2 round B, merged green at `6a098f9`** (333 in-process tests)
+
+| Slice | Result | Requirements advanced |
+|---|---|---|
+| client-outbox | `@ade/client/outbox` holds only unadmitted operations; desktop recovery after admission uses the daemon list and acknowledge operations | F036, F075, F103, R001, R002, R005 |
+| host-resources | Host-level claim registry shared by profiles (device and inode identity, shared and exclusive claims, quarantine); worktree create and remove take claims | Architecture §5, F061–F069 foundation |
+| runtime-contracts | Typed daemon-to-runtime protocol (`ade_core::runtime_protocol`) | R020 foundation |
+| activity-feed | Durable activity records written in the same transaction as their event; deduplicated desktop notifications | F114, F117 |
+| mcp-catalog | Profile MCP catalog with credential references and workspace and provider scope resolution | F131 |
+| skill-catalog | Pinned skill bundles with provenance; read-only discovery of external skills | F132 |
+| plugin-registry | Pinned plugin installs with activation-generation fencing and namespaced state; no plugin host yet | F051, F059 |
+| orchestration | Child conversations with parent links, messages and non-blocking waits (`ade child ...`) | F104, F106, F107 |
+| history-search | FTS5 search index as a recoverable projection; combined history | F041, F043 |
+| diagnostics | Resource visibility and a redacted diagnostics export (redaction adapted from Orca, MIT) | F136, F137 |
+
+Known gaps from round B:
+- Legacy E2E `desktop-send-recovery` assertions will fail by design after the
+  outbox change; the evidence file lists them for the UI-phase E2E rewrite.
+- New stores (plugins database and artifacts, skill bundles) are not yet in
+  backups; round C adds them. None of these is E2E-verified;
 each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
 
 ## Scope baseline and daily-use gate
