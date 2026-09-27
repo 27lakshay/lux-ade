@@ -9,6 +9,7 @@
   remain allowed for pure cores: fingerprints, reducers, codecs, schema
   round-trips and reconciliation deciders, kept beside the code they test.
   A feature is accepted only when its register acceptance passes as E2E.
+  Write specs on the shared fixtures described in `e2e/protocol/README.md`.
 - Existing prototype and E2E tests are legacy coverage. Do not delete them. Keep
   the legacy Rust tests passing, because `check:static` runs them.
 - Operations fall into three tiers: query, idempotent command and effect command.
