@@ -39,6 +39,8 @@ pub mod activity;
 pub mod agents;
 pub mod browser;
 pub mod checkpoints;
+pub mod commands;
+pub mod context;
 pub mod conversations;
 pub mod daemon;
 pub mod devices;
@@ -204,6 +206,16 @@ pub const DOMAINS: &[Domain] = &[
         name: "placement",
         operations: placement::operations,
         frames: placement::frames,
+    },
+    Domain {
+        name: "commands",
+        operations: commands::operations,
+        frames: commands::frames,
+    },
+    Domain {
+        name: "context",
+        operations: context::operations,
+        frames: context::frames,
     },
 ];
 
