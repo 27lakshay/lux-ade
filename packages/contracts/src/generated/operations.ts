@@ -166,6 +166,12 @@ export const operations = {
   "usage.summary": { tier: "query", domain: "usage", request: "UsageSummaryRequest", response: "UsageSummary" },
   "usage.turns": { tier: "query", domain: "usage", request: "UsageTurnsRequest", response: "UsageTurns" },
   "usage.limits": { tier: "query", domain: "usage", request: "UsageLimitsRequest", response: "UsageLimits" },
+  "browser.diagnostics.attach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsAttachRequest", response: "BrowserDiagnosticsState" },
+  "browser.diagnostics.detach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsDetachRequest", response: "BrowserDiagnosticsState" },
+  "browser.diagnostics.read": { tier: "query", domain: "browser", request: "BrowserDiagnosticsReadRequest", response: "BrowserDiagnostics" },
+  "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
+  "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
+  "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

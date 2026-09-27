@@ -48,11 +48,23 @@ export type ContractDefinition =
   | AttachmentReclaimPreviewRequest
   | AttachmentReply
   | BranchPolicy
+  | BrowserAttachment
+  | BrowserAttachmentState
+  | BrowserCaptureKind
   | BrowserCloseRequest
+  | BrowserConsoleEntry
+  | BrowserDiagnostics
+  | BrowserDiagnosticsAttachRequest
+  | BrowserDiagnosticsDetachRequest
+  | BrowserDiagnosticsDropped
+  | BrowserDiagnosticsReadRequest
+  | BrowserDiagnosticsState
   | BrowserInspectRequest
   | BrowserListRequest
   | BrowserMutation
   | BrowserNavigateRequest
+  | BrowserNetworkEntry
+  | BrowserNetworkOutcome
   | BrowserOpenRequest
   | BrowserOperation
   | BrowserOperationRequest
@@ -62,6 +74,11 @@ export type ContractDefinition =
   | BrowserOwnerReleased
   | BrowserOwnerReply
   | BrowserOwnerUnregisterRequest
+  | BrowserRecording
+  | BrowserRecordingGetRequest
+  | BrowserRecordingStartRequest
+  | BrowserRecordingState
+  | BrowserRecordingStopRequest
   | BrowserTabRecord
   | BrowserTabReply
   | BrowserTabs
@@ -503,9 +520,25 @@ export type ActivityMark = 'read' | 'dismissed'
  */
 export type BranchPolicy = 'keep' | 'merged'
 /**
+ * Whether the owner's debugger capture holds the tab.
+ */
+export type BrowserAttachmentState = 'attached' | 'detached'
+/**
+ * What a recording captures.
+ */
+export type BrowserCaptureKind = 'screenshots' | 'page_events' | 'console' | 'network'
+/**
+ * How a network request ended.
+ */
+export type BrowserNetworkOutcome = ('completed' | 'failed' | 'canceled' | 'blocked') | 'incomplete'
+/**
  * Where a browser mutation stands.
  */
 export type BrowserOperationState = 'accepted' | 'unknown' | 'completed'
+/**
+ * Where a recording stands.
+ */
+export type BrowserRecordingState = ('recording' | 'stopped') | 'interrupted'
 /**
  * Who asks. An Agent caller names its own Conversation; the daemon records
  * the attribution and refuses an Agent that acts as another Conversation.
@@ -1524,6 +1557,26 @@ export interface AttachmentReply {
   [k: string]: unknown
 }
 /**
+ * The debugger capture of one tab.
+ */
+export interface BrowserAttachment {
+  /**
+   * Wall-clock milliseconds when capture last attached.
+   */
+  attached_at_ms: number | null
+  /**
+   * Who holds capture: `caller` and one entry per active recording ID.
+   */
+  holders: string[]
+  /**
+   * Why capture is detached: `not_attached`, `requested`, `target_closed`,
+   * `target_replaced`, or the debugger's own detach reason.
+   */
+  reason: string | null
+  state: BrowserAttachmentState
+  [k: string]: unknown
+}
+/**
  * `browser.close`: close an exact tab.
  */
 export interface BrowserCloseRequest {
@@ -1532,6 +1585,152 @@ export interface BrowserCloseRequest {
   owner_id: string
   profile_id: string
   tab_id: string
+}
+/**
+ * One console message, exception or browser log entry, redacted and cut to
+ * 1024 characters.
+ */
+export interface BrowserConsoleEntry {
+  at_ms: number
+  /**
+   * The console method or log level, such as `log`, `warning` or `error`.
+   */
+  level: string
+  line: number | null
+  /**
+   * Shared with network entries; increases for the owner's lifetime.
+   */
+  seq: number
+  /**
+   * `console`, `exception` or `browser`.
+   */
+  source: string
+  text: string
+  /**
+   * The redacted script or page URL, when the page reported one.
+   */
+  url: string | null
+  [k: string]: unknown
+}
+/**
+ * The `browser.diagnostics.read` reply.
+ */
+export interface BrowserDiagnostics {
+  attachment: BrowserAttachment
+  console: BrowserConsoleEntry[]
+  dropped: BrowserDiagnosticsDropped
+  /**
+   * What capture never includes.
+   */
+  excluded: string[]
+  /**
+   * Requests seen but not yet finished; they appear once they end.
+   */
+  in_flight: number
+  /**
+   * True when more entries follow this page.
+   */
+  more: boolean
+  network: BrowserNetworkEntry[]
+  /**
+   * Pass as `after` to read the next page.
+   */
+  next: number
+  owner_id: string
+  profile_id: string
+  /**
+   * The redaction policy, such as `ade-browser-redaction-v1`.
+   */
+  redaction: string
+  tab_id: string
+  /**
+   * The `browser_diagnostics` type tag.
+   */
+  type: 'browser_diagnostics'
+  [k: string]: unknown
+}
+/**
+ * Entries the owner discarded to stay within its bounds.
+ */
+export interface BrowserDiagnosticsDropped {
+  console: number
+  network: number
+  [k: string]: unknown
+}
+/**
+ * One network request summary. It never carries headers, cookies or bodies.
+ */
+export interface BrowserNetworkEntry {
+  at_ms: number
+  duration_ms: number | null
+  encoded_bytes: number | null
+  error: string | null
+  method: string
+  mime_type: string | null
+  outcome: BrowserNetworkOutcome
+  resource_type: string | null
+  seq: number
+  status: number | null
+  /**
+   * Without user information or fragment, credential-like query values
+   * replaced, cut to 1024 characters.
+   */
+  url: string
+  [k: string]: unknown
+}
+/**
+ * `browser.diagnostics.attach`: start capturing console and network
+ * summaries for one exact tab. Attaching an attached tab changes nothing.
+ * A tab without a live page, or whose debugger another client holds, fails.
+ */
+export interface BrowserDiagnosticsAttachRequest {
+  op: 'browser.diagnostics.attach'
+  owner_id: string
+  profile_id: string
+  tab_id: string
+}
+/**
+ * `browser.diagnostics.detach`: stop the caller's capture on one exact tab.
+ * The captured entries stay readable until the tab closes. Detaching a
+ * detached tab changes nothing; an active recording keeps its own capture.
+ */
+export interface BrowserDiagnosticsDetachRequest {
+  op: 'browser.diagnostics.detach'
+  owner_id: string
+  profile_id: string
+  tab_id: string
+}
+/**
+ * `browser.diagnostics.read`: one page of captured entries for one exact tab.
+ */
+export interface BrowserDiagnosticsReadRequest {
+  /**
+   * Return entries whose `seq` is greater than this; the previous page's
+   * `next`. From the oldest retained entry when absent.
+   */
+  after?: number
+  /**
+   * 1 to 200 entries across both kinds; 100 when absent.
+   */
+  limit?: number
+  op: 'browser.diagnostics.read'
+  owner_id: string
+  profile_id: string
+  tab_id: string
+}
+/**
+ * The `browser.diagnostics.attach` and `browser.diagnostics.detach` reply.
+ */
+export interface BrowserDiagnosticsState {
+  attachment: BrowserAttachment
+  owner_id: string
+  profile_id: string
+  tab_id: string
+  /**
+   * The `browser_diagnostics_state` type tag.
+   */
+  type: 'browser_diagnostics_state'
+  [k: string]: unknown
 }
 /**
  * `browser.inspect`: inspect one exact tab.
@@ -1681,6 +1880,100 @@ export interface BrowserOwnerUnregisterRequest {
   op: 'browser.owner.unregister'
   owner_id: string
   profile_id: string
+}
+/**
+ * The `browser.recording.*` reply: the recording's manifest.
+ */
+export interface BrowserRecording {
+  /**
+   * The local artifact directory. Nothing is published.
+   */
+  artifact_dir: string
+  bytes: number
+  capture: BrowserCaptureKind[]
+  console_entries: number
+  /**
+   * What this recording does not cover, in plain words.
+   */
+  coverage_gaps: string[]
+  /**
+   * `ade-browser-recording-v1`.
+   */
+  format: string
+  frames: number
+  /**
+   * Screenshot ticks that produced no image, such as a hidden page.
+   */
+  frames_unavailable: number
+  interval_ms: number
+  max_duration_ms: number
+  network_entries: number
+  owner_id: string
+  page_events: number
+  profile_id: string
+  recording_id: string
+  started_at_ms: number
+  state: BrowserRecordingState
+  /**
+   * `requested`, `duration_reached`, `frame_limit`, `size_limit`,
+   * `target_closed`, `write_failed` or `owner_stopped`.
+   */
+  stop_reason: string | null
+  stopped_at_ms: number | null
+  tab_id: string
+  /**
+   * The `browser_recording` type tag.
+   */
+  type: 'browser_recording'
+  [k: string]: unknown
+}
+/**
+ * `browser.recording.get`: read a recording's manifest.
+ */
+export interface BrowserRecordingGetRequest {
+  op: 'browser.recording.get'
+  owner_id: string
+  profile_id: string
+  recording_id: string
+}
+/**
+ * `browser.recording.start`: record one exact tab into a local artifact.
+ * `recording_id` is caller-owned. Repeating a start with the same ID and
+ * the same target and scope returns that recording in its current state and
+ * never starts it again; the same ID with another target or scope conflicts.
+ */
+export interface BrowserRecordingStartRequest {
+  /**
+   * One or more distinct kinds.
+   */
+  capture: BrowserCaptureKind[]
+  /**
+   * Milliseconds between screenshots, 250 to 60000; 2000 when absent.
+   */
+  interval_ms?: number
+  /**
+   * The recording window, 1000 to 1800000 milliseconds; 300000 when absent.
+   * The recording stops by itself when it ends.
+   */
+  max_duration_ms?: number
+  op: 'browser.recording.start'
+  owner_id: string
+  profile_id: string
+  /**
+   * 1 to 128 ASCII letters, digits, `-` or `_`.
+   */
+  recording_id: string
+  tab_id: string
+}
+/**
+ * `browser.recording.stop`: end a recording and seal its manifest. Stopping a
+ * stopped or interrupted recording returns it unchanged.
+ */
+export interface BrowserRecordingStopRequest {
+  op: 'browser.recording.stop'
+  owner_id: string
+  profile_id: string
+  recording_id: string
 }
 /**
  * One browser tab as the owner reports it. The owner uses camelCase names.
@@ -6898,7 +7191,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -7065,6 +7358,12 @@ export interface RequestByOperation {
   "usage.summary": UsageSummaryRequest
   "usage.turns": UsageTurnsRequest
   "usage.limits": UsageLimitsRequest
+  "browser.diagnostics.attach": BrowserDiagnosticsAttachRequest
+  "browser.diagnostics.detach": BrowserDiagnosticsDetachRequest
+  "browser.diagnostics.read": BrowserDiagnosticsReadRequest
+  "browser.recording.start": BrowserRecordingStartRequest
+  "browser.recording.stop": BrowserRecordingStopRequest
+  "browser.recording.get": BrowserRecordingGetRequest
 }
 
 export interface ResponseByOperation {
@@ -7232,6 +7531,12 @@ export interface ResponseByOperation {
   "usage.summary": UsageSummary
   "usage.turns": UsageTurns
   "usage.limits": UsageLimits
+  "browser.diagnostics.attach": BrowserDiagnosticsState
+  "browser.diagnostics.detach": BrowserDiagnosticsState
+  "browser.diagnostics.read": BrowserDiagnostics
+  "browser.recording.start": BrowserRecording
+  "browser.recording.stop": BrowserRecording
+  "browser.recording.get": BrowserRecording
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged
