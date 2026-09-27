@@ -108,6 +108,7 @@ impl Sessions {
                 admission.review_anchor.or(admission.review_feedback),
             )?;
             let current = d.store.conversation(id)?;
+            Self::ensure_not_imported(&current)?;
             Self::ensure_account_current(
                 &d,
                 &current,
@@ -242,6 +243,7 @@ impl Sessions {
         let clear_view = {
             let d = self.data.lock().unwrap();
             let c = d.store.conversation(id)?;
+            Self::ensure_not_imported(&c)?;
             Self::ensure_account_current(
                 &d,
                 &c,

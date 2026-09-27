@@ -153,6 +153,8 @@ export const operations = {
   "history.list": { tier: "query", domain: "history", request: "HistoryListRequest", response: "HistoryList" },
   "history.index.status": { tier: "query", domain: "history", request: "HistoryIndexStatusRequest", response: "HistoryIndexReply" },
   "history.index.rebuild": { tier: "idempotent_command", domain: "history", request: "HistoryIndexRebuildRequest", response: "HistoryIndexReply" },
+  "history.import.scan": { tier: "query", domain: "history", request: "HistoryImportScanRequest", response: "HistoryImportScan" },
+  "history.import.session": { tier: "idempotent_command", domain: "history", request: "HistoryImportRequest", response: "HistoryImported" },
   "resources.inspect": { tier: "query", domain: "resources", request: "ResourcesInspectRequest", response: "HostResourcesState" },
   "resources.claim.resolve": { tier: "effect_command", domain: "resources", request: "ResourcesClaimResolveRequest", response: "HostResourcesState" },
   "resources.registry.accept": { tier: "effect_command", domain: "resources", request: "ResourcesRegistryAcceptRequest", response: "HostResourcesState" },

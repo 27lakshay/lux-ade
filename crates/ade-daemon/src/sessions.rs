@@ -33,6 +33,7 @@ mod activity;
 mod agents;
 mod checkpoints;
 mod conversations;
+mod imports;
 mod inspection;
 mod leases;
 mod mcp;
@@ -593,6 +594,9 @@ impl Sessions {
                 self.release_restore_fence_if_bound()?;
             }
             return Ok(response);
+        }
+        if op.starts_with("history.import.") {
+            return self.history_import_command(request);
         }
         if op.starts_with("history.") {
             return self.history.command(request);

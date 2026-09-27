@@ -5415,6 +5415,336 @@
       ],
       "type": "object"
     },
+    "HistoryImportCandidate": {
+      "description": "One native session found by a scan. Metadata comes from the start of the\nfile; importing reads all of it.",
+      "properties": {
+        "cwd": {
+          "description": "The working directory the native session recorded, when it did.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "imported_conversation_id": {
+          "description": "The conversation an earlier import created, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modified_at": {
+          "description": "When the file last changed, in milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "native_session_id": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "title": {
+          "description": "A native title or the first user prompt, when one was found.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "native_session_id",
+        "cwd",
+        "title",
+        "modified_at",
+        "size_bytes",
+        "source_path",
+        "imported_conversation_id"
+      ],
+      "type": "object"
+    },
+    "HistoryImportOutcome": {
+      "oneOf": [
+        {
+          "const": "imported",
+          "description": "A new read-only conversation was created.",
+          "type": "string"
+        },
+        {
+          "const": "appended",
+          "description": "Records the native session gained since the last import were added.",
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "The conversation already held every record.",
+          "type": "string"
+        }
+      ]
+    },
+    "HistoryImportProvider": {
+      "description": "A provider whose native on-disk sessions ADE can import.",
+      "oneOf": [
+        {
+          "const": "claude",
+          "description": "Claude Code transcripts under `<config dir>/projects`.",
+          "type": "string"
+        },
+        {
+          "const": "codex",
+          "description": "Codex rollouts under `<CODEX_HOME>/sessions` and `archived_sessions`.",
+          "type": "string"
+        }
+      ]
+    },
+    "HistoryImportRequest": {
+      "additionalProperties": false,
+      "description": "`history.import.session`: import one native session as a read-only\nconversation. Keyed by provider and native session ID: repeating it\nreturns the same conversation, adds only records appended since, and\nrefuses when the native history no longer extends what was imported.",
+      "properties": {
+        "account_id": {
+          "description": "Read from this ADE account's native home instead of the default store.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "native_session_id": {
+          "description": "The provider's own session UUID, as `history.import.scan` reports it.",
+          "type": "string"
+        },
+        "op": {
+          "const": "history.import.session"
+        },
+        "provider": {
+          "$ref": "#/$defs/HistoryImportProvider"
+        },
+        "workspace_id": {
+          "description": "The workspace the imported conversation belongs to. A repeat must name\nthe same workspace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "provider",
+        "native_session_id",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "HistoryImportScan": {
+      "description": "The `history.import.scan` reply.",
+      "properties": {
+        "more": {
+          "description": "True when more matching sessions exist than `limit` allowed.",
+          "type": "boolean"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/HistoryImportCandidate"
+          },
+          "type": "array"
+        },
+        "store": {
+          "$ref": "#/$defs/HistoryImportStore"
+        },
+        "type": {
+          "description": "The `history_import_scan` type tag.",
+          "enum": [
+            "history_import_scan"
+          ],
+          "type": "string"
+        },
+        "unreadable": {
+          "description": "Session files whose metadata could not be read; they are not listed.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "store",
+        "sessions",
+        "more",
+        "unreadable"
+      ],
+      "type": "object"
+    },
+    "HistoryImportScanRequest": {
+      "additionalProperties": false,
+      "description": "`history.import.scan`: the native sessions one provider store holds, newest\nfirst. It reads the store and changes nothing.",
+      "properties": {
+        "account_id": {
+          "description": "Scan this ADE account's native home. Absent scans the daemon user's\ndefault store (`CLAUDE_CONFIG_DIR` or `~/.claude`; `CODEX_HOME` or\n`~/.codex`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "1 to 200; the daemon uses 50 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "history.import.scan"
+        },
+        "provider": {
+          "$ref": "#/$defs/HistoryImportProvider"
+        },
+        "workspace_id": {
+          "description": "Keep only sessions whose recorded working directory is this\nworkspace's root or lies inside it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "provider"
+      ],
+      "type": "object"
+    },
+    "HistoryImportSource": {
+      "description": "Where an imported conversation came from, and what ADE can do with it.",
+      "properties": {
+        "account_id": {
+          "description": "The ADE account whose native home held the session.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "imported_at": {
+          "description": "The last import, in milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "native_cwd": {
+          "description": "The working directory the native session recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resumable": {
+          "description": "False while ADE cannot continue this native session. Sending to an\nimported conversation is refused, never silently started fresh.",
+          "type": "boolean"
+        },
+        "resume_unavailable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_path": {
+          "description": "The native file the history was read from.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_path",
+        "native_cwd",
+        "account_id",
+        "imported_at",
+        "resumable",
+        "resume_unavailable_reason"
+      ],
+      "type": "object"
+    },
+    "HistoryImportStore": {
+      "description": "The native store a scan read.",
+      "properties": {
+        "account_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "available": {
+          "description": "False when the store could not be read; `unavailable_reason` says why.",
+          "type": "boolean"
+        },
+        "provider": {
+          "$ref": "#/$defs/HistoryImportProvider"
+        },
+        "root": {
+          "description": "The directory scanned.",
+          "type": "string"
+        },
+        "unavailable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "account_id",
+        "root",
+        "available",
+        "unavailable_reason"
+      ],
+      "type": "object"
+    },
+    "HistoryImported": {
+      "description": "The `history.import.session` reply.",
+      "properties": {
+        "added_messages": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "conversation": {
+          "$ref": "#/$defs/HistoryConversation"
+        },
+        "incomplete_tail": {
+          "description": "True when the file ended in a partly written record, which a later\nimport picks up once the provider finishes it.",
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/HistoryImportOutcome"
+        },
+        "skipped_records": {
+          "description": "Native records that could not be parsed and were left out. Records\nADE does not model, such as private reasoning, are not counted.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `history_imported` type tag.",
+          "enum": [
+            "history_imported"
+          ],
+          "type": "string"
+        },
+        "updated_messages": {
+          "description": "Earlier imported messages whose native record gained detail since,\nsuch as a tool result written after its call.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "outcome",
+        "conversation",
+        "added_messages",
+        "updated_messages",
+        "skipped_records",
+        "incomplete_tail"
+      ],
+      "type": "object"
+    },
     "HistoryIndexRebuildRequest": {
       "additionalProperties": false,
       "description": "`history.index.rebuild`: discard the search index and rebuild it from\ndurable history. It applies only while the index is still at\n`expected_epoch`, so a repeated request does not restart a rebuild.",
@@ -5647,6 +5977,17 @@
           "maximum": 9007199254740991,
           "minimum": -9007199254740991,
           "type": "integer"
+        },
+        "import": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HistoryImportSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present when the conversation is a read-only import of a native\nsession rather than one ADE ran."
         },
         "native_session_id": {
           "description": "The provider's own session or thread ID, when the provider assigned one.",
@@ -15053,6 +15394,20 @@
       "name": "history.index.rebuild",
       "request": "HistoryIndexRebuildRequest",
       "response": "HistoryIndexReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "history",
+      "name": "history.import.scan",
+      "request": "HistoryImportScanRequest",
+      "response": "HistoryImportScan",
+      "tier": "query"
+    },
+    {
+      "domain": "history",
+      "name": "history.import.session",
+      "request": "HistoryImportRequest",
+      "response": "HistoryImported",
       "tier": "idempotent_command"
     },
     {

@@ -169,6 +169,15 @@ export type ContractDefinition =
   | HealthPolicy
   | HelloRequest
   | HistoryConversation
+  | HistoryImportCandidate
+  | HistoryImportOutcome
+  | HistoryImportProvider
+  | HistoryImportRequest
+  | HistoryImportScan
+  | HistoryImportScanRequest
+  | HistoryImportSource
+  | HistoryImportStore
+  | HistoryImported
   | HistoryIndexRebuildRequest
   | HistoryIndexReply
   | HistoryIndexStatus
@@ -673,6 +682,11 @@ export type PreviewKind = 'text' | 'image' | 'unsupported'
  * Where a Git mutation stands.
  */
 export type GitOperationStatus = ('running' | 'succeeded' | 'failed') | 'interrupted'
+export type HistoryImportOutcome = 'imported' | 'appended' | 'unchanged'
+/**
+ * A provider whose native on-disk sessions ADE can import.
+ */
+export type HistoryImportProvider = 'claude' | 'codex'
 export type RegistryState = 'ready' | 'blocked'
 /**
  * How the server's code reached this host. ADE records it; it installs nothing.
@@ -3073,11 +3087,181 @@ export interface HistoryProvenance {
    */
   conversation_updated_at: number
   /**
+   * Present when the conversation is a read-only import of a native
+   * session rather than one ADE ran.
+   */
+  import?: HistoryImportSource | null
+  /**
    * The provider's own session or thread ID, when the provider assigned one.
    */
   native_session_id: string | null
   provider: string
   workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * Where an imported conversation came from, and what ADE can do with it.
+ */
+export interface HistoryImportSource {
+  /**
+   * The ADE account whose native home held the session.
+   */
+  account_id: string | null
+  /**
+   * The last import, in milliseconds since the Unix epoch.
+   */
+  imported_at: number
+  /**
+   * The working directory the native session recorded.
+   */
+  native_cwd: string | null
+  /**
+   * False while ADE cannot continue this native session. Sending to an
+   * imported conversation is refused, never silently started fresh.
+   */
+  resumable: boolean
+  resume_unavailable_reason: string | null
+  /**
+   * The native file the history was read from.
+   */
+  source_path: string
+  [k: string]: unknown
+}
+/**
+ * One native session found by a scan. Metadata comes from the start of the
+ * file; importing reads all of it.
+ */
+export interface HistoryImportCandidate {
+  /**
+   * The working directory the native session recorded, when it did.
+   */
+  cwd: string | null
+  /**
+   * The conversation an earlier import created, when there is one.
+   */
+  imported_conversation_id: string | null
+  /**
+   * When the file last changed, in milliseconds since the Unix epoch.
+   */
+  modified_at: number
+  native_session_id: string
+  size_bytes: number
+  source_path: string
+  /**
+   * A native title or the first user prompt, when one was found.
+   */
+  title: string | null
+  [k: string]: unknown
+}
+/**
+ * `history.import.session`: import one native session as a read-only
+ * conversation. Keyed by provider and native session ID: repeating it
+ * returns the same conversation, adds only records appended since, and
+ * refuses when the native history no longer extends what was imported.
+ */
+export interface HistoryImportRequest {
+  /**
+   * Read from this ADE account's native home instead of the default store.
+   */
+  account_id?: string | null
+  /**
+   * The provider's own session UUID, as `history.import.scan` reports it.
+   */
+  native_session_id: string
+  op: 'history.import.session'
+  provider: HistoryImportProvider
+  /**
+   * The workspace the imported conversation belongs to. A repeat must name
+   * the same workspace.
+   */
+  workspace_id: string
+}
+/**
+ * The `history.import.scan` reply.
+ */
+export interface HistoryImportScan {
+  /**
+   * True when more matching sessions exist than `limit` allowed.
+   */
+  more: boolean
+  sessions: HistoryImportCandidate[]
+  store: HistoryImportStore
+  /**
+   * The `history_import_scan` type tag.
+   */
+  type: 'history_import_scan'
+  /**
+   * Session files whose metadata could not be read; they are not listed.
+   */
+  unreadable: number
+  [k: string]: unknown
+}
+/**
+ * The native store a scan read.
+ */
+export interface HistoryImportStore {
+  account_id: string | null
+  /**
+   * False when the store could not be read; `unavailable_reason` says why.
+   */
+  available: boolean
+  provider: HistoryImportProvider
+  /**
+   * The directory scanned.
+   */
+  root: string
+  unavailable_reason: string | null
+  [k: string]: unknown
+}
+/**
+ * `history.import.scan`: the native sessions one provider store holds, newest
+ * first. It reads the store and changes nothing.
+ */
+export interface HistoryImportScanRequest {
+  /**
+   * Scan this ADE account's native home. Absent scans the daemon user's
+   * default store (`CLAUDE_CONFIG_DIR` or `~/.claude`; `CODEX_HOME` or
+   * `~/.codex`).
+   */
+  account_id?: string | null
+  /**
+   * 1 to 200; the daemon uses 50 when it is absent.
+   */
+  limit?: number
+  op: 'history.import.scan'
+  provider: HistoryImportProvider
+  /**
+   * Keep only sessions whose recorded working directory is this
+   * workspace's root or lies inside it.
+   */
+  workspace_id?: string | null
+}
+/**
+ * The `history.import.session` reply.
+ */
+export interface HistoryImported {
+  added_messages: number
+  conversation: HistoryConversation
+  /**
+   * True when the file ended in a partly written record, which a later
+   * import picks up once the provider finishes it.
+   */
+  incomplete_tail: boolean
+  outcome: HistoryImportOutcome
+  /**
+   * Native records that could not be parsed and were left out. Records
+   * ADE does not model, such as private reasoning, are not counted.
+   */
+  skipped_records: number
+  /**
+   * The `history_imported` type tag.
+   */
+  type: 'history_imported'
+  /**
+   * Earlier imported messages whose native record gained detail since,
+   * such as a tool result written after its call.
+   */
+  updated_messages: number
   [k: string]: unknown
 }
 /**
@@ -6425,7 +6609,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -6579,6 +6763,8 @@ export interface RequestByOperation {
   "history.list": HistoryListRequest
   "history.index.status": HistoryIndexStatusRequest
   "history.index.rebuild": HistoryIndexRebuildRequest
+  "history.import.scan": HistoryImportScanRequest
+  "history.import.session": HistoryImportRequest
   "resources.inspect": ResourcesInspectRequest
   "resources.claim.resolve": ResourcesClaimResolveRequest
   "resources.registry.accept": ResourcesRegistryAcceptRequest
@@ -6741,6 +6927,8 @@ export interface ResponseByOperation {
   "history.list": HistoryList
   "history.index.status": HistoryIndexReply
   "history.index.rebuild": HistoryIndexReply
+  "history.import.scan": HistoryImportScan
+  "history.import.session": HistoryImported
   "resources.inspect": HostResourcesState
   "resources.claim.resolve": HostResourcesState
   "resources.registry.accept": HostResourcesState
