@@ -30,6 +30,7 @@ use std::{
 mod accounts;
 mod agents;
 mod conversations;
+mod leases;
 mod services;
 mod terminals;
 mod workspaces;
@@ -79,6 +80,8 @@ struct Data {
     store: Store,
     agents: HashMap<String, Agent>,
     terminal_leases: HashMap<String, crate::worktrees::Lease>,
+    /// Leases a restart could not resolve; they refuse conflicting admission.
+    unresolved: HashMap<leases::LeaseKey, leases::Unresolved>,
     stopping_services: HashSet<(String, String)>,
     health_samples: HashMap<(String, String), HealthSample>,
     health_attempts: HashMap<(String, String), HealthAttempt>,
@@ -127,6 +130,7 @@ impl Sessions {
                 store,
                 agents: HashMap::new(),
                 terminal_leases: HashMap::new(),
+                unresolved: HashMap::new(),
                 stopping_services: HashSet::new(),
                 health_samples: HashMap::new(),
                 health_attempts: HashMap::new(),
@@ -163,6 +167,9 @@ impl Sessions {
                 };
                 if let Err(error) = hub.release_exited_script_leases() {
                     eprintln!("Script lease monitor: {error}");
+                }
+                if let Err(error) = hub.reconcile_unresolved() {
+                    eprintln!("Session lease reconciliation: {error}");
                 }
                 if let Err(error) = hub.sample_due_service_health() {
                     eprintln!("Service health monitor: {error}");
@@ -219,15 +226,20 @@ impl Sessions {
                 self.clear_view_terminal(&c.id)?;
             }
         }
-        // Script runs use durable workspace terminal membership as their
-        // handoff lease. Reconcile a launch that died before runtime admission.
-        let terminals = self.runtime.command(json!({"op":"terminal.list"}))?;
-        let terminals = terminals["terminals"]
-            .as_array()
-            .context("Invalid terminal catalogue")?;
+        // Reconcile every persisted lease against the runtime before any
+        // admission: script runs (durable workspace terminal membership),
+        // service reservations and Agent runs. See `leases::decide`.
+        let terminals =
+            leases::observe_terminals(&self.runtime.command(json!({"op":"terminal.list"}))?)?;
+        let agent_records =
+            leases::observe_agents(&self.runtime.agent(json!({"op":"agent.list"}))?)?;
+        let mut live = HashSet::new();
+        let mut runs = Vec::new();
         {
             let mut d = self.data.lock().unwrap();
-            for workspace in d.store.catalog()?.workspaces {
+            let catalog = d.store.catalog()?;
+            let mut claims = Vec::new();
+            for workspace in &catalog.workspaces {
                 if d.store.ensure_workspace_bound(&workspace.id).is_err() {
                     continue;
                 }
@@ -236,87 +248,149 @@ impl Sessions {
                     .iter()
                     .filter(|id| ade_core::scripts::run_name(id).is_ok())
                 {
-                    let runtime = terminals.iter().find(|item| {
-                        item["workspace"]["id"] == workspace.id
-                            && item["workspace"]["terminal_id"] == *run_id
+                    claims.push(leases::Claim {
+                        key: leases::LeaseKey::Script {
+                            workspace_id: workspace.id.clone(),
+                            run_id: run_id.clone(),
+                        },
+                        workspace_id: workspace.id.clone(),
+                        root: workspace.root.clone(),
+                        holder: leases::Holder::Terminal {
+                            terminal_id: run_id.clone(),
+                            transfer_id: None,
+                            runtime_instance: None,
+                        },
                     });
-                    match runtime {
-                        Some(item) => {
-                            ensure!(
-                                item["workspace"]["root"] == workspace.root
-                                    && item["metrics"]["transfer_id"].as_str().is_some(),
-                                "Runtime script does not match its durable workspace"
-                            );
-                            if item["metrics"]["shell_running"] == true {
-                                d.terminal_leases
-                                    .insert(run_id.clone(), self.worktrees.lease(&workspace.root)?);
-                            }
-                        }
-                        None => d.store.retire_script_run(&workspace.id, run_id)?,
-                    }
                 }
-            }
-        }
-        let response = self.runtime.agent(json!({"op":"agent.list"}))?;
-        let mut live = std::collections::HashSet::new();
-        let mut runs = Vec::new();
-        {
-            let mut d = self.data.lock().unwrap();
-            for w in d.store.catalog()?.workspaces {
-                if d.store.ensure_workspace_bound(&w.id).is_err() {
-                    continue;
-                }
-                for service in d.store.services(&w.id)? {
+                for service in d.store.services(&workspace.id)? {
                     if let Some(owner) = service.terminal_owner {
-                        d.terminal_leases
-                            .insert(owner.terminal_id, self.worktrees.lease(&w.root)?);
+                        claims.push(leases::Claim {
+                            key: leases::LeaseKey::Service {
+                                workspace_id: workspace.id.clone(),
+                                name: service.name.clone(),
+                            },
+                            workspace_id: workspace.id.clone(),
+                            root: workspace.root.clone(),
+                            holder: leases::Holder::Terminal {
+                                terminal_id: owner.terminal_id,
+                                transfer_id: Some(owner.transfer_id),
+                                runtime_instance: Some(owner.runtime_instance),
+                            },
+                        });
                     }
                 }
             }
-            for c in d.store.catalog()?.conversations {
+            // A Conversation handed to a terminal holds that terminal's lease;
+            // its runtime Agent, if any, is covered by it.
+            let mut records = HashMap::new();
+            let mut observed_agents = Vec::new();
+            for (agent, spec, commands) in agent_records {
+                if let Ok(c) = d.store.conversation(&agent.conversation_id) {
+                    let w = d.store.workspace(&c.workspace_id)?;
+                    d.store.ensure_workspace_bound(&w.id)?;
+                    if c.terminal_owner.is_some() {
+                        continue;
+                    }
+                }
+                records.insert(agent.conversation_id.clone(), (spec, commands));
+                observed_agents.push(agent);
+            }
+            for c in &catalog.conversations {
                 if d.store.ensure_workspace_bound(&c.workspace_id).is_err() {
                     continue;
                 }
-                if c.terminal_owner.is_some() {
-                    let w = d.store.workspace(&c.workspace_id)?;
-                    d.terminal_leases
-                        .insert(c.id, self.worktrees.lease(&w.root)?);
-                }
-            }
-            for record in response["agents"]
-                .as_array()
-                .context("Invalid Agent catalogue")?
-            {
-                let spec: Spec = serde_json::from_value(record["spec"].clone())?;
-                let c = d.store.conversation(&spec.conversation)?;
                 let w = d.store.workspace(&c.workspace_id)?;
-                d.store.ensure_workspace_bound(&w.id)?;
-                ensure!(
-                    c.runtime_run.as_deref() == Some(&spec.run)
-                        && c.provider == spec.provider
-                        && c.account_id.as_deref()
-                            == spec.account.as_ref().map(|account| account.id.as_str())
-                        && w.root == spec.root,
-                    "Runtime Agent does not match its durable Conversation; preserve the runtime for recovery"
-                );
                 if c.terminal_owner.is_some() {
+                    d.terminal_leases
+                        .insert(c.id.clone(), self.worktrees.lease(&w.root)?);
                     continue;
                 }
-                let lease = self.worktrees.lease(&w.root)?;
-                live.insert(c.id.clone());
-                d.agents.insert(
-                    c.id.clone(),
-                    Agent {
-                        run_id: spec.run.clone(),
-                        rpc: None,
-                        submission: c.runtime_submission.clone(),
-                        account_generation: spec.account.as_ref().map(|account| account.generation),
-                        _lease: lease,
-                    },
-                );
-                runs.push((spec, record["commands"].clone()));
+                if c.runtime_run.is_some() || records.contains_key(&c.id) {
+                    claims.push(leases::Claim {
+                        key: leases::LeaseKey::Agent(c.id.clone()),
+                        workspace_id: w.id.clone(),
+                        root: w.root.clone(),
+                        holder: leases::Holder::Agent {
+                            run: c.runtime_run.clone(),
+                            provider: c.provider.clone(),
+                            account: c.account_id.clone(),
+                        },
+                    });
+                }
+            }
+            let observed = leases::Observation {
+                runtime_instance: self.runtime.instance.clone(),
+                terminals,
+                agents: Some(observed_agents),
+            };
+            let mut uncertain_agents = Vec::new();
+            for (claim, verdict) in leases::reconcile(&claims, &observed) {
+                use leases::{Holder, LeaseKey, Release, Verdict};
+                match (&claim.key, &claim.holder, verdict) {
+                    (_, _, Verdict::Uncertain(reason)) => {
+                        if let LeaseKey::Agent(id) = &claim.key {
+                            uncertain_agents.push((id.clone(), reason.clone()));
+                        }
+                        self.hold_unresolved(&mut d, claim, reason);
+                    }
+                    (LeaseKey::Script { run_id, .. }, _, Verdict::Live) => {
+                        d.terminal_leases
+                            .insert(run_id.clone(), self.worktrees.lease(&claim.root)?);
+                    }
+                    (LeaseKey::Script { .. }, _, Verdict::Released(Release::Exited)) => {}
+                    (
+                        LeaseKey::Script {
+                            workspace_id,
+                            run_id,
+                        },
+                        _,
+                        Verdict::Released(Release::Absent),
+                    ) => d.store.retire_script_run(workspace_id, run_id)?,
+                    // The durable service reservation keeps its worktree lease
+                    // until service.stop releases it, whether or not it runs.
+                    (LeaseKey::Service { .. }, Holder::Terminal { terminal_id, .. }, _) => {
+                        d.terminal_leases
+                            .insert(terminal_id.clone(), self.worktrees.lease(&claim.root)?);
+                    }
+                    (LeaseKey::Agent(id), _, Verdict::Live) => {
+                        let (spec, commands) =
+                            records.remove(id).context("Invalid Agent catalogue")?;
+                        let c = d.store.conversation(id)?;
+                        let lease = self.worktrees.lease(&claim.root)?;
+                        live.insert(id.clone());
+                        d.agents.insert(
+                            id.clone(),
+                            Agent {
+                                run_id: spec.run.clone(),
+                                rpc: None,
+                                submission: c.runtime_submission.clone(),
+                                account_generation: spec
+                                    .account
+                                    .as_ref()
+                                    .map(|account| account.generation),
+                                _lease: lease,
+                            },
+                        );
+                        runs.push((spec, commands));
+                    }
+                    // recover_except marks a Conversation whose run is gone interrupted.
+                    (LeaseKey::Agent(_), _, Verdict::Released(_)) => {}
+                    (LeaseKey::Service { .. }, Holder::Agent { .. }, _) => {
+                        bail!("Invalid service lease")
+                    }
+                }
             }
             d.store.recover_except(&live)?;
+            for (id, reason) in uncertain_agents {
+                let Ok(mut c) = d.store.conversation(&id) else {
+                    continue;
+                };
+                c.queue_paused = true;
+                c.error = Some(format!(
+                    "Execution ownership is unresolved after a daemon restart: {reason}. ADE will not start another run until the runtime run stops."
+                ));
+                d.store.commit_conversation(&c, &[], &[])?;
+            }
         }
         for (spec, commands) in runs {
             let result = self.attach_agent(&spec.conversation, &spec.run, true);
@@ -540,6 +614,7 @@ impl Sessions {
                 let lease = self.worktrees.agent_lease(&workspace.root)?;
                 let mut d = self.data.lock().unwrap();
                 ensure!(!d.draining, "Application daemon is restarting");
+                Self::ensure_scripts_resolved(&d, &workspace.id)?;
                 d.store.ensure_workspace_bound(&workspace.id)?;
                 d.store.register_script_run(&workspace.id, run_id)?;
                 d.terminal_leases.insert(run_id.to_owned(), lease);
@@ -550,6 +625,13 @@ impl Sessions {
                 ensure!(!d.draining, "Application daemon is restarting");
                 d.store.retire_script_run(&workspace.id, run_id)?;
                 d.terminal_leases.remove(run_id);
+                self.settle_unresolved(
+                    &mut d,
+                    &leases::LeaseKey::Script {
+                        workspace_id: workspace.id.clone(),
+                        run_id: run_id.to_owned(),
+                    },
+                );
                 Ok(())
             };
             return crate::scripts::command(

@@ -99,6 +99,7 @@ impl Sessions {
                 !d.draining,
                 "Application daemon is restarting; prompt remains queued"
             );
+            Self::ensure_lease_resolved(&d, &super::leases::LeaseKey::Agent(id.to_owned()))?;
             d.store.guard_send_intent(
                 id,
                 key,
@@ -263,6 +264,7 @@ impl Sessions {
                 c.terminal_owner.is_none(),
                 "Return this Conversation from its terminal before resuming"
             );
+            Self::ensure_lease_resolved(&d, &super::leases::LeaseKey::Agent(id.to_owned()))?;
             if let Some(agent) = d.agents.get(id) {
                 ensure!(
                     agent.rpc.is_some()

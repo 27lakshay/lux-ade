@@ -1024,6 +1024,13 @@ impl Sessions {
     pub(super) fn start_service(&self, workspace: &str, name: &str) -> Result<ServiceReply> {
         let mut d = self.data.lock().unwrap();
         ensure!(!d.draining, "Application daemon is restarting");
+        Self::ensure_lease_resolved(
+            &d,
+            &super::leases::LeaseKey::Service {
+                workspace_id: workspace.to_owned(),
+                name: name.to_owned(),
+            },
+        )?;
         d.store.ensure_workspace_bound(workspace)?;
         let mut w = d.store.workspace(workspace)?;
         let before = d.store.service(workspace, name)?;
@@ -1164,6 +1171,13 @@ impl Sessions {
         d.health_attempts
             .remove(&(workspace.to_owned(), name.to_owned()));
         d.terminal_leases.remove(&owner.terminal_id);
+        self.settle_unresolved(
+            &mut d,
+            &super::leases::LeaseKey::Service {
+                workspace_id: workspace.to_owned(),
+                name: name.to_owned(),
+            },
+        );
         let changed = self.service_changed(&d, &service, None);
         self.publish(&mut d, changed);
         Ok(ServiceReply::service(service))
