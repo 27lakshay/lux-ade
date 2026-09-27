@@ -91,6 +91,7 @@ struct Data {
 }
 pub struct Sessions {
     pub review: Arc<crate::review::Review>,
+    history: Arc<crate::history::History>,
     pub worktrees: Arc<crate::worktrees::Worktrees>,
     files: crate::files::Files,
     data: Mutex<Data>,
@@ -119,7 +120,9 @@ impl Sessions {
         }
         let review =
             crate::review::Review::open(&path.with_extension("review.sqlite3"), worktrees.clone())?;
+        let history = crate::history::History::open(path)?;
         let sessions = Arc::new(Self {
+            history,
             runtime,
             queue_wake,
             worktrees,
@@ -554,6 +557,9 @@ impl Sessions {
                 self.release_restore_fence_if_bound()?;
             }
             return Ok(response);
+        }
+        if op.starts_with("history.") {
+            return self.history.command(request);
         }
         if op == "review.feedback.search" {
             let data = self.data.lock().unwrap();

@@ -8,6 +8,7 @@ import { accountUsage, runAccountCommand } from './commands/accounts.js'
 import { browserUsage, runBrowserCommand } from './commands/browser.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
+import { historyUsage, runHistoryCommand } from './commands/history.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
@@ -59,6 +60,7 @@ const usage = [
   usageHeader,
   workspaceUsage,
   conversationUsage,
+  historyUsage,
   accountUsage,
   terminalUsage,
   browserUsage,
@@ -182,6 +184,7 @@ async function profileSocket(profileId: string): Promise<string> {
 const commandAreas = [
   runWorkspaceCommand,
   runConversationCommand,
+  runHistoryCommand,
   runAccountCommand,
   runTerminalCommand,
   runBrowserCommand,

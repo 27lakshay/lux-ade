@@ -108,6 +108,10 @@ export const operations = {
   "browser.navigate": { tier: "effect_command", domain: "daemon", request: "BrowserNavigateRequest", response: "BrowserMutation" },
   "browser.close": { tier: "effect_command", domain: "daemon", request: "BrowserCloseRequest", response: "BrowserMutation" },
   "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
+  "history.search": { tier: "query", domain: "history", request: "HistorySearchRequest", response: "HistorySearch" },
+  "history.list": { tier: "query", domain: "history", request: "HistoryListRequest", response: "HistoryList" },
+  "history.index.status": { tier: "query", domain: "history", request: "HistoryIndexStatusRequest", response: "HistoryIndexReply" },
+  "history.index.rebuild": { tier: "idempotent_command", domain: "history", request: "HistoryIndexRebuildRequest", response: "HistoryIndexReply" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */
