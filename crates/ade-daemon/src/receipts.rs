@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
 /// Receipts older than this answer a reused ID with [`Admission::Expired`].
 pub const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -17,6 +18,23 @@ pub const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 pub const OPERATION_ID_FIELD: &str = "operation_id";
 
 const EXPIRED: &str = "expired";
+
+/// The daemon stores besides the profile database that carry an `operations`
+/// table, by the paths `Sessions::open` derives from the profile database.
+/// Retention and diagnostics both read this list, so they agree on which
+/// stores hold effect receipts.
+pub fn side_stores(sessions: &Path) -> Vec<(&'static str, PathBuf)> {
+    vec![
+        (
+            "lifecycle",
+            sessions
+                .with_extension("worktrees")
+                .join("lifecycle.sqlite3"),
+        ),
+        ("review", sessions.with_extension("review.sqlite3")),
+        ("plugins", sessions.with_extension("plugins.sqlite3")),
+    ]
+}
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, op TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result TEXT, caller TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);";
 

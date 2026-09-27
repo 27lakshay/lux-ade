@@ -230,11 +230,22 @@ impl Sessions {
                 if let Err(error) = hub.recovery_tick() {
                     eprintln!("Runtime restart reconciliation: {error:#}");
                 }
-                if let Err(error) = hub.sample_due_service_health() {
-                    eprintln!("Service health monitor: {error}");
-                }
                 if let Err(error) = hub.flush_activity(&mut hub.data.lock().unwrap()) {
                     eprintln!("Activity feed: {error}");
+                }
+            }
+        });
+        // Health sampling runs lsof and an HTTP probe that can take seconds,
+        // so it gets its own thread; the tick above must not wait on it.
+        let weak = Arc::downgrade(&sessions);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                let Some(hub) = weak.upgrade() else {
+                    break;
+                };
+                if let Err(error) = hub.sample_due_service_health() {
+                    eprintln!("Service health monitor: {error}");
                 }
             }
         });

@@ -9040,7 +9040,7 @@
           "type": "integer"
         },
         "store": {
-          "description": "`sessions`, `lifecycle`, `review` or `browser`.",
+          "description": "`sessions`, `lifecycle`, `review`, `plugins` or `browser`.",
           "type": "string"
         },
         "unknown": {

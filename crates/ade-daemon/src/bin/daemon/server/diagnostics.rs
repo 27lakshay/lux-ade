@@ -197,11 +197,16 @@ impl Host {
         let stores = observe::Stores::in_directory(&self.directory);
         let sessions_db = observe::read_only(&stores.sessions);
         let mut receipts = Vec::new();
-        for (name, connection) in [
-            ("sessions", sessions_db.as_ref()),
-            ("lifecycle", observe::read_only(&stores.lifecycle).as_ref()),
-            ("review", observe::read_only(&stores.review).as_ref()),
-        ] {
+        let side_stores = stores
+            .receipts
+            .iter()
+            .map(|(name, path)| (*name, observe::read_only(path)))
+            .collect::<Vec<_>>();
+        for (name, connection) in std::iter::once(("sessions", sessions_db.as_ref())).chain(
+            side_stores
+                .iter()
+                .map(|(name, connection)| (*name, connection.as_ref())),
+        ) {
             match connection.map(|connection| observe::receipts(connection, name, now)) {
                 Some(Ok((tally, lost))) => {
                     receipts.push(tally);

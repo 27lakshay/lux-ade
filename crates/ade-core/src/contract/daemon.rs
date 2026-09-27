@@ -492,7 +492,7 @@ pub struct DiagnosticCounter {
 /// Effect receipts in one database, counted by status.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq, Eq)]
 pub struct DiagnosticReceipts {
-    /// `sessions`, `lifecycle`, `review` or `browser`.
+    /// `sessions`, `lifecycle`, `review`, `plugins` or `browser`.
     pub store: String,
     /// False when the database could not be read; every count is then zero.
     pub available: bool,
