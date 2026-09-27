@@ -43,6 +43,7 @@ import { appUrl, registerAppScheme, serveAppScheme } from './app-protocol'
 import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
 import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
+import { startCrashReporter } from './diagnostics'
 import { recoverRendererFailures } from './renderer-recovery'
 
 let singleWindowId = ''
@@ -53,6 +54,7 @@ if (process.env.ADE_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.ADE_E2E_USER_DATA_DIR)
 }
 initializeLogging()
+startCrashReporter()
 startDevStateServer()
 registerBrowserIpc(selectProfile)
 

@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron'
 import type { AppCommand } from '../shared/app-commands'
+import { exportDiagnostics } from './diagnostics'
 
 // The native application menu. Global shortcuts live here as accelerators so they fire wherever
 // focus is, including terminals and browser tabs; each sends its command to the focused window.
@@ -57,6 +58,18 @@ export function installAppMenu(): void {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'Export Diagnostics…',
+          click: () =>
+            void exportDiagnostics(BrowserWindow.getFocusedWindow()).catch((error: unknown) => {
+              void dialog.showMessageBox({ type: 'error', message: 'Diagnostics export failed', detail: String(error) })
+            }),
+        },
+      ],
+    },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
