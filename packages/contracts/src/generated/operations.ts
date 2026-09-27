@@ -126,6 +126,8 @@ export const operations = {
   "browser.operation": { tier: "query", domain: "daemon", request: "BrowserOperationRequest", response: "BrowserOperation" },
   "diagnostics.status": { tier: "query", domain: "daemon", request: "DiagnosticsStatusRequest", response: "DiagnosticsStatus" },
   "diagnostics.export": { tier: "query", domain: "daemon", request: "DiagnosticsExportRequest", response: "DiagnosticsExport" },
+  "runtime.recovery": { tier: "query", domain: "daemon", request: "RuntimeRecoveryRequest", response: "RuntimeRecovery" },
+  "runtime.recovery.release": { tier: "idempotent_command", domain: "daemon", request: "RuntimeRecoveryReleaseRequest", response: "RuntimeRecoveryReleased" },
   "activity.list": { tier: "query", domain: "activity", request: "ActivityListRequest", response: "ActivityList" },
   "activity.mark": { tier: "idempotent_command", domain: "activity", request: "ActivityMarkRequest", response: "ActivityMarked" },
   "notification.delivery.claim": { tier: "idempotent_command", domain: "activity", request: "NotificationDeliveryClaimRequest", response: "NotificationDeliveryClaim" },

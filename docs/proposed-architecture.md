@@ -261,6 +261,68 @@ have stopped. Test reparenting, ignored signals, escaped process groups, and PID
 reuse. macOS process management cannot promise universal containment of arbitrary
 trusted code. Unverifiable execution remains explicit and can quarantine resources.
 
+### Runtime restart reconciliation
+
+The daemon owns one runtime incarnation per process lifetime. It records each
+incarnation it owns, with the runtime's PID and start stamp. Every 2 seconds it
+also records the PID, start stamp and group leadership of each terminal shell
+and provider process that incarnation runs. At startup, an incarnation other
+than the current one that no report has reconciled means the runtime restarted.
+The daemon then classifies every attempt the old incarnation may have owned:
+provider turns, plain terminals, services and script runs.
+
+A lease goes to this path, not to ordinary lease reconciliation, when an
+earlier report left it open. It also goes here when all of these hold: an old
+incarnation is unreconciled, the current runtime does not report the lease live,
+and one of the following is true:
+
+- its record names another incarnation;
+- the current incarnation is new to the daemon;
+- an old incarnation recorded its process.
+
+Absence from a replacement runtime is never proof of exit.
+
+The rules apply in order; the first match wins:
+
+1. The old runtime process still runs (same PID and start stamp): **quarantined**.
+2. The recorded process, or a live member of the process group it led, still
+   runs: **quarantined**, with those PIDs. A PID now held by a process with
+   another start stamp proves the old group is empty. POSIX does not reuse a PID
+   while a process group with that ID exists.
+3. The process table cannot be read: **unknown**.
+4. Whether the old runtime stopped cannot be verified, for example because it
+   runs under a reused PID with no recorded start stamp: **unknown**.
+5. No identity was recorded: **settled** for a Conversation with no turn in
+   flight, and **unknown** for anything else.
+6. The tree is gone, but a service's assigned port is held by a process ADE
+   cannot attribute, or the ports cannot be checked: **unknown**.
+7. The tree is gone and a provider turn was in flight: **settled**, with the
+   turn's outcome marked unknown. The turn is not replayed. Resume reconciles
+   it from the native session when one is recorded.
+8. Otherwise: **settled**.
+
+A settled lease is released as ordinary absence releases it: a script run is
+retired, a service keeps its reservation until `service.stop`, and a
+Conversation is marked interrupted. A quarantined or unknown lease stays
+reserved and refuses conflicting admission. Its Conversation's queue pauses.
+
+The daemon writes one report per restart, readable through `runtime.recovery`.
+It records an `operation_unknown` activity for each attempt that did not settle.
+Open attempts are observed again every 10 seconds and settle when the evidence
+appears. A daemon restart reloads open attempts. `service.stop` and
+`script.retire` also resolve them. `runtime.recovery.release` lets the user
+accept an **unknown** attempt without proof. The daemon refuses the release
+while processes from the attempt are observed running. Nothing is ever
+replayed automatically.
+
+Limits:
+
+- A process that left the recorded group before the crash is not seen.
+- An attempt that started within 2 seconds of the crash has no record, so it
+  is unknown.
+- An idle Conversation settles without a record. Its provider process may still
+  run, but no turn can be lost.
+
 ## 5. HostResources: coordination across profiles
 
 Per-profile execution alone cannot protect a shared checkout, port, device, or

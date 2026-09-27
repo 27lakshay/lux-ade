@@ -43,8 +43,10 @@ mod leases;
 mod mcp;
 mod orchestration;
 mod placement;
+mod recovery;
 mod remote;
 mod repository;
+mod restart;
 mod retention;
 mod services;
 mod skills;
@@ -107,6 +109,7 @@ struct Data {
     revision: u64,
     /// The last activity sequence published as a feed frame.
     activity_published: Option<u64>,
+    recovery: restart::State,
 }
 pub struct Sessions {
     pub review: Arc<crate::review::Review>,
@@ -181,6 +184,7 @@ impl Sessions {
                 subscribers: HashMap::new(),
                 revision: 0,
                 activity_published: None,
+                recovery: Default::default(),
             }),
             subscribers: Arc::new(AtomicUsize::new(0)),
             boot_id: new_id("boot"),
@@ -215,6 +219,9 @@ impl Sessions {
                 }
                 if let Err(error) = hub.reconcile_unresolved() {
                     eprintln!("Session lease reconciliation: {error}");
+                }
+                if let Err(error) = hub.recovery_tick() {
+                    eprintln!("Runtime restart reconciliation: {error:#}");
                 }
                 if let Err(error) = hub.sample_due_service_health() {
                     eprintln!("Service health monitor: {error}");
@@ -374,7 +381,9 @@ impl Sessions {
                 agents: Some(observed_agents),
             };
             let mut uncertain_agents = Vec::new();
-            for (claim, verdict) in leases::reconcile(&claims, &observed) {
+            let plan = leases::reconcile(&claims, &observed);
+            let plan = self.reconcile_runtime_restart(&mut d, plan, &observed)?;
+            for (claim, verdict) in plan {
                 use leases::{Holder, LeaseKey, Release, Verdict};
                 match (&claim.key, &claim.holder, verdict) {
                     (_, _, Verdict::Uncertain(reason)) => {
@@ -735,6 +744,7 @@ impl Sessions {
             | "service.remove" => self.service_command(request),
             "provider.list" | "account.list" | "account.create" | "account.inspect"
             | "account.verify" | "account.disable" => self.account_command(request),
+            "runtime.recovery" | "runtime.recovery.release" => self.recovery_command(request),
             "catalog.get"
             | "workspace.rebind.list"
             | "repository.rebind.list"

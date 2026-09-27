@@ -466,6 +466,10 @@ export type ContractDefinition =
   | ReadinessState
   | ReadinessState2
   | ReasoningCapabilities
+  | RecoveredAttempt
+  | RecoveredAttemptKind
+  | RecoveryClassification
+  | RecoveryReport
   | RecoveryStatus
   | RegistryScope
   | RegistryState
@@ -556,6 +560,10 @@ export type ContractDefinition =
   | RunRecord
   | RunSpec
   | RuntimePrepareRestartRequest
+  | RuntimeRecovery
+  | RuntimeRecoveryReleaseRequest
+  | RuntimeRecoveryReleased
+  | RuntimeRecoveryRequest
   | RuntimeStatus
   | RuntimeStatusRequest
   | Scope
@@ -1441,6 +1449,14 @@ export type ReadinessState =
       | 'observation_unavailable'
     )
   | 'bound_unassigned_port'
+/**
+ * How runtime restart reconciliation classified one attempt.
+ */
+export type RecoveryClassification = 'settled' | 'quarantined' | 'unknown'
+/**
+ * What kind of execution an old runtime incarnation owned.
+ */
+export type RecoveredAttemptKind = 'provider_turn' | 'terminal' | 'service' | 'script'
 export type RecoveryStatus = 'healthy' | 'degraded' | 'corrupt'
 export type RegistryScope = 'host' | 'profile'
 /**
@@ -7746,6 +7762,74 @@ export interface Readiness {
   [k: string]: unknown
 }
 /**
+ * One attempt an old runtime incarnation owned.
+ */
+export interface RecoveredAttempt {
+  /**
+   * The run ID or terminal transfer ID, when recorded.
+   */
+  attempt: string | null
+  classification: RecoveryClassification
+  /**
+   * Stable within the report: `agent:<conversation>`,
+   * `terminal:<workspace>:<terminal>`, `service:<workspace>:<name>` or
+   * `script:<workspace>:<run>`.
+   */
+  key: string
+  kind: RecoveredAttemptKind
+  /**
+   * A provider turn was in flight: its effects are unknown and it was not replayed.
+   */
+  outcome_unknown: boolean
+  /**
+   * Processes observed still running, for a quarantined attempt.
+   */
+  pids: number[]
+  /**
+   * The evidence behind the classification, in one sentence.
+   */
+  reason: string
+  /**
+   * How it was resolved.
+   */
+  resolution: string | null
+  /**
+   * When a later observation or the user resolved a quarantined or unknown attempt.
+   */
+  resolved_at: number | null
+  /**
+   * The runtime incarnation that owned it, when recorded.
+   */
+  runtime_instance: string | null
+  /**
+   * The Conversation ID, terminal ID, service name or script run ID.
+   */
+  subject: string
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * One runtime restart reconciliation.
+ */
+export interface RecoveryReport {
+  attempts: RecoveredAttempt[]
+  /**
+   * The runtime incarnation the daemon found instead.
+   */
+  current_instance: string
+  detected_at: number
+  id: string
+  /**
+   * Attempts still quarantined or unknown and not resolved.
+   */
+  open: number
+  /**
+   * The runtime incarnations that had stopped.
+   */
+  previous_instances: string[]
+  [k: string]: unknown
+}
+/**
  * The remote daemon's identity as its `hello` reported it.
  */
 export interface RemoteDaemon {
@@ -8798,6 +8882,55 @@ export interface RuntimePrepareRestartRequest {
    */
   boot_id: string
   op: 'runtime.prepare_restart'
+}
+/**
+ * The `runtime.recovery` reply.
+ */
+export interface RuntimeRecovery {
+  current_instance: string
+  reports: RecoveryReport[]
+  /**
+   * The `runtime_recovery` type tag.
+   */
+  type: 'runtime_recovery'
+  [k: string]: unknown
+}
+/**
+ * `runtime.recovery.release`: accept an `unknown` attempt as stopped without
+ * proof, so its workspace can admit new work. An attempt whose processes are
+ * observed running is refused. Nothing is replayed. Repeating it after the
+ * attempt is resolved returns the same report.
+ */
+export interface RuntimeRecoveryReleaseRequest {
+  /**
+   * The attempt's `key` from the report.
+   */
+  attempt_key: string
+  op: 'runtime.recovery.release'
+  report_id: string
+}
+/**
+ * The `runtime.recovery.release` reply.
+ */
+export interface RuntimeRecoveryReleased {
+  attempt_key: string
+  report: RecoveryReport
+  /**
+   * The `runtime_recovery_released` type tag.
+   */
+  type: 'runtime_recovery_released'
+  [k: string]: unknown
+}
+/**
+ * `runtime.recovery`: read the reports the daemon wrote when it found that
+ * the runtime restarted under a new incarnation. Newest first.
+ */
+export interface RuntimeRecoveryRequest {
+  op: 'runtime.recovery'
+  /**
+   * Only reports that still hold a quarantined or unknown attempt.
+   */
+  open_only?: boolean | null
 }
 /**
  * The `runtime.status` reply.
@@ -10737,7 +10870,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -10864,6 +10997,8 @@ export interface RequestByOperation {
   "browser.operation": BrowserOperationRequest
   "diagnostics.status": DiagnosticsStatusRequest
   "diagnostics.export": DiagnosticsExportRequest
+  "runtime.recovery": RuntimeRecoveryRequest
+  "runtime.recovery.release": RuntimeRecoveryReleaseRequest
   "activity.list": ActivityListRequest
   "activity.mark": ActivityMarkRequest
   "notification.delivery.claim": NotificationDeliveryClaimRequest
@@ -11101,6 +11236,8 @@ export interface ResponseByOperation {
   "browser.operation": BrowserOperation
   "diagnostics.status": DiagnosticsStatus
   "diagnostics.export": DiagnosticsExport
+  "runtime.recovery": RuntimeRecovery
+  "runtime.recovery.release": RuntimeRecoveryReleased
   "activity.list": ActivityList
   "activity.mark": ActivityMarked
   "notification.delivery.claim": NotificationDeliveryClaim

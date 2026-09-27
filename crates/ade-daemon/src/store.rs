@@ -23,6 +23,7 @@ mod attachments;
 mod bindings;
 mod conversations;
 mod migrations;
+pub mod runtime_recovery;
 mod send_intents;
 mod send_outbox;
 mod snoozes;

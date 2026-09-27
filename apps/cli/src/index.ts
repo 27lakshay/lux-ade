@@ -25,6 +25,7 @@ import { importUsage, runImportCommand } from './commands/imports.js'
 import { runUsageCommand, usageAnalyticsUsage } from './commands/usage.js'
 import { providerUsage, runProviderCommand } from './commands/providers.js'
 import { retentionUsage, runRetentionCommand } from './commands/retention.js'
+import { recoveryUsage, runRecoveryCommand } from './commands/recovery.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
@@ -106,6 +107,7 @@ const usage = [
   diagnosticsUsage,
   remoteConnectUsage,
   retentionUsage,
+  recoveryUsage,
   deviceUsage,
   requestUsage,
   usageFooter,
@@ -249,6 +251,7 @@ const commandAreas = [
   runRunsCommand,
   runDiagnosticsCommand,
   runRetentionCommand,
+  runRecoveryCommand,
   runDeviceCommand,
 ] as const
 

@@ -63,6 +63,14 @@ pub fn operations() -> Vec<OperationSpec> {
             "diagnostics.export",
             Tier::Query,
         ),
+        OperationSpec::new::<RuntimeRecoveryRequest, RuntimeRecovery>(
+            "runtime.recovery",
+            Tier::Query,
+        ),
+        OperationSpec::new::<RuntimeRecoveryReleaseRequest, RuntimeRecoveryReleased>(
+            "runtime.recovery.release",
+            Tier::IdempotentCommand,
+        ),
     ]
 }
 
@@ -194,6 +202,8 @@ wire_tag!(BrowserMutationTag, "browser_mutation");
 wire_tag!(BrowserOperationTag, "browser_operation");
 wire_tag!(DiagnosticsStatusTag, "diagnostics_status");
 wire_tag!(DiagnosticsExportTag, "diagnostics_export");
+wire_tag!(RuntimeRecoveryTag, "runtime_recovery");
+wire_tag!(RuntimeRecoveryReleasedTag, "runtime_recovery_released");
 
 /// The `hello` reply: build identity and every protocol version.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -682,6 +692,114 @@ pub struct DiagnosticsExport {
     pub events_truncated: bool,
 }
 
+/// `runtime.recovery`: read the reports the daemon wrote when it found that
+/// the runtime restarted under a new incarnation. Newest first.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct RuntimeRecoveryRequest {
+    /// Only reports that still hold a quarantined or unknown attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_only: Option<bool>,
+}
+
+/// `runtime.recovery.release`: accept an `unknown` attempt as stopped without
+/// proof, so its workspace can admit new work. An attempt whose processes are
+/// observed running is refused. Nothing is replayed. Repeating it after the
+/// attempt is resolved returns the same report.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RuntimeRecoveryReleaseRequest {
+    pub report_id: String,
+    /// The attempt's `key` from the report.
+    pub attempt_key: String,
+}
+
+/// What kind of execution an old runtime incarnation owned.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveredAttemptKind {
+    /// A Conversation's provider run and its turn, if one was in flight.
+    ProviderTurn,
+    /// A plain workspace terminal shell.
+    Terminal,
+    /// A reserved service run.
+    Service,
+    /// A script run.
+    Script,
+}
+
+/// How runtime restart reconciliation classified one attempt.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryClassification {
+    /// Positive evidence that nothing observed from the attempt still runs.
+    Settled,
+    /// Processes from the attempt still run without an owner. Its resources
+    /// stay reserved until they exit.
+    Quarantined,
+    /// No evidence either way. Its resources stay reserved until evidence
+    /// appears or the user releases it.
+    Unknown,
+}
+
+/// One attempt an old runtime incarnation owned.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct RecoveredAttempt {
+    /// Stable within the report: `agent:<conversation>`,
+    /// `terminal:<workspace>:<terminal>`, `service:<workspace>:<name>` or
+    /// `script:<workspace>:<run>`.
+    pub key: String,
+    pub kind: RecoveredAttemptKind,
+    pub workspace_id: String,
+    /// The Conversation ID, terminal ID, service name or script run ID.
+    pub subject: String,
+    /// The run ID or terminal transfer ID, when recorded.
+    pub attempt: Option<String>,
+    /// The runtime incarnation that owned it, when recorded.
+    pub runtime_instance: Option<String>,
+    pub classification: RecoveryClassification,
+    /// The evidence behind the classification, in one sentence.
+    pub reason: String,
+    /// Processes observed still running, for a quarantined attempt.
+    pub pids: Vec<u32>,
+    /// A provider turn was in flight: its effects are unknown and it was not replayed.
+    pub outcome_unknown: bool,
+    /// When a later observation or the user resolved a quarantined or unknown attempt.
+    pub resolved_at: Option<i64>,
+    /// How it was resolved.
+    pub resolution: Option<String>,
+}
+
+/// One runtime restart reconciliation.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct RecoveryReport {
+    pub id: String,
+    /// The runtime incarnations that had stopped.
+    pub previous_instances: Vec<String>,
+    /// The runtime incarnation the daemon found instead.
+    pub current_instance: String,
+    pub detected_at: i64,
+    pub attempts: Vec<RecoveredAttempt>,
+    /// Attempts still quarantined or unknown and not resolved.
+    pub open: u32,
+}
+
+/// The `runtime.recovery` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RuntimeRecovery {
+    #[serde(rename = "type")]
+    pub tag: RuntimeRecoveryTag,
+    pub current_instance: String,
+    pub reports: Vec<RecoveryReport>,
+}
+
+/// The `runtime.recovery.release` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RuntimeRecoveryReleased {
+    #[serde(rename = "type")]
+    pub tag: RuntimeRecoveryReleasedTag,
+    pub attempt_key: String,
+    pub report: RecoveryReport,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -782,6 +900,8 @@ mod tests {
             ("browser.operation", "query"),
             ("diagnostics.status", "query"),
             ("diagnostics.export", "query"),
+            ("runtime.recovery", "query"),
+            ("runtime.recovery.release", "idempotent_command"),
         ]
         .iter()
         .map(|(name, tier)| ((*name).to_owned(), (*tier).to_owned()))
@@ -1001,5 +1121,40 @@ mod tests {
                 "events": [{"event": "rpc_failed", "operation_family": "agent"}],
                 "events_truncated": true}),
         );
+    }
+
+    #[test]
+    fn runtime_recovery_operations_round_trip() {
+        let all: RuntimeRecoveryRequest = request("runtime.recovery", json!({}));
+        assert!(all.open_only.is_none());
+        request::<RuntimeRecoveryRequest>("runtime.recovery", json!({"open_only": true}));
+        request::<RuntimeRecoveryReleaseRequest>(
+            "runtime.recovery.release",
+            json!({"report_id": "recovery_1", "attempt_key": "script:workspace_1:run_2"}),
+        );
+        let report = json!({"id": "recovery_1", "previous_instances": ["instance_0"],
+            "current_instance": "instance_1", "detected_at": 1_700_000_000_000_i64, "open": 1,
+            "attempts": [{"key": "agent:conversation_1", "kind": "provider_turn",
+                "workspace_id": "workspace_1", "subject": "conversation_1", "attempt": "run_1",
+                "runtime_instance": "instance_0", "classification": "settled",
+                "reason": "the provider process exited mid-turn", "pids": [],
+                "outcome_unknown": true, "resolved_at": null, "resolution": null},
+                {"key": "script:workspace_1:run_2", "kind": "script", "workspace_id": "workspace_1",
+                "subject": "run_2", "attempt": null, "runtime_instance": null,
+                "classification": "quarantined", "reason": "2 processes still run",
+                "pids": [41, 42], "outcome_unknown": false, "resolved_at": null,
+                "resolution": null}]});
+        response::<RuntimeRecovery>(
+            "runtime.recovery",
+            json!({"type": "runtime_recovery", "current_instance": "instance_1",
+                "reports": [report.clone()]}),
+        );
+        response::<RuntimeRecoveryReleased>(
+            "runtime.recovery.release",
+            json!({"type": "runtime_recovery_released", "attempt_key": "script:workspace_1:run_2",
+                "report": report}),
+        );
+        let (name, _) = operation("runtime.recovery.release");
+        assert!(!validator(&name).is_valid(&json!({"op": "runtime.recovery.release"})));
     }
 }
