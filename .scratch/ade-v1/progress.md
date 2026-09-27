@@ -1121,3 +1121,23 @@ accepted rows.
   launches, retention limits, SSH clone and publish). Held for completion and
   review.
 
+**Round 3 fixes, merged at `cda8b98`** (784 in-process tests; 547 protocol specs pass in
+8.1 minutes with 2 workers, 31 skipped)
+
+Run under the new machine-safety rules: 4 workers, no keychain or Security
+framework use, and system-service specs run alone.
+
+- Secret storage is a `SecretStore` trait. Production uses the Keychain; tests
+  use an encrypted file store that release builds refuse. Keychain items are
+  owned per profile, and backups (format 6) drop ADE-owned references.
+- Remote pairing tokens now resolve through the same store, instead of running
+  `/usr/bin/security` directly.
+- The `browser.list` and `browser.inspect` reply shape is fixed for fixed-socket
+  owners.
+- ops-3 is finished.
+- The full-disk cancellation conflict is resolved.
+
+**Newly accepted (9):** F089, F059, R007, R013, R015, R018, F050, F062 and F132.
+The register now holds 70 accepted rows. F039 (rewind) stays open: its Claude
+proof depends on fake-SDK behaviour the real SDK does not document.
+

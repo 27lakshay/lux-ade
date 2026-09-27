@@ -69,7 +69,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F047 | Automatic settlement | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F048 | Idle hibernation | Not now | [03-conversations](03-conversations/spec.md) | Not scheduled |
 | F049 | Usage analytics | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-catalogs.md)) |
-| F050 | History export and backup | V1 | [03-conversations](03-conversations/spec.md) | Unverified |
+| F050 | History export and backup | V1 | [03-conversations](03-conversations/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-ops3.md)) |
 | F051 | Plugin installation and lifecycle | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
 | F052 | Plugin panels, navigation and settings | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F053 | Timeline renderers and transforms | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
@@ -78,10 +78,10 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F056 | Theme extension support | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F057 | Backend extensions | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
 | F058 | Lifecycle hooks | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-plugins.md)) |
-| F059 | Plugin state, credentials and settings | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
+| F059 | Plugin state, credentials and settings | V1 | [04-plugins](04-plugins/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-secrets.md)) |
 | F060 | Plugin development and recovery | V1 | [04-plugins](04-plugins/spec.md) | Unverified |
 | F061 | Projects and ordinary folders | V1 | [05-workspaces](05-workspaces/spec.md) | Verified |
-| F062 | Repository clone and publish | V1 | [05-workspaces](05-workspaces/spec.md) | Unverified |
+| F062 | Repository clone and publish | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-ops3.md)) |
 | F063 | Managed worktree creation | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
 | F064 | Carry uncommitted changes | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
 | F065 | Adopt branch, checkout, worktree or PR source | V1 | [05-workspaces](05-workspaces/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-worktrees.md)) |
@@ -108,7 +108,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F086 | Managed dev services | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-services.md)) |
 | F087 | Port allocation | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-services.md)) |
 | F088 | Stable dev URLs and proxying | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-services.md)) |
-| F089 | Peer-service environment wiring | V1 | [07-terminals-services](07-terminals-services/spec.md) | Unverified |
+| F089 | Peer-service environment wiring | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-secrets.md)) |
 | F090 | Workspace scripts | V1 | [07-terminals-services](07-terminals-services/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-services.md)) |
 | F091 | Embedded browser | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
 | F092 | Browser profiles | V1 | [08-browser-devices](08-browser-devices/spec.md) | Unverified |
@@ -151,7 +151,7 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F129 | Remote previews and device access | V1 | [11-remote](11-remote/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-remote2.md)) |
 | F130 | Polished self-host deployment product | Not now | [11-remote](11-remote/spec.md) | Not scheduled |
 | F131 | Central MCP catalog | V1 | [12-integrations-operations](12-integrations-operations/spec.md) | Unverified |
-| F132 | Central skill catalog | V1 | [12-integrations-operations](12-integrations-operations/spec.md) | Unverified |
+| F132 | Central skill catalog | V1 | [12-integrations-operations](12-integrations-operations/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-ops3.md)) |
 | F133 | ADE MCP server | Not now | [12-integrations-operations](12-integrations-operations/spec.md) | Not scheduled |
 | F134 | Skill sharing | Not now | [12-integrations-operations](12-integrations-operations/spec.md) | Not scheduled |
 | F135 | Artifact publishing | Not now | [12-integrations-operations](12-integrations-operations/spec.md) | Not scheduled |
@@ -177,17 +177,17 @@ These apply in addition to the 107 selected features.
 | R004 | Stop existing execution during overload | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R005 | Retain independent work across frontend and daemon restarts | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R006 | See actual process uncertainty | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
-| R007 | Coordinate physical resources across profiles | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R007 | Coordinate physical resources across profiles | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-reliability-c.md)) |
 | R008 | Know when output recovery reaches its limit | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R009 | Keep one slow client from degrading other work | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R010 | Restore a consistent application view | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-reliability-b.md)) |
 | R011 | Avoid stale results after changing context | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R012 | Retain account identity through credential changes | [Shared reliability](13-reliability/spec.md) | Unverified |
-| R013 | Continue active work while plugins update | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R013 | Continue active work while plugins update | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-reliability-c.md)) |
 | R014 | Restore a complete managed backup | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `df9c032` ([evidence](evidence/e2e-backup.md)) |
-| R015 | Control retention without losing referenced work | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R015 | Control retention without losing referenced work | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-reliability-c.md)) |
 | R016 | Keep preview content separate from application authority | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R017 | Keep remote targets stable during connection failure | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `42928c9` ([evidence](evidence/e2e-remote2.md)) |
-| R018 | Understand failures without exposing secrets | [Shared reliability](13-reliability/spec.md) | Unverified |
+| R018 | Understand failures without exposing secrets | [Shared reliability](13-reliability/spec.md) | Accepted: headless E2E `cda8b98` ([evidence](evidence/e2e-reliability-c.md)) |
 | R019 | Use many active resources responsively | [Shared reliability](13-reliability/spec.md) | Unverified |
 | R020 | Run the packaged application independently of development tooling | [Shared reliability](13-reliability/spec.md) | Unverified |
