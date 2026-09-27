@@ -30,6 +30,12 @@ export const operations = {
   "agent.child_transcript": { tier: "query", domain: "agents", request: "AgentChildTranscriptRequest", response: "ChildTranscriptPage" },
   "agent.list": { tier: "query", domain: "agents", request: "AgentListRequest", response: "AgentList" },
   "agent.account_inspect": { tier: "query", domain: "agents", request: "AgentAccountInspectRequest", response: "AgentAccountInspection" },
+  "provider.list": { tier: "query", domain: "accounts", request: "ProviderListRequest", response: "ProvidersReply" },
+  "account.list": { tier: "query", domain: "accounts", request: "AccountListRequest", response: "AccountsReply" },
+  "account.create": { tier: "effect_command", domain: "accounts", request: "AccountCreateRequest", response: "AccountAck" },
+  "account.inspect": { tier: "query", domain: "accounts", request: "AccountInspectRequest", response: "AccountInspection" },
+  "account.verify": { tier: "idempotent_command", domain: "accounts", request: "AccountVerifyRequest", response: "AccountAck" },
+  "account.disable": { tier: "idempotent_command", domain: "accounts", request: "AccountDisableRequest", response: "AccountDisabled" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

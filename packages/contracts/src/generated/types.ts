@@ -1,6 +1,16 @@
 // Generated from the Rust contracts in crates/ade-core/src/contract by scripts/generate-contracts.mjs. Do not edit.
 
 export type ContractDefinition =
+  | Account
+  | AccountAck
+  | AccountCreateRequest
+  | AccountDisableRequest
+  | AccountDisabled
+  | AccountInspectRequest
+  | AccountInspection
+  | AccountListRequest
+  | AccountVerifyRequest
+  | AccountsReply
   | Ack
   | AgentAccountInspectRequest
   | AgentAccountInspection
@@ -30,6 +40,8 @@ export type ContractDefinition =
   | CatalogGetRequest
   | Catalogue
   | ChildTranscriptPage
+  | ClaudeIdentity
+  | CodexIdentity
   | Conversation
   | ConversationChanged
   | ConversationCreateRequest
@@ -45,8 +57,12 @@ export type ContractDefinition =
   | DraftSendCompleteRequest
   | DraftSendGetRequest
   | DraftSendPrepareRequest
+  | Inspection
   | Message
+  | OmpIdentity
   | PendingRequest
+  | ProviderListRequest
+  | ProvidersReply
   | QueueCancelRequest
   | QueueEnqueueRequest
   | QueuePauseRequest
@@ -59,6 +75,153 @@ export type ContractDefinition =
   | WindowSaveRequest
   | WorkspaceRecord
 
+/**
+ * Profile-owned account metadata. Credentials remain with the native provider.
+ */
+export interface Account {
+  claude_identity?: ClaudeIdentity | null
+  codex_identity?: CodexIdentity | null
+  generation: number
+  id: string
+  name: string
+  native_home: string
+  omp_identity?: OmpIdentity | null
+  provider: string
+  state: string
+  [k: string]: unknown
+}
+export interface ClaudeIdentity {
+  api_provider: string
+  auth_method: string
+  email: string
+  org_id: string
+  [k: string]: unknown
+}
+export interface CodexIdentity {
+  chatgpt_account_id: string
+  email: string
+  [k: string]: unknown
+}
+export interface OmpIdentity {
+  account_id: string | null
+  credential_id: number
+  credential_type: string
+  email: string | null
+  identity_key: string
+  org_id: string | null
+  provider: string
+  [k: string]: unknown
+}
+/**
+ * The `account.create` and `account.verify` reply.
+ */
+export interface AccountAck {
+  account: Account
+  /**
+   * The `ack` type tag.
+   */
+  type: 'ack'
+  [k: string]: unknown
+}
+/**
+ * `account.create`: register a new native account home for a provider.
+ */
+export interface AccountCreateRequest {
+  /**
+   * Trimmed by the daemon; 1 to 80 characters without line breaks.
+   */
+  name: string
+  op: 'account.create'
+  provider: string
+}
+/**
+ * `account.disable`: stop new ADE launches with this account.
+ */
+export interface AccountDisableRequest {
+  account_id: string
+  op: 'account.disable'
+}
+/**
+ * The `account.disable` reply. ADE never logs the native CLI out.
+ */
+export interface AccountDisabled {
+  account: Account
+  native_logout: boolean
+  /**
+   * The `ack` type tag.
+   */
+  type: 'ack'
+  [k: string]: unknown
+}
+/**
+ * `account.inspect`: probe a managed account's native readiness.
+ */
+export interface AccountInspectRequest {
+  account_id: string
+  op: 'account.inspect'
+}
+/**
+ * The `account.inspect` reply.
+ */
+export interface AccountInspection {
+  account_id: string
+  generation: number
+  inspection: Inspection
+  /**
+   * The `account_inspection` type tag.
+   */
+  type: 'account_inspection'
+  [k: string]: unknown
+}
+/**
+ * A provider's native readiness report for one account.
+ */
+export interface Inspection {
+  /**
+   * The provider-specific identity to pin; its shape depends on the provider.
+   */
+  identity: unknown
+  reason: string
+  /**
+   * `ready` when the account can be verified.
+   */
+  state: string
+  version: string | null
+  [k: string]: unknown
+}
+/**
+ * `account.list`: every account in the profile.
+ */
+export interface AccountListRequest {
+  op: 'account.list'
+}
+/**
+ * `account.verify`: pin the identity an earlier `account.inspect` returned.
+ */
+export interface AccountVerifyRequest {
+  account_id: string
+  /**
+   * The `generation` from `account.inspect`. Required on the wire; the
+   * daemon reports its absence after it has found the account.
+   */
+  expected_generation: number
+  /**
+   * The `inspection.identity` object from `account.inspect`, as returned.
+   */
+  expected_identity: unknown
+  op: 'account.verify'
+}
+/**
+ * The `account.list` reply.
+ */
+export interface AccountsReply {
+  accounts: Account[]
+  /**
+   * The `accounts` type tag.
+   */
+  type: 'accounts'
+  [k: string]: unknown
+}
 /**
  * A bare acceptance reply.
  */
@@ -679,6 +842,23 @@ export interface DraftSendPrepareRequest {
   window_id: string
 }
 /**
+ * `provider.list`: the providers this daemon can launch.
+ */
+export interface ProviderListRequest {
+  op: 'provider.list'
+}
+/**
+ * The `provider.list` reply.
+ */
+export interface ProvidersReply {
+  providers: Descriptor[]
+  /**
+   * The `providers` type tag.
+   */
+  type: 'providers'
+  [k: string]: unknown
+}
+/**
  * `queue.cancel`: cancel a queued prompt that has not been submitted.
  */
 export interface QueueCancelRequest {
@@ -773,7 +953,7 @@ export interface WindowSaveRequest {
   window: unknown
 }
 
-export type Operation = "catalog.get" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect"
+export type Operation = "catalog.get" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -804,6 +984,12 @@ export interface RequestByOperation {
   "agent.child_transcript": AgentChildTranscriptRequest
   "agent.list": AgentListRequest
   "agent.account_inspect": AgentAccountInspectRequest
+  "provider.list": ProviderListRequest
+  "account.list": AccountListRequest
+  "account.create": AccountCreateRequest
+  "account.inspect": AccountInspectRequest
+  "account.verify": AccountVerifyRequest
+  "account.disable": AccountDisableRequest
 }
 
 export interface ResponseByOperation {
@@ -835,6 +1021,12 @@ export interface ResponseByOperation {
   "agent.child_transcript": ChildTranscriptPage
   "agent.list": AgentList
   "agent.account_inspect": AgentAccountInspection
+  "provider.list": ProvidersReply
+  "account.list": AccountsReply
+  "account.create": AccountAck
+  "account.inspect": AccountInspection
+  "account.verify": AccountAck
+  "account.disable": AccountDisabled
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged

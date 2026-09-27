@@ -71,17 +71,19 @@ export function registerConversationIpc(): void {
       throw new Error('Profile daemon is unavailable')
     }
     const catalog = getClient().getState().catalog
-    if (op === 'provider.list') return requestDaemon(endpoint, op)
+    if (op === 'provider.list') return dailyUseCommand(endpoint, { op })
     if (op === 'account.list' || op === 'account.create' || op === 'account.inspect' || op === 'account.verify' || op === 'account.disable') {
-      let request: Record<string, unknown> = {}
-      if (op === 'account.create') {
+      let pending: ReturnType<typeof dailyUseCommand>
+      if (op === 'account.list') {
+        pending = dailyUseCommand(endpoint, { op })
+      } else if (op === 'account.create') {
         if (typeof args.provider !== 'string' || !['claude', 'codex', 'omp'].includes(args.provider) || typeof args.name !== 'string' || !args.name.trim() || args.name.length > 80) {
           throw new Error('Invalid managed account')
         }
-        request = { provider: args.provider, name: args.name.trim() }
-      } else if (op !== 'account.list') {
+        pending = dailyUseCommand(endpoint, { op, provider: args.provider, name: args.name.trim() })
+      } else {
         if (!validId(args.account_id)) throw new Error('Invalid account')
-        request = { account_id: args.account_id }
+        const account_id = args.account_id
         if (op === 'account.verify') {
           if (!Number.isSafeInteger(args.expected_generation) || (args.expected_generation as number) < 0) {
             throw new Error('Invalid account generation')
@@ -109,11 +111,13 @@ export function registerConversationIpc(): void {
           if (!identity || typeof identity !== 'object' || Array.isArray(identity) || (!claudeIdentity && !codexIdentity && !ompIdentity)) {
             throw new Error('Invalid inspected account identity')
           }
-          request.expected_generation = args.expected_generation
-          request.expected_identity = identity
+          pending = dailyUseCommand(endpoint, { op, account_id,
+            expected_generation: args.expected_generation as number, expected_identity: identity })
+        } else {
+          pending = dailyUseCommand(endpoint, { op, account_id })
         }
       }
-      const result = await requestDaemon(endpoint, op, request)
+      const result = await pending
       if (getClientGeneration() !== generation || getSocket() !== endpoint) {
         throw new Error('Profile changed during account request; inspect the original profile before retrying')
       }
