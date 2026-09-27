@@ -3,9 +3,10 @@
 // e2e/protocol/accounts-rewind/rewind.spec.ts. File rewind restores an ADE
 // checkpoint for any provider: it is previewed first, refuses a stale preview
 // and unconfirmed overwrites, and reads a lost outcome back after a crash.
-import { readFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile, type ScratchRepo } from '../fixtures'
+import { expect, prompts, send, startConversation, test, waitForIdle, type AdeHarness, type ScratchProfile,
+  type ScratchRepo } from '../fixtures'
 import { sendAndLoseReply } from '../fixtures/lost-reply'
 import { mockDirectory } from '../fixtures/providers'
 import { snapshot } from './helpers'
@@ -99,23 +100,87 @@ test('F039: file rewind refuses a stale preview, unconfirmed overwrites and a ru
   expect(await repo.read('src/app.ts')).toBe('export const answer = 42\n')
 })
 
-test('R001: a file rewind whose reply was lost is read back after a daemon crash and restores once', async ({ profile, repo }) => {
+// R001 for file rewind. The reply is lost and the daemon is SIGKILLed at a
+// fixed point, where the daemon's debug-only receipt pause
+// (`receipts::e2e_pause`, gated on ADE_E2E_RECEIPT_PAUSE_DIR) holds it:
+// - conversation.rewind.files.settled: the restore's receipt has settled, so
+//   a retry reads the restore back once;
+// - checkpoint.restore.writing and checkpoint.restore.written, either side of
+//   the file writes: the receipt says the workspace may be changing, so a
+//   retry reports the outcome unknown, never runs the restore again, and the
+//   files stay as the crash left them.
+type PausePoint = 'conversation.rewind.files.settled' | 'checkpoint.restore.writing' | 'checkpoint.restore.written'
+const UNKNOWN = /rewind-lost:files was interrupted while it was changing the workspace; its outcome is unknown and it will not run again/
+
+async function exists(path: string): Promise<boolean> {
+  return access(path).then(() => true, () => false)
+}
+
+/** Loses a file rewind's reply, SIGKILLs the daemon while it is held at `point`, then starts a new daemon. */
+async function rewindLostAt(ade: AdeHarness, repo: ScratchRepo, point: PausePoint) {
+  const pause = join(ade.root, 'pause-receipt')
+  await mkdir(pause, { recursive: true })
+  const profile = await ade.profile({ env: { ADE_E2E_RECEIPT_PAUSE_DIR: pause } })
   const { workspaceId, conversationId, checkpointId } = await checkpointed(profile, repo, 'codex')
   const preview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId, scope: 'files',
     checkpoint_id: checkpointId })
   const rewind = { operation_id: 'rewind-lost', conversation_id: conversationId, scope: 'files' as const,
     checkpoint_id: checkpointId, expected_state: preview.files!.state_token, confirm_overwrite: true }
+  await writeFile(join(pause, `${point}.armed`), '')
   await sendAndLoseReply(profile, { op: 'conversation.rewind', ...rewind })
-  await expect.poll(() => repo.read('src/app.ts')).toBe('export const answer = 42\n')
-  await profile.restartDaemon('kill')
+  await expect.poll(() => exists(join(pause, `${point}.paused`)), { timeout: 30_000 }).toBe(true)
+  await profile.killDaemon()
+  // Nothing is armed for the daemons that follow.
+  await rm(join(pause, `${point}.armed`))
+  await profile.restartDaemon()
+  const safety = async () => (await profile.call('checkpoint.list', { workspace_id: workspaceId })).checkpoints
+    .filter((entry) => entry.checkpoint_id !== checkpointId)
+  return { profile, rewind, safety }
+}
+
+test('R001: a file rewind whose reply was lost after it settled is read back after a daemon crash and restores once', async ({ ade, repo }) => {
+  const { profile, rewind, safety } = await rewindLostAt(ade, repo, 'conversation.rewind.files.settled')
+  expect(await repo.read('src/app.ts')).toBe('export const answer = 42\n')
+  await expect(repo.read('src/extra.ts')).rejects.toThrow()
   // The user edits again; the retry reports the earlier restore and does not write over the new edit.
   await repo.dirty('src/app.ts', 'export const answer = 43\n')
   const retried = await profile.call('conversation.rewind', rewind)
-  expect(retried).toMatchObject({ outcome: 'restored', files: { outcome: 'restored' } })
+  expect(retried).toMatchObject({ outcome: 'restored', files: { outcome: 'restored', verified: true } })
   expect(await repo.read('src/app.ts')).toBe('export const answer = 43\n')
-  const safety = (await profile.call('checkpoint.list', { workspace_id: workspaceId })).checkpoints
-    .filter((entry) => entry.checkpoint_id !== checkpointId)
-  expect(safety).toHaveLength(1)
+  await profile.restartDaemon('kill')
+  expect(await profile.call('conversation.rewind', rewind)).toEqual(retried)
+  expect(await repo.read('src/app.ts')).toBe('export const answer = 43\n')
+  expect(await safety()).toHaveLength(1)
+})
+
+test('R001: a file rewind crashed before it wrote files reports its outcome unknown and never runs again', async ({ ade, repo }) => {
+  const { profile, rewind, safety } = await rewindLostAt(ade, repo, 'checkpoint.restore.writing')
+  // The workspace is as the agent left it.
+  expect(await repo.read('src/app.ts')).toBe('export const answer = 41\n')
+  expect(await repo.read('src/extra.ts')).toBe('export {}\n')
+  const [kept] = await safety()
+  const unknown = profile.call('conversation.rewind', rewind)
+  await expect(unknown).rejects.toThrow(UNKNOWN)
+  await expect(unknown).rejects.toThrow(`safety checkpoint ${kept!.checkpoint_id}`)
+  await profile.restartDaemon('kill')
+  await expect(profile.call('conversation.rewind', rewind)).rejects.toThrow(UNKNOWN)
+  expect(await repo.read('src/app.ts')).toBe('export const answer = 41\n')
+  expect(await repo.read('src/extra.ts')).toBe('export {}\n')
+  expect(await safety()).toHaveLength(1)
+})
+
+test('R001: a file rewind crashed after it wrote files, before it settled, reports its outcome unknown and never runs again', async ({ ade, repo }) => {
+  const { profile, rewind, safety } = await rewindLostAt(ade, repo, 'checkpoint.restore.written')
+  // The workspace is restored.
+  expect(await repo.read('src/app.ts')).toBe('export const answer = 42\n')
+  await expect(repo.read('src/extra.ts')).rejects.toThrow()
+  // A later edit is never overwritten by a retry.
+  await repo.dirty('src/app.ts', 'export const answer = 43\n')
+  await expect(profile.call('conversation.rewind', rewind)).rejects.toThrow(UNKNOWN)
+  await profile.restartDaemon('kill')
+  await expect(profile.call('conversation.rewind', rewind)).rejects.toThrow(UNKNOWN)
+  expect(await repo.read('src/app.ts')).toBe('export const answer = 43\n')
+  expect(await safety()).toHaveLength(1)
 })
 
 // Codex conversation rewind forks the thread with thread/fork and lastTurnId

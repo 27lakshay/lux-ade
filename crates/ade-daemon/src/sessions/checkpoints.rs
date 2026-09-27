@@ -392,6 +392,9 @@ impl Sessions {
                 record["phase"] = json!("writing");
                 self.checkpoint_settle(id, Status::Acknowledged, &record)
                     .context("Restore stopped before changing the workspace")?;
+                // E2E crash points on either side of the file writes, while
+                // the receipt says the workspace may be changing.
+                receipts::e2e_pause("checkpoint.restore.writing");
                 let result = match cp::restore(&layout, &snapshot, &checkpoint) {
                     Ok(applied) => restored(
                         if applied.verified {
@@ -407,6 +410,7 @@ impl Sessions {
                         "Restore failed; safety checkpoint {safety_id} was kept"
                     ))),
                 };
+                receipts::e2e_pause("checkpoint.restore.written");
                 self.checkpoint_finish(id, result)
             }
         }
