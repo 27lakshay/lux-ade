@@ -19,6 +19,13 @@ export interface RemoteTarget {
   destination: string
   /** Absolute path of the remote profile daemon's command socket. */
   remoteSocket: string
+  /**
+   * The host key pinned in the daemon's registry, `type base64`
+   * (`remote.host.list` host_public_key). When set, ssh trusts only this key,
+   * exactly as the daemon's own connections do. Null trusts the user's
+   * known_hosts; only an explicitly typed destination uses that.
+   */
+  hostPublicKey: string | null
 }
 
 export type RemotePhase =
@@ -87,6 +94,81 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 // A leading '-' would be parsed by ssh as an option, so it is rejected.
 const DESTINATION_PATTERN = /^(?:[A-Za-z0-9._-]{1,64}@)?[A-Za-z0-9][A-Za-z0-9._:%-]{0,252}$/
 
+const HOST_KEY_ALGORITHMS: Readonly<Record<string, string>> = {
+  'ssh-ed25519': 'ssh-ed25519',
+  'ecdsa-sha2-nistp256': 'ecdsa-sha2-nistp256',
+  'ecdsa-sha2-nistp384': 'ecdsa-sha2-nistp384',
+  'ecdsa-sha2-nistp521': 'ecdsa-sha2-nistp521',
+  // An RSA key is verified with SHA-2 signatures only, as in the daemon.
+  'ssh-rsa': 'rsa-sha2-512,rsa-sha2-256',
+}
+
+/** A parsed pinned host key. */
+interface PinnedHostKey {
+  keyType: string
+  base64: string
+  /** The `HostKeyAlgorithms` value that makes ssh ask for this key type. */
+  algorithms: string
+}
+
+/** Parses `type base64 [comment]`; the blob must name the same type. Returns null when unusable. */
+function parseHostPublicKey(line: string): PinnedHostKey | null {
+  const [keyType, base64] = line.trim().split(/\s+/)
+  if (!keyType || !base64) return null
+  const algorithms = HOST_KEY_ALGORITHMS[keyType]
+  if (!Object.hasOwn(HOST_KEY_ALGORITHMS, keyType) || algorithms === undefined) return null
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return null
+  const blob = Buffer.from(base64, 'base64')
+  if (blob.length < 4) return null
+  const length = blob.readUInt32BE(0)
+  if (blob.subarray(4, 4 + length).toString('latin1') !== keyType) return null
+  return { keyType, base64, algorithms }
+}
+
+/** The known_hosts alias that ties a registry host to its pinned key (daemon: host_key_alias). */
+function hostKeyAlias(hostId: string): string {
+  return `ade-remote-${hostId}`
+}
+
+function pinnedKey(target: RemoteTarget): PinnedHostKey | null {
+  if (target.hostPublicKey === null) return null
+  const key = parseHostPublicKey(target.hostPublicKey)
+  if (!key) throw new TypeError('The pinned host key is not a supported SSH public key.')
+  return key
+}
+
+/** The one-line private known_hosts file for a pinned target, or null when the target pins no key. */
+export function pinnedKnownHosts(target: RemoteTarget): string | null {
+  const key = pinnedKey(target)
+  return key ? `${hostKeyAlias(target.hostId)} ${key.keyType} ${key.base64}\n` : null
+}
+
+/**
+ * ssh options that decide which host key is trusted. A pinned target trusts
+ * only its key, through a private known_hosts file that must hold
+ * {@link pinnedKnownHosts}; the user's and system files, DNS and key updates
+ * are all ignored, as in the daemon's `ssh_args`.
+ */
+export function hostTrustArgs(target: RemoteTarget, knownHostsFile: string | null): string[] {
+  const common = ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes']
+  const key = pinnedKey(target)
+  if (!key) return common
+  if (knownHostsFile === null || !knownHostsFile.startsWith('/') || /[\s\0]/.test(knownHostsFile)) {
+    throw new TypeError('A pinned host needs an absolute known_hosts path without whitespace.')
+  }
+  return [
+    ...common,
+    '-o', `UserKnownHostsFile=${knownHostsFile}`,
+    '-o', 'GlobalKnownHostsFile=/dev/null',
+    '-o', 'KnownHostsCommand=none',
+    '-o', `HostKeyAlias=${hostKeyAlias(target.hostId)}`,
+    '-o', `HostKeyAlgorithms=${key.algorithms}`,
+    '-o', 'UpdateHostKeys=no',
+    '-o', 'CheckHostIP=no',
+    '-o', 'VerifyHostKeyDNS=no',
+  ]
+}
+
 /** Returns a reason when the target cannot be used, or null. */
 export function validateTarget(target: RemoteTarget): string | null {
   if (!ID_PATTERN.test(target.hostId)) return 'Host ID must be 1-128 letters, digits, ".", "_", ":" or "-".'
@@ -98,6 +180,9 @@ export function validateTarget(target: RemoteTarget): string | null {
     return 'Remote socket must be an absolute path without "..", ":" or whitespace.'
   }
   if (Buffer.byteLength(socket) > MAX_UNIX_SOCKET_BYTES) return 'Remote socket path is too long for a Unix socket.'
+  if (target.hostPublicKey !== null && !parseHostPublicKey(target.hostPublicKey)) {
+    return 'The pinned host key is not a supported SSH public key.'
+  }
   return null
 }
 
@@ -116,16 +201,15 @@ export function validateLocalSocket(path: string): string | null {
 }
 
 /**
- * OpenSSH arguments for `ssh -L local_socket:remote_socket`. Host keys must
- * already be trusted (StrictHostKeyChecking=yes), and BatchMode refuses
+ * OpenSSH arguments for `ssh -L local_socket:remote_socket`. The host key is
+ * checked strictly (see {@link hostTrustArgs}) and BatchMode refuses
  * interactive prompts, so an unknown or changed host fails closed. The
  * destination follows `--`, so it can never be read as an option.
  */
-export function sshForwardArgs(target: RemoteTarget, localSocket: string): string[] {
+export function sshForwardArgs(target: RemoteTarget, localSocket: string, knownHostsFile: string | null): string[] {
   return [
     '-N', '-T',
-    '-o', 'BatchMode=yes',
-    '-o', 'StrictHostKeyChecking=yes',
+    ...hostTrustArgs(target, knownHostsFile),
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'StreamLocalBindUnlink=yes',
     '-o', 'StreamLocalBindMask=0177',

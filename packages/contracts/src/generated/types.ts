@@ -9172,6 +9172,11 @@ export interface RemoteHost {
    * The pinned host key algorithm, such as `ssh-ed25519`.
    */
   host_key_type: string
+  /**
+   * The pinned public key, `type base64`. A public value: clients pin every
+   * SSH connection they open to this host to it, as the daemon does.
+   */
+  host_public_key: string
   label: string
   /**
    * The active pairing, or else the most recent revoked one; null when never paired.

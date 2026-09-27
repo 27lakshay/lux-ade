@@ -88,6 +88,7 @@ fn read_host(connection: &Connection, host_id: &str) -> Result<Option<Stored>> {
             ssh_target,
             host_key_type: key.key_type.clone(),
             host_key_fingerprint: fingerprint,
+            host_public_key: key.public_line(),
             backend_path,
             remote_profile_id,
             created_at_ms: created,
@@ -428,14 +429,14 @@ impl Sessions {
                 let remove: RemoteHostRemoveRequest = decode(request)?;
                 self.remote_store(|connection| {
                     let tx = transaction(connection)?;
-                    if let Some(pairing) = latest_pairing(&tx, &remove.host_id)?
+                    let active = latest_pairing(&tx, &remove.host_id)?
                         .filter(|pairing| pairing.state == PairingState::Active)
+                        .map(|pairing| pairing.pairing_id);
+                    let placements = super::placement::placements_on_host(&tx, &remove.host_id)?;
+                    if let Some(refusal) =
+                        decide::removal_refusal(&remove.host_id, active.as_deref(), placements)
                     {
-                        bail!(
-                            "Revoke pairing {} before removing {}",
-                            pairing.pairing_id,
-                            remove.host_id
-                        );
+                        bail!(refusal);
                     }
                     tx.execute(
                         "DELETE FROM remote_pairings WHERE host_id=?1",

@@ -92,6 +92,9 @@ pub struct RemoteHost {
     pub host_key_type: String,
     /// The pinned key's OpenSSH SHA-256 fingerprint, `SHA256:...`.
     pub host_key_fingerprint: String,
+    /// The pinned public key, `type base64`. A public value: clients pin every
+    /// SSH connection they open to this host to it, as the daemon does.
+    pub host_public_key: String,
     /// Absolute path of `ade-control` on the remote host; null uses its `PATH`.
     pub backend_path: Option<String>,
     /// The remote profile to start; null uses the remote host's selected profile.
@@ -297,7 +300,8 @@ mod tests {
         round_trip::<RemoteHosts>(
             json!({"type": "remote_hosts", "hosts": [{"host_id": "devbox",
             "label": "devbox", "ssh_target": "devbox", "host_key_type": "ssh-ed25519",
-            "host_key_fingerprint": "SHA256:abc", "backend_path": null,
+            "host_key_fingerprint": "SHA256:abc", "host_public_key": "ssh-ed25519 AAAA",
+            "backend_path": null,
             "remote_profile_id": null, "created_at_ms": 1, "pairing": pairing}]}),
         );
         round_trip::<RemoteHostProbe>(json!({"type": "remote_host_probe", "host_id": "devbox",

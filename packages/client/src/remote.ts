@@ -4,7 +4,7 @@
 // remote-state.ts; this file only runs their effects.
 // Pattern studied, not copied: Orca src/main/ssh/system-ssh-forward-process.ts (MIT).
 import { spawn, type ChildProcess } from 'node:child_process'
-import { lstatSync, mkdtempSync, rmSync } from 'node:fs'
+import { lstatSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -13,7 +13,8 @@ import {
 } from '@ade/contracts'
 import { DaemonRequestError, requestDaemon, type DaemonResponse, type RequestOptions } from './request.js'
 import {
-  admitRemoteRequest, connectionKey, initialRemoteState, reduceRemote, sshForwardArgs, validateLocalSocket,
+  admitRemoteRequest, connectionKey, initialRemoteState, pinnedKnownHosts, reduceRemote, sshForwardArgs,
+  validateLocalSocket,
   type RemoteEffect, type RemoteEvent, type RemoteState, type RemoteTarget,
 } from './remote-state.js'
 import {
@@ -50,6 +51,8 @@ export class RemoteDaemonTransport {
   private readonly listeners = new Set<Listener>()
   private readonly directory: string
   private readonly localSocket: string
+  /** The private known_hosts file holding only the pinned key, or null when the target pins none. */
+  private readonly knownHostsFile: string | null = null
   private child: ChildProcess | null = null
   private childGeneration = 0
   private probeTimer: ReturnType<typeof setTimeout> | null = null
@@ -65,6 +68,12 @@ export class RemoteDaemonTransport {
     if (invalid) {
       rmSync(this.directory, { recursive: true, force: true })
       throw new DaemonRequestError('invalid_request', invalid)
+    }
+    // An invalid pinned key already failed the target; the forward is never spawned then.
+    const knownHosts = this.state.failure === 'invalid_target' ? null : pinnedKnownHosts(this.target)
+    if (knownHosts !== null) {
+      this.knownHostsFile = join(this.directory, 'known_hosts')
+      writeFileSync(this.knownHostsFile, knownHosts, { mode: 0o600 })
     }
   }
 
@@ -195,7 +204,7 @@ export class RemoteDaemonTransport {
     let stderr = ''
     let child: ChildProcess
     try {
-      child = spawn(this.options.sshPath ?? 'ssh', sshForwardArgs(this.target, this.localSocket),
+      child = spawn(this.options.sshPath ?? 'ssh', sshForwardArgs(this.target, this.localSocket, this.knownHostsFile),
         { stdio: ['ignore', 'ignore', 'pipe'] })
     } catch (error) {
       queueMicrotask(() => this.dispatch({ type: 'forward_failed', exitCode: null, stderr: String(error) }))
@@ -284,9 +293,10 @@ export class RemoteConnections {
     const key = connectionKey(target)
     const existing = this.transports.get(key)
     if (existing) {
-      if (existing.target.destination !== target.destination || existing.target.remoteSocket !== target.remoteSocket) {
+      if (existing.target.destination !== target.destination || existing.target.remoteSocket !== target.remoteSocket ||
+        existing.target.hostPublicKey !== target.hostPublicKey) {
         throw new DaemonRequestError('conflict',
-          'This host and profile is already bound to a different SSH destination or remote socket.')
+          'This host and profile is already bound to a different SSH destination, remote socket or host key.')
       }
       return existing
     }

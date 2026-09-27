@@ -29,6 +29,16 @@ fn ensure_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// How many placements are recorded on `host_id`.
+pub(super) fn placements_on_host(connection: &Connection, host_id: &str) -> Result<u64> {
+    ensure_schema(connection)?;
+    Ok(connection.query_row(
+        "SELECT count(*) FROM execution_placements WHERE host_id=?1",
+        [host_id],
+        |row| row.get::<_, i64>(0),
+    )? as u64)
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

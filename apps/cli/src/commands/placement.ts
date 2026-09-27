@@ -70,8 +70,9 @@ async function remoteTarget(socketPath: string, entry: HostEntry): Promise<Remot
   const { hosts } = await dailyUseCommand<'remote.host.list'>(socketPath, { op: 'remote.host.list' })
   const registered = hosts.find((candidate) => candidate.host_id === hostId)
   if (!registered) return null
+  // The daemon pinned this key; the forward trusts only it, never the user's known_hosts.
   const target = { hostId, profileId: entry.remote_profile_id, destination: registered.ssh_target,
-    remoteSocket: entry.remote_socket }
+    remoteSocket: entry.remote_socket, hostPublicKey: registered.host_public_key }
   return validateTarget(target) ? null : target
 }
 

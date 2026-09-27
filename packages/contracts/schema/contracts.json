@@ -17859,6 +17859,10 @@
           "description": "The pinned host key algorithm, such as `ssh-ed25519`.",
           "type": "string"
         },
+        "host_public_key": {
+          "description": "The pinned public key, `type base64`. A public value: clients pin every\nSSH connection they open to this host to it, as the daemon does.",
+          "type": "string"
+        },
         "label": {
           "type": "string"
         },
@@ -17891,6 +17895,7 @@
         "ssh_target",
         "host_key_type",
         "host_key_fingerprint",
+        "host_public_key",
         "backend_path",
         "remote_profile_id",
         "created_at_ms",
