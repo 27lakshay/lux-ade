@@ -1091,7 +1091,7 @@ export type CommandSource = 'provider_file' | 'provider_skill' | 'ade_catalog'
 /**
  * How an invocation ended.
  */
-export type CommandInvokeOutcome = 'queued' | 'unavailable' | 'unknown'
+export type CommandInvokeOutcome = 'queued' | 'unavailable' | 'unknown' | 'cancelled'
 /**
  * What a run committed between the group's start and its current HEAD.
  */

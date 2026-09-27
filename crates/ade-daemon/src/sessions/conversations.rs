@@ -541,7 +541,8 @@ impl Sessions {
                         non_empty("request_id", &enqueue.request_id)?,
                         &enqueue.text,
                         &enqueue.attachments,
-                    )
+                    )?;
+                    Ok(())
                 })
             }
             "queue.cancel" => {

@@ -38,6 +38,7 @@ mod windows;
 pub use account_switches::SwitchCommit;
 pub use attachments::*;
 pub use bindings::*;
+pub use conversations::QueueEntry;
 use conversations::*;
 pub use drafts::{DraftContent, Restored};
 pub use send_intents::*;
