@@ -1302,10 +1302,15 @@ impl Worktrees {
                     }
                     crate::host_resources::AcceptOutcome::Ran { rebound: false } => {}
                 }
-                drop(d);
+                // The binding committed with its receipt acknowledged. The
+                // data lock stays held until the reply is recorded, so a
+                // concurrent retry of the same ID cannot settle it first. A
+                // crash before the record leaves the receipt acknowledged,
+                // and the first retry settles it (`HostResources::accept`).
                 let accepted = reply(&self.resources.inspect(None)?)?;
+                crate::receipts::e2e_pause("resources.registry.accept");
                 crate::host_resources::HostResources::record_accept_reply(
-                    &self.data.lock().unwrap().db,
+                    &d.db,
                     &accept.operation_id,
                     &accepted,
                 );
