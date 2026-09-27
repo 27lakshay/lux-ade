@@ -26,6 +26,8 @@ extraResources:
     to: cli
   - from: .ade/package-stage/client
     to: cli/node_modules/@ade/client
+  - from: .ade/package-stage/contracts
+    to: cli/node_modules/@ade/contracts
   - from: pnpm-lock.yaml
     to: pnpm-lock.yaml
   - from: .ade/package-stage/providers

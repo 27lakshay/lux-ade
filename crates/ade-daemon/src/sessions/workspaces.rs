@@ -1,5 +1,6 @@
 //! Workspace binding, rebind operations, the catalog and the restore fence.
 use super::*;
+use ade_core::contract::workspaces::{CatalogFrame, CatalogGetRequest};
 
 #[derive(PartialEq, Eq)]
 pub(super) struct SelectedBinding {
@@ -67,10 +68,15 @@ impl Sessions {
         let string = required_str(request);
         match request["op"].as_str().unwrap_or("") {
             "catalog.get" => {
+                let CatalogGetRequest {} = decode(request)?;
                 let (catalog, revision) = self.live_catalog()?;
-                Ok(
-                    json!({"type":"catalog","catalog":catalog,"providers":provider::descriptors(),"boot_id":self.boot_id,"revision":revision}),
-                )
+                reply(&CatalogFrame {
+                    tag: Default::default(),
+                    catalog,
+                    providers: provider::descriptors().to_vec(),
+                    boot_id: self.boot_id.clone(),
+                    revision,
+                })
             }
             "workspace.rebind.list" => {
                 let workspaces = self.data.lock().unwrap().store.rebind_workspaces()?;

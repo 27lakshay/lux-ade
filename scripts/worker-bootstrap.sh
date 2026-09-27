@@ -25,5 +25,7 @@ for dir in native vendor tools; do
 done
 
 pnpm install --frozen-lockfile
-pnpm --filter @ade/client build
+# check:static reads cargo metadata offline, so every locked crate must be present.
+node scripts/cargo.mjs fetch --locked
+pnpm build:sdk
 printf 'Worker ready at %s on %s\n' "$(git rev-parse --short HEAD)" "$(git branch --show-current)"

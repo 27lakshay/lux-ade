@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -10,7 +11,7 @@ pub struct Repository {
     #[serde(default)]
     pub worktree_lifecycle_needs_rebind: bool,
 }
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct WorkspaceRecord {
     #[serde(default)]
     pub extra_terminals: Vec<String>,
@@ -24,7 +25,7 @@ pub struct WorkspaceRecord {
     #[serde(default)]
     pub worktree_lifecycle_needs_rebind: bool,
 }
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Conversation {
     #[serde(default)]
     pub view_terminal: Option<TerminalOwner>,
@@ -47,6 +48,7 @@ pub struct Conversation {
     #[serde(default = "legacy_ambient_account_context")]
     pub account_context: String,
     #[serde(default)]
+    #[schemars(with = "serde_json::Value")]
     pub provider_config: crate::provider::Config,
     pub provider_thread_id: Option<String>,
     pub status: String,
@@ -121,14 +123,14 @@ pub struct Draft {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
 }
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct Attachment {
     pub id: String,
     pub name: String,
     pub media_type: String,
     pub size: usize,
 }
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct QueuedPrompt {
     pub id: String,
     pub conversation_id: String,
@@ -137,9 +139,10 @@ pub struct QueuedPrompt {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
 }
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<Value>")]
     pub content: Option<crate::transcript::Content>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_feedback: Option<serde_json::Value>,
@@ -155,7 +158,7 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
 }
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct PendingRequest {
     pub id: String,
     pub conversation_id: String,
@@ -254,10 +257,11 @@ pub struct WindowRecord {
     pub width: f32,
     pub height: f32,
 }
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, JsonSchema)]
 pub struct Catalogue {
     pub workspaces: Vec<WorkspaceRecord>,
     pub conversations: Vec<Conversation>,
+    #[schemars(with = "Vec<Value>")]
     pub windows: Vec<WindowRecord>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -278,7 +282,7 @@ pub fn now_ms() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct TerminalOwner {
     pub terminal_id: String,
     pub transfer_id: String,
