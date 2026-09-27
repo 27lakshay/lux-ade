@@ -1,6 +1,7 @@
-// F039: conversation and file rewind. No adapter rewinds a provider's history
-// yet, so conversation rewind is reported as unavailable, with the reason,
-// for every provider and records nothing. File rewind restores an ADE
+// F039: conversation and file rewind. Codex's adapter does not rewind its
+// history, so conversation rewind is reported as unavailable, with the reason,
+// and records nothing; Claude's conversation rewind is proved in
+// e2e/protocol/ops3/rewind.spec.ts. File rewind restores an ADE
 // checkpoint for any provider: it is previewed first, refuses a stale preview
 // and unconfirmed overwrites, and reads a lost outcome back after a crash.
 import { expect, prompts, send, startConversation, test, waitForIdle, type ScratchProfile, type ScratchRepo } from '../fixtures'
@@ -24,25 +25,27 @@ async function control(profile: ScratchProfile, conversationId: string, name: st
 }
 
 for (const provider of ['codex', 'claude'] as const) {
-  test(`F039: ${provider} rewinds files through a checkpoint after a preview, and conversation rewind is unavailable`, async ({ profile, repo }) => {
+  test(`F039: ${provider} rewinds files through a checkpoint after a preview${provider === 'codex' ? ', and conversation rewind is unavailable' : ''}`, async ({ profile, repo }) => {
     const { conversationId, checkpointId } = await checkpointed(profile, repo, provider)
     expect(await control(profile, conversationId, 'rewind_files'))
       .toMatchObject({ available: true, mechanism: 'ade.checkpoints', reason: null })
-    expect(await control(profile, conversationId, 'rewind_conversation'))
-      .toMatchObject({ available: false, mechanism: null, reason: expect.stringContaining('adapter') })
-
-    // Conversation rewind: reported, not emulated, and no receipt, so the operation ID stays unused.
     await send(profile, conversationId, prompts.turn)
     await waitForIdle(profile, conversationId)
     const before = (await snapshot(profile, conversationId)).messages
-    const conversationPreview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
-      scope: 'conversation' })
-    expect(conversationPreview).toMatchObject({ scope: 'conversation', files: null, availability: { available: false } })
-    const refused = await profile.call('conversation.rewind', { operation_id: 'rewind-op', conversation_id: conversationId,
-      scope: 'conversation' })
-    expect(refused).toMatchObject({ outcome: 'unavailable', control: 'rewind_conversation',
-      reason: conversationPreview.availability.reason })
-    expect((await snapshot(profile, conversationId)).messages).toEqual(before)
+
+    if (provider === 'codex') {
+      expect(await control(profile, conversationId, 'rewind_conversation'))
+        .toMatchObject({ available: false, mechanism: null, reason: expect.stringContaining('adapter') })
+      // Conversation rewind: reported, not emulated, and no receipt, so the operation ID stays unused.
+      const conversationPreview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId,
+        scope: 'conversation' })
+      expect(conversationPreview).toMatchObject({ scope: 'conversation', files: null, availability: { available: false } })
+      const refused = await profile.call('conversation.rewind', { operation_id: 'rewind-op', conversation_id: conversationId,
+        scope: 'conversation' })
+      expect(refused).toMatchObject({ outcome: 'unavailable', control: 'rewind_conversation',
+        reason: conversationPreview.availability.reason })
+      expect((await snapshot(profile, conversationId)).messages).toEqual(before)
+    }
 
     // File rewind: the preview lists what changes and asks for confirmation over uncommitted work.
     const preview = await profile.call('conversation.rewind.preview', { conversation_id: conversationId, scope: 'files',
@@ -127,11 +130,11 @@ test('R001: a file rewind whose reply was lost is read back after a daemon crash
   expect(safety).toHaveLength(1)
 })
 
-// Gap: no adapter rewinds a provider's history. Codex 0.157.0 has
-// thread/revert, but ADE's Codex adapter does not call it, and ADE would also
-// need to drop its stored messages after the rewind point and invalidate the
-// history pages a client already read. Until then conversation rewind is
-// honestly unavailable (proved above) and this acceptance path cannot run.
+// Gap: Codex 0.157.0 thread/revert rewrites only paginated threads, and ADE's
+// Codex adapter starts legacy threads (thread/rollback was removed), so Codex
+// conversation rewind is honestly unavailable (proved above). ADE's side of a
+// rewind (dropping messages, invalidating history pages) is built and proved
+// for Claude in e2e/protocol/ops3/rewind.spec.ts.
 test.fixme('F039: a Codex conversation rewind drops later messages and invalidates stale history pages', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await send(profile, conversationId, prompts.turn)

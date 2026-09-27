@@ -184,6 +184,7 @@ fn conversation_get_round_trips() {
             conversation_id: "conversation_1".into(),
             before: None,
             limit: None,
+            history_epoch: None,
         },
     );
     request_round_trip(
@@ -192,6 +193,7 @@ fn conversation_get_round_trips() {
             conversation_id: "conversation_1".into(),
             before: Some(10),
             limit: Some(200),
+            history_epoch: Some(2),
         },
     );
     let snapshot = ConversationSnapshot {
@@ -202,6 +204,7 @@ fn conversation_get_round_trips() {
         queued: vec![queued()],
         boot_id: "boot_1".into(),
         revision: 9,
+        history_epoch: 0,
     };
     response_round_trip("conversation.get", &snapshot);
     let changed = ConversationChanged {

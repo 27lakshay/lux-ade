@@ -20,12 +20,14 @@ export class Bridge {
     this.sdk=sdk;this.emit=emit;this.cwd=cwd;this.session=null;this.query=null;this.active=null;
     this.inputs=[];this.wake=null;this.closed=false;this.permissions=new Map();this.partial=new Map();
     this.todoCalls=new Map();
+    // Each query() reads its own input generator; a rewind starts a new generation.
+    this.generation=0;
     this.taskPlans=new TaskPlans();
     this.subagents=new Subagents();
     this.toolCalls=new Map();this.toolBytes=0;
   }
-  async *input() {
-    while(!this.closed) {
+  async *input(generation) {
+    while(!this.closed&&this.generation===generation) {
       if(this.inputs.length) {yield this.inputs.shift();continue;}
       await new Promise(resolve=>{this.wake=resolve;});
     }
@@ -82,7 +84,7 @@ export class Bridge {
     return items;
   }
   event(value) {this.emit({method:'event',params:value});}
-  async open({resume,config={}}) {
+  async open({resume,config={},mcp_servers}) {
     if(this.query)throw new Error('Claude session already opened');
     this.session=resume??randomUUID();
     this.taskPlans.open(this.session,process.env.ADE_DATA_DIR?join(process.env.ADE_DATA_DIR,'claude-task-results'):null);
@@ -104,14 +106,17 @@ export class Bridge {
       includePartialMessages:true,canUseTool:(name,input,options)=>this.permission(name,input,options),
       onElicitation:async()=>({action:'decline'}),
       ...(config.model?{model:config.model}:{}),
+      // The profile MCP catalog resolved by the daemon (F131); references stay ${VAR}.
+      ...(mcp_servers&&typeof mcp_servers==='object'?{mcpServers:mcp_servers}:{}),
       ...(resume?{resume}:{sessionId:this.session}),
       pathToClaudeCodeExecutable:executable(),
     };
     // Cumulative usage in results belongs to this query() call; the daemon
     // differences it only between results of the same query.
     this.usageStream={query_id:randomUUID(),fresh:!resume,results:0};
-    this.query=this.sdk.query({prompt:this.input(),options});
-    this.loop=this.consume().catch(error=>{if(!this.closed)this.event({type:'exited',error:error.message});this.close();});
+    this.options=options;
+    this.query=this.sdk.query({prompt:this.input(this.generation),options});
+    this.watch(this.query);
     try { await this.query.initializationResult(); }
     catch(error) {
       // Initialization can reject while the SDK iterator is still alive. Do not
@@ -121,10 +126,16 @@ export class Bridge {
     }
     return {session:this.session,history:[...new Map(history.map(item=>[item.id,item])).values()]};
   }
-  async consume() {
-    for await(const message of this.query) {
+  async consume(query) {
+    for await(const message of query) {
       if(message.session_id&&message.session_id!==this.session)throw new Error('Claude returned a different session ID; refusing session replacement');
       if(message.type==='system'&&message.subtype==='init')continue;
+      if(query!==this.query)break;
+      // A truncating resume the CLI refused (resumeDropsTurn) reports a result with no turn.
+      if(message.type==='result'&&!this.active&&[...(message.errors??[]),message.result??''].some(text=>String(text).startsWith('Resume rejected'))) {
+        this.event({type:'error',error:'Claude refused the conversation rewind; the history was kept'});
+        continue;
+      }
       const active=this.active;
       if(message.type==='rate_limit_event') {
         this.event({type:'usage',session:this.session,turn:active?.turn??null,source:'rate_limit_event',report:message.rate_limit_info??null});
@@ -160,7 +171,7 @@ export class Bridge {
         this.event({type:'finished',session:this.session,turn:active.turn,status:active.cancelled?'interrupted':message.is_error?'failed':'completed',error:message.is_error?(message.errors??[message.result??message.subtype]).join('\n'):null});
       }
     }
-    if(!this.closed)throw new Error('Claude SDK stream closed; resume before continuing');
+    if(!this.closed&&query===this.query)throw new Error('Claude SDK stream closed; resume before continuing');
   }
   async child_transcript({session,child,offset=0,cursor=null}) {
     if(cursor!==null)throw new Error('Claude child reader uses message offsets');
@@ -254,6 +265,38 @@ export class Bridge {
     }
     return {};
   }
+  watch(query) {
+    this.loop=this.consume(query).catch(error=>{
+      if(query!==this.query)return;
+      if(!this.closed)this.event({type:'exited',error:error.message});this.close();
+    });
+  }
+  // Agent SDK 0.3.281 resumeSessionAt: restart the query from the last chain
+  // entry before the prompt that started `drop_from`, so that turn and every
+  // later one leave the session. Dropping only the last turn also passes
+  // resumeDropsTurn, which the CLI validates. Nothing runs while it restarts.
+  async rewind({session,drop_from}) {
+    if(this.closed||!this.query||session!==this.session)throw new Error('Claude session is not connected');
+    if(this.active||this.inputs.length)throw new Error('A turn is running; stop it before rewinding the conversation');
+    if(typeof drop_from!=='string'||!drop_from)throw new Error('Missing the prompt to rewind before');
+    const prompt=m=>m.type==='user'&&(typeof m.message?.content==='string'||m.message?.content?.some(b=>['text','image','document'].includes(b.type)));
+    const chain=(await this.sdk.getSessionMessages(session,{dir:this.cwd,limit:2001})).filter(m=>!m.parent_tool_use_id);
+    const index=chain.findIndex(m=>m.uuid===drop_from);
+    if(index<0||!prompt(chain[index]))throw new Error('Claude history has no such prompt; nothing was rewound');
+    if(index===0)throw new Error('Claude cannot resume before its first message; nothing was rewound');
+    const single=!chain.slice(index+1).some(prompt);
+    const {sessionId,...kept}=this.options;
+    const options={...kept,resume:session,resumeSessionAt:chain[index-1].uuid,...(single?{resumeDropsTurn:drop_from}:{})};
+    const previous=this.query;
+    this.generation++;this.wake?.();this.wake=null;
+    this.query=this.sdk.query({prompt:this.input(this.generation),options});
+    previous.close();
+    this.options={...kept,resume:session};
+    this.usageStream={query_id:randomUUID(),fresh:false,results:0};
+    this.watch(this.query);
+    await this.query.initializationResult();
+    return {};
+  }
   close() {this.closed=true;for(const request of [...this.permissions.values()])request.resolve({behavior:'deny',message:'lux-ade disconnected'});this.query?.close();this.wake?.();}
 }
 
@@ -271,7 +314,7 @@ export function serve(sdk) {
     buffered=0;
     let frame;try{frame=JSON.parse(line);}catch{bridge.close();process.exit(1);}
     Promise.resolve().then(()=>{
-      if(!['open','send','cancel','answer','child_transcript'].includes(frame.method))throw new Error('Unknown lux-ade bridge method');
+      if(!['open','send','cancel','answer','child_transcript','rewind'].includes(frame.method))throw new Error('Unknown lux-ade bridge method');
       return bridge[frame.method](frame.params??{});
     }).then(result=>emit({id:frame.id,result}),error=>emit({id:frame.id,error:{message:error.message}}));
   });

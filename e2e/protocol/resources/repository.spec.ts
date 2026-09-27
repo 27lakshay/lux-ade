@@ -218,14 +218,9 @@ test('a daemon killed during a push settles the publish as unknown after restart
   expect(second.message).toBe(replay.message)
 })
 
-// Gap: `repository.publish` and `repository.clone` report an unknown outcome as
-// an untyped error (crates/ade-daemon/src/sessions/repository.rs `unknown()`),
-// because `error_envelope` in crates/ade-core/src/error.rs (a coordinator file)
-// has no typed variant that keeps the operation's own message. The frame has no
-// `code`, so the SDK and CLI report `daemon` (exit 7) instead of
-// `outcome_unknown` (exit 9), and a client can tell "unknown" from "failed"
-// only by parsing the message.
-test.fixme('an unknown publish outcome carries the typed outcome_unknown code', async ({ ade, profile, repo }) => {
+// An unknown outcome is typed: the frame carries `code: outcome_unknown`, so
+// the SDK and CLI report it (exit 9) apart from a failure without parsing text.
+test('an unknown publish outcome carries the typed outcome_unknown code', async ({ ade, profile, repo }) => {
   const remote = await emptyBare(ade, repo, 'typed')
   const { started, release } = await holdPushes(ade, remote.path)
   const folder = await plainFolder(ade, 'typed-push')
@@ -244,4 +239,8 @@ test.fixme('an unknown publish outcome carries the typed outcome_unknown code', 
   const cli = await profile.cli('request', 'repository.publish', JSON.stringify({ operation_id: 'publish-typed',
     path: folder, url: remote.url, create_initial_commit: true }))
   expect(cli.json).toMatchObject({ code: 'outcome_unknown' })
+  expect(cli.code).toBe(9)
+  const sdk = await profile.call('repository.publish', { operation_id: 'publish-typed', path: folder, url: remote.url,
+    create_initial_commit: true }).catch((error: unknown) => error as { code?: string; recovery?: string })
+  expect(sdk).toMatchObject({ code: 'outcome_unknown', recovery: 'inspect_before_retry' })
 })

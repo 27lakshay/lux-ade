@@ -120,9 +120,9 @@ test('catches up after a daemon kill without losing or duplicating indexed messa
   await searchUntil(profile, { query: 'hello world', conversation_id: conversationId }, 6)
 })
 
-// F043 asks that deleted records leave the results. Search joins live
-// messages, but no operation deletes a message or a conversation yet (rewind
-// removes none in this build), so a deletion cannot be driven end to end.
+// F043 asks that deleted records leave the results. Messages a Conversation
+// rewind removes leave search (e2e/protocol/ops3/rewind.spec.ts). No operation
+// deletes a whole Conversation, so this path still cannot be driven.
 test.fixme('a deleted conversation disappears from search results', async ({ profile }) => {
   const { conversationId } = await startConversation(profile, 'codex')
   await turn(profile, conversationId, 'pangolin notes')

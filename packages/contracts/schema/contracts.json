@@ -7509,6 +7509,17 @@
           ],
           "description": "The checkpoint restore result of a file rewind."
         },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationRewindHistory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a Conversation rewind removed, and the new history epoch."
+        },
         "operation_id": {
           "type": "string"
         },
@@ -7676,6 +7687,12 @@
         "conversation_id": {
           "type": "string"
         },
+        "history_epoch": {
+          "description": "The `history_epoch` of the snapshot the caller is paging from. An\nolder page (`before` set) is refused once a rewind replaced history,\nso a client never splices pages of two histories together.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "limit": {
           "description": "Page size; the daemon uses 50 when it is absent.",
           "maximum": 9007199254740991,
@@ -7689,6 +7706,54 @@
       "required": [
         "op",
         "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationRewindHistory": {
+      "description": "What a Conversation rewind removes, or removed.",
+      "properties": {
+        "before_message_id": {
+          "description": "The first removed message: the user message that started `turn_id`.",
+          "type": "string"
+        },
+        "history_epoch": {
+          "description": "The history epoch: current for a preview, the new one after a rewind.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kept_messages": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed_messages": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed_turns": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state_token": {
+          "description": "Names the previewed history; a rewind refuses a history that changed.",
+          "type": "string"
+        },
+        "turn_id": {
+          "description": "The provider turn the rewind returns to before.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "before_message_id",
+        "turn_id",
+        "removed_messages",
+        "removed_turns",
+        "kept_messages",
+        "state_token",
+        "history_epoch"
       ],
       "type": "object"
     },
@@ -7710,6 +7775,17 @@
             }
           ],
           "description": "The checkpoint restore preview; present for an available file rewind."
+        },
+        "history": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationRewindHistory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What an available Conversation rewind would remove."
         },
         "scope": {
           "$ref": "#/$defs/RewindScope"
@@ -7735,6 +7811,13 @@
       "additionalProperties": false,
       "description": "`conversation.rewind.preview`: whether a rewind may run, and what a file\nrewind would change.",
       "properties": {
+        "before_message_id": {
+          "description": "The user message a Conversation rewind removes, with every later\nmessage; required for `conversation`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "checkpoint_id": {
           "description": "The checkpoint a file rewind restores; required for `files`.",
           "type": [
@@ -7763,6 +7846,13 @@
       "additionalProperties": false,
       "description": "`conversation.rewind`: perform a previewed rewind.",
       "properties": {
+        "before_message_id": {
+          "description": "Required for `conversation`: the user message to remove with every later message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "checkpoint_id": {
           "description": "Required for `files`.",
           "type": [
@@ -7779,7 +7869,7 @@
           "type": "string"
         },
         "expected_state": {
-          "description": "The preview's `state_token`; required for `files`.",
+          "description": "The preview's `state_token` (of `files` or `history`); required for both scopes.",
           "type": [
             "string",
             "null"
@@ -7811,6 +7901,13 @@
         },
         "conversation": {
           "$ref": "#/$defs/Conversation"
+        },
+        "history_epoch": {
+          "default": 0,
+          "description": "Durable; grows each time a rewind replaces this Conversation's history.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
         },
         "messages": {
           "items": {
@@ -7850,7 +7947,8 @@
         "requests",
         "queued",
         "boot_id",
-        "revision"
+        "revision",
+        "history_epoch"
       ],
       "type": "object"
     },
@@ -20432,6 +20530,32 @@
       ],
       "type": "object"
     },
+    "RetentionConfigured": {
+      "description": "The configured limits, as stored; null means the default applies.",
+      "properties": {
+        "diagnostic_log_max_age_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "service_log_idle_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "service_log_idle_ms",
+        "diagnostic_log_max_age_ms"
+      ],
+      "type": "object"
+    },
     "RetentionItemResult": {
       "description": "One item's result.",
       "properties": {
@@ -20565,6 +20689,13 @@
           "minimum": -9007199254740991,
           "type": "integer"
         },
+        "revision": {
+          "default": 0,
+          "description": "The configuration revision; 0 until `retention.policy.set` first changes it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "service_log_idle_ms": {
           "description": "A service log must be idle this long before it can go.",
           "maximum": 9007199254740991,
@@ -20578,7 +20709,87 @@
         "attachment_grace_ms",
         "service_log_idle_ms",
         "diagnostic_log_max_age_ms",
-        "candidate_limit"
+        "candidate_limit",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "RetentionPolicyGetRequest": {
+      "additionalProperties": false,
+      "description": "`retention.policy.get`: the policy retention applies now.",
+      "properties": {
+        "op": {
+          "const": "retention.policy.get"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "RetentionPolicyReply": {
+      "description": "The `retention.policy.get` and `retention.policy.set` reply.",
+      "properties": {
+        "changed": {
+          "description": "False when a set found the policy already as requested.",
+          "type": "boolean"
+        },
+        "configured": {
+          "$ref": "#/$defs/RetentionConfigured"
+        },
+        "policy": {
+          "$ref": "#/$defs/RetentionPolicy",
+          "description": "The effective policy; its `revision` guards the next change."
+        },
+        "type": {
+          "description": "The `retention_policy` type tag.",
+          "enum": [
+            "retention_policy"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "policy",
+        "configured",
+        "changed"
+      ],
+      "type": "object"
+    },
+    "RetentionPolicySetRequest": {
+      "additionalProperties": false,
+      "description": "`retention.policy.set`: configure the limits a user may change. An absent\nfield returns that limit to its default. Each limit is 1 to 365 days.",
+      "properties": {
+        "diagnostic_log_max_age_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expected_revision": {
+          "description": "The policy `revision` the caller saw; a newer stored policy is refused.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "op": {
+          "const": "retention.policy.set"
+        },
+        "service_log_idle_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "expected_revision"
       ],
       "type": "object"
     },
@@ -24472,6 +24683,120 @@
           "type": "string"
         }
       ]
+    },
+    "SkillPlaceOutcome": {
+      "description": "What a placement did at its provider path.",
+      "oneOf": [
+        {
+          "const": "created",
+          "description": "The directory was absent; ADE wrote the bundle and owns the path.",
+          "type": "string"
+        },
+        {
+          "const": "replaced",
+          "description": "ADE replaced its own unchanged placement with this bundle.",
+          "type": "string"
+        },
+        {
+          "const": "up_to_date",
+          "description": "The catalog-owned path already held this bundle.",
+          "type": "string"
+        },
+        {
+          "const": "external_identical",
+          "description": "An external directory already holds identical content. ADE wrote\nnothing and does not own it.",
+          "type": "string"
+        }
+      ]
+    },
+    "SkillPlaceRequest": {
+      "additionalProperties": false,
+      "description": "`skill.place`: write an installed bundle where one provider reads skills,\nso that provider's adapter rules invoke it. The path must be absent or\ncatalog-owned and unchanged; an external skill is never overwritten.",
+      "properties": {
+        "expected_content_hash": {
+          "description": "The installed bundle's content hash the caller reviewed.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "skill.place"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "provider": {
+          "description": "`claude`, `codex`, `opencode` or `omp`: whose skill root receives it.",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillScope"
+        },
+        "workspace_id": {
+          "description": "Required for `workspace` scope. Placement is local: a workspace on a\nremote host is refused, never placed on this host instead.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "name",
+        "expected_content_hash",
+        "provider",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "SkillPlaced": {
+      "description": "The `skill.place` reply.",
+      "properties": {
+        "content_hash": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/SkillPlaceOutcome"
+        },
+        "path": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillScope"
+        },
+        "type": {
+          "description": "The `skill_placed` type tag.",
+          "enum": [
+            "skill_placed"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "content_hash",
+        "provider",
+        "scope",
+        "workspace_id",
+        "path",
+        "outcome"
+      ],
+      "type": "object"
     },
     "SkillPlacementDecision": {
       "description": "What a placement of the bundle at that path would need.",
@@ -28742,6 +29067,13 @@
     },
     {
       "domain": "skills",
+      "name": "skill.place",
+      "request": "SkillPlaceRequest",
+      "response": "SkillPlaced",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "skills",
       "name": "skill.list",
       "request": "SkillListRequest",
       "response": "SkillList",
@@ -29172,6 +29504,20 @@
       "name": "retention.apply",
       "request": "RetentionApplyRequest",
       "response": "RetentionApply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "retention",
+      "name": "retention.policy.get",
+      "request": "RetentionPolicyGetRequest",
+      "response": "RetentionPolicyReply",
+      "tier": "query"
+    },
+    {
+      "domain": "retention",
+      "name": "retention.policy.set",
+      "request": "RetentionPolicySetRequest",
+      "response": "RetentionPolicyReply",
       "tier": "idempotent_command"
     },
     {

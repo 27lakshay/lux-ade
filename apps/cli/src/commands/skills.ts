@@ -10,6 +10,8 @@ export const skillUsage = `  skill list                             List catalog
   skill adopt PATH HASH --request-id ID [--workspace ID]
                                         Take ownership of a discovered provider skill
   skill remove NAME HASH --request-id ID Remove a catalog skill; provider files stay
+  skill place NAME HASH PROVIDER --request-id ID [--workspace ID]
+                                        Write a catalog skill where PROVIDER reads it; never over another owner's skill
 `
 
 function split(rest: string[], positional: number, allowed: readonly string[], command: string):
@@ -55,6 +57,15 @@ export async function runSkillCommand(socketPath: string, area: string | undefin
     return dailyUseCommand(socketPath, { op: 'skill.remove',
       operation_id: required(options['--request-id'], '--request-id'),
       name: required(args[0], 'NAME'), expected_content_hash: required(args[1], 'HASH') })
+  }
+  if (action === 'place') {
+    const { args, options } = split(rest, 3, ['--request-id', '--workspace'], 'place')
+    const workspace = options['--workspace']
+    return dailyUseCommand(socketPath, { op: 'skill.place',
+      operation_id: required(options['--request-id'], '--request-id'),
+      name: required(args[0], 'NAME'), expected_content_hash: required(args[1], 'HASH'),
+      provider: required(args[2], 'PROVIDER'), scope: workspace ? 'workspace' : 'global',
+      ...(workspace ? { workspace_id: workspace } : {}) })
   }
   return undefined
 }

@@ -97,6 +97,8 @@ pub struct Adapter {
     socket_directory: Option<std::path::PathBuf>,
     session: Mutex<Option<String>>,
     identity: Option<CodexIdentity>,
+    /// The `mcp_servers` table from the profile MCP catalog (F131).
+    mcp_servers: Mutex<Option<Value>>,
 }
 impl Adapter {
     pub fn spawn(
@@ -162,6 +164,7 @@ impl Adapter {
             socket_directory,
             session: Mutex::new(None),
             identity: account.and_then(|value| value.codex_identity.clone()),
+            mcp_servers: Mutex::new(None),
         }))
     }
 }
@@ -184,6 +187,14 @@ impl Provider for Adapter {
     }
     fn pid(&self) -> Option<u32> {
         Some(self.rpc.pid())
+    }
+    /// Codex 0.157.0 `thread/start` and `thread/resume` take `config`, which
+    /// overrides `config.toml` keys for the thread; `mcp_servers` is the
+    /// table Codex reads its MCP servers from.
+    fn configure_mcp(&self, servers: Value) -> Result<()> {
+        ensure!(servers.is_object(), "Codex MCP servers must be a table");
+        *self.mcp_servers.lock().unwrap() = Some(servers);
+        Ok(())
     }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
         self.rpc.request(
@@ -211,6 +222,9 @@ impl Provider for Adapter {
         let mut params = json!({"cwd":self.cwd,"approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":if config.permission_mode=="read-only" {"read-only"}else{"workspace-write"}});
         if let Some(model) = &config.model {
             params["model"] = json!(model);
+        }
+        if let Some(servers) = self.mcp_servers.lock().unwrap().clone() {
+            params["config"] = json!({"mcp_servers": servers});
         }
         let method = if let Some(session) = resume {
             params["threadId"] = json!(session);
@@ -826,6 +840,7 @@ mod tests {
             socket_directory: Some(directory.clone()),
             session: Mutex::new(None),
             identity: None,
+            mcp_servers: Mutex::new(None),
         };
         adapter.stop_confirmed().unwrap();
         assert!(!directory.exists());

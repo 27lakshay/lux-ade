@@ -42,6 +42,10 @@ pub struct Spec {
     /// Absent for every other provider, so their wire shape is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<ade_core::contract::providers::adapters::AdapterPin>,
+    /// The provider-native MCP server map the daemon resolved from the
+    /// profile catalog (F131). Absent when no entry applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Value>,
 }
 /// Starts the provider a run names. A plugin provider must arrive with the
 /// worker pin its session leases, and an adapter with its pinned definition;
@@ -172,6 +176,12 @@ impl Run {
     pub fn spawn(spec: Spec) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::sync_channel(256);
         let adapter = launch(&spec, tx)?;
+        if let Some(servers) = &spec.mcp_servers
+            && let Err(error) = adapter.configure_mcp(servers.clone())
+        {
+            adapter.stop();
+            return Err(error);
+        }
         let run = Arc::new(Self {
             spec,
             adapter,
@@ -449,6 +459,7 @@ impl Run {
                     Ok(json!({"type":"steered","turn":turn}))
                 }
                 "compact" => { self.adapter.compact(string("session")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
+                "rewind" => { self.adapter.rewind(string("session")?, string("turn")?, string("operation")?)?; Ok(json!({"type":"ack"})) }
                 "answer" => {
                     let p: PendingRequest = serde_json::from_value(request["request"].clone())?;
                     ensure!(p.run_id == self.spec.run && p.conversation_id == self.spec.conversation, "Interaction belongs to another Agent run");
@@ -519,7 +530,7 @@ impl Drop for Run {
 /// caller reads the failure from the command receipt and decides for the turn
 /// it cancelled.
 fn failure_ends_run(method: &str) -> bool {
-    !matches!(method, "steer" | "compact" | "cancel")
+    !matches!(method, "steer" | "compact" | "cancel" | "rewind")
 }
 
 pub fn read(reader: &mut BufReader<UnixStream>) -> Result<Value> {
@@ -675,6 +686,15 @@ impl Provider for Remote {
         ensure!(result["type"] == "ack", "Invalid compaction receipt");
         Ok(())
     }
+    fn rewind(&self, session: &str, turn: &str, operation: &str) -> Result<()> {
+        let result = self.call(
+            "rewind",
+            format!("rewind:{operation}"),
+            json!({"session":session,"turn":turn,"operation":operation}),
+        )?;
+        ensure!(result["type"] == "ack", "Invalid rewind receipt");
+        Ok(())
+    }
     fn validate_answer(
         &self,
         p: &PendingRequest,
@@ -724,7 +744,7 @@ mod tests {
     use super::*;
     #[test]
     fn a_failed_cancel_never_fails_the_run_it_shares_with_a_successor() {
-        for control in ["cancel", "steer", "compact"] {
+        for control in ["cancel", "steer", "compact", "rewind"] {
             assert!(!failure_ends_run(control), "{control}");
         }
         for operation in ["open", "send", "resume"] {
@@ -787,6 +807,7 @@ mod tests {
                     account: None,
                     worker: None,
                     adapter: None,
+                    mcp_servers: None,
                 },
                 adapter: fake.clone(),
                 journal: Mutex::new(Journal::new()),

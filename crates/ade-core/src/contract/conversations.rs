@@ -128,6 +128,12 @@ pub struct ConversationGetRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "u64")]
     pub limit: Option<u64>,
+    /// The `history_epoch` of the snapshot the caller is paging from. An
+    /// older page (`before` set) is refused once a rewind replaced history,
+    /// so a client never splices pages of two histories together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "u64")]
+    pub history_epoch: Option<u64>,
 }
 
 /// `agent.send`: submit a prompt. `request_id` is the caller-owned operation ID.
@@ -167,6 +173,9 @@ pub struct ConversationSnapshot {
     pub queued: Vec<QueuedPrompt>,
     pub boot_id: String,
     pub revision: u64,
+    /// Durable; grows each time a rewind replaces this Conversation's history.
+    #[serde(default)]
+    pub history_epoch: u64,
 }
 
 /// The `conversation_changed` feed frame.
@@ -702,6 +711,26 @@ pub struct ConversationRewindPreviewRequest {
     /// The checkpoint a file rewind restores; required for `files`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_id: Option<String>,
+    /// The user message a Conversation rewind removes, with every later
+    /// message; required for `conversation`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_message_id: Option<String>,
+}
+
+/// What a Conversation rewind removes, or removed.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ConversationRewindHistory {
+    /// The first removed message: the user message that started `turn_id`.
+    pub before_message_id: String,
+    /// The provider turn the rewind returns to before.
+    pub turn_id: String,
+    pub removed_messages: u64,
+    pub removed_turns: u64,
+    pub kept_messages: u64,
+    /// Names the previewed history; a rewind refuses a history that changed.
+    pub state_token: String,
+    /// The history epoch: current for a preview, the new one after a rewind.
+    pub history_epoch: u64,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -713,6 +742,9 @@ pub struct ConversationRewindPreview {
     pub availability: ControlAvailability,
     /// The checkpoint restore preview; present for an available file rewind.
     pub files: Option<super::checkpoints::CheckpointRestorePreview>,
+    /// What an available Conversation rewind would remove.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<ConversationRewindHistory>,
 }
 
 /// `conversation.rewind`: perform a previewed rewind.
@@ -724,7 +756,10 @@ pub struct ConversationRewindRequest {
     /// Required for `files`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_id: Option<String>,
-    /// The preview's `state_token`; required for `files`.
+    /// Required for `conversation`: the user message to remove with every later message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_message_id: Option<String>,
+    /// The preview's `state_token` (of `files` or `history`); required for both scopes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_state: Option<String>,
     /// Required when the preview listed uncommitted work it would overwrite.
@@ -770,6 +805,9 @@ pub struct ConversationControlReply {
     pub turn_id: Option<String>,
     /// The checkpoint restore result of a file rewind.
     pub files: Option<super::checkpoints::CheckpointRestored>,
+    /// What a Conversation rewind removed, and the new history epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<ConversationRewindHistory>,
 }
 
 /// A durable snooze: attention to the Conversation is deferred until `until`.
@@ -987,6 +1025,7 @@ mod tests {
                 reason: Some("Claude Code: not supported".into()),
                 turn_id: None,
                 files: None,
+                history: None,
             },
             json!({"type": "conversation_control", "operation_id": "op_1",
                 "conversation_id": "conversation_1", "control": "steer", "outcome": "unavailable",

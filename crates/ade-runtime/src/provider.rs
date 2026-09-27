@@ -31,6 +31,12 @@ pub trait Provider: Send + Sync {
     fn pid(&self) -> Option<u32> {
         None
     }
+    /// Receives the provider-native MCP server map (F131) before `open`. Only
+    /// adapters in `ade_core::mcp::WIRED_PROVIDERS` accept it; any other
+    /// adapter refuses rather than launch without servers it was given.
+    fn configure_mcp(&self, _servers: Value) -> Result<()> {
+        bail!("This provider adapter does not pass MCP servers at launch")
+    }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected>;
     fn send(
         &self,
@@ -56,6 +62,12 @@ pub trait Provider: Send + Sync {
     /// identifies the request so a retry is not delivered twice.
     fn compact(&self, _session: &str, _operation: &str) -> Result<()> {
         bail!("This provider adapter does not support context compaction")
+    }
+    /// Returns the provider's history to before `turn` (F039): `turn` and
+    /// every later turn leave the provider's history. `operation` identifies
+    /// the request so a retry is not delivered twice.
+    fn rewind(&self, _session: &str, _turn: &str, _operation: &str) -> Result<()> {
+        bail!("This provider adapter does not support rewinding the conversation")
     }
     fn prepare_submission(&self) -> Option<String> {
         None

@@ -97,7 +97,7 @@ test('the CLI drives the same catalog and reports refusals as JSON errors', asyn
   expect(providers.map((entry) => entry.provider)).toEqual(expect.arrayContaining(['claude', 'codex', 'omp']))
   expect(providers.find((entry) => entry.provider === 'codex')).toMatchObject({
     native: { url: 'https://mcp.example.invalid/docs', env_http_headers: { Authorization: 'FIXTURE_REMOTE_AUTH' } },
-    unsupported_reason: null, wired: false })
+    unsupported_reason: null, wired: true })
   expect(inspected.json?.protocol_versions).toContain('2026-07-28')
 
   const stale = await profile.cli('mcp', 'remove', 'docs', '7')
@@ -152,7 +152,7 @@ test('resolves scope and provider selection per workspace into each native docum
   const reasons = (resolution: any) => Object.fromEntries(resolution.excluded.map((entry: any) => [entry.name, entry.reason]))
 
   const alphaCodex = await call(profile, 'mcp.resolve', { workspace_id: alpha.id, provider: 'codex' })
-  expect(alphaCodex).toMatchObject({ delivery: 'direct', wired: false, format: 'codex_config_toml' })
+  expect(alphaCodex).toMatchObject({ delivery: 'direct', wired: true, format: 'codex_config_toml' })
   expect(names(alphaCodex)).toEqual(['alpha-only', 'codex-only', 'everywhere', 'alpha-repo'].sort())
   expect(reasons(alphaCodex)).toEqual({ 'switched-off': 'disabled' })
   // Codex forwards the reference by name and keeps the literal.
@@ -160,7 +160,7 @@ test('resolves scope and provider selection per workspace into each native docum
     command: 'files-mcp', env: { LOG_LEVEL: 'info' }, env_vars: ['FIXTURE_TOKEN'] })
 
   const betaClaude = await call(profile, 'mcp.resolve', { workspace_id: beta.id, provider: 'claude' })
-  expect(betaClaude).toMatchObject({ delivery: 'direct', wired: false, format: 'claude_mcp_json' })
+  expect(betaClaude).toMatchObject({ delivery: 'direct', wired: true, format: 'claude_mcp_json' })
   expect(names(betaClaude)).toEqual(['everywhere'])
   expect(reasons(betaClaude)).toMatchObject({ 'alpha-only': 'outside_scope', 'codex-only': 'provider_not_selected',
     'switched-off': 'disabled', 'alpha-repo': 'outside_scope' })
@@ -204,11 +204,9 @@ test('a repository-scoped entry reaches Oh My Pi in that repository only', async
   expect(elsewhere.excluded).toEqual([expect.objectContaining({ name: 'repo-tools', reason: 'outside_scope' })])
 })
 
-// F131 asks that a registered server reach providers through their adapters.
-// No adapter reads mcp.resolve yet (every reply says wired: false), so no
-// provider launch carries the catalog. There is also no ADE gateway, so the
-// both-leg capability and authorization handling cannot be observed.
-test.fixme('a provider launched in a workspace receives the resolved MCP servers', async ({ profile }) => {
+// F131: Codex and Claude adapters pass the resolution at launch. The launch
+// itself is proved in e2e/protocol/ops3/mcp-launch.spec.ts.
+test('a provider launched in a workspace receives the resolved MCP servers', async ({ profile }) => {
   const workspace = (await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })).workspace
   await call(profile, 'mcp.server.add', { name: 'files', definition: stdio() })
   const resolved = await call(profile, 'mcp.resolve', { workspace_id: workspace.id, provider: 'claude' })

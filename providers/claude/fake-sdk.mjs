@@ -16,7 +16,23 @@ export function fakeSdk(directory) {
     getSubagentMessages:async(id,child,{offset,limit})=>JSON.parse(readFileSync(file(id),'utf8')).filter(m=>child==='fixture-child'&&m.parent_tool_use_id==='fixture-spawn').slice(offset,offset+limit),
     query({prompt,options}) {
       const session=options.resume??options.sessionId;
-      const history=options.resume?JSON.parse(readFileSync(file(session),'utf8')):[];
+      // Recorded only when the catalog passed servers, so other call logs are unchanged.
+      let history=options.resume?JSON.parse(readFileSync(file(session),'utf8')):[];
+      // resumeSessionAt truncates the chain after that entry at boot. With
+      // resumeDropsTurn the discarded range must be exactly that one turn,
+      // or the resume is refused and the history kept, as the CLI documents.
+      let rejected=false;
+      if(options.resumeSessionAt) {
+        const at=history.findIndex(m=>m.uuid===options.resumeSessionAt);
+        const dropped=history.slice(at+1);
+        const prompt=m=>m.type==='user'&&typeof m.message?.content==='string';
+        rejected=at<0||(!!options.resumeDropsTurn&&(dropped[0]?.uuid!==options.resumeDropsTurn||dropped.slice(1).some(prompt)));
+        if(!rejected)history=history.slice(0,at+1);
+      }
+      // Recorded only for a catalog or rewind launch, so other call logs are unchanged.
+      if(options.mcpServers||options.resumeSessionAt)record({method:'query',session,resume:options.resume??null,
+        ...(options.mcpServers?{mcpServers:options.mcpServers}:{}),
+        ...(options.resumeSessionAt?{resumeSessionAt:options.resumeSessionAt,resumeDropsTurn:options.resumeDropsTurn??null,rejected}:{})});
       const messages=[];let wake=null,closed=false,current=null;
       // Cumulative per query() call, as the SDK reports modelUsage and total_cost_usd.
       const usage={inputTokens:0,outputTokens:0,cacheReadInputTokens:0,cacheCreationInputTokens:0,costUSD:0};
@@ -49,6 +65,7 @@ export function fakeSdk(directory) {
         async *[Symbol.asyncIterator](){while(!closed){if(messages.length){yield messages.shift();continue;}await new Promise(resolve=>wake=resolve);}},
       };
       sdk.last=query;save();
+      if(rejected)queueMicrotask(()=>emit({type:'result',is_error:true,subtype:'error_during_execution',errors:[`Resume rejected by --resume-drops-turn: entries after ${options.resumeSessionAt} are not all from ${options.resumeDropsTurn}`]}));
       queueMicrotask(async()=>{
         for await(const user of prompt) {
           if(closed)break;

@@ -232,6 +232,46 @@ pub fn plan_adoption(context: &AdoptionContext) -> Result<AdoptionPlan, String> 
     }
 }
 
+/// What `skill.place` does, decided from what [`decide`] saw at the path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlacePlan {
+    /// Write the bundle into the absent path and own it.
+    Create,
+    /// Swap ADE's own unchanged placement for the bundle.
+    Replace,
+    /// The owned path already holds the bundle; write nothing.
+    UpToDate,
+    /// An external directory holds identical content; write nothing, own nothing.
+    ExternalIdentical,
+}
+
+/// Decides a placement. Anything but an absent path or an unchanged
+/// catalog-owned one is refused with the projection's reason, so an external
+/// skill is never written over (D14).
+pub fn plan_place(
+    observed: SkillObservedPlacement,
+    decision: SkillPlacementDecision,
+    reason: Option<&str>,
+) -> Result<PlacePlan, String> {
+    use SkillObservedPlacement as O;
+    use SkillPlacementDecision as D;
+    match (observed, decision) {
+        (_, D::Create) => Ok(PlacePlan::Create),
+        (_, D::Replace) => Ok(PlacePlan::Replace),
+        (O::ExternalIdentical, D::UpToDate) => Ok(PlacePlan::ExternalIdentical),
+        (_, D::UpToDate) => Ok(PlacePlan::UpToDate),
+        (_, D::RequiresAdoption | D::Refuse) => Err(reason
+            .unwrap_or("The provider path cannot take this skill")
+            .to_owned()),
+    }
+}
+
+/// Whether a placement interrupted by a crash provably finished: the path
+/// now holds exactly the bundle it was writing. Anything else is unknown.
+pub fn placement_finished(seen: &Seen, content_hash: &str) -> bool {
+    matches!(seen, Seen::Directory { content_hash: Some(found) } if found == content_hash)
+}
+
 /// Checks a removal against the installed bundle's hash.
 pub fn check_remove(installed: Option<&str>, expected: &str) -> Result<(), String> {
     match installed {
@@ -409,5 +449,39 @@ mod tests {
         assert!(check_remove(None, "a").is_err());
         assert!(check_remove(Some("b"), "a").is_err());
         assert!(check_remove(Some("a"), "a").is_ok());
+    }
+
+    #[test]
+    fn placement_writes_only_an_absent_or_owned_unchanged_path() {
+        let plan = |seen: &Seen, adopted: Option<&str>| {
+            let (observed, decision, reason) = decide(seen, adopted, "h");
+            plan_place(observed, decision, reason)
+        };
+        assert_eq!(plan(&Seen::Absent, None), Ok(PlacePlan::Create));
+        assert_eq!(plan(&dir(Some("old")), Some("old")), Ok(PlacePlan::Replace));
+        assert_eq!(plan(&dir(Some("h")), Some("h")), Ok(PlacePlan::UpToDate));
+        assert_eq!(
+            plan(&dir(Some("h")), None),
+            Ok(PlacePlan::ExternalIdentical)
+        );
+        // External, drifted, non-directory and unreadable paths are never written.
+        for (seen, adopted) in [
+            (dir(Some("other")), None),
+            (dir(None), None),
+            (dir(Some("edited")), Some("old")),
+            (Seen::Other, None),
+            (Seen::Unreadable, None),
+        ] {
+            assert!(plan(&seen, adopted).is_err(), "{seen:?} {adopted:?}");
+        }
+    }
+
+    #[test]
+    fn an_interrupted_placement_is_finished_only_with_the_exact_bundle() {
+        assert!(placement_finished(&dir(Some("h")), "h"));
+        assert!(!placement_finished(&dir(Some("old")), "h"));
+        assert!(!placement_finished(&dir(None), "h"));
+        assert!(!placement_finished(&Seen::Absent, "h"));
+        assert!(!placement_finished(&Seen::Other, "h"));
     }
 }

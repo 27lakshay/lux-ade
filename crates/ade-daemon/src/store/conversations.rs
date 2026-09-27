@@ -16,6 +16,8 @@ pub enum QueueEntry {
 /// user resumes it, as `agent.send` may. Keep in step with `queue_heads`.
 pub const QUEUE_DISPATCH_STATUSES: &[&str] = &["idle", "ready", "interrupted", "error"];
 
+const HISTORY_EPOCHS: &str = "CREATE TABLE IF NOT EXISTS conversation_history_epochs(conversation_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL CHECK(epoch>=0));";
+
 pub(super) fn message_by_id(db: &Connection, id: &str) -> Result<Option<Message>> {
     db.query_row("SELECT data FROM messages WHERE id=?1", [id], |r| {
         r.get::<_, String>(0)
@@ -159,6 +161,62 @@ impl Store {
     }
     pub fn message(&self, id: &str) -> Result<Option<Message>> {
         message_by_id(&self.connection, id)
+    }
+    /// How many times a rewind replaced this Conversation's history (F039).
+    /// The table is created on first use rather than by a numbered migration.
+    pub fn history_epoch(&self, conversation: &str) -> Result<u64> {
+        self.connection.execute_batch(HISTORY_EPOCHS)?;
+        let epoch: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT epoch FROM conversation_history_epochs WHERE conversation_id=?1",
+                [conversation],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(epoch.unwrap_or(0).max(0) as u64)
+    }
+    /// Every message from `sequence` on, oldest first.
+    pub fn messages_from(&self, conversation: &str, sequence: i64) -> Result<Vec<Message>> {
+        let mut statement = self.connection.prepare(
+            "SELECT data FROM messages WHERE conversation_id=?1 AND sequence>=?2 ORDER BY sequence",
+        )?;
+        let messages = statement
+            .query_map(params![conversation, sequence], |r| r.get::<_, String>(0))?
+            .map(|row| decode(row?))
+            .collect::<Result<_>>()?;
+        Ok(messages)
+    }
+    /// Removes every message from `sequence` on and moves the history epoch,
+    /// in one transaction with `settle`, which records the operation's
+    /// outcome. Returns how many messages went and the new epoch. The search
+    /// index drops them through its delete journal.
+    pub fn rewind_history(
+        &self,
+        conversation: &str,
+        sequence: i64,
+        settle: impl FnOnce(&Connection, u64, u64) -> Result<()>,
+    ) -> Result<(u64, u64)> {
+        self.connection.execute_batch(HISTORY_EPOCHS)?;
+        let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        let removed = tx.execute(
+            "DELETE FROM messages WHERE conversation_id=?1 AND sequence>=?2",
+            params![conversation, sequence],
+        )?;
+        tx.execute(
+            "INSERT INTO conversation_history_epochs(conversation_id,epoch) VALUES(?1,1)
+             ON CONFLICT(conversation_id) DO UPDATE SET epoch=epoch+1",
+            [conversation],
+        )?;
+        let epoch: i64 = tx.query_row(
+            "SELECT epoch FROM conversation_history_epochs WHERE conversation_id=?1",
+            [conversation],
+            |row| row.get(0),
+        )?;
+        let epoch = epoch.max(0) as u64;
+        settle(&tx, removed as u64, epoch)?;
+        tx.commit()?;
+        Ok((removed as u64, epoch))
     }
     /// Page backward through a workspace's durable review anchors. The scan cap
     /// bounds one request even when few notes match the requested text/path.
