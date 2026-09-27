@@ -76,7 +76,14 @@ export type ContractDefinition =
   | SendIntent
   | SendIntentPrepared
   | SendIntentState
+  | TerminalCreateRequest
+  | TerminalCreated
+  | TerminalOperation
+  | TerminalOperationRequest
   | TerminalOwner
+  | TerminalRestartRequest
+  | TerminalRetireRequest
+  | TerminalStopRequest
   | WindowCloseRequest
   | WindowSaveRequest
   | WorkspaceAck
@@ -1007,6 +1014,80 @@ export interface SendIntentState {
   [k: string]: unknown
 }
 /**
+ * `terminal.create`: add another terminal to a workspace.
+ *
+ * `operation_id` is the caller-owned receipt ID; `request_id` is accepted as
+ * its older name. Without one, every call creates a new terminal.
+ */
+export interface TerminalCreateRequest {
+  op: 'terminal.create'
+  /**
+   * Absent or a string of 1 to 256 bytes; the daemon rejects `null`.
+   */
+  operation_id?: string
+  workspace_id: string
+}
+/**
+ * The `terminal.create` reply.
+ */
+export interface TerminalCreated {
+  terminal_id: string
+  /**
+   * The `ack` type tag.
+   */
+  type: 'ack'
+  [k: string]: unknown
+}
+/**
+ * The `terminal.operation` reply. `request_id` echoes the requested
+ * operation ID under its older name.
+ */
+export interface TerminalOperation {
+  request_id: string
+  terminal_id: string
+  /**
+   * The `terminal_operation` type tag.
+   */
+  type: 'terminal_operation'
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * `terminal.operation`: read the terminal a `terminal.create` receipt produced.
+ * `request_id` is accepted as the older name of `operation_id`.
+ */
+export interface TerminalOperationRequest {
+  op: 'terminal.operation'
+  operation_id: string
+  workspace_id: string
+}
+/**
+ * `terminal.restart`: start a new shell in an exited terminal. Without
+ * `workspace_id` the daemon uses its default workspace; without
+ * `terminal_id` it uses the workspace's primary terminal.
+ */
+export interface TerminalRestartRequest {
+  op: 'terminal.restart'
+  terminal_id?: string | null
+  workspace_id?: string | null
+}
+/**
+ * `terminal.retire`: remove a stopped terminal from its workspace.
+ */
+export interface TerminalRetireRequest {
+  op: 'terminal.retire'
+  terminal_id: string
+  workspace_id: string
+}
+/**
+ * `terminal.stop`: stop a workspace terminal's shell.
+ */
+export interface TerminalStopRequest {
+  op: 'terminal.stop'
+  terminal_id: string
+  workspace_id: string
+}
+/**
  * `window.close`: forget a window's record, unless it is the last one.
  */
 export interface WindowCloseRequest {
@@ -1081,7 +1162,7 @@ export interface WorkspaceRebindRequest {
   workspace_id: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -1123,6 +1204,11 @@ export interface RequestByOperation {
   "account.inspect": AccountInspectRequest
   "account.verify": AccountVerifyRequest
   "account.disable": AccountDisableRequest
+  "terminal.create": TerminalCreateRequest
+  "terminal.operation": TerminalOperationRequest
+  "terminal.restart": TerminalRestartRequest
+  "terminal.stop": TerminalStopRequest
+  "terminal.retire": TerminalRetireRequest
 }
 
 export interface ResponseByOperation {
@@ -1165,6 +1251,11 @@ export interface ResponseByOperation {
   "account.inspect": AccountInspection
   "account.verify": AccountAck
   "account.disable": AccountDisabled
+  "terminal.create": TerminalCreated
+  "terminal.operation": TerminalOperation
+  "terminal.restart": Ack
+  "terminal.stop": Ack
+  "terminal.retire": Ack
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged

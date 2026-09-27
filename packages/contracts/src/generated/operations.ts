@@ -41,6 +41,11 @@ export const operations = {
   "account.inspect": { tier: "query", domain: "accounts", request: "AccountInspectRequest", response: "AccountInspection" },
   "account.verify": { tier: "idempotent_command", domain: "accounts", request: "AccountVerifyRequest", response: "AccountAck" },
   "account.disable": { tier: "idempotent_command", domain: "accounts", request: "AccountDisableRequest", response: "AccountDisabled" },
+  "terminal.create": { tier: "effect_command", domain: "terminals", request: "TerminalCreateRequest", response: "TerminalCreated" },
+  "terminal.operation": { tier: "query", domain: "terminals", request: "TerminalOperationRequest", response: "TerminalOperation" },
+  "terminal.restart": { tier: "effect_command", domain: "terminals", request: "TerminalRestartRequest", response: "Ack" },
+  "terminal.stop": { tier: "effect_command", domain: "terminals", request: "TerminalStopRequest", response: "Ack" },
+  "terminal.retire": { tier: "effect_command", domain: "terminals", request: "TerminalRetireRequest", response: "Ack" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

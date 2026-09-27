@@ -1,36 +1,54 @@
 //! `terminal.*` operations, terminal leases and view-terminal recovery.
 use super::*;
+use ade_core::contract::conversations::AckTag;
+use ade_core::contract::terminals::{
+    TerminalCreateRequest, TerminalCreated, TerminalOperation, TerminalOperationRequest,
+    TerminalOperationTag, runtime,
+};
 
 impl Sessions {
     pub(super) fn terminal_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
-        let string = required_str(request);
         match request["op"].as_str().unwrap_or("") {
             "terminal.create" => {
+                for key in ["operation_id", "request_id"] {
+                    if let Some(value) = request.get(key) {
+                        ensure!(value.is_string(), "Invalid terminal request ID");
+                    }
+                }
+                let create: TerminalCreateRequest = decode(request)?;
                 let mut d = self.data.lock().unwrap();
-                let request_id = match request.get("request_id") {
-                    Some(value) => Some(value.as_str().context("Invalid terminal request ID")?),
-                    None => None,
-                };
                 let terminal = d
                     .store
-                    .create_terminal(string("workspace_id")?, request_id)?;
+                    .create_terminal(&create.workspace_id, create.operation_id.as_deref())?;
                 self.catalog_changed(&mut d)?;
-                Ok(json!({"type":"ack", "terminal_id":terminal}))
+                reply(&TerminalCreated {
+                    tag: AckTag::Tag,
+                    terminal_id: terminal,
+                })
             }
             "terminal.operation" => {
+                ensure!(
+                    request.get("operation_id").is_some() || request.get("request_id").is_some(),
+                    "Missing request_id"
+                );
+                let lookup: TerminalOperationRequest = decode(request)?;
+                let workspace_id = non_empty("workspace_id", &lookup.workspace_id)?;
+                let operation_id = non_empty("request_id", &lookup.operation_id)?;
                 let d = self.data.lock().unwrap();
-                let workspace_id = string("workspace_id")?;
-                let request_id = string("request_id")?;
                 let (owner, terminal_id) = d
                     .store
-                    .terminal_creation(request_id)?
+                    .terminal_creation(operation_id)?
                     .context("Terminal operation is unavailable")?;
                 ensure!(
                     owner == workspace_id,
                     "Terminal operation belongs to another workspace"
                 );
-                Ok(json!({"type":"terminal_operation", "workspace_id":owner,
-                    "request_id":request_id, "terminal_id":terminal_id}))
+                reply(&TerminalOperation {
+                    tag: TerminalOperationTag::Tag,
+                    workspace_id: owner,
+                    request_id: operation_id.to_owned(),
+                    terminal_id,
+                })
             }
             _ => bail!("Unknown session operation"),
         }
@@ -56,23 +74,37 @@ impl Sessions {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             let mut stopped = false;
             loop {
-                let state = self.runtime.command(json!({"op":"terminal.list"}))?;
-                let terminal = state["terminals"]
-                    .as_array()
-                    .context("Invalid terminal catalogue")?
+                let state: runtime::Terminals = serde_json::from_value(
+                    self.runtime.command(runtime::Command::List.to_value())?,
+                )
+                .context("Invalid terminal catalogue")?;
+                let terminal = state
+                    .terminals
                     .iter()
-                    .find(|t| t["workspace"]["terminal_id"] == owner.terminal_id);
+                    .find(|t| t.workspace.terminal_id == owner.terminal_id);
                 let Some(terminal) = terminal else { break };
                 ensure!(
-                    terminal["metrics"]["transfer_id"] == owner.transfer_id,
+                    terminal.metrics["transfer_id"] == owner.transfer_id,
                     "Terminal view ownership changed"
                 );
-                if terminal["metrics"]["shell_running"] == false {
-                    self.runtime.command(json!({"op":"terminal.retire","workspace_id":c.workspace_id,"terminal_id":owner.terminal_id}))?;
+                if terminal.metrics["shell_running"] == false {
+                    self.runtime.command(
+                        runtime::Command::Retire {
+                            workspace_id: c.workspace_id.clone(),
+                            terminal_id: owner.terminal_id.clone(),
+                        }
+                        .to_value(),
+                    )?;
                     break;
                 }
                 if !stopped {
-                    self.runtime.command(json!({"op":"terminal.stop","workspace_id":c.workspace_id,"terminal_id":owner.terminal_id}))?;
+                    self.runtime.command(
+                        runtime::Command::Stop {
+                            workspace_id: c.workspace_id.clone(),
+                            terminal_id: owner.terminal_id.clone(),
+                        }
+                        .to_value(),
+                    )?;
                     stopped = true;
                 }
                 ensure!(
