@@ -69,6 +69,25 @@ export type ContractDefinition =
   | CatalogFrame
   | CatalogGetRequest
   | Catalogue
+  | CheckpointArea
+  | CheckpointChangeKind
+  | CheckpointCoverage
+  | CheckpointCreateRequest
+  | CheckpointCreated
+  | CheckpointDeleteRequest
+  | CheckpointDeleted
+  | CheckpointKind
+  | CheckpointList
+  | CheckpointListRequest
+  | CheckpointPathChange
+  | CheckpointProblem
+  | CheckpointRestoreOutcome
+  | CheckpointRestorePreview
+  | CheckpointRestorePreviewRequest
+  | CheckpointRestoreRequest
+  | CheckpointRestoreVerdict
+  | CheckpointRestored
+  | CheckpointSummary
   | ChildDelegated
   | ChildGetRequest
   | ChildList
@@ -464,6 +483,26 @@ export type Caller =
       kind: 'agent'
       [k: string]: unknown
     }
+/**
+ * Which snapshot a change belongs to.
+ */
+export type CheckpointArea = 'worktree' | 'index'
+/**
+ * How restoring one path changes it.
+ */
+export type CheckpointChangeKind = ('added' | 'modified' | 'deleted') | 'type_changed'
+/**
+ * Why a checkpoint exists.
+ */
+export type CheckpointKind = 'manual' | 'safety'
+/**
+ * How a restore ended.
+ */
+export type CheckpointRestoreOutcome = 'unchanged' | 'restored' | 'partial'
+/**
+ * Whether a restore may run now.
+ */
+export type CheckpointRestoreVerdict = 'unchanged' | 'ready' | 'needs_confirmation' | 'blocked'
 /**
  * How the child's workspace was chosen.
  */
@@ -1680,6 +1719,228 @@ export interface Descriptor {
  */
 export interface CatalogGetRequest {
   op: 'catalog.get'
+}
+/**
+ * What a checkpoint holds and what it leaves out.
+ */
+export interface CheckpointCoverage {
+  /**
+   * Files in the working-tree snapshot, including symbolic links. Binary
+   * files are stored byte for byte.
+   */
+  files: number
+  /**
+   * Ignored entries left out. An ignored directory counts once.
+   */
+  ignored_entries: number
+  /**
+   * The categories this checkpoint never covers.
+   */
+  not_covered: string[]
+  /**
+   * Submodules and nested repositories, recorded by commit only; their
+   * contents are not captured.
+   */
+  submodules: number
+  symlinks: number
+  /**
+   * Untracked, non-ignored files included in the snapshot.
+   */
+  untracked_files: number
+  [k: string]: unknown
+}
+/**
+ * `checkpoint.create`: record the workspace's working tree and index.
+ */
+export interface CheckpointCreateRequest {
+  /**
+   * A short note shown in lists; at most 200 characters on one line.
+   */
+  label?: string | null
+  op: 'checkpoint.create'
+  operation_id: string
+  workspace_id: string
+}
+export interface CheckpointCreated {
+  checkpoint: CheckpointSummary
+  /**
+   * The `checkpoint_created` type tag.
+   */
+  type: 'checkpoint_created'
+  [k: string]: unknown
+}
+/**
+ * One checkpoint as Git records it.
+ */
+export interface CheckpointSummary {
+  /**
+   * The branch HEAD named; absent when detached or unborn.
+   */
+  branch: string | null
+  checkpoint_id: string
+  /**
+   * The checkpoint commit.
+   */
+  commit: string
+  coverage: CheckpointCoverage
+  created_at: number
+  /**
+   * HEAD when the checkpoint was made; absent on an unborn branch.
+   */
+  head: string | null
+  /**
+   * The tree of the index snapshot.
+   */
+  index_tree: string
+  kind: CheckpointKind
+  label?: string | null
+  /**
+   * The private ref that keeps the checkpoint.
+   */
+  ref_name: string
+  workspace_id: string
+  /**
+   * The tree of the working-tree snapshot.
+   */
+  worktree_tree: string
+  [k: string]: unknown
+}
+/**
+ * `checkpoint.delete`: remove a checkpoint's ref. Its objects become
+ * unreachable and Git's own garbage collection reclaims them later.
+ */
+export interface CheckpointDeleteRequest {
+  checkpoint_id: string
+  /**
+   * The checkpoint's `commit`; delete refuses when the ref points elsewhere.
+   */
+  expected_commit: string
+  op: 'checkpoint.delete'
+  operation_id: string
+  workspace_id: string
+}
+export interface CheckpointDeleted {
+  checkpoint_id: string
+  ref_name: string
+  /**
+   * The `checkpoint_deleted` type tag.
+   */
+  type: 'checkpoint_deleted'
+  [k: string]: unknown
+}
+export interface CheckpointList {
+  /**
+   * Newest first.
+   */
+  checkpoints: CheckpointSummary[]
+  /**
+   * Refs under the workspace's namespace that do not parse as checkpoints.
+   */
+  problems: CheckpointProblem[]
+  /**
+   * The `checkpoints` type tag.
+   */
+  type: 'checkpoints'
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * A checkpoint ref that ADE cannot read as a checkpoint.
+ */
+export interface CheckpointProblem {
+  problem: string
+  ref_name: string
+  [k: string]: unknown
+}
+/**
+ * `checkpoint.list`: the workspace's checkpoints, newest first.
+ */
+export interface CheckpointListRequest {
+  op: 'checkpoint.list'
+  workspace_id: string
+}
+/**
+ * One path a restore changes, relative to the workspace root.
+ */
+export interface CheckpointPathChange {
+  area: CheckpointArea
+  kind: CheckpointChangeKind
+  path: string
+  [k: string]: unknown
+}
+export interface CheckpointRestorePreview {
+  blocked_reasons: string[]
+  changes: CheckpointPathChange[]
+  checkpoint: CheckpointSummary
+  /**
+   * HEAD moved since the checkpoint. Restore keeps the current HEAD.
+   */
+  head_changed: boolean
+  /**
+   * Paths the checkpoint would write over ignored or excluded files on disk.
+   * Restore refuses while any exist, because no checkpoint covers them.
+   */
+  ignored_overwritten: string[]
+  /**
+   * Pass as `expected_state` to `checkpoint.restore`.
+   */
+  state_token: string
+  /**
+   * The `checkpoint_restore_preview` type tag.
+   */
+  type: 'checkpoint_restore_preview'
+  /**
+   * Changed paths whose current content differs from HEAD. The safety
+   * checkpoint keeps them.
+   */
+  uncommitted_overwritten: string[]
+  verdict: CheckpointRestoreVerdict
+  [k: string]: unknown
+}
+/**
+ * `checkpoint.restore.preview`: what a restore would change, and whether it may run.
+ */
+export interface CheckpointRestorePreviewRequest {
+  checkpoint_id: string
+  op: 'checkpoint.restore.preview'
+  workspace_id: string
+}
+/**
+ * `checkpoint.restore`: make the working tree and index match a checkpoint.
+ */
+export interface CheckpointRestoreRequest {
+  checkpoint_id: string
+  /**
+   * Required when the preview listed `uncommitted_overwritten` paths.
+   */
+  confirm_overwrite?: boolean
+  /**
+   * The `state_token` from `checkpoint.restore.preview`. Restore refuses when
+   * the workspace or the checkpoint changed since that preview.
+   */
+  expected_state: string
+  op: 'checkpoint.restore'
+  operation_id: string
+  workspace_id: string
+}
+export interface CheckpointRestored {
+  changes: CheckpointPathChange[]
+  checkpoint_id: string
+  outcome: CheckpointRestoreOutcome
+  problems: string[]
+  /**
+   * The state saved before any write; absent when nothing changed.
+   */
+  safety_checkpoint: CheckpointSummary | null
+  /**
+   * The `checkpoint_restored` type tag.
+   */
+  type: 'checkpoint_restored'
+  /**
+   * Whether a fresh snapshot after the restore matched the checkpoint.
+   */
+  verified: boolean
+  [k: string]: unknown
 }
 /**
  * The `orchestration.delegate` reply: the child is admitted and its task is
@@ -5929,7 +6190,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -6081,6 +6342,11 @@ export interface RequestByOperation {
   "resources.inspect": ResourcesInspectRequest
   "resources.claim.resolve": ResourcesClaimResolveRequest
   "resources.registry.accept": ResourcesRegistryAcceptRequest
+  "checkpoint.create": CheckpointCreateRequest
+  "checkpoint.list": CheckpointListRequest
+  "checkpoint.restore.preview": CheckpointRestorePreviewRequest
+  "checkpoint.restore": CheckpointRestoreRequest
+  "checkpoint.delete": CheckpointDeleteRequest
 }
 
 export interface ResponseByOperation {
@@ -6233,6 +6499,11 @@ export interface ResponseByOperation {
   "resources.inspect": HostResourcesState
   "resources.claim.resolve": HostResourcesState
   "resources.registry.accept": HostResourcesState
+  "checkpoint.create": CheckpointCreated
+  "checkpoint.list": CheckpointList
+  "checkpoint.restore.preview": CheckpointRestorePreview
+  "checkpoint.restore": CheckpointRestored
+  "checkpoint.delete": CheckpointDeleted
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

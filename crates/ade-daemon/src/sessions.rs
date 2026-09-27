@@ -31,6 +31,7 @@ use std::{
 mod accounts;
 mod activity;
 mod agents;
+mod checkpoints;
 mod conversations;
 mod inspection;
 mod leases;
@@ -711,6 +712,7 @@ impl Sessions {
             | "notification.delivery.report"
             | "notification.delivery.list" => self.activity_command(request),
             op if op.starts_with("mcp.") => self.mcp_command(request),
+            op if op.starts_with("checkpoint.") => self.checkpoint_command(request),
             "attachment.inspect"
             | "attachment.reclaim.preview"
             | "attachment.reclaim.apply"

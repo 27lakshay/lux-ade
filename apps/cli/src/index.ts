@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { DaemonRequestError, requestDaemon } from '@ade/client'
 import { accountUsage, runAccountCommand } from './commands/accounts.js'
 import { browserUsage, runBrowserCommand } from './commands/browser.js'
+import { checkpointUsage, runCheckpointCommand } from './commands/checkpoints.js'
 import { conversationUsage, runConversationCommand } from './commands/conversations.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
 import { gitUsage, runGitCommand } from './commands/git.js'
@@ -71,6 +72,7 @@ const usage = [
   browserUsage,
   serviceUsage,
   gitUsage,
+  checkpointUsage,
   listenerUsage,
   mcpUsage,
   skillUsage,
@@ -200,6 +202,7 @@ const commandAreas = [
   runBrowserCommand,
   runServiceCommand,
   runGitCommand,
+  runCheckpointCommand,
   runListenerCommand,
   runMcpCommand,
   runSkillCommand,
