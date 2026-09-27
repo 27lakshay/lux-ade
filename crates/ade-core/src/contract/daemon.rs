@@ -146,6 +146,11 @@ pub struct BrowserOpenRequest {
     pub operation_id: String,
     /// An `http://` or `https://` URL of at most 8192 bytes.
     pub url: String,
+    /// The browser partition the tab lives in, from `browser.partition.list`.
+    /// The `default` partition when absent. The partition is part of the
+    /// operation's fingerprint only when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_id: Option<String>,
 }
 
 /// `browser.navigate`: load a URL in an exact tab.
@@ -274,6 +279,9 @@ pub struct BrowserTabRecord {
     pub title: String,
     pub loading: bool,
     pub error: String,
+    /// The tab's browser partition; absent for `default`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_id: Option<String>,
 }
 
 /// The `browser.list` reply, relayed from the owner.

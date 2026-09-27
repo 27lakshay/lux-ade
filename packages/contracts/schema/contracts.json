@@ -1538,6 +1538,140 @@
       ],
       "type": "object"
     },
+    "BrowserContextCapture": {
+      "description": "The `browser.context.capture` reply.",
+      "properties": {
+        "capture_id": {
+          "type": "string"
+        },
+        "captured_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "context": {
+          "$ref": "#/$defs/Attachment",
+          "description": "The `ade-design-context-v1` document."
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "element": {
+          "description": "The element's lowercase tag name.",
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "screenshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Attachment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "screenshot_unavailable": {
+          "description": "Why there is no screenshot: `not_requested`, `not_visible`,\n`too_large` or `capture_failed`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "truncated": {
+          "description": "Parts of the context cut to stay within bounds, such as `html`,\n`text` or `attributes`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `browser_context_capture` type tag.",
+          "enum": [
+            "browser_context_capture"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "description": "The page URL without user information, query or fragment.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "conversation_id",
+        "capture_id",
+        "url",
+        "title",
+        "element",
+        "context",
+        "screenshot",
+        "screenshot_unavailable",
+        "truncated",
+        "captured_at_ms"
+      ],
+      "type": "object"
+    },
+    "BrowserContextCaptureRequest": {
+      "additionalProperties": false,
+      "description": "`browser.context.capture`: capture one element of one exact tab into two\nconversation attachments. The first is a UTF-8 JSON document\n(`ade-design-context-v1`) with the element's redacted HTML snippet,\ncomputed styles and geometry. The second, when the element is visible, is a\nPNG or JPEG screenshot of it. The owner reads the named tab only; it never\nsubstitutes the selected or focused tab, and a page that navigates during\nthe capture fails it.\n\n`capture_id` is caller-owned and becomes the context attachment's ID; the\nscreenshot's is `<capture_id>-screenshot`. Repeating a capture with the\nsame ID and request returns the stored capture and never captures again;\nthe same ID with another request conflicts.",
+      "properties": {
+        "capture_id": {
+          "description": "1 to 100 ASCII letters, digits, `-` or `_`.",
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "browser.context.capture"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "screenshot": {
+          "description": "Take a screenshot of the element; true when absent.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "selector": {
+          "description": "A CSS selector of 1 to 1024 characters; its first match is captured.",
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "profile_id",
+        "owner_id",
+        "tab_id",
+        "conversation_id",
+        "capture_id",
+        "selector"
+      ],
+      "type": "object"
+    },
     "BrowserDiagnostics": {
       "description": "The `browser.diagnostics.read` reply.",
       "properties": {
@@ -1756,6 +1890,374 @@
         "owner_id",
         "tab_id",
         "attachment"
+      ],
+      "type": "object"
+    },
+    "BrowserImport": {
+      "description": "The `browser.import.run` and `browser.import.get` reply.",
+      "properties": {
+        "classes": {
+          "items": {
+            "$ref": "#/$defs/BrowserImportedClass"
+          },
+          "type": "array"
+        },
+        "import_id": {
+          "type": "string"
+        },
+        "imported_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "partition_id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "refused": {
+          "description": "What this source holds that was not imported.",
+          "items": {
+            "$ref": "#/$defs/BrowserImportRefusal"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/BrowserImportSource"
+        },
+        "source_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `browser_import` type tag.",
+          "enum": [
+            "browser_import"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "import_id",
+        "partition_id",
+        "source",
+        "source_profile",
+        "classes",
+        "refused",
+        "imported_at_ms"
+      ],
+      "type": "object"
+    },
+    "BrowserImportAvailability": {
+      "description": "Whether a class can be read from the source now.",
+      "oneOf": [
+        {
+          "const": "ready",
+          "description": "The source file exists, has a supported format and was read.",
+          "type": "string"
+        },
+        {
+          "const": "missing",
+          "description": "The source file does not exist.",
+          "type": "string"
+        },
+        {
+          "const": "permission_denied",
+          "description": "macOS refused access, as it does for Safari without Full Disk Access.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "The file exists but its format or version is not supported, or it is\ndamaged or too large. `reason` says which.",
+          "type": "string"
+        }
+      ]
+    },
+    "BrowserImportClass": {
+      "description": "A data class ADE imports. Every other class is refused, and the preview\nlists each one with its reason.",
+      "oneOf": [
+        {
+          "const": "bookmarks",
+          "description": "HTTP(S) bookmarks with their folder path. Other URL schemes are skipped.",
+          "type": "string"
+        },
+        {
+          "const": "history",
+          "description": "The most recently visited HTTP(S) URLs, at most 50000, with title,\nvisit count and last visit time. Individual visits are not imported.",
+          "type": "string"
+        }
+      ]
+    },
+    "BrowserImportClassPreview": {
+      "description": "One class as the source holds it.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/BrowserImportAvailability"
+        },
+        "class": {
+          "$ref": "#/$defs/BrowserImportClass"
+        },
+        "format": {
+          "description": "The detected format, such as `chrome-bookmarks-json-1` or\n`chrome-history-sqlite-68`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "importable": {
+          "description": "Entries that would be imported.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "description": "The file this class reads.",
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skipped": {
+          "description": "Entries skipped: non-HTTP(S) or over-long URLs.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "Entries beyond the import bound that would be left out.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "class",
+        "availability",
+        "path",
+        "format",
+        "importable",
+        "skipped",
+        "truncated",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "BrowserImportGetRequest": {
+      "additionalProperties": false,
+      "description": "`browser.import.get`: read a stored import by its ID.",
+      "properties": {
+        "import_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "browser.import.get"
+        },
+        "profile_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "import_id"
+      ],
+      "type": "object"
+    },
+    "BrowserImportPreview": {
+      "description": "The `browser.import.preview` reply.",
+      "properties": {
+        "classes": {
+          "items": {
+            "$ref": "#/$defs/BrowserImportClassPreview"
+          },
+          "type": "array"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "refused": {
+          "items": {
+            "$ref": "#/$defs/BrowserImportRefusal"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/BrowserImportSource"
+        },
+        "source_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `browser_import_preview` type tag.",
+          "enum": [
+            "browser_import_preview"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "source",
+        "source_profile",
+        "classes",
+        "refused"
+      ],
+      "type": "object"
+    },
+    "BrowserImportPreviewRequest": {
+      "additionalProperties": false,
+      "description": "`browser.import.preview`: what an import from one source would read. It\nstores nothing in ADE and never writes the source.",
+      "properties": {
+        "op": {
+          "const": "browser.import.preview"
+        },
+        "profile_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/BrowserImportSource"
+        },
+        "source_profile": {
+          "description": "Chrome only: `Default` or `Profile N`; `Default` when absent. Safari\ntakes none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "source"
+      ],
+      "type": "object"
+    },
+    "BrowserImportRefusal": {
+      "description": "A class ADE never imports from this source, and why.",
+      "properties": {
+        "class": {
+          "description": "Such as `cookies`, `passwords` or `open_tabs`.",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "BrowserImportRunRequest": {
+      "additionalProperties": false,
+      "description": "`browser.import.run`: import the named classes into a partition's library.\n`import_id` is caller-owned. The import is one transaction: every requested\nclass is read and stored, or nothing is. Repeating it with the same ID and\nrequest returns the stored import without reading the source again; the\nsame ID with another request conflicts.",
+      "properties": {
+        "classes": {
+          "description": "One or more distinct classes.",
+          "items": {
+            "$ref": "#/$defs/BrowserImportClass"
+          },
+          "type": "array"
+        },
+        "import_id": {
+          "description": "1 to 128 ASCII letters, digits, `-` or `_`.",
+          "type": "string"
+        },
+        "op": {
+          "const": "browser.import.run"
+        },
+        "partition_id": {
+          "description": "`default` or a registered partition.",
+          "type": "string"
+        },
+        "profile_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/BrowserImportSource"
+        },
+        "source_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "import_id",
+        "partition_id",
+        "source",
+        "classes"
+      ],
+      "type": "object"
+    },
+    "BrowserImportSource": {
+      "description": "A browser ADE can import from, on macOS only.",
+      "oneOf": [
+        {
+          "const": "chrome",
+          "description": "Google Chrome: `Bookmarks` (JSON, format version 1) and `History`\n(SQLite, schema versions 40 to 99) in one profile directory.",
+          "type": "string"
+        },
+        {
+          "const": "safari",
+          "description": "Safari's default profile: `Bookmarks.plist` (binary property list,\nfile version 1) and `History.db` (SQLite). Reading them needs Full\nDisk Access for ADE.",
+          "type": "string"
+        }
+      ]
+    },
+    "BrowserImportedClass": {
+      "description": "One imported class.",
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/BrowserImportClass"
+        },
+        "format": {
+          "type": "string"
+        },
+        "imported": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "class",
+        "format",
+        "imported",
+        "skipped",
+        "truncated"
       ],
       "type": "object"
     },
@@ -1991,6 +2493,13 @@
         "owner_id": {
           "type": "string"
         },
+        "partition_id": {
+          "description": "The browser partition the tab lives in, from `browser.partition.list`.\nThe `default` partition when absent. The partition is part of the\noperation's fingerprint only when present.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "profile_id": {
           "type": "string"
         },
@@ -2210,6 +2719,144 @@
         "op",
         "profile_id",
         "owner_id"
+      ],
+      "type": "object"
+    },
+    "BrowserPartition": {
+      "description": "One browser partition.",
+      "properties": {
+        "created_at_ms": {
+          "description": "Wall-clock milliseconds; `null` for `default`.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "partition_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "partition_id",
+        "name",
+        "created_at_ms"
+      ],
+      "type": "object"
+    },
+    "BrowserPartitionCreateRequest": {
+      "additionalProperties": false,
+      "description": "`browser.partition.create`: register a named partition. `partition_id` is\ncaller-owned: repeating a create with the same ID and name returns the\npartition unchanged, and the same ID with another name conflicts. The\nbrowser owner creates its storage when a tab first opens in it.",
+      "properties": {
+        "name": {
+          "description": "1 to 64 characters without control characters.",
+          "type": "string"
+        },
+        "op": {
+          "const": "browser.partition.create"
+        },
+        "partition_id": {
+          "description": "1 to 64 lowercase ASCII letters, digits, `-` or `_`, starting with a\nletter or digit. `default` is reserved.",
+          "type": "string"
+        },
+        "profile_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "partition_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "BrowserPartitionListRequest": {
+      "additionalProperties": false,
+      "description": "`browser.partition.list`: the profile's browser partitions. A partition is\na named browser profile inside an ADE profile, with its own cookies,\nstorage and cache. `default` always exists: it is the storage every tab\nused before partitions, and it cannot be created or renamed.",
+      "properties": {
+        "op": {
+          "const": "browser.partition.list"
+        },
+        "profile_id": {
+          "description": "Defaults to this daemon's profile; any other profile is unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "BrowserPartitionReply": {
+      "description": "The `browser.partition.create` reply.",
+      "properties": {
+        "created": {
+          "description": "False when the partition already existed with this name.",
+          "type": "boolean"
+        },
+        "partition": {
+          "$ref": "#/$defs/BrowserPartition"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_partition` type tag.",
+          "enum": [
+            "browser_partition"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "partition",
+        "created"
+      ],
+      "type": "object"
+    },
+    "BrowserPartitions": {
+      "description": "The `browser.partition.list` reply, `default` first.",
+      "properties": {
+        "limit": {
+          "description": "The most named partitions a profile holds.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "partitions": {
+          "items": {
+            "$ref": "#/$defs/BrowserPartition"
+          },
+          "type": "array"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `browser_partitions` type tag.",
+          "enum": [
+            "browser_partitions"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "profile_id",
+        "partitions",
+        "limit"
       ],
       "type": "object"
     },
@@ -2477,6 +3124,13 @@
         },
         "observedUrl": {
           "type": "string"
+        },
+        "partitionId": {
+          "description": "The tab's browser partition; absent for `default`.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "profileId": {
           "description": "The owner's browser storage profile.",
@@ -18793,6 +19447,48 @@
       "request": "BrowserRecordingGetRequest",
       "response": "BrowserRecording",
       "tier": "query"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.partition.list",
+      "request": "BrowserPartitionListRequest",
+      "response": "BrowserPartitions",
+      "tier": "query"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.partition.create",
+      "request": "BrowserPartitionCreateRequest",
+      "response": "BrowserPartitionReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.import.preview",
+      "request": "BrowserImportPreviewRequest",
+      "response": "BrowserImportPreview",
+      "tier": "query"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.import.run",
+      "request": "BrowserImportRunRequest",
+      "response": "BrowserImport",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.import.get",
+      "request": "BrowserImportGetRequest",
+      "response": "BrowserImport",
+      "tier": "query"
+    },
+    {
+      "domain": "browser",
+      "name": "browser.context.capture",
+      "request": "BrowserContextCaptureRequest",
+      "response": "BrowserContextCapture",
+      "tier": "idempotent_command"
     }
   ]
 }

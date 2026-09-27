@@ -54,12 +54,25 @@ export type ContractDefinition =
   | BrowserCaptureKind
   | BrowserCloseRequest
   | BrowserConsoleEntry
+  | BrowserContextCapture
+  | BrowserContextCaptureRequest
   | BrowserDiagnostics
   | BrowserDiagnosticsAttachRequest
   | BrowserDiagnosticsDetachRequest
   | BrowserDiagnosticsDropped
   | BrowserDiagnosticsReadRequest
   | BrowserDiagnosticsState
+  | BrowserImport
+  | BrowserImportAvailability
+  | BrowserImportClass
+  | BrowserImportClassPreview
+  | BrowserImportGetRequest
+  | BrowserImportPreview
+  | BrowserImportPreviewRequest
+  | BrowserImportRefusal
+  | BrowserImportRunRequest
+  | BrowserImportSource
+  | BrowserImportedClass
   | BrowserInspectRequest
   | BrowserListRequest
   | BrowserMutation
@@ -75,6 +88,11 @@ export type ContractDefinition =
   | BrowserOwnerReleased
   | BrowserOwnerReply
   | BrowserOwnerUnregisterRequest
+  | BrowserPartition
+  | BrowserPartitionCreateRequest
+  | BrowserPartitionListRequest
+  | BrowserPartitionReply
+  | BrowserPartitions
   | BrowserRecording
   | BrowserRecordingGetRequest
   | BrowserRecordingStartRequest
@@ -583,6 +601,19 @@ export type BrowserCaptureKind = 'screenshots' | 'page_events' | 'console' | 'ne
  * How a network request ended.
  */
 export type BrowserNetworkOutcome = ('completed' | 'failed' | 'canceled' | 'blocked') | 'incomplete'
+/**
+ * A data class ADE imports. Every other class is refused, and the preview
+ * lists each one with its reason.
+ */
+export type BrowserImportClass = 'bookmarks' | 'history'
+/**
+ * A browser ADE can import from, on macOS only.
+ */
+export type BrowserImportSource = 'chrome' | 'safari'
+/**
+ * Whether a class can be read from the source now.
+ */
+export type BrowserImportAvailability = 'ready' | 'missing' | 'permission_denied' | 'unsupported'
 /**
  * Where a browser mutation stands.
  */
@@ -1802,6 +1833,86 @@ export interface BrowserConsoleEntry {
   [k: string]: unknown
 }
 /**
+ * The `browser.context.capture` reply.
+ */
+export interface BrowserContextCapture {
+  capture_id: string
+  captured_at_ms: number
+  context: Attachment1
+  conversation_id: string
+  /**
+   * The element's lowercase tag name.
+   */
+  element: string
+  owner_id: string
+  profile_id: string
+  screenshot: Attachment | null
+  /**
+   * Why there is no screenshot: `not_requested`, `not_visible`,
+   * `too_large` or `capture_failed`.
+   */
+  screenshot_unavailable: string | null
+  tab_id: string
+  title: string
+  /**
+   * Parts of the context cut to stay within bounds, such as `html`,
+   * `text` or `attributes`.
+   */
+  truncated: string[]
+  /**
+   * The `browser_context_capture` type tag.
+   */
+  type: 'browser_context_capture'
+  /**
+   * The page URL without user information, query or fragment.
+   */
+  url: string
+  [k: string]: unknown
+}
+/**
+ * The `ade-design-context-v1` document.
+ */
+export interface Attachment1 {
+  id: string
+  media_type: string
+  name: string
+  size: number
+  [k: string]: unknown
+}
+/**
+ * `browser.context.capture`: capture one element of one exact tab into two
+ * conversation attachments. The first is a UTF-8 JSON document
+ * (`ade-design-context-v1`) with the element's redacted HTML snippet,
+ * computed styles and geometry. The second, when the element is visible, is a
+ * PNG or JPEG screenshot of it. The owner reads the named tab only; it never
+ * substitutes the selected or focused tab, and a page that navigates during
+ * the capture fails it.
+ *
+ * `capture_id` is caller-owned and becomes the context attachment's ID; the
+ * screenshot's is `<capture_id>-screenshot`. Repeating a capture with the
+ * same ID and request returns the stored capture and never captures again;
+ * the same ID with another request conflicts.
+ */
+export interface BrowserContextCaptureRequest {
+  /**
+   * 1 to 100 ASCII letters, digits, `-` or `_`.
+   */
+  capture_id: string
+  conversation_id: string
+  op: 'browser.context.capture'
+  owner_id: string
+  profile_id: string
+  /**
+   * Take a screenshot of the element; true when absent.
+   */
+  screenshot?: boolean | null
+  /**
+   * A CSS selector of 1 to 1024 characters; its first match is captured.
+   */
+  selector: string
+  tab_id: string
+}
+/**
  * The `browser.diagnostics.read` reply.
  */
 export interface BrowserDiagnostics {
@@ -1922,6 +2033,141 @@ export interface BrowserDiagnosticsState {
   [k: string]: unknown
 }
 /**
+ * The `browser.import.run` and `browser.import.get` reply.
+ */
+export interface BrowserImport {
+  classes: BrowserImportedClass[]
+  import_id: string
+  imported_at_ms: number
+  partition_id: string
+  profile_id: string
+  /**
+   * What this source holds that was not imported.
+   */
+  refused: BrowserImportRefusal[]
+  source: BrowserImportSource
+  source_profile: string | null
+  /**
+   * The `browser_import` type tag.
+   */
+  type: 'browser_import'
+  [k: string]: unknown
+}
+/**
+ * One imported class.
+ */
+export interface BrowserImportedClass {
+  class: BrowserImportClass
+  format: string
+  imported: number
+  skipped: number
+  truncated: number
+  [k: string]: unknown
+}
+/**
+ * A class ADE never imports from this source, and why.
+ */
+export interface BrowserImportRefusal {
+  /**
+   * Such as `cookies`, `passwords` or `open_tabs`.
+   */
+  class: string
+  reason: string
+  [k: string]: unknown
+}
+/**
+ * One class as the source holds it.
+ */
+export interface BrowserImportClassPreview {
+  availability: BrowserImportAvailability
+  class: BrowserImportClass
+  /**
+   * The detected format, such as `chrome-bookmarks-json-1` or
+   * `chrome-history-sqlite-68`.
+   */
+  format: string | null
+  /**
+   * Entries that would be imported.
+   */
+  importable: number
+  /**
+   * The file this class reads.
+   */
+  path: string
+  reason: string | null
+  /**
+   * Entries skipped: non-HTTP(S) or over-long URLs.
+   */
+  skipped: number
+  /**
+   * Entries beyond the import bound that would be left out.
+   */
+  truncated: number
+  [k: string]: unknown
+}
+/**
+ * `browser.import.get`: read a stored import by its ID.
+ */
+export interface BrowserImportGetRequest {
+  import_id: string
+  op: 'browser.import.get'
+  profile_id?: string | null
+}
+/**
+ * The `browser.import.preview` reply.
+ */
+export interface BrowserImportPreview {
+  classes: BrowserImportClassPreview[]
+  profile_id: string
+  refused: BrowserImportRefusal[]
+  source: BrowserImportSource
+  source_profile: string | null
+  /**
+   * The `browser_import_preview` type tag.
+   */
+  type: 'browser_import_preview'
+  [k: string]: unknown
+}
+/**
+ * `browser.import.preview`: what an import from one source would read. It
+ * stores nothing in ADE and never writes the source.
+ */
+export interface BrowserImportPreviewRequest {
+  op: 'browser.import.preview'
+  profile_id?: string | null
+  source: BrowserImportSource
+  /**
+   * Chrome only: `Default` or `Profile N`; `Default` when absent. Safari
+   * takes none.
+   */
+  source_profile?: string | null
+}
+/**
+ * `browser.import.run`: import the named classes into a partition's library.
+ * `import_id` is caller-owned. The import is one transaction: every requested
+ * class is read and stored, or nothing is. Repeating it with the same ID and
+ * request returns the stored import without reading the source again; the
+ * same ID with another request conflicts.
+ */
+export interface BrowserImportRunRequest {
+  /**
+   * One or more distinct classes.
+   */
+  classes: BrowserImportClass[]
+  /**
+   * 1 to 128 ASCII letters, digits, `-` or `_`.
+   */
+  import_id: string
+  op: 'browser.import.run'
+  /**
+   * `default` or a registered partition.
+   */
+  partition_id: string
+  profile_id?: string | null
+  source: BrowserImportSource
+  source_profile?: string | null
+}
+/**
  * `browser.inspect`: inspect one exact tab.
  */
 export interface BrowserInspectRequest {
@@ -1975,6 +2221,12 @@ export interface BrowserOpenRequest {
   op: 'browser.open'
   operation_id: string
   owner_id: string
+  /**
+   * The browser partition the tab lives in, from `browser.partition.list`.
+   * The `default` partition when absent. The partition is part of the
+   * operation's fingerprint only when present.
+   */
+  partition_id?: string | null
   profile_id: string
   /**
    * An `http://` or `https://` URL of at most 8192 bytes.
@@ -2069,6 +2321,82 @@ export interface BrowserOwnerUnregisterRequest {
   op: 'browser.owner.unregister'
   owner_id: string
   profile_id: string
+}
+/**
+ * One browser partition.
+ */
+export interface BrowserPartition {
+  /**
+   * Wall-clock milliseconds; `null` for `default`.
+   */
+  created_at_ms: number | null
+  name: string
+  partition_id: string
+  [k: string]: unknown
+}
+/**
+ * `browser.partition.create`: register a named partition. `partition_id` is
+ * caller-owned: repeating a create with the same ID and name returns the
+ * partition unchanged, and the same ID with another name conflicts. The
+ * browser owner creates its storage when a tab first opens in it.
+ */
+export interface BrowserPartitionCreateRequest {
+  /**
+   * 1 to 64 characters without control characters.
+   */
+  name: string
+  op: 'browser.partition.create'
+  /**
+   * 1 to 64 lowercase ASCII letters, digits, `-` or `_`, starting with a
+   * letter or digit. `default` is reserved.
+   */
+  partition_id: string
+  profile_id?: string | null
+}
+/**
+ * `browser.partition.list`: the profile's browser partitions. A partition is
+ * a named browser profile inside an ADE profile, with its own cookies,
+ * storage and cache. `default` always exists: it is the storage every tab
+ * used before partitions, and it cannot be created or renamed.
+ */
+export interface BrowserPartitionListRequest {
+  op: 'browser.partition.list'
+  /**
+   * Defaults to this daemon's profile; any other profile is unavailable.
+   */
+  profile_id?: string | null
+}
+/**
+ * The `browser.partition.create` reply.
+ */
+export interface BrowserPartitionReply {
+  /**
+   * False when the partition already existed with this name.
+   */
+  created: boolean
+  partition: BrowserPartition
+  profile_id: string
+  /**
+   * The `browser_partition` type tag.
+   */
+  type: 'browser_partition'
+  [k: string]: unknown
+}
+/**
+ * The `browser.partition.list` reply, `default` first.
+ */
+export interface BrowserPartitions {
+  /**
+   * The most named partitions a profile holds.
+   */
+  limit: number
+  partitions: BrowserPartition[]
+  profile_id: string
+  /**
+   * The `browser_partitions` type tag.
+   */
+  type: 'browser_partitions'
+  [k: string]: unknown
 }
 /**
  * The `browser.recording.*` reply: the recording's manifest.
@@ -2172,6 +2500,10 @@ export interface BrowserTabRecord {
   id: string
   loading: boolean
   observedUrl: string
+  /**
+   * The tab's browser partition; absent for `default`.
+   */
+  partitionId?: string | null
   /**
    * The owner's browser storage profile.
    */
@@ -8053,7 +8385,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -8239,6 +8571,12 @@ export interface RequestByOperation {
   "browser.recording.start": BrowserRecordingStartRequest
   "browser.recording.stop": BrowserRecordingStopRequest
   "browser.recording.get": BrowserRecordingGetRequest
+  "browser.partition.list": BrowserPartitionListRequest
+  "browser.partition.create": BrowserPartitionCreateRequest
+  "browser.import.preview": BrowserImportPreviewRequest
+  "browser.import.run": BrowserImportRunRequest
+  "browser.import.get": BrowserImportGetRequest
+  "browser.context.capture": BrowserContextCaptureRequest
 }
 
 export interface ResponseByOperation {
@@ -8425,6 +8763,12 @@ export interface ResponseByOperation {
   "browser.recording.start": BrowserRecording
   "browser.recording.stop": BrowserRecording
   "browser.recording.get": BrowserRecording
+  "browser.partition.list": BrowserPartitions
+  "browser.partition.create": BrowserPartitionReply
+  "browser.import.preview": BrowserImportPreview
+  "browser.import.run": BrowserImport
+  "browser.import.get": BrowserImport
+  "browser.context.capture": BrowserContextCapture
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ActivityChanged

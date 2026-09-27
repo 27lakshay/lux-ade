@@ -1,3 +1,4 @@
+mod browser_context;
 mod browser_tools;
 mod diagnostics;
 
@@ -581,6 +582,7 @@ impl Host {
             "diagnostic_id",
             if needs_tab { "tab_id" } else { "" },
             if needs_url { "url" } else { "" },
+            if needs_tab { "" } else { "partition_id" },
         ];
         if request
             .as_object()
@@ -606,7 +608,13 @@ impl Host {
             Ok(fields) => fields,
             Err(error) => return error,
         };
-        let payload = browser_payload(op, profile_id, &owner_id, tab_id.as_deref(), url.as_deref());
+        let partition = match self.open_partition(request) {
+            Ok(partition) => partition,
+            Err(error) => return error,
+        };
+        let mut payload =
+            browser_payload(op, profile_id, &owner_id, tab_id.as_deref(), url.as_deref());
+        browser_context::with_partition(&mut payload, partition.as_deref());
         let fingerprint = receipts::fingerprint(&payload);
         {
             // Probe the journal without admitting: dropping the transaction
@@ -685,6 +693,9 @@ impl Host {
         }
         if let Some(url) = &url {
             command["url"] = json!(url);
+        }
+        if let Some(partition) = &partition {
+            command["partition_id"] = json!(partition);
         }
         let uncertain = || {
             browser_error(
@@ -1640,6 +1651,8 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                         | "browser.operation"
                 ) {
                     Ok(host.browser_command(&request))
+                } else if browser_context::is_browser_context(op) {
+                    Ok(host.browser_context(&request))
                 } else if browser_tools::is_browser_tool(op) {
                     Ok(host.browser_tool(&request))
                 } else {

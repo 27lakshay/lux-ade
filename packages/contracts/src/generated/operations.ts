@@ -185,6 +185,12 @@ export const operations = {
   "browser.recording.start": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStartRequest", response: "BrowserRecording" },
   "browser.recording.stop": { tier: "idempotent_command", domain: "browser", request: "BrowserRecordingStopRequest", response: "BrowserRecording" },
   "browser.recording.get": { tier: "query", domain: "browser", request: "BrowserRecordingGetRequest", response: "BrowserRecording" },
+  "browser.partition.list": { tier: "query", domain: "browser", request: "BrowserPartitionListRequest", response: "BrowserPartitions" },
+  "browser.partition.create": { tier: "idempotent_command", domain: "browser", request: "BrowserPartitionCreateRequest", response: "BrowserPartitionReply" },
+  "browser.import.preview": { tier: "query", domain: "browser", request: "BrowserImportPreviewRequest", response: "BrowserImportPreview" },
+  "browser.import.run": { tier: "idempotent_command", domain: "browser", request: "BrowserImportRunRequest", response: "BrowserImport" },
+  "browser.import.get": { tier: "query", domain: "browser", request: "BrowserImportGetRequest", response: "BrowserImport" },
+  "browser.context.capture": { tier: "idempotent_command", domain: "browser", request: "BrowserContextCaptureRequest", response: "BrowserContextCapture" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

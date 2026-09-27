@@ -8,15 +8,18 @@ import { getBrowserOwner, getProfileState, getStartupProfileSelection, isSwitchi
 import type { QuitGuard } from './quit-guards'
 import { reconcileBrowserEffect, type BrowserIntent } from './browser-reconcile'
 
-type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string }
+// `partitionId` names the tab's browser partition (F092); absent means the
+// profile's default browser storage.
+type Tab = { id: string; profileId: string; requestedUrl: string; observedUrl: string; title: string; loading: boolean; error: string
+  partitionId?: string }
 type BrowserMutation = 'browser.open' | 'browser.navigate' | 'browser.close'
 // A pending receipt records its intent (`target`, `url`, `priorUrl`) before the
 // effect runs, so a crash can be reconciled against the tabs. Receipts written
 // before intent was recorded lack those fields and stay unknown.
 type BrowserReceipt = { requestId: string; fingerprint: string; profileId: string; ownerId: string;
   status: 'pending' | 'completed' | 'not_applied'; op: BrowserMutation; tabId: string | null
-  target?: string | null; url?: string | null; priorUrl?: string | null; evidence?: string }
-type Saved = { version: 1; selectedId: string | null; tabs: Array<Pick<Tab, 'id' | 'profileId' | 'requestedUrl' | 'observedUrl' | 'title'>> }
+  target?: string | null; url?: string | null; priorUrl?: string | null; evidence?: string; partitionId?: string }
+type Saved = { version: 1; selectedId: string | null; tabs: Array<Pick<Tab, 'id' | 'profileId' | 'requestedUrl' | 'observedUrl' | 'title' | 'partitionId'>> }
 type ProfileTabs = { selectedId: string | null; tabs: Map<string, Tab>; views: Map<string, WebContentsView>;
   inFlightOperations: Map<string, BrowserReceipt>; writes: Promise<void> }
 type WindowTab = { profileId: string; tabId: string; bounds: Electron.Rectangle } | null
@@ -39,6 +42,9 @@ const allowedUrl = (value: unknown): boolean => {
 }
 const abortedLoad = (error: unknown): boolean => /ERR_ABORTED|\(-3\)/.test(String(error))
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
+/** A named partition ID as the daemon registers it; `default` is never stored on a tab. */
+const validPartition = (value: unknown): value is string =>
+  typeof value === 'string' && value !== 'default' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)
 const profilePath = (id: string): string => {
   const directory = profilePaths.get(id)
   if (!directory) throw new Error('Browser profile storage is unavailable')
@@ -52,6 +58,13 @@ const browserStoragePath = (id: string): string => {
   if (id === 'fixed') return join(profilePath(id), 'browser-session')
   return join(app.getPath('userData'), 'browser-sessions', storageKey(id))
 }
+/** A named partition's storage: a sibling of the profile's default storage, one directory per partition. */
+const partitionStoragePath = (id: string, partitionId: string): string => {
+  if (id === 'fixed') return join(profilePath(id), 'browser-partitions', storageKey(partitionId))
+  return join(app.getPath('userData'), 'browser-sessions', `${storageKey(id)}.partitions`, storageKey(partitionId))
+}
+const tabStoragePath = (id: string, tab: Pick<Tab, 'partitionId'>): string =>
+  tab.partitionId ? partitionStoragePath(id, tab.partitionId) : browserStoragePath(id)
 async function acquireBrowserLease(id: string, directory: string): Promise<BrowserLease> {
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const control = app.isPackaged ? join(process.resourcesPath, '../MacOS/ade-control')
@@ -159,6 +172,7 @@ function validBrowserReceipt(value: unknown, requestId: string, profileId: strin
     !(item.target === undefined || item.target === null || validId(item.target)) ||
     !(item.url === undefined || item.url === null || allowedUrl(item.url)) ||
     !(item.priorUrl === undefined || item.priorUrl === null || typeof item.priorUrl === 'string') ||
+    !(item.partitionId === undefined || (item.op === 'browser.open' && validPartition(item.partitionId))) ||
     !(item.evidence === undefined || (typeof item.evidence === 'string' && /^[a-z_]{1,64}$/.test(item.evidence)))) {
     throw new Error('Browser receipt is invalid; preserve it for review')
   }
@@ -395,8 +409,10 @@ async function stateFor(id: string): Promise<ProfileTabs> {
     const tabs = new Map<string, Tab>()
     for (const item of saved?.tabs ?? []) {
       if (!item || typeof item !== 'object' || !validId(item.id) || item.profileId !== id || !allowedUrl(item.requestedUrl) ||
-        typeof item.observedUrl !== 'string' || typeof item.title !== 'string') continue
-      tabs.set(item.id, { ...item, loading: false, error: '' })
+        typeof item.observedUrl !== 'string' || typeof item.title !== 'string' ||
+        !(item.partitionId === undefined || validPartition(item.partitionId))) continue
+      tabs.set(item.id, { id: item.id, profileId: id, requestedUrl: item.requestedUrl, observedUrl: item.observedUrl,
+        title: item.title, loading: false, error: '', ...(item.partitionId ? { partitionId: item.partitionId } : {}) })
     }
     const state: ProfileTabs = { tabs, selectedId: validId(saved?.selectedId) && tabs.has(saved.selectedId) ? saved.selectedId : null,
       views: new Map(), inFlightOperations: new Map(), writes: Promise.resolve() }
@@ -410,6 +426,7 @@ async function save(id: string): Promise<void> {
   const state = await stateFor(id)
   const payload: Saved = { version: 1, selectedId: state.selectedId, tabs: [...state.tabs.values()].map((tab) => ({
     id: tab.id, profileId: id, requestedUrl: tab.requestedUrl, observedUrl: tab.observedUrl, title: tab.title,
+    ...(tab.partitionId ? { partitionId: tab.partitionId } : {}),
   })) }
   state.writes = state.writes.catch(() => undefined).then(async () => {
     const directory = profilePath(id)
@@ -501,7 +518,7 @@ function attach(window: BrowserWindow, profileId: string, tabId: string, bounds:
 function viewFor(id: string, state: ProfileTabs, tab: Tab, initialUrl = tab.observedUrl || tab.requestedUrl): WebContentsView {
   const existing = state.views.get(tab.id)
   if (existing && !existing.webContents.isDestroyed()) return existing
-  const storage = browserStoragePath(id)
+  const storage = tabStoragePath(id, tab)
   const pageSession = session.fromPath(storage)
   if (!guardedSessions.has(storage)) {
     pageSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
@@ -567,11 +584,14 @@ function viewFor(id: string, state: ProfileTabs, tab: Tab, initialUrl = tab.obse
 }
 
 async function flushProfileSession(id: string): Promise<void> {
-  const storage = browserStoragePath(id)
-  if (!guardedSessions.has(storage)) return
-  const pageSession = session.fromPath(storage)
-  pageSession.flushStorageData()
-  await pageSession.cookies.flushStore()
+  const storages = new Set([browserStoragePath(id)])
+  for (const tab of profiles.get(id)?.tabs.values() ?? []) storages.add(tabStoragePath(id, tab))
+  for (const storage of storages) {
+    if (!guardedSessions.has(storage)) continue
+    const pageSession = session.fromPath(storage)
+    pageSession.flushStorageData()
+    await pageSession.cookies.flushStore()
+  }
 }
 type PortableCookie = Pick<Electron.Cookie, 'name' | 'value' | 'domain' | 'hostOnly' | 'path' | 'secure' | 'httpOnly' | 'sameSite' | 'expirationDate'>
 type BundleEntry<T> = { bytes: number; sha256: string; value: T }
@@ -605,8 +625,11 @@ function validCookie(value: unknown): value is PortableCookie {
   } catch { return false }
   return true
 }
+/** The default partition's tabs; a backup bundle carries no named partition. */
 function savedTabs(id: string, state: ProfileTabs): Saved {
-  return { version: 1, selectedId: state.selectedId, tabs: [...state.tabs.values()].map((tab) => ({
+  const tabs = [...state.tabs.values()].filter((tab) => !tab.partitionId)
+  const selectedId = tabs.some((tab) => tab.id === state.selectedId) ? state.selectedId : null
+  return { version: 1, selectedId, tabs: tabs.map((tab) => ({
     id: tab.id, profileId: id, requestedUrl: tab.requestedUrl, observedUrl: tab.observedUrl, title: tab.title,
   })) }
 }
@@ -708,7 +731,9 @@ async function captureBrowserProfile(id: string, destination: string): Promise<R
     return { type: 'browser_profile_captured', format: bundle.format, scope: bundle.scope,
       source_profile_id: id, tab_count: bundle.tabs.value.tabs.length,
       cookie_count: bundle.cookies.value.length, file: destination,
-      included: bundle.included, excluded: bundle.excluded }
+      included: bundle.included, excluded: bundle.excluded,
+      // Named partitions (F092) are outside the bundle format: their tabs and storage stay behind.
+      excluded_partition_tabs: state.tabs.size - bundle.tabs.value.tabs.length }
   } finally {
     capturingProfiles.delete(id)
     if (state && activeProfile === id && browserLease?.id === id) {
@@ -1069,16 +1094,28 @@ function requireBrowserLease(id: string, lease: BrowserLease): void {
     throw new Error('Browser owner changed')
   }
 }
-async function openBrowserTab(id: string, url: unknown, tabId: string = randomUUID()): Promise<string> {
+async function openBrowserTab(id: string, url: unknown, tabId: string = randomUUID(),
+  partitionId?: string): Promise<string> {
   if (!allowedUrl(url)) throw new Error('Only HTTP(S) URLs are supported')
+  if (partitionId !== undefined && !validPartition(partitionId)) throw new Error('Invalid browser partition')
   const lease = liveBrowserLease(id)
   const state = await stateFor(id)
   requireBrowserLease(id, lease)
+  if (partitionId) {
+    const storage = partitionStoragePath(id, partitionId)
+    await mkdir(storage, { recursive: true, mode: 0o700 })
+    const info = await lstat(storage)
+    if (!info.isDirectory() || (info.mode & 0o077) !== 0) {
+      throw new Error('Browser partition storage is unsafe; preserve it for review')
+    }
+    requireBrowserLease(id, lease)
+  }
   await e2eBrowserPause('open-before-mutation', url as string)
   requireBrowserLease(id, lease)
   const address = url as string
   if (state.tabs.has(tabId)) throw new Error('Browser tab ID is already in use')
-  const tab: Tab = { id: tabId, profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '' }
+  const tab: Tab = { id: tabId, profileId: id, requestedUrl: address, observedUrl: '', title: address, loading: false, error: '',
+    ...(partitionId ? { partitionId } : {}) }
   state.tabs.set(tab.id, tab)
   state.selectedId = tab.id
   viewFor(id, state, tab)
@@ -1129,13 +1166,17 @@ async function closeBrowserTab(id: string, tabId: unknown): Promise<string> {
 }
 export async function mutateBrowserOwner(browserProfileId: string, profileId: string, ownerId: string,
   op: BrowserMutation, requestId: unknown, fingerprint: unknown, tabId?: unknown,
-  url?: unknown): Promise<Record<string, unknown>> {
+  url?: unknown, partitionId?: unknown): Promise<Record<string, unknown>> {
   if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(requestId) ||
     typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(fingerprint)) {
     throw new Error('Invalid browser request identity')
   }
+  // The daemon appends an explicit partition to the fingerprinted payload.
+  if (partitionId !== undefined && (op !== 'browser.open' || !validPartition(partitionId))) {
+    throw new Error('Invalid browser mutation target')
+  }
   const expected = createHash('sha256').update(JSON.stringify([op, profileId, ownerId,
-    tabId ?? null, url ?? null])).digest('hex')
+    tabId ?? null, url ?? null, ...(partitionId === undefined ? [] : [partitionId])])).digest('hex')
   if (expected !== fingerprint) throw new Error('Browser request fingerprint does not match its target')
   const lease = liveBrowserLease(browserProfileId)
   browserOperations.set(browserProfileId, (browserOperations.get(browserProfileId) ?? 0) + 1)
@@ -1176,6 +1217,7 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
       receipt.target = randomUUID()
       receipt.url = url as string
       receipt.priorUrl = null
+      if (partitionId !== undefined) receipt.partitionId = partitionId as string
     } else {
       const tab = exact(state, browserProfileId, tabId)
       receipt.target = tab.id
@@ -1185,7 +1227,8 @@ export async function mutateBrowserOwner(browserProfileId: string, profileId: st
     recorded = true
     await writeBrowserReceipt(browserProfileId, receipt)
     requireBrowserLease(browserProfileId, lease)
-    const resultId = op === 'browser.open' ? await openBrowserTab(browserProfileId, url, receipt.target)
+    const resultId = op === 'browser.open'
+      ? await openBrowserTab(browserProfileId, url, receipt.target, receipt.partitionId)
       : op === 'browser.navigate' ? await navigateBrowserTab(browserProfileId, tabId, url)
       : await closeBrowserTab(browserProfileId, tabId)
     receipt.tabId = resultId
