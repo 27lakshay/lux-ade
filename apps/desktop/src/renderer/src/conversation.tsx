@@ -1,5 +1,6 @@
 import React from 'react'
-import type { Conversation, FeedFrame } from '@ade/client'
+import type { Conversation } from '@ade/client'
+import { startConversationProjection } from '@ade/client/sync'
 import type { Message, PendingRequest, Snapshot } from './types'
 
 function contentSummary(message: Message): string {
@@ -111,75 +112,17 @@ export function ConversationView({ conversation, bootId, accountLabel, fenced }:
       .catch((reason) => setDraftError(`Draft could not be saved: ${String(reason)}`))
   }
 
-  React.useEffect(() => {
-    let disposed = false
-    let current: Snapshot | null = null
-    let loading = false
-    let reloadRequested = false
-    let buffered: FeedFrame[] = []
-    const apply = (frame: FeedFrame): void => {
-      if (!current) { buffered.push(frame); if (!loading) void load(); return }
-      if (frame.boot_id === current.boot_id && frame.revision <= current.revision) return
-      if (frame.boot_id !== current.boot_id || frame.revision !== current.revision + 1) {
-        current = null
-        buffered = []
-        reloadRequested = true
-        if (!loading) { reloadRequested = false; void load() }
-        return
-      }
-      if (frame.type === 'conversation_reload' &&
-          (frame.conversation as Conversation | undefined)?.id === conversation.id) {
-        current = null
-        reloadRequested = true
-        if (!loading) { reloadRequested = false; void load() }
-        return
-      }
-      if (frame.type !== 'conversation_changed') {
-        current = { ...current, revision: frame.revision }
-        return
-      }
-      const changed = frame.conversation as Conversation | undefined
-      if (!changed || changed.id !== conversation.id || !Array.isArray(frame.messages) || !Array.isArray(frame.requests)) {
-        current = { ...current, revision: frame.revision }
-        return
-      }
-      const messages = new Map(current.messages.map((message) => [message.id, message]))
-      for (const item of frame.messages as Message[]) {
-        if (item && typeof item.id === 'string') messages.set(item.id, item)
-      }
-      current = { ...current, conversation: changed,
-        messages: [...messages.values()].sort((left, right) => left.sequence - right.sequence).slice(-200),
-        requests: frame.requests as PendingRequest[], revision: frame.revision }
-      setSnapshot(current)
-    }
-    const load = async (): Promise<void> => {
-      if (loading || disposed) return
-      loading = true
-      try {
-        const value = await window.adeHost.conversations.request('conversation.get', { conversation_id: conversation.id }) as Snapshot
-        if (!disposed) {
-          current = value
-          setSnapshot(value)
-          setError('')
-          const pending = buffered
-          buffered = []
-          for (const frame of pending) {
-            if (frame.boot_id === value.boot_id && frame.revision <= (current?.revision ?? -1)) continue
-            apply(frame)
-            if (!current) break
-          }
-        }
-      } catch (reason) {
-        if (!disposed) setError(String(reason))
-      } finally {
-        loading = false
-        if (!disposed && reloadRequested) { reloadRequested = false; void load() }
-      }
-    }
-    const unsubscribe = window.adeHost.conversations.onFeedFrame(apply)
-    void load()
-    return () => { disposed = true; unsubscribe() }
-  }, [conversation.id, bootId, refresh])
+  React.useEffect(() => startConversationProjection<Conversation, Message, PendingRequest>({
+    conversationId: conversation.id,
+    fetchSnapshot: async (conversationId, limit) => await window.adeHost.conversations.request('conversation.get',
+      { conversation_id: conversationId, limit }) as Snapshot,
+    subscribe: (listener) => window.adeHost.conversations.onFeedFrame(listener),
+    onState: (state, cause) => {
+      if (cause === 'failed') { setError(state.error ?? ''); return }
+      if (cause === 'loaded') setError('')
+      setSnapshot(state.snapshot)
+    },
+  }), [conversation.id, bootId, refresh])
 
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
