@@ -12,13 +12,17 @@
 //!
 //! Quota visibility reads the rate-limit windows the usage domain recorded.
 //! ADE never switches account or model when a limit is exhausted.
+//!
+//! [`adapters`] holds the profile-scoped generic adapter definitions (F024).
 use super::usage::{UsageLimitWindow, UsageRecording};
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod adapters;
+
 pub fn operations() -> Vec<OperationSpec> {
-    vec![
+    let mut operations = vec![
         OperationSpec::new::<ProviderCapabilitiesRequest, ProviderCapabilities>(
             "provider.capabilities",
             Tier::Query,
@@ -43,7 +47,9 @@ pub fn operations() -> Vec<OperationSpec> {
             "preset.delete",
             Tier::IdempotentCommand,
         ),
-    ]
+    ];
+    operations.extend(adapters::operations());
+    operations
 }
 
 pub fn frames() -> Vec<FrameSpec> {

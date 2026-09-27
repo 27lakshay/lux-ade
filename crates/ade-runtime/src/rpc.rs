@@ -35,15 +35,32 @@ pub struct Rpc {
     pending: Mutex<HashMap<String, mpsc::SyncSender<Reply>>>,
     next_id: AtomicU64,
     closed: AtomicBool,
+    framing: Framing,
+}
+/// How outgoing messages are framed. Owned bridges take bare messages;
+/// external JSON-RPC 2.0 peers such as ACP agents require the version member.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Framing {
+    Bare,
+    JsonRpc2,
 }
 impl Rpc {
     pub fn pid(&self) -> u32 {
         self.pid
     }
     pub fn spawn(
-        mut command: Command,
+        command: Command,
         events: mpsc::SyncSender<crate::provider::Event>,
         decode: fn(WireEvent) -> Result<Option<crate::provider::Event>>,
+    ) -> Result<Arc<Self>> {
+        Self::spawn_with(command, events, Framing::Bare, decode)
+    }
+    /// Like [`Rpc::spawn`], with a stateful decoder and a chosen framing.
+    pub fn spawn_with(
+        mut command: Command,
+        events: mpsc::SyncSender<crate::provider::Event>,
+        framing: Framing,
+        decode: impl Fn(WireEvent) -> Result<Option<crate::provider::Event>> + Send + 'static,
     ) -> Result<Arc<Self>> {
         use std::os::unix::process::CommandExt;
         let mut child = command
@@ -91,6 +108,7 @@ impl Rpc {
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
+            framing,
         });
         let weak = Arc::downgrade(&this);
         std::thread::spawn(move || {
@@ -172,7 +190,14 @@ impl Rpc {
         tracing::info!(target: "ade", event = "provider_started", pid);
         Ok(this)
     }
-    fn write(&self, value: Value) -> Result<()> {
+    /// True once the transport is closed; no further reply can arrive.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+    fn write(&self, mut value: Value) -> Result<()> {
+        if self.framing == Framing::JsonRpc2 {
+            value["jsonrpc"] = json!("2.0");
+        }
         ensure!(
             !self.closed.load(Ordering::SeqCst),
             TransportError::Disconnected
@@ -215,6 +240,16 @@ impl Rpc {
         Ok(())
     }
     pub fn request(&self, method: &str, params: Value) -> Result<Value> {
+        self.request_within(method, params, Some(Duration::from_secs(45)))
+    }
+    /// A request whose reply may take as long as the peer's work. With no
+    /// limit the caller waits until the reply or the end of the transport.
+    pub fn request_within(
+        &self,
+        method: &str,
+        params: Value,
+        limit: Option<Duration>,
+    ) -> Result<Value> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::sync_channel(1);
         self.pending
@@ -228,7 +263,10 @@ impl Rpc {
                 .remove(&id.to_string());
             return Err(error);
         }
-        let result = rx.recv_timeout(Duration::from_secs(45));
+        let result = match limit {
+            Some(limit) => rx.recv_timeout(limit),
+            None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+        };
         self.pending
             .lock()
             .map_err(|_| TransportError::StateUnavailable)?
