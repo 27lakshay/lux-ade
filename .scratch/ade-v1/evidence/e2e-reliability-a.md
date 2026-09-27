@@ -122,7 +122,7 @@ The matrix totals:
 | R003 | Async callback: a cancellation whose provider reply fails after its turn ended does not fail the successor | `cancel-fencing.spec.ts` "a cancellation whose provider reply fails after the turn ended" | pass (failed before fix 2) |
 | R003 | Async callback: a late `turn/start` reply or error for a finished turn neither fails nor replaces the successor | `cancel-fencing.spec.ts` "a late provider reply to a finished turn" | pass |
 | R003 | Stream fencing: events of an old run or incarnation cannot reach a successor | none; no fixture can deliver an old run's stream after a new run starts | not covered |
-| R004 | Data volume full (disposable 48 MiB HFS+ image): new send refused through SDK and CLI with nothing reaching the provider; cancel still interrupts the provider and reports it could not record; recovery after space returns | `overload.spec.ts` "with the data volume full" | pass (failed before fix 3) |
+| R004 | Data volume full (disposable 48 MiB HFS+ image): new send refused through SDK and CLI with nothing reaching the provider; cancel still interrupts the provider and either records `cancelling` (ack) or reports it could not record; recovery after space returns | `overload.spec.ts` "with the data volume full" | pass (failed before fix 3; see the overload follow-up for fix 4 and the either-outcome check) |
 | R004 | About 40 MiB of provider output plus 400 concurrent ordinary commands: cancel stops the turn; no sent command is lost | `overload.spec.ts` "an output flood and a burst of ordinary commands" | pass (cancel retried only while `not_sent`) |
 | R004 | A cancel during a connection flood past the socket backlog is admitted on its first attempt | `overload.spec.ts` fixme | fixme (gap; refused in 1 of 3 runs when enabled) |
 | R004 | Saturated ordinary receipts: cancel admitted from the reserve | `recovery/receipt-saturation.spec.ts` (round 1) | pass (cited) |
@@ -156,6 +156,75 @@ The matrix totals:
 In-process tests for the pure cores:
 `a_cancel_naming_an_earlier_turn_never_stops_its_successor` (daemon) and
 `a_failed_cancel_never_fails_the_run_it_shares_with_a_successor` (runtime).
+
+4. **A full disk failed the running Agent** (overload follow-up, after the
+   round 3 merge). A provider event batch that arrived after the volume
+   filled could not be recorded. The event loop then failed the Agent, so
+   `agent.cancel` replied "Agent is not connected" and nothing reconciled the
+   Conversation, which still read `running`.
+   - `events` now returns `StorageFull` when SQLite reports `SQLITE_FULL`.
+     The event loop keeps the Agent, leaves the batch unacknowledged and
+     retries it every 250 ms. It logs once per wait.
+   - The runtime serves the unacknowledged batch again, the same replay path
+     a daemon restart uses. Ingest is idempotent: the cursor, message IDs and
+     the usage replay cursor skip what was already committed.
+   - Code: `crates/ade-daemon/src/sessions/agents.rs`.
+
+## Overload follow-up (round 4)
+
+Status: returned. Branch: `claude/wf_c51346dc-a4d-4`.
+
+The failure after the round 3 merge was not a swallowed error. `cancel`
+still bails when `commit_conversation` fails. The commit simply succeeded:
+
+- The database runs in WAL mode with `synchronous=FULL`.
+- A refused insert can leave allocated WAL space, and a checkpoint lets the
+  WAL restart in place. The cancellation's small in-place update of one
+  Conversation row can then commit durably while a new Conversation cannot.
+- Which one happens depends on page layout. No merged change caused it
+  directly; the round 3 schema and write changes moved the layout.
+
+Decision:
+
+- An ack is correct when the cancellation was recorded. R004 asks that stop
+  "remains available or reports its actual failure". R001 asks that an
+  accepted operation is kept. Reporting "could not record" after a durable
+  commit would be false.
+- The spec now accepts either outcome and checks each one. After an ack,
+  `conversation.get` reads `cancelling` or `interrupted`. After a refusal,
+  the reply names "could not record the cancellation" and the storage error.
+  In both cases, the provider receives exactly one interrupt, and the
+  Conversation reaches `interrupted` after space returns.
+- The spec records which branch ran in a `cancel-while-full` annotation.
+
+Reproducing it also exposed fix 4 above: in 1 of 2 runs, the Agent was
+failed during the fill, and cancel replied "Agent is not connected".
+
+Checks in this follow-up (all run serially; no other hdiutil run was active):
+
+- `ADE_E2E_SYSTEM=1 ADE_E2E_WORKERS=1 pnpm test:e2e:protocol:only
+  e2e/protocol/reliability-a/overload.spec.ts`: 2 passed and 1 fixme, twice.
+- The full-volume test alone, four more times on the fixed build: 4 passed.
+  Three runs took the ack branch and one took the refusal branch.
+- `ADE_E2E_WORKERS=2 pnpm test:e2e:protocol:only e2e/protocol/reliability-a
+  e2e/protocol/conversations e2e/protocol/recovery`: 122 passed and 25
+  skipped (fixme and system-service specs).
+- `pnpm check:static`: pass, with 770 legacy Rust tests passed and 5 skipped.
+- After the runs, `mount` showed no scratch volume, and `pgrep` found no
+  `ade-daemon`, `ade-runtime`, `hdiutil` or `security` process from this
+  worktree.
+- No keychain, Security framework or `security` tool was used.
+
+What is uncertain:
+
+- No spec forces an event batch to arrive while the volume is full, so fix 4
+  is proven only by the runs that happened to hit it. The spec no longer
+  fails when they do.
+- A retried batch repeats side effects taken before its commit, such as
+  rejecting an unsupported provider request. A daemon restart replays the
+  same way.
+
+Time: implementation 25, review 5, checks 20, integration 0 (minutes).
 
 ## Operation tiers
 
