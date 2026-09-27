@@ -29,3 +29,8 @@ claiming a UI change works.
 - `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI, unmodified. Build product
   components from it; do not edit the kit files.
 - Terminal output stays outside React state (xterm.js).
+- `?safeMode=1` in the window URL means main reloaded the window after a hang or crash
+  (`src/main/renderer-recovery.ts`). Load no plugins in safe mode, and keep pending approvals and
+  core recovery visible.
+- Global shortcuts belong to the native menu (`src/main/app-menu.ts`), which sends commands listed
+  in `src/shared/app-commands.ts`. Do not bind the same keys in the renderer.

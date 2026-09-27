@@ -43,6 +43,7 @@ import { appUrl, registerAppScheme, serveAppScheme } from './app-protocol'
 import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
 import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
+import { recoverRendererFailures } from './renderer-recovery'
 
 let singleWindowId = ''
 enableRemoteDebugging()
@@ -117,6 +118,7 @@ function openMainWindow(): void {
   })
   windowIds.set(window.webContents.id, singleWindowId)
   logWindowConsole(window.webContents, 'window')
+  recoverRendererFailures(window)
   let readyForClose = false
   let closeFlushInProgress = false
   window.on('close', (event) => {
