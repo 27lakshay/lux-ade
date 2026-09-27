@@ -6,6 +6,36 @@ Type: delivery record
 Updated: 2026-09-27. Branch: `codex/architecture-proposal`. No Git remote is
 configured. This is a checkpoint, not a claim that the v1 register is complete.
 
+## UI phase foundations (2026-09-28)
+
+Built before any product surface, on `main`, `c59348a`..`dbaf259`:
+
+- **Toolchain:** Vite 8 with electron-vite 6 (beta), React Compiler, TypeScript 7, type-aware
+  Oxlint with ADE's own rules (`scripts/oxlint-plugin-ade.mjs`), oxfmt, Fallow import
+  boundaries, husky and lint-staged, Vitest in browser mode. All run in `check:static`.
+- **Agent tooling:** development-only DevTools port 9333 and state endpoint 9334, logs in
+  `.dev/logs`, react-grab, React Scan and React DevTools, the `drive-ade-app`, `motion` and
+  `shadcn` skills, and `.mcp.json` servers (chrome-devtools-mcp, shadcn, Motion).
+- **Electron:** `ade://` scheme with one strict CSP, deny-by-default navigation and permissions,
+  native menu owning global shortcuts, window-state persistence, safe-mode renderer recovery,
+  local crash dumps with Help → Export Diagnostics, fuses in the packaged app, a typed IPC
+  contract that accepts requests only from app windows, and a stream bridge utility process
+  carrying the feed and terminal streams per window.
+- **Renderer:** the stock shadcn/ui kit on Base UI (not yet used by the prototype shell), daemon
+  and conversation stores, and a command and keybinding service.
+
+Deferred until the surface that needs it is built:
+
+- A cap on live browser tabs and on terminal WebGL contexts, and hiding a browser tab's native
+  view while an overlay is open. The browser and terminal panes are still mock-ups, and the tab
+  cap changes `browser.ts`'s ownership and restore paths, which have no Electron E2E coverage.
+- Saving the pane layout through the daemon's `window.save` (`dock_layout`): the panes still hold
+  sample tabs.
+- TanStack Virtual, Streamdown and Shiki, Pierre Diffs, TipTap, Pragmatic drag and drop, zod and
+  Sonner are chosen (D07) and get installed with the surface that uses them.
+- Terminal output as raw bytes: the daemon sends JSON frames; this needs a wire format change.
+- Electron E2E (Playwright `_electron`) was dropped from this plan by the user.
+
 ## UI phase started: renderer replaced, legacy specs pruned (2026-09-28)
 
 The UI phase runs on `main`. The desktop renderer's test harness was replaced by the
