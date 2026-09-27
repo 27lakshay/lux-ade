@@ -128,7 +128,13 @@ export class Bridge {
       this.event({ ...update, session: this.session });
     }
     if (frame.type === 'message_end') {
-      if (frame.message?.role === 'assistant') this.active.lastAssistant = { stopReason: frame.message.stopReason, errorMessage: frame.message.errorMessage };
+      if (frame.message?.role === 'assistant') {
+        this.active.lastAssistant = { stopReason: frame.message.stopReason, errorMessage: frame.message.errorMessage };
+        // One model call's figures as Oh My Pi reported them; the daemon sums
+        // a turn's calls and marks figures a call left out as unavailable.
+        this.event({ type: 'usage', session: this.session, turn: this.active.turn, source: 'message_end',
+          report: { usage: frame.message.usage ?? null, model: frame.message.model ?? null } });
+      }
       await this.reconcile();
     }
     else if (frame.type === 'agent_end') {

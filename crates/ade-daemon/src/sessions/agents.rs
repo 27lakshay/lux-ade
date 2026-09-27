@@ -614,6 +614,7 @@ impl Sessions {
         let mut changed = false;
         let mut order = Vec::new();
         let mut exit_error = None;
+        let mut usage = Vec::new();
         let mut messages: HashMap<String, Message> = HashMap::new();
         let mut requests: HashMap<String, PendingRequest> = d
             .store
@@ -732,6 +733,10 @@ impl Sessions {
                         c.queue_paused = true;
                     }
                     c.active_turn_id = None;
+                    usage.push((
+                        envelope.sequence,
+                        crate::usage::Observed::Finished { turn: turn.clone() },
+                    ));
                     for r in requests.values_mut() {
                         if matches!(r.status.as_str(), "pending" | "responding")
                             && r.params["turnId"] == turn
@@ -809,8 +814,40 @@ impl Sessions {
                     c.error = Some(error);
                     changed = true;
                 }
+                Event::Usage {
+                    session,
+                    turn,
+                    source,
+                    report,
+                } => {
+                    if !session.is_empty()
+                        && Some(session.as_str()) != c.provider_thread_id.as_deref()
+                    {
+                        continue;
+                    }
+                    usage.push((
+                        envelope.sequence,
+                        crate::usage::Observed::Report {
+                            turn,
+                            source,
+                            report,
+                        },
+                    ));
+                }
             }
         }
+        // Usage commits first with its own replay cursor, so a crash before
+        // the conversation commit cannot count a report twice.
+        self.usage.record(
+            &crate::usage::Context {
+                conversation_id: id,
+                workspace_id: &c.workspace_id,
+                provider: &c.provider,
+                account_id: c.account_id.as_deref(),
+            },
+            run,
+            &usage,
+        );
         if changed {
             c.updated_at = now_ms();
             let messages: Vec<_> = order

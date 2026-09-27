@@ -163,6 +163,9 @@ export const operations = {
   "checkpoint.restore.preview": { tier: "query", domain: "checkpoints", request: "CheckpointRestorePreviewRequest", response: "CheckpointRestorePreview" },
   "checkpoint.restore": { tier: "effect_command", domain: "checkpoints", request: "CheckpointRestoreRequest", response: "CheckpointRestored" },
   "checkpoint.delete": { tier: "effect_command", domain: "checkpoints", request: "CheckpointDeleteRequest", response: "CheckpointDeleted" },
+  "usage.summary": { tier: "query", domain: "usage", request: "UsageSummaryRequest", response: "UsageSummary" },
+  "usage.turns": { tier: "query", domain: "usage", request: "UsageTurnsRequest", response: "UsageTurns" },
+  "usage.limits": { tier: "query", domain: "usage", request: "UsageLimitsRequest", response: "UsageLimits" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

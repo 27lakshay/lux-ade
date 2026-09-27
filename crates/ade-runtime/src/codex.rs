@@ -457,6 +457,21 @@ fn decode(wire: WireEvent) -> Result<Option<Event>> {
                     text: text(&p, "delta"),
                 }
             }
+            // Usage is forwarded as reported; the daemon normalizes it and
+            // never fills in a figure Codex left out.
+            "thread/tokenUsage/updated" => Event::Usage {
+                session: text(&p, "threadId"),
+                turn: p["turnId"].as_str().map(str::to_owned),
+                source: method.clone(),
+                report: p["tokenUsage"].clone(),
+            },
+            // Account-wide and sparse: it names no thread.
+            "account/rateLimits/updated" => Event::Usage {
+                session: String::new(),
+                turn: None,
+                source: method.clone(),
+                report: p["rateLimits"].clone(),
+            },
             "serverRequest/resolved" => Event::Resolved {
                 id: p["requestId"].clone(),
             },

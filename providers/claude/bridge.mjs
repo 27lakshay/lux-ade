@@ -107,6 +107,9 @@ export class Bridge {
       ...(resume?{resume}:{sessionId:this.session}),
       pathToClaudeCodeExecutable:executable(),
     };
+    // Cumulative usage in results belongs to this query() call; the daemon
+    // differences it only between results of the same query.
+    this.usageStream={query_id:randomUUID(),fresh:!resume,results:0};
     this.query=this.sdk.query({prompt:this.input(),options});
     this.loop=this.consume().catch(error=>{if(!this.closed)this.event({type:'exited',error:error.message});this.close();});
     try { await this.query.initializationResult(); }
@@ -123,6 +126,10 @@ export class Bridge {
       if(message.session_id&&message.session_id!==this.session)throw new Error('Claude returned a different session ID; refusing session replacement');
       if(message.type==='system'&&message.subtype==='init')continue;
       const active=this.active;
+      if(message.type==='rate_limit_event') {
+        this.event({type:'usage',session:this.session,turn:active?.turn??null,source:'rate_limit_event',report:message.rate_limit_info??null});
+        continue;
+      }
       const child=this.subagents.consume(message,active?.turn);
       if(child)this.event({type:'item',session:this.session,item:child});
       if(!active)continue;
@@ -147,6 +154,9 @@ export class Bridge {
         for(const request of [...this.permissions.values()])request.resolve({behavior:'deny',message:'Turn ended'});
         this.permissions.clear();this.partial.clear();
         this.active=null;
+        // Figures as reported; the daemon marks what the SDK left out as unavailable.
+        const stream=this.usageStream;
+        this.event({type:'usage',session:this.session,turn:active.turn,source:'result',report:{usage:message.usage??null,modelUsage:message.modelUsage??null,total_cost_usd:message.total_cost_usd??null,is_error:!!message.is_error,query_id:stream.query_id,fresh:stream.fresh,result_index:stream.results++}});
         this.event({type:'finished',session:this.session,turn:active.turn,status:active.cancelled?'interrupted':message.is_error?'failed':'completed',error:message.is_error?(message.errors??[message.result??message.subtype]).join('\n'):null});
       }
     }
