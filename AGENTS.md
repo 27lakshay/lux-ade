@@ -1,80 +1,69 @@
 # Project instructions
 
+ADE is in its UI phase. The backend (Rust daemon and runtime, contracts, SDK, CLI) is built and
+proven headlessly; the work now is the Electron desktop app in `apps/desktop`. Read
+[apps/desktop/AGENTS.md](apps/desktop/AGENTS.md) before changing anything there.
+
+## Working rules
+
+- Work on `main`. Commit each finished step with a focused message and report its hash. Pushing,
+  opening a PR and merging into another branch need a separate instruction.
 - Use pnpm for JavaScript and TypeScript packages. Keep Rust dependencies in Cargo.
-- Test policy (user decisions, 2026-09-27): backend behaviour is proven by
-  headless E2E: real daemon and runtime processes driven through the CLI, the
-  SDK or the public protocol, with no Electron, in `e2e/protocol/`, run with
-  `pnpm test:e2e:protocol`. Electron E2E stays paused until the UI phase begins.
-  Every slice still passes `pnpm check:static`. Deterministic in-process tests
-  remain allowed for pure cores: fingerprints, reducers, codecs, schema
-  round-trips and reconciliation deciders, kept beside the code they test.
-  A feature is accepted only when its register acceptance passes as E2E.
-  Write specs on the shared fixtures described in `e2e/protocol/README.md`.
-- Machine safety (after the 2026-09-27 incident where test runs likely wedged
-  the Mac's `securityd` and the user could not log in until a safe-mode boot):
-  E2E and workers must never call the macOS Security framework or the
-  `security` tool, create keychains, or touch the login keychain. Secret
-  storage is tested through a test-only file backend. The real Keychain backend
-  is checked only by hand, with the user present. Specs that use other system
-  services (`hdiutil`, and similar) are opt-in through `ADE_E2E_SYSTEM=1` and run
-  serially. Rounds use at most 5 workers, each with `ADE_E2E_WORKERS=2`.
-- Existing prototype and E2E tests are legacy coverage. Do not delete them. Keep
-  the legacy Rust tests passing, because `check:static` runs them.
-- Operations fall into three tiers: query, idempotent command and effect command.
-  Only effect commands carry an operation ID, a daemon-computed payload
-  fingerprint, a receipt and reconciliation. Declare each operation's tier in its
-  contract. See section 4 of [the proposed architecture](docs/proposed-architecture.md).
-- Before initializing or restructuring the monorepo, read
-  [the initialization plan](docs/monorepo-initialization-plan.md). Before changing
-  process ownership, protocols, providers, or plugins, read
-  [the proposed architecture](docs/proposed-architecture.md). These describe the
-  planned successor. [The current architecture](docs/architecture.md) describes
-  the GPUI prototype. Its client crate was removed on 2026-09-27, and the Python
-  scripts that drive it are unmaintained; do not write code for them.
-- React, xterm.js, and Fallow are selected. Keep terminal output outside React
-  state. Keep the client SDK independent of React and Electron. Use Fallow for
-  JavaScript/TypeScript dead-code analysis.
-- The user authorized commits for the active ADE v1 build goal. Keep commits
-  focused and report their hashes. Pushing, opening a PR, and merging into another
-  branch still require separate instructions. A design discussion or plan alone
-  is not an implementation order.
+- A design discussion or plan alone is not an implementation order.
+- Every change passes `pnpm check:static`. It runs formatting, lint, typecheck, dead-code and
+  boundary checks, the in-process tests and the legacy Rust tests; keep them all passing.
+- When agents repeat a mistake, add a lint rule or a test that catches it, with a test of the rule
+  itself. Do not rely on a written reminder alone.
+- A lint suppression states its reason; unused suppressions fail the lint.
 
-## Parallel build
+## Design workflow
 
-The build runs as one coordinator plus up to 10 workers; see the
-[parallel build map](.scratch/parallel-build/README.md) and its
-[handoff](.scratch/parallel-build/issues/15-handoff-order.md).
+Visual design happens in Pen (`~/Documents/ade.pen`) first. A new surface or visual change is built
+in code only after the user approves it there; code is where motion, interaction mechanics,
+performance and accessibility behaviour are worked out. Do not style new UI directly in code. Use
+the terms in [CONTEXT.md](CONTEXT.md) in UI copy.
 
-- The coordinator is the Claude session in this checkout. Workers run in their
-  own worktrees on `claude/<slice>` branches. The coordinator merges them into
-  `codex/architecture-proposal` one at a time, rebasing first, then `--no-ff`.
-- Run `scripts/worker-bootstrap.sh` first in every new worker worktree.
-- A worker edits only its own domain's modules. Only the coordinator edits the
-  shared files: the central contract enums, migration version numbers,
-  `AGENTS.md`, `.scratch/ade-v1/progress.md`, `.scratch/ade-v1/decisions.md` and
-  `THIRD-PARTY-NOTICES.md`. A worker that needs a change there says so in its
-  result.
-- Contracts: a slice adds its operations' typed request and response types to
-  `crates/ade-core/src/contract/<domain>.rs` with a declared tier, then runs
-  `pnpm contract:generate`. Generated files in `packages/contracts` are never
-  edited by hand; on a merge conflict the coordinator regenerates them.
+## Tests
+
+- Backend behaviour is proven by headless E2E: real daemon and runtime processes driven through the
+  CLI, the SDK or the public protocol, with no Electron, in `e2e/protocol/`, run with
+  `pnpm test:e2e:protocol`. Write specs on the shared fixtures described in
+  `e2e/protocol/README.md`. A backend feature is accepted only when its register acceptance passes.
+- Renderer stores and components are tested with Vitest in browser mode, beside the code.
+- Deterministic in-process tests stay allowed for pure cores: fingerprints, reducers, codecs,
+  schema round-trips and reconciliation deciders, kept beside the code they test.
+- `e2e/specs` holds legacy CLI and daemon specs that `e2e/protocol` does not cover yet. Port one
+  into `e2e/protocol`, then delete it.
+
+## Architecture
+
+- Operations fall into three tiers: query, idempotent command and effect command. Only effect
+  commands carry an operation ID, a daemon-computed payload fingerprint, a receipt and
+  reconciliation. Declare each operation's tier in its contract. See section 4 of
+  [the proposed architecture](docs/proposed-architecture.md).
+- Before changing process ownership, protocols, providers or plugins, read
+  [the proposed architecture](docs/proposed-architecture.md). [docs/architecture.md](docs/architecture.md)
+  describes the removed GPUI prototype; do not write code for it or its Python scripts.
+- Contracts: add an operation's typed request and response to
+  `crates/ade-core/src/contract/<domain>.rs` with a declared tier, then run
+  `pnpm contract:generate`. Never edit the generated files in `packages/contracts` by hand.
   Effect commands use `crates/ade-daemon/src/receipts.rs`.
-- Each slice writes `.scratch/ade-v1/evidence/<slice>.md` from
-  [the template](.scratch/ade-v1/evidence/TEMPLATE.md). It records the time spent,
-  the checks run and a `References:` block.
-- Reference repos in `~/work/ade-evaluation-2026-09-24` may be copied with
-  attribution under their MIT or Apache-2.0 licences. See the
-  [licence and path table](.scratch/parallel-build/research/08-reference-map.md).
-  A copied file carries a `Portions adapted from <repo> <path> (<licence>)` header
-  and gets an entry in `THIRD-PARTY-NOTICES.md`. GPL-licensed files and vendored
-  third-party directories in those repos are study-only.
+- Keep terminal output outside React state. Keep the client SDK independent of React and Electron.
+
+## Reference code
+
+Reference repos in `~/work/ade-evaluation-2026-09-24` may be copied with attribution under their
+MIT or Apache-2.0 licences; see the [licence and path table](.scratch/parallel-build/research/08-reference-map.md).
+A copied file carries a `Portions adapted from <repo> <path> (<licence>)` header and gets an entry
+in `THIRD-PARTY-NOTICES.md`. GPL-licensed files and vendored third-party directories there are
+study-only.
 
 ## Agent skills
 
-- Issue tracker: use the local Markdown tracker described in
-  [issue-tracker guidance](docs/agents/issue-tracker.md). Start v1 work from the
-  [spec index](.scratch/ade-v1/README.md) and its complete requirements register.
-- Triage: published specs use `ready-for-agent`; see
-  [triage labels](docs/agents/triage-labels.md).
-- Domain: read [CONTEXT.md](CONTEXT.md) and follow
-  [domain guidance](docs/agents/domain.md) before changing shared terminology or contracts.
+- Issue tracker: the local Markdown tracker in [issue-tracker guidance](docs/agents/issue-tracker.md).
+  Start v1 work from the [spec index](.scratch/ade-v1/README.md) and its requirements register.
+- Triage: published specs use `ready-for-agent`; see [triage labels](docs/agents/triage-labels.md).
+- Domain: read [CONTEXT.md](CONTEXT.md) and follow [domain guidance](docs/agents/domain.md) before
+  changing shared terminology or contracts.
+- Library notes: Electron, Tailwind v4 and xterm.js publish no agent docs; read the verified notes
+  in `docs/agents/` before using their APIs.
