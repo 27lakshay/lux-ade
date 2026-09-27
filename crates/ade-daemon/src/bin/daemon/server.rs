@@ -2007,7 +2007,10 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>, lane: Lane) -> any
         upstream.write_all(first.as_bytes())?;
         drop(admission);
         // Copy bytes without parsing terminal output a second time. Both directions
-        // are bounded by Unix socket buffers; slow viewers are evicted upstream.
+        // are bounded by Unix socket buffers. The runtime never closes a slow
+        // viewer: once it falls a whole budget behind, the runtime skips the
+        // output it could not queue and resynchronizes it with a fresh
+        // snapshot marked `resync: true`.
         let mut input = upstream.try_clone()?;
         std::thread::spawn(move || {
             let _ = io::copy(&mut reader, &mut input);

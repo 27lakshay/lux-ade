@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { binaries } from '../fixtures/environment'
+import type { ProcessLedger } from '../fixtures/processes'
 import { attachThroughTty, clientSdk, terminalMetrics, TerminalStream, type TerminalFrame } from '../fixtures/terminals'
 import { feedSource, restoredScreen, terminalPackage, type ScreenState } from './xterm'
 
@@ -187,7 +188,112 @@ test('ade terminal attach resets and restores its TTY on a resync and stays atta
   expect(await terminalMetrics(profile, ...target)).toMatchObject({ run_id: runId, shell_pid: shellPid, shell_running: true })
 })
 
-test('the SDK passes a resync snapshot on and refuses a real output gap', async ({ ade }) => {
+/** Bytes `seq 1 <lines>` writes through the PTY, which turns each LF into CRLF. */
+function seqBytes(lines: number): number {
+  let total = 0
+  for (let digits = 1, low = 1; low <= lines; digits++, low *= 10) {
+    total += (Math.min(lines, low * 10 - 1) - low + 1) * (digits + 2)
+  }
+  return total
+}
+
+/**
+ * `ade terminal attach` under a throttled TTY during a flood of `lines`
+ * distinct lines, until the CLI has been resynchronized. The TTY runs at full
+ * speed from the moment the flood has finished (`flood`), or only once the
+ * flood's last line has reached it after a reset (`replayed`). Returns the
+ * attachment and the resync count before the flood.
+ */
+async function floodBehindTty(root: string, ledger: ProcessLedger, profile: ScratchProfile, lines: number,
+  bytesPerTick: number, releaseAfter: 'flood' | 'replayed') {
+  const { target, runId, shellPid, stream } = await openTerminal(profile)
+  const release = join(root, 'tty-release')
+  const attach = await attachThroughTty(profile, ledger, ...target, { bytesPerTick, tickMs: 50, releaseFile: release })
+  await expect.poll(async () => (await terminalMetrics(profile, ...target))!.resize_owner,
+    { message: 'the CLI to attach and claim the viewport' }).not.toBeNull()
+  const before = attach.output().length
+  const start = (await terminalMetrics(profile, ...target))!
+  startFlood(stream, runId, `seq 1 ${lines}; echo "flo""od-end"`)
+  await expect.poll(async () => (await terminalMetrics(profile, ...target))!.terminal_bytes as number,
+    { message: 'the flood to finish', timeout: 120_000 })
+    .toBeGreaterThanOrEqual((start.terminal_bytes as number) + seqBytes(lines) + 'flood-end\r\n'.length)
+  if (releaseAfter === 'flood') writeFileSync(release, '')
+  await expect.poll(async () => (await terminalMetrics(profile, ...target))!.viewer_resyncs as number,
+    { message: 'the CLI to be resynchronized', timeout: 150_000 }).toBeGreaterThan(start.viewer_resyncs as number)
+  if (releaseAfter === 'replayed') {
+    await expect.poll(() => {
+      const output = attach.output().slice(before)
+      return attach.child.exitCode !== null || output.slice(output.lastIndexOf('\x1bc')).includes('flood-end')
+    }, { message: 'the replay to reach the slow TTY', timeout: 150_000 }).toBe(true)
+  }
+  writeFileSync(release, '')
+  return { target, runId, shellPid, attach, before, resyncsBefore: start.viewer_resyncs as number }
+}
+
+test('ade terminal attach replays the complete history after a resync within the replay bound', async ({ ade, profile }) => {
+  test.setTimeout(240_000)
+  // About 2.3 MB of distinct lines: below the 4 MiB replay bound, so every
+  // resync snapshot carries the complete history. The TTY first drains 4 KiB
+  // every 50 ms, so the CLI reads frames far slower than the flood and falls
+  // a whole budget behind. The TTY is released once the flood has finished,
+  // while the runtime still drains what it queued before the lag, so the
+  // resync snapshot's replay reaches a fast TTY.
+  const lines = 300_000
+  const { target, runId, shellPid, attach, before, resyncsBefore } =
+    await floodBehindTty(ade.root, ade.ledger, profile, lines, 4 * 1024, 'flood')
+
+  await typeLine(profile, target, 'echo "af""ter-resync"')
+  await expect.poll(() => attach.output().includes('after-resync'),
+    { message: 'live output after the resync on the TTY', timeout: 90_000 }).toBe(true)
+  const output = attach.output().slice(before)
+  const resyncs = ((await terminalMetrics(profile, ...target))!.viewer_resyncs as number) - resyncsBefore
+  expect(resyncs).toBeGreaterThanOrEqual(1)
+  // Each resync reset the TTY (RIS) once and took the complete-history
+  // branch: no replay-limit warning, no gap, no error.
+  expect(output.split('\x1bc').length - 1).toBe(resyncs)
+  expect(output).not.toContain('replay_limit_exceeded')
+  expect(output).not.toContain('byte gap')
+  expect(output).not.toContain('"type":"error"')
+  // After the last reset, the TTY holds the replayed history followed by live
+  // output: every line of the flood, once each and in order, from line 1.
+  const restored = output.slice(output.lastIndexOf('\x1bc') + 2)
+  const numbers = restored.split(/\r*\n/).filter((line) => /^\d+$/.test(line)).map(Number)
+  expect(numbers.length).toBe(lines)
+  expect(numbers.every((value, index) => value === index + 1)).toBe(true)
+  expect(restored).toMatch(/\nflood-end\r*\n/)
+  expect(restored).toContain('after-resync')
+  expect(attach.child.exitCode).toBeNull()
+
+  // The runtime's own snapshot agrees that the history is still complete.
+  const fresh = TerminalStream.open(profile, ...target)
+  const recovery = (await fresh.snapshot()).terminal_recovery as { complete: boolean }
+  fresh.close()
+  expect(recovery.complete).toBe(true)
+
+  attach.child.stdin!.write('\x1d')
+  expect(await attach.exited).toBe(0)
+  expect(await terminalMetrics(profile, ...target)).toMatchObject({ run_id: runId, shell_pid: shellPid, shell_running: true })
+})
+
+// Gap: the runtime's terminal writer closes an attachment whose socket
+// accepts nothing for 2 s. `ade terminal attach` writes a resync replay to its
+// TTY synchronously, so a complete-history replay that takes longer than 2 s
+// to reach a slow TTY (2.3 MB at about 320 KB/s here) stops it reading its
+// socket, and the runtime closes it: the CLI exits 3 with "Terminal
+// connection closed." A slow viewer should be resynchronized again, not closed.
+test.fixme('ade terminal attach survives a complete-history replay slower than the write timeout', async ({ ade, profile }) => {
+  test.setTimeout(240_000)
+  const { target, attach } = await floodBehindTty(ade.root, ade.ledger, profile, 300_000, 16 * 1024, 'replayed')
+  await typeLine(profile, target, 'echo "af""ter-resync"')
+  await expect.poll(() => attach.output().includes('after-resync'),
+    { message: 'live output after the resync on the TTY', timeout: 90_000 }).toBe(true)
+  expect(attach.output()).not.toContain('Terminal connection closed.')
+  expect(attach.child.exitCode).toBeNull()
+  attach.child.stdin!.write('\x1d')
+  expect(await attach.exited).toBe(0)
+})
+
+test('the SDK passes a resync snapshot on and refuses a real output gap',async ({ ade }) => {
   // A scripted terminal peer: snapshot, live output, a resync snapshot that
   // skips ahead, live output from its offset, then a frame after a gap.
   const socketPath = join(ade.root, 'peer.sock')

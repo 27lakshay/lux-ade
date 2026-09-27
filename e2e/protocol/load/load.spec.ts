@@ -25,7 +25,7 @@ import { ownerStorageProfile, startBrowserOwner, type BrowserOwner } from '../fi
 import { subscribeFeed } from '../fixtures/feed'
 import { AdmissionClient, startWorkload, summarize, terminalEcho, timed, type Workload } from '../fixtures/load'
 import { claudeRecords, claudeTranscript } from '../fixtures/native-sessions'
-import { TerminalStream } from '../fixtures/terminals'
+import { terminalMetrics, TerminalStream } from '../fixtures/terminals'
 
 const ADMISSION_TARGET_MS = 250
 const ECHO_TARGET_MS = 50
@@ -51,29 +51,14 @@ function stalledSubscriber(socketPath: string): Promise<Socket> {
 }
 
 /**
- * Wait for `pattern` in a terminal's output. The runtime closes an attachment
- * that falls 64 frames behind instead of stalling the PTY, and the client
- * attaches again from a snapshot, as a slow viewer does. Returns the new
- * attachments that were needed, which the caller closes.
+ * Wait for `pattern` in a terminal's output on its original attachment. The
+ * runtime never closes an attachment that falls behind: it resynchronizes it
+ * from a fresh snapshot, so the attachment must still be open when the
+ * pattern arrives.
  */
-async function waitThroughEvictions(profile: ScratchProfile, stream: TerminalStream, pattern: RegExp) {
-  const reattached: TerminalStream[] = []
-  let current = stream
-  for (let attempt = 0; attempt < 50; attempt++) {
-    try {
-      await current.waitForText(pattern, 120_000)
-      return reattached
-    } catch (error) {
-      if (!current.closed) throw error
-      current = TerminalStream.open(profile, stream.workspaceId, stream.terminalId)
-      reattached.push(current)
-      // Under a flood a new attachment can fall 64 frames behind while its
-      // snapshot is still being written, and is closed before the snapshot
-      // arrives; the next attempt starts over.
-      await current.snapshot().catch((error) => { if (!current.closed) throw error })
-    }
-  }
-  throw new Error(`Terminal ${stream.terminalId} was evicted 50 times before ${pattern} arrived`)
+async function waitOnAttachment(stream: TerminalStream, pattern: RegExp): Promise<void> {
+  await stream.waitForText(pattern, 300_000)
+  expect(stream.closed, `terminal ${stream.terminalId} attachment closed`).toBe(false)
 }
 
 /** A scripted owner with five open tabs, answering the way the Electron owner does. */
@@ -195,7 +180,7 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
   }
   let streamed = false
   const streams = Promise.all(streaming.map((terminal, index) =>
-    waitThroughEvictions(profile, terminal, new RegExp(`done-${index + 7000}\\r?\\n`))))
+    waitOnAttachment(terminal, new RegExp(`done-${index + 7000}\\r?\\n`))))
     .finally(() => { streamed = true })
   const sustained: Record<string, number[]> = {}
   const echoSustained: number[] = []
@@ -218,7 +203,7 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
     })(),
     streams,
   ]))
-  const reattached = (await streams).flat()
+  await streams
   const underLoad = await profile.call('diagnostics.status', {})
 
   // Idle phase: nothing streams; the same measurements again.
@@ -233,7 +218,11 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
   expect(fast.client.getState().status).toBe('connected')
   fast.stop()
   stalled.destroy()
-  for (const stream of reattached) stream.close()
+  // No attachment was closed for lag; any that fell behind was resynchronized.
+  expect(workload.terminals.filter((terminal) => terminal.closed).map((terminal) => terminal.terminalId)).toEqual([])
+  const viewerResyncs = (await Promise.all(workload.terminals.map((terminal) =>
+    terminalMetrics(profile, terminal.workspaceId, terminal.terminalId))))
+    .reduce((sum, metrics) => sum + Number(metrics?.viewer_resyncs ?? 0), 0)
   for (const terminal of workload.terminals) terminal.close()
 
   // Crash phase: the daemon is killed under the whole workload. Recovery is
@@ -294,7 +283,7 @@ test('ten agents, twenty terminals, three services, five browser tabs and a larg
       e2e_workers: process.env.ADE_E2E_WORKERS ?? 'default' },
     workload: { agents: 10, terminals: 20, services: 3, browser_tabs: TABS, history_messages: history.messages,
       diff_lines: 5000, slow_subscribers: 1, streamed_lines: 19 * STREAMED_LINES, sustained_rounds: rounds, setup_ms: Math.round(setup.ms),
-      slow_attachments_evicted: reattached.length },
+      viewer_resyncs: viewerResyncs },
     history: { import_ms: history.import_ms, index_catch_up_ms: history.index_catch_up_ms },
     targets: { admission_p95_ms: ADMISSION_TARGET_MS, echo_p95_ms: ECHO_TARGET_MS },
     sustained: { admission: admission(sustained), echo: summarize(echoSustained), diff: summarize(diffs),
