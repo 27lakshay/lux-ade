@@ -691,27 +691,31 @@ impl Sessions {
         } else {
             error
         };
-        // Mark the Agent stopping under the lock, then stop its provider
-        // without the lock: a stop can take a full shutdown escalation.
-        let rpc = {
-            let mut d = self.data.lock().unwrap();
-            if !Self::owns(&d, id, run)
-                || d.agents[id].stopping
-                || submission.is_some_and(|key| d.agents[id].submission.as_deref() != Some(key))
-            {
-                return;
+        let mut d = self.data.lock().unwrap();
+        if !Self::owns(&d, id, run)
+            || d.agents[id].stopping
+            || submission.is_some_and(|key| d.agents[id].submission.as_deref() != Some(key))
+        {
+            return;
+        }
+        let outcome = match d.agents[id].rpc.clone() {
+            // No provider is attached yet: remove the Agent in this same lock
+            // hold, so a concurrent attach sees it gone and stops its own run.
+            None => failed_agent(None),
+            // Stop the provider without the lock: a stop can take a full
+            // shutdown escalation. The stopping flag fences the gap.
+            Some(rpc) => {
+                d.agents.get_mut(id).unwrap().stopping = true;
+                drop(d);
+                let stop = rpc.stop_confirmed().map_err(|error| format!("{error:#}"));
+                d = self.data.lock().unwrap();
+                if !Self::owns(&d, id, run) {
+                    return;
+                }
+                failed_agent(Some(stop))
             }
-            let agent = d.agents.get_mut(id).unwrap();
-            agent.stopping = true;
-            agent.rpc.clone()
         };
-        let stop = rpc.map(|rpc| rpc.stop_confirmed().map_err(|error| format!("{error:#}")));
-        let outcome = failed_agent(stop);
         let result = (|| -> Result<()> {
-            let mut d = self.data.lock().unwrap();
-            if !Self::owns(&d, id, run) {
-                return Ok(());
-            }
             let agent = d.agents.remove(id).unwrap();
             let current = d.store.conversation(id).ok();
             if let Some(reason) = &outcome.hold {
