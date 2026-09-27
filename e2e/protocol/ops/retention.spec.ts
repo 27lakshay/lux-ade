@@ -58,9 +58,8 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
   await profile.call('draft.save', { conversation_id: conversationId, window_id: 'retention-window', revision: 1,
     text: 'draft with a file', attachments: [drafted.attachment] })
 
-  // An installed skill bundle, replaced once. The replacement releases the
-  // old files in its own transaction, so retention has no skill files to find
-  // and must not touch the installed ones.
+  // An installed skill bundle, replaced once. The replacement leaves the old
+  // files unreferenced, so they are a candidate; the installed ones are not.
   const source = join(ade.root, 'skills', 'notes')
   await writeSkill(source, 'notes', 'First version.')
   const first = await profile.call('skill.install', { operation_id: nextOperation('install'), source_path: source })
@@ -96,9 +95,9 @@ test('preview selects only unowned, idle and aged items; apply removes exactly t
   expect(planned.generation).toMatch(/^[0-9a-f]{64}$/)
   expect(ids(planned, 'service_log')).toEqual([idleOrphan])
   expect(ids(planned, 'diagnostic_log')).toEqual([oldLog])
-  expect(ids(planned, 'skill_blob')).toEqual([])
+  expect(ids(planned, 'skill_blob')).toEqual([first.skill.content_hash])
   expect(ids(planned, 'attachment')).toEqual([])
-  expect(planned.candidates).toHaveLength(2)
+  expect(planned.candidates).toHaveLength(3)
   for (const candidate of planned.candidates) {
     expect(candidate.bytes).toBeGreaterThan(0)
     expect(candidate.reason.length).toBeGreaterThan(0)

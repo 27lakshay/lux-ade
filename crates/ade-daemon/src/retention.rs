@@ -150,8 +150,12 @@ pub fn attachment(facts: &AttachmentFacts, now: i64) -> Verdict {
     Verdict::Keep("unreferenced upload; reclaim it explicitly")
 }
 
-/// Skill files belong to a bundle; the install writes both in one
-/// transaction, so an unreferenced hash is never in flight.
+/// Skill files belong to a bundle. An install writes the files and the
+/// catalog row that references them in one transaction, under the lock apply
+/// holds, so an unreferenced hash is never in flight. `skill.remove` and a
+/// replacing install leave the old files unreferenced for retention. External
+/// skills are references to provider paths, never blobs, so they are never
+/// candidates.
 pub fn skill_blob(referenced: bool) -> Verdict {
     if referenced {
         Verdict::Keep("referenced by an installed skill")
