@@ -59,7 +59,8 @@ pub fn operations() -> Vec<OperationSpec> {
 }
 
 pub fn frames() -> Vec<FrameSpec> {
-    vec![FrameSpec::new::<ServiceChanged>("service_changed")]
+    // The services domain owns the `service_changed` frame.
+    vec![]
 }
 
 /// Keeps an explicit JSON `null` distinct from an absent field: absent is
@@ -178,7 +179,6 @@ wire_tag!(BrowserTabsTag, "browser_tabs");
 wire_tag!(BrowserTabTag, "browser_tab");
 wire_tag!(BrowserMutationTag, "browser_mutation");
 wire_tag!(BrowserOperationTag, "browser_operation");
-wire_tag!(ServiceChangedTag, "service_changed");
 
 /// The `hello` reply: build identity and every protocol version.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -342,26 +342,6 @@ pub struct BrowserOperation {
     pub result: Option<Value>,
 }
 
-/// The `service_changed` feed frame.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ServiceChanged {
-    #[serde(rename = "type")]
-    pub tag: ServiceChangedTag,
-    /// The changed service definition.
-    #[schemars(with = "Value")]
-    pub service: Value,
-    /// Launch metrics; present only when the service was just launched.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "Value")]
-    pub metrics: Option<Value>,
-    pub boot_id: String,
-    pub revision: u64,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,21 +481,6 @@ mod tests {
         );
         request::<SessionSubscribeRequest>("session.subscribe", json!({}));
         assert_eq!(operation("session.subscribe").1, "CatalogFrame");
-    }
-
-    #[test]
-    fn service_changed_frame_keeps_metrics_optional() {
-        reply::<ServiceChanged>(
-            "ServiceChanged",
-            json!({"type": "service_changed", "service": {"name": "web"},
-                "boot_id": "boot_1", "revision": 3}),
-        );
-        let launched: ServiceChanged = reply(
-            "ServiceChanged",
-            json!({"type": "service_changed", "service": {"name": "web"}, "metrics": null,
-                "boot_id": "boot_1", "revision": 4}),
-        );
-        assert_eq!(launched.metrics, Some(Value::Null));
     }
 
     #[test]

@@ -166,7 +166,6 @@ export type ContractDefinition =
   | SendIntentState
   | Service
   | ServiceChanged
-  | ServiceChanged2
   | ServiceConfigureRequest
   | ServiceExecution
   | ServiceHealthSample
@@ -2337,26 +2336,6 @@ export interface ServiceChanged {
   [k: string]: unknown
 }
 /**
- * The `service_changed` feed frame.
- */
-export interface ServiceChanged2 {
-  boot_id: string
-  /**
-   * Launch metrics; present only when the service was just launched.
-   */
-  metrics?: unknown
-  revision: number
-  /**
-   * The changed service definition.
-   */
-  service: unknown
-  /**
-   * The `service_changed` type tag.
-   */
-  type: 'service_changed'
-  [k: string]: unknown
-}
-/**
  * `service.configure`: create or edit a service recipe.
  */
 export interface ServiceConfigureRequest {
@@ -3421,4 +3400,4 @@ export interface ResponseByOperation {
   "browser.operation": BrowserOperation
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged | ServiceChanged2
+export type FeedFrame = CatalogFrame | ConversationChanged | ServiceChanged

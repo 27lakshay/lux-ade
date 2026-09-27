@@ -111,5 +111,4 @@ export const frames = {
   "catalog": { domain: "workspaces", frame: "CatalogFrame" },
   "conversation_changed": { domain: "conversations", frame: "ConversationChanged" },
   "service_changed": { domain: "services", frame: "ServiceChanged" },
-  "service_changed": { domain: "daemon", frame: "ServiceChanged2" },
 } as const

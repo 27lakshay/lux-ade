@@ -53,7 +53,6 @@ impl Sessions {
     }
 
     pub(super) fn conversation_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
-        let string = required_str(request);
         match request["op"].as_str().unwrap_or("") {
             "attachment.inspect" => {
                 let inspect: AttachmentInspectRequest = decode(request)?;

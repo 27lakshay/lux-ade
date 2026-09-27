@@ -4928,39 +4928,6 @@
       ],
       "type": "object"
     },
-    "ServiceChanged2": {
-      "description": "The `service_changed` feed frame.",
-      "properties": {
-        "boot_id": {
-          "type": "string"
-        },
-        "metrics": {
-          "description": "Launch metrics; present only when the service was just launched."
-        },
-        "revision": {
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "service": {
-          "description": "The changed service definition."
-        },
-        "type": {
-          "description": "The `service_changed` type tag.",
-          "enum": [
-            "service_changed"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "service",
-        "boot_id",
-        "revision"
-      ],
-      "type": "object"
-    },
     "ServiceConfigureRequest": {
       "additionalProperties": false,
       "description": "`service.configure`: create or edit a service recipe.",
@@ -7022,11 +6989,6 @@
     {
       "domain": "services",
       "frame": "ServiceChanged",
-      "type": "service_changed"
-    },
-    {
-      "domain": "daemon",
-      "frame": "ServiceChanged2",
       "type": "service_changed"
     }
   ],
