@@ -12,7 +12,7 @@ export {
   type TerminalConnectionOptions,
   type TerminalFrame,
 } from './terminal.js'
-export { requestDaemon, DaemonRequestError, categoryErrorCodes, daemonRefusalCodes, isDaemonRefusal,
+export { requestDaemon, controlOperations, controlSocketPath, DaemonRequestError, categoryErrorCodes, daemonRefusalCodes, isDaemonRefusal,
   type DaemonErrorCode, type DaemonResponse, type KnownDaemonErrorCode, type RequestDelivery,
   type RequestOptions } from './request.js'
 export { call, decodeCallReply, encodeCall, takesOperationId, type CallRequest, type OperationIdOperation } from './call.js'
