@@ -1,17 +1,6 @@
 use super::*;
 
-#[derive(Serialize)]
-pub struct AttachmentReclaimPreview {
-    pub attachment_id: String,
-    pub conversation_id: String,
-    pub generation: String,
-    pub state: String,
-    pub created_at: i64,
-    pub payload_bytes: i64,
-    pub estimated_reusable_payload_bytes: i64,
-    pub protected_by: Vec<String>,
-    pub reclaimable: bool,
-}
+pub use ade_core::contract::conversations::AttachmentReclaimPreview;
 
 fn attachment_reclaim_preview_from(
     db: &Connection,

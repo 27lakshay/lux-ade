@@ -1,100 +1,160 @@
 //! Conversation, draft, queue, attachment, agent and window operations.
 use super::*;
 use ade_core::contract::conversations::{
-    Ack, AgentAnswerRequest, AgentSendRequest, ConversationGetRequest, ConversationSnapshot,
+    Ack, AgentAnswerRequest, AgentSendRequest, AttachmentImportRequest, AttachmentInspectRequest,
+    AttachmentInspection, AttachmentPutRequest, AttachmentReclaim, AttachmentReclaimApplyRequest,
+    AttachmentReclaimPreviewReply, AttachmentReclaimPreviewRequest, AttachmentReply,
+    ConversationCreateRequest, ConversationCreated, ConversationGetRequest, ConversationSnapshot,
+    DraftGetRequest, DraftReply, DraftSaveRequest, DraftSendAbortRequest, DraftSendCompleteRequest,
+    DraftSendGetRequest, DraftSendPrepareRequest, QueueCancelRequest, QueueEnqueueRequest,
+    QueuePauseRequest, SendIntentPrepared, SendIntentState, WindowCloseRequest, WindowSaveRequest,
 };
 
+/// Checks a field before decoding, so it keeps its established error message.
+fn field<'a, T>(
+    request: &'a Value,
+    key: &str,
+    read: fn(&'a Value) -> Option<T>,
+    message: &str,
+) -> Result<()> {
+    read(&request[key]).map(drop).context(message.to_owned())
+}
+
 impl Sessions {
+    fn attach(&self, conversation: &str, id: &str, name: &str, bytes: &[u8]) -> Result<Value> {
+        let attachment = self.data.lock().unwrap().store.attach(
+            non_empty("conversation_id", conversation)?,
+            non_empty("request_id", id)?,
+            name,
+            bytes,
+        )?;
+        reply(&AttachmentReply {
+            tag: Default::default(),
+            attachment,
+        })
+    }
+
+    /// Applies one queue change under the store lock and publishes the Conversation.
+    fn queue_change(
+        &self,
+        conversation: &str,
+        change: impl FnOnce(&mut Data, &mut Conversation) -> Result<()>,
+    ) -> Result<Value> {
+        let mut d = self.data.lock().unwrap();
+        let id = non_empty("conversation_id", conversation)?;
+        let mut c = d.store.conversation(id)?;
+        change(&mut d, &mut c)?;
+        self.changed(&mut d, &c, &[])?;
+        reply(&Ack::default())
+    }
+
     pub(super) fn conversation_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let string = required_str(request);
         match request["op"].as_str().unwrap_or("") {
             "attachment.inspect" => {
+                let inspect: AttachmentInspectRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &inspect.conversation_id)?;
+                let id = non_empty("attachment_id", &inspect.attachment_id)?;
                 let (attachment, sha256) = self
                     .data
                     .lock()
                     .unwrap()
                     .store
-                    .attachment_inspect(string("conversation_id")?, string("attachment_id")?)?;
-                Ok(json!({"type":"attachment_inspection","attachment":attachment,"sha256":sha256}))
+                    .attachment_inspect(conversation, id)?;
+                reply(&AttachmentInspection {
+                    tag: Default::default(),
+                    attachment,
+                    sha256,
+                })
             }
             "attachment.reclaim.preview" => {
-                let preview = self.data.lock().unwrap().store.attachment_reclaim_preview(
-                    string("conversation_id")?,
-                    string("attachment_id")?,
-                )?;
-                Ok(
-                    json!({"type":"attachment_reclaim_preview","preview":preview,
-                    "scope":"explicit_single_attachment","automatic_gc_eligible":false,
-                    "client_held_uploads":"not_enumerated","filesystem_reclaimed_bytes":0}),
-                )
+                let inspect: AttachmentReclaimPreviewRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &inspect.conversation_id)?;
+                let id = non_empty("attachment_id", &inspect.attachment_id)?;
+                let preview = self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .attachment_reclaim_preview(conversation, id)?;
+                reply(&AttachmentReclaimPreviewReply {
+                    tag: Default::default(),
+                    preview,
+                    scope: Default::default(),
+                    automatic_gc_eligible: false,
+                    client_held_uploads: Default::default(),
+                    filesystem_reclaimed_bytes: 0,
+                })
             }
             "attachment.reclaim.apply" => {
-                let (attachment, reclaimed) =
-                    self.data.lock().unwrap().store.attachment_reclaim_apply(
-                        string("conversation_id")?,
-                        string("attachment_id")?,
-                        string("expected_generation")?,
-                    )?;
-                Ok(json!({"type":"attachment_reclaim","attachment":attachment,
-                    "reclaimed_payload_bytes":reclaimed,"filesystem_reclaimed_bytes":0,
-                    "scope":"explicit_single_attachment"}))
+                let apply: AttachmentReclaimApplyRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &apply.conversation_id)?;
+                let id = non_empty("attachment_id", &apply.attachment_id)?;
+                let generation = non_empty("expected_generation", &apply.expected_generation)?;
+                let (attachment, reclaimed) = self
+                    .data
+                    .lock()
+                    .unwrap()
+                    .store
+                    .attachment_reclaim_apply(conversation, id, generation)?;
+                reply(&AttachmentReclaim {
+                    tag: Default::default(),
+                    attachment,
+                    reclaimed_payload_bytes: reclaimed,
+                    filesystem_reclaimed_bytes: 0,
+                    scope: Default::default(),
+                })
             }
-            "attachment.import" | "attachment.put" => {
-                use base64::Engine;
+            "attachment.import" => {
                 use std::io::Read;
-                let (name, bytes) = if request["op"] == "attachment.import" {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    let path = std::path::Path::new(string("path")?);
-                    let file = std::fs::OpenOptions::new()
-                        .read(true)
-                        .custom_flags(libc::O_NONBLOCK)
-                        .open(path)?;
-                    ensure!(file.metadata()?.is_file(), "Attach a regular file");
-                    let mut bytes = Vec::new();
-                    file.take(crate::prompt::ATTACHMENT_LIMIT as u64 + 1)
-                        .read_to_end(&mut bytes)?;
-                    (
-                        path.file_name()
-                            .and_then(|n| n.to_str())
-                            .context("Invalid file name")?
-                            .to_owned(),
-                        bytes,
-                    )
-                } else {
-                    let bytes =
-                        base64::engine::general_purpose::STANDARD.decode(string("data")?)?;
-                    (string("name")?.to_owned(), bytes)
-                };
-                let attachment = self.data.lock().unwrap().store.attach(
-                    string("conversation_id")?,
-                    string("request_id")?,
-                    &name,
-                    &bytes,
-                )?;
-                Ok(json!({"type":"attachment","attachment":attachment}))
+                use std::os::unix::fs::OpenOptionsExt;
+                let import: AttachmentImportRequest = decode(request)?;
+                let path = std::path::Path::new(non_empty("path", &import.path)?);
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(path)?;
+                ensure!(file.metadata()?.is_file(), "Attach a regular file");
+                let mut bytes = Vec::new();
+                file.take(crate::prompt::ATTACHMENT_LIMIT as u64 + 1)
+                    .read_to_end(&mut bytes)?;
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .context("Invalid file name")?;
+                self.attach(&import.conversation_id, &import.request_id, name, &bytes)
+            }
+            "attachment.put" => {
+                use base64::Engine;
+                let put: AttachmentPutRequest = decode(request)?;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(non_empty("data", &put.data)?)?;
+                let name = non_empty("name", &put.name)?;
+                self.attach(&put.conversation_id, &put.request_id, name, &bytes)
             }
             "conversation.create" => {
-                let mut d = self.data.lock().unwrap();
-                let title = request["title"].as_str().unwrap_or("New Conversation");
+                if let Some(value) = request.get("account_id") {
+                    value.as_str().context("Invalid account ID")?;
+                }
+                let create: ConversationCreateRequest = decode(request)?;
+                let title = create.title.as_deref().unwrap_or("New Conversation");
                 ensure!(title.len() <= 256, "Title is too long");
-                let account_id = match request.get("account_id") {
-                    None => None,
-                    Some(value) => Some(value.as_str().context("Invalid account ID")?),
-                };
-                let c = d.store.create_with_account(
-                    string("workspace_id")?,
+                let workspace = non_empty("workspace_id", &create.workspace_id)?;
+                let provider_config =
+                    serde_json::from_value(create.provider_config.unwrap_or_else(|| json!({})))?;
+                let mut d = self.data.lock().unwrap();
+                let conversation = d.store.create_with_account(
+                    workspace,
                     title,
-                    request["provider"].as_str().unwrap_or("codex"),
-                    serde_json::from_value(
-                        request
-                            .get("provider_config")
-                            .cloned()
-                            .unwrap_or_else(|| json!({})),
-                    )?,
-                    account_id,
+                    create.provider.as_deref().unwrap_or("codex"),
+                    provider_config,
+                    create.account_id.as_deref(),
                 )?;
                 self.catalog_changed(&mut d)?;
-                Ok(json!({"type":"ack","conversation":c}))
+                reply(&ConversationCreated {
+                    tag: Default::default(),
+                    conversation,
+                })
             }
             "conversation.get" => {
                 let get: ConversationGetRequest = decode(request)?;
@@ -151,40 +211,55 @@ impl Sessions {
                 };
                 rpc.child_transcript(&session, child, offset, cursor)
             }
-            "draft.get" => Ok(
-                json!({"type":"draft","draft":self.data.lock().unwrap().store.draft(string("conversation_id")?,string("window_id")?)?}),
-            ),
+            "draft.get" => {
+                let get: DraftGetRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &get.conversation_id)?;
+                let window = non_empty("window_id", &get.window_id)?;
+                reply(&DraftReply {
+                    tag: Default::default(),
+                    draft: self
+                        .data
+                        .lock()
+                        .unwrap()
+                        .store
+                        .draft(conversation, window)?,
+                })
+            }
             "draft.save" => {
+                field(request, "text", Value::as_str, "Missing draft text")?;
+                field(request, "revision", Value::as_i64, "Missing draft revision")?;
+                let save: DraftSaveRequest = decode(request)?;
                 let draft = crate::model::Draft {
-                    attachments: serde_json::from_value(
-                        request.get("attachments").cloned().unwrap_or(json!([])),
-                    )?,
-                    text: request["text"]
-                        .as_str()
-                        .context("Missing draft text")?
-                        .into(),
-                    revision: request["revision"]
-                        .as_i64()
-                        .context("Missing draft revision")?,
+                    attachments: save.attachments,
+                    text: save.text,
+                    revision: save.revision,
                 };
                 let data = self.data.lock().unwrap();
-                let conversation = string("conversation_id")?;
-                let window = string("window_id")?;
+                let conversation = non_empty("conversation_id", &save.conversation_id)?;
+                let window = non_empty("window_id", &save.window_id)?;
                 // Explicit conflict resolution must not overwrite a third writer
                 // that saved after the user reviewed the conflicting draft.
-                let saved = if let Some(expected) = request["expected_revision"].as_i64() {
+                let saved = if let Some(expected) = save.expected_revision {
                     data.store
                         .resolve_draft(conversation, window, &draft, expected)
                 } else {
                     data.store.save_draft(conversation, window, &draft)
                 };
-                Ok(json!({"type":"draft","draft":persistence_result(saved)?}))
+                reply(&DraftReply {
+                    tag: Default::default(),
+                    draft: persistence_result(saved)?,
+                })
             }
             "draft.send.get" => {
+                let get: DraftSendGetRequest = decode(request)?;
+                let conversation = non_empty("conversation_id", &get.conversation_id)?;
+                let window = non_empty("window_id", &get.window_id)?;
                 let data = self.data.lock().unwrap();
-                Ok(json!({"type":"send_intent","intent":data.store.send_intent(
-                    string("conversation_id")?, string("window_id")?)?,
-                    "restored_from_backup":data.store.restored_from_backup()?}))
+                reply(&SendIntentState {
+                    tag: Default::default(),
+                    intent: data.store.send_intent(conversation, window)?,
+                    restored_from_backup: data.store.restored_from_backup()?,
+                })
             }
             "draft.send.prepare" => {
                 ensure!(
@@ -195,50 +270,59 @@ impl Sessions {
                 if let Some(feedback) = request.get("review_feedback") {
                     crate::review::feedback_anchors(feedback)?;
                 }
+                field(request, "draft_text", Value::as_str, "Missing draft text")?;
+                field(request, "revision", Value::as_i64, "Missing draft revision")?;
+                field(request, "text", Value::as_str, "Missing prompt text")?;
+                let prepare: DraftSendPrepareRequest = decode(request)?;
                 let draft = crate::model::Draft {
-                    text: request["draft_text"]
-                        .as_str()
-                        .context("Missing draft text")?
-                        .into(),
-                    revision: request["revision"]
-                        .as_i64()
-                        .context("Missing draft revision")?,
-                    attachments: serde_json::from_value(
-                        request.get("attachments").cloned().unwrap_or(json!([])),
-                    )?,
+                    text: prepare.draft_text,
+                    revision: prepare.revision,
+                    attachments: prepare.attachments,
                 };
                 let data = self.data.lock().unwrap();
                 let intent = persistence_result(
                     data.store.prepare_send_intent(
-                        string("conversation_id")?,
-                        string("window_id")?,
-                        string("request_id")?,
+                        non_empty("conversation_id", &prepare.conversation_id)?,
+                        non_empty("window_id", &prepare.window_id)?,
+                        non_empty("request_id", &prepare.request_id)?,
                         &draft,
-                        request["text"].as_str().context("Missing prompt text")?,
-                        request
-                            .get("review_anchor")
-                            .or(request.get("review_feedback")),
+                        &prepare.text,
+                        prepare
+                            .review_anchor
+                            .as_ref()
+                            .or(prepare.review_feedback.as_ref()),
                     ),
                 )?;
-                Ok(json!({"type":"send_intent","intent":intent}))
+                reply(&SendIntentPrepared {
+                    tag: Default::default(),
+                    intent,
+                })
             }
             "draft.send.complete" => {
+                let complete: DraftSendCompleteRequest = decode(request)?;
                 let data = self.data.lock().unwrap();
                 let draft = persistence_result(data.store.complete_send_intent(
-                    string("conversation_id")?,
-                    string("window_id")?,
-                    string("request_id")?,
+                    non_empty("conversation_id", &complete.conversation_id)?,
+                    non_empty("window_id", &complete.window_id)?,
+                    non_empty("request_id", &complete.request_id)?,
                 ))?;
-                Ok(json!({"type":"draft","draft":draft}))
+                reply(&DraftReply {
+                    tag: Default::default(),
+                    draft,
+                })
             }
             "draft.send.abort" => {
+                let abort: DraftSendAbortRequest = decode(request)?;
                 let data = self.data.lock().unwrap();
                 let draft = persistence_result(data.store.abort_send_intent(
-                    string("conversation_id")?,
-                    string("window_id")?,
-                    string("request_id")?,
+                    non_empty("conversation_id", &abort.conversation_id)?,
+                    non_empty("window_id", &abort.window_id)?,
+                    non_empty("request_id", &abort.request_id)?,
                 ))?;
-                Ok(json!({"type":"draft","draft":draft}))
+                reply(&DraftReply {
+                    tag: Default::default(),
+                    draft,
+                })
             }
             "agent.send" => {
                 let send: AgentSendRequest = decode(request)?;
@@ -377,45 +461,49 @@ impl Sessions {
                 }
                 Ok(json!({"type":"ack"}))
             }
-            "queue.enqueue" | "queue.cancel" | "queue.pause" => {
-                let mut d = self.data.lock().unwrap();
-                let id = string("conversation_id")?;
-                let mut c = d.store.conversation(id)?;
-                match request["op"].as_str().unwrap() {
-                    "queue.enqueue" => d.store.enqueue_content(
-                        id,
-                        string("request_id")?,
-                        request["text"].as_str().context("Missing prompt text")?,
-                        &serde_json::from_value::<Vec<crate::model::Attachment>>(
-                            request.get("attachments").cloned().unwrap_or(json!([])),
-                        )?,
-                    )?,
-                    "queue.cancel" => d.store.cancel_queued(id, string("request_id")?)?,
-                    _ => {
-                        c.queue_paused =
-                            request["paused"].as_bool().context("Missing paused flag")?;
-                        ensure!(
-                            c.queue_paused || c.terminal_owner.is_none(),
-                            "Return this Conversation from its terminal before unpausing"
-                        );
-                        if c.error
-                            .as_deref()
-                            .is_some_and(|message| message.starts_with("Prompt queue paused:"))
-                        {
-                            c.error = None;
-                        }
-                        if !c.queue_paused
-                            && c.provider_thread_id.is_none()
-                            && !d.agents.contains_key(id)
-                            && matches!(c.status.as_str(), "error" | "interrupted" | "disconnected")
-                        {
-                            c.status = "idle".into();
-                        }
-                        d.store.commit_conversation(&c, &[], &[])?;
+            "queue.enqueue" => {
+                field(request, "text", Value::as_str, "Missing prompt text")?;
+                let enqueue: QueueEnqueueRequest = decode(request)?;
+                self.queue_change(&enqueue.conversation_id, |d, c| {
+                    d.store.enqueue_content(
+                        &c.id,
+                        non_empty("request_id", &enqueue.request_id)?,
+                        &enqueue.text,
+                        &enqueue.attachments,
+                    )
+                })
+            }
+            "queue.cancel" => {
+                let cancel: QueueCancelRequest = decode(request)?;
+                self.queue_change(&cancel.conversation_id, |d, c| {
+                    d.store
+                        .cancel_queued(&c.id, non_empty("request_id", &cancel.request_id)?)
+                })
+            }
+            "queue.pause" => {
+                field(request, "paused", Value::as_bool, "Missing paused flag")?;
+                let pause: QueuePauseRequest = decode(request)?;
+                self.queue_change(&pause.conversation_id, |d, c| {
+                    c.queue_paused = pause.paused;
+                    ensure!(
+                        c.queue_paused || c.terminal_owner.is_none(),
+                        "Return this Conversation from its terminal before unpausing"
+                    );
+                    if c.error
+                        .as_deref()
+                        .is_some_and(|message| message.starts_with("Prompt queue paused:"))
+                    {
+                        c.error = None;
                     }
-                }
-                self.changed(&mut d, &c, &[])?;
-                Ok(json!({"type":"ack"}))
+                    if !c.queue_paused
+                        && c.provider_thread_id.is_none()
+                        && !d.agents.contains_key(&c.id)
+                        && matches!(c.status.as_str(), "error" | "interrupted" | "disconnected")
+                    {
+                        c.status = "idle".into();
+                    }
+                    d.store.commit_conversation(c, &[], &[])
+                })
             }
             "agent.disconnect" => {
                 let id = string("conversation_id")?;
@@ -461,19 +549,18 @@ impl Sessions {
                 reply(&Ack::default())
             }
             "window.save" => {
-                let window: WindowRecord = serde_json::from_value(request["window"].clone())?;
+                let save: WindowSaveRequest = decode(request)?;
+                let window: WindowRecord = serde_json::from_value(save.window)?;
                 let d = self.data.lock().unwrap();
                 persistence_result(d.store.save_window(&window))?;
                 // Layout acknowledgements do not refresh all other windows.
-                Ok(json!({"type":"ack"}))
+                reply(&Ack::default())
             }
             "window.close" => {
-                self.data
-                    .lock()
-                    .unwrap()
-                    .store
-                    .close_window(string("window_id")?)?;
-                Ok(json!({"type":"ack"}))
+                let close: WindowCloseRequest = decode(request)?;
+                let window = non_empty("window_id", &close.window_id)?;
+                self.data.lock().unwrap().store.close_window(window)?;
+                reply(&Ack::default())
             }
             _ => bail!("Unknown session operation"),
         }

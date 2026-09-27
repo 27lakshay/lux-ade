@@ -100,6 +100,316 @@
       ],
       "type": "object"
     },
+    "AttachmentImportRequest": {
+      "additionalProperties": false,
+      "description": "`attachment.import`: attach a regular file that the daemon reads from disk.\n`request_id` becomes the attachment ID.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "attachment.import"
+        },
+        "path": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "path",
+        "conversation_id",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "AttachmentInspectRequest": {
+      "additionalProperties": false,
+      "description": "`attachment.inspect`: read a live attachment's metadata and digest.",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "attachment.inspect"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "attachment_id"
+      ],
+      "type": "object"
+    },
+    "AttachmentInspection": {
+      "description": "The `attachment.inspect` reply.",
+      "properties": {
+        "attachment": {
+          "$ref": "#/$defs/Attachment"
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the payload.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The `attachment_inspection` type tag.",
+          "enum": [
+            "attachment_inspection"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "attachment",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "AttachmentPutRequest": {
+      "additionalProperties": false,
+      "description": "`attachment.put`: upload attachment bytes. `request_id` becomes the attachment ID.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "data": {
+          "description": "Standard base64 of the file bytes.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "attachment.put"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "data",
+        "name",
+        "conversation_id",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "AttachmentReclaim": {
+      "description": "The `attachment.reclaim.apply` reply; `attachment` is the state after reclaim.",
+      "properties": {
+        "attachment": {
+          "$ref": "#/$defs/AttachmentReclaimPreview"
+        },
+        "filesystem_reclaimed_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reclaimed_payload_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "scope": {
+          "description": "The `explicit_single_attachment` type tag.",
+          "enum": [
+            "explicit_single_attachment"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "description": "The `attachment_reclaim` type tag.",
+          "enum": [
+            "attachment_reclaim"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "attachment",
+        "reclaimed_payload_bytes",
+        "filesystem_reclaimed_bytes",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "AttachmentReclaimApplyRequest": {
+      "additionalProperties": false,
+      "description": "`attachment.reclaim.apply`: discard one unreferenced attachment's payload.",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "expected_generation": {
+          "description": "The preview's `generation`; a changed attachment is refused.",
+          "type": "string"
+        },
+        "op": {
+          "const": "attachment.reclaim.apply"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "attachment_id",
+        "expected_generation"
+      ],
+      "type": "object"
+    },
+    "AttachmentReclaimPreview": {
+      "description": "One attachment's retention state and what protects it from reclaim.",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "estimated_reusable_payload_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "payload_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "protected_by": {
+          "description": "`message`, `draft`, `queued_prompt`, `send_intent` or `already_discarded`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reclaimable": {
+          "type": "boolean"
+        },
+        "state": {
+          "description": "`live` or `discarded`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "conversation_id",
+        "generation",
+        "state",
+        "created_at",
+        "payload_bytes",
+        "estimated_reusable_payload_bytes",
+        "protected_by",
+        "reclaimable"
+      ],
+      "type": "object"
+    },
+    "AttachmentReclaimPreviewReply": {
+      "description": "The `attachment.reclaim.preview` reply.",
+      "properties": {
+        "automatic_gc_eligible": {
+          "description": "Always false: only an explicit reclaim frees an attachment.",
+          "type": "boolean"
+        },
+        "client_held_uploads": {
+          "description": "The `not_enumerated` type tag.",
+          "enum": [
+            "not_enumerated"
+          ],
+          "type": "string"
+        },
+        "filesystem_reclaimed_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "preview": {
+          "$ref": "#/$defs/AttachmentReclaimPreview"
+        },
+        "scope": {
+          "description": "The `explicit_single_attachment` type tag.",
+          "enum": [
+            "explicit_single_attachment"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "description": "The `attachment_reclaim_preview` type tag.",
+          "enum": [
+            "attachment_reclaim_preview"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "preview",
+        "scope",
+        "automatic_gc_eligible",
+        "client_held_uploads",
+        "filesystem_reclaimed_bytes"
+      ],
+      "type": "object"
+    },
+    "AttachmentReclaimPreviewRequest": {
+      "additionalProperties": false,
+      "description": "`attachment.reclaim.preview`: report what reclaiming one attachment would free.",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "attachment.reclaim.preview"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "attachment_id"
+      ],
+      "type": "object"
+    },
+    "AttachmentReply": {
+      "description": "The `attachment.put` and `attachment.import` reply.",
+      "properties": {
+        "attachment": {
+          "$ref": "#/$defs/Attachment"
+        },
+        "type": {
+          "description": "The `attachment` type tag.",
+          "enum": [
+            "attachment"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "attachment"
+      ],
+      "type": "object"
+    },
     "CatalogFrame": {
       "description": "The `catalog.get` reply and the `catalog` feed frame.",
       "properties": {
@@ -354,6 +664,58 @@
       ],
       "type": "object"
     },
+    "ConversationCreateRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.create`: make a Conversation in a workspace.",
+      "properties": {
+        "account_id": {
+          "description": "A managed account of the same provider.",
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.create"
+        },
+        "provider": {
+          "description": "Provider ID; defaults to `codex`.",
+          "type": "string"
+        },
+        "provider_config": {
+          "description": "Provider settings; the daemon validates them for the provider."
+        },
+        "title": {
+          "description": "Defaults to `New Conversation`; at most 256 bytes.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "ConversationCreated": {
+      "description": "The `conversation.create` reply: an `ack` carrying the new Conversation.",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/Conversation"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation"
+      ],
+      "type": "object"
+    },
     "ConversationGetRequest": {
       "additionalProperties": false,
       "description": "`conversation.get`: one page of a conversation's messages, newest first.",
@@ -472,6 +834,236 @@
       ],
       "type": "object"
     },
+    "Draft": {
+      "description": "The schema of [`Draft`], which the model defines without one.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "DraftGetRequest": {
+      "additionalProperties": false,
+      "description": "`draft.get`: read one window's draft of a Conversation.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.get"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "DraftReply": {
+      "description": "The reply to `draft.get`, `draft.save`, `draft.send.complete` and `draft.send.abort`.",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/Draft"
+        },
+        "type": {
+          "description": "The `draft` type tag.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "draft"
+      ],
+      "type": "object"
+    },
+    "DraftSaveRequest": {
+      "additionalProperties": false,
+      "description": "`draft.save`: store a newer draft revision for one window.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "expected_revision": {
+          "description": "Resolve a conflict: save only if the stored revision is still this one.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "op": {
+          "const": "draft.save"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "text",
+        "revision",
+        "conversation_id",
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "DraftSendAbortRequest": {
+      "additionalProperties": false,
+      "description": "`draft.send.abort`: release a send the daemon rejected before admission.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.send.abort"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "DraftSendCompleteRequest": {
+      "additionalProperties": false,
+      "description": "`draft.send.complete`: clear the draft once the prompt was accepted.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.send.complete"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "DraftSendGetRequest": {
+      "additionalProperties": false,
+      "description": "`draft.send.get`: read the window's unresolved send intent.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.send.get"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "DraftSendPrepareRequest": {
+      "additionalProperties": false,
+      "description": "`draft.send.prepare`: record the exact prompt and draft before dispatch.\n`request_id` is the send's ID and becomes the accepted message's ID.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "draft_text": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.send.prepare"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "review_anchor": {
+          "description": "One review anchor; excludes `review_feedback`."
+        },
+        "review_feedback": {
+          "description": "A review feedback batch; excludes `review_anchor`."
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "draft_text",
+        "revision",
+        "conversation_id",
+        "window_id",
+        "request_id",
+        "text"
+      ],
+      "type": "object"
+    },
     "Message": {
       "properties": {
         "attachments": {
@@ -580,6 +1172,79 @@
       ],
       "type": "object"
     },
+    "QueueCancelRequest": {
+      "additionalProperties": false,
+      "description": "`queue.cancel`: cancel a queued prompt that has not been submitted.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "queue.cancel"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "request_id"
+      ],
+      "type": "object"
+    },
+    "QueueEnqueueRequest": {
+      "additionalProperties": false,
+      "description": "`queue.enqueue`: queue a prompt. `request_id` becomes the queued prompt's ID.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "queue.enqueue"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "request_id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "QueuePauseRequest": {
+      "additionalProperties": false,
+      "description": "`queue.pause`: pause or resume a Conversation's prompt queue.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "queue.pause"
+        },
+        "paused": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "paused"
+      ],
+      "type": "object"
+    },
     "QueuedPrompt": {
       "properties": {
         "attachments": {
@@ -609,6 +1274,112 @@
       ],
       "type": "object"
     },
+    "SendIntent": {
+      "description": "A prompt recorded before dispatch, with the draft it came from.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "draft_revision": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "draft_text": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "review_anchor": {
+          "description": "Null unless the send carries one review anchor."
+        },
+        "review_feedback": {
+          "description": "Null unless the send carries a review feedback batch."
+        },
+        "state": {
+          "description": "`pending`, `rejected`, `completed` or `aborted`.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "conversation_id",
+        "window_id",
+        "draft_revision",
+        "draft_text",
+        "text",
+        "attachments",
+        "state",
+        "review_anchor",
+        "review_feedback"
+      ],
+      "type": "object"
+    },
+    "SendIntentPrepared": {
+      "description": "The `draft.send.prepare` reply: the new or already recorded intent.",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/SendIntent"
+        },
+        "type": {
+          "description": "The `send_intent` type tag.",
+          "enum": [
+            "send_intent"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "intent"
+      ],
+      "type": "object"
+    },
+    "SendIntentState": {
+      "description": "The `draft.send.get` reply. `intent` is null when no send is unresolved.",
+      "properties": {
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SendIntent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restored_from_backup": {
+          "description": "Whether the profile was restored from a backup, which holds its sends.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `send_intent` type tag.",
+          "enum": [
+            "send_intent"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "intent",
+        "restored_from_backup"
+      ],
+      "type": "object"
+    },
     "TerminalOwner": {
       "properties": {
         "runtime_instance": {
@@ -625,6 +1396,40 @@
         "terminal_id",
         "transfer_id",
         "runtime_instance"
+      ],
+      "type": "object"
+    },
+    "WindowCloseRequest": {
+      "additionalProperties": false,
+      "description": "`window.close`: forget a window's record, unless it is the last one.",
+      "properties": {
+        "op": {
+          "const": "window.close"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "WindowSaveRequest": {
+      "additionalProperties": false,
+      "description": "`window.save`: store one window's layout record.",
+      "properties": {
+        "op": {
+          "const": "window.save"
+        },
+        "window": {
+          "description": "The window record, in the shape `catalog.get` lists it."
+        }
+      },
+      "required": [
+        "op",
+        "window"
       ],
       "type": "object"
     },
@@ -719,6 +1524,125 @@
       "request": "AgentAnswerRequest",
       "response": "Ack",
       "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.create",
+      "request": "ConversationCreateRequest",
+      "response": "ConversationCreated",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.get",
+      "request": "DraftGetRequest",
+      "response": "DraftReply",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.save",
+      "request": "DraftSaveRequest",
+      "response": "DraftReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.send.get",
+      "request": "DraftSendGetRequest",
+      "response": "SendIntentState",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.send.prepare",
+      "request": "DraftSendPrepareRequest",
+      "response": "SendIntentPrepared",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.send.complete",
+      "request": "DraftSendCompleteRequest",
+      "response": "DraftReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.send.abort",
+      "request": "DraftSendAbortRequest",
+      "response": "DraftReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "queue.enqueue",
+      "request": "QueueEnqueueRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "queue.cancel",
+      "request": "QueueCancelRequest",
+      "response": "Ack",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "queue.pause",
+      "request": "QueuePauseRequest",
+      "response": "Ack",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "window.save",
+      "request": "WindowSaveRequest",
+      "response": "Ack",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "window.close",
+      "request": "WindowCloseRequest",
+      "response": "Ack",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "attachment.put",
+      "request": "AttachmentPutRequest",
+      "response": "AttachmentReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "attachment.import",
+      "request": "AttachmentImportRequest",
+      "response": "AttachmentReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "attachment.inspect",
+      "request": "AttachmentInspectRequest",
+      "response": "AttachmentInspection",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "attachment.reclaim.preview",
+      "request": "AttachmentReclaimPreviewRequest",
+      "response": "AttachmentReclaimPreviewReply",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "attachment.reclaim.apply",
+      "request": "AttachmentReclaimApplyRequest",
+      "response": "AttachmentReclaim",
+      "tier": "idempotent_command"
     }
   ]
 }

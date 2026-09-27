@@ -2,7 +2,8 @@ import { app, BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { DaemonRequestError, requestDaemon, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
+import { DaemonRequestError, decodeDailyUseResponse, requestDaemon, type DailyUseOperation, type DailyUseRequest,
+  type DailyUseResponse, type RequestOptions, type ReviewAnchor, type ReviewFeedback } from '@ade/client'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
 import { reviewNote, sameReviewAnchor, sameReviewFeedback } from '../review'
 import type { SendJournal, SendJournalIdentity, SendJournalRecord } from '../send-journal'
@@ -10,6 +11,14 @@ import { validId } from '../validation'
 import { selectedWorkspaces } from '../workspaces'
 
 type Draft = { text: string; revision: number; attachments: unknown[] }
+type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
+type Attachments = Fields<'draft.save'>['attachments']
+
+/** One daemon request whose reply is checked against the operation's contract. */
+export async function daemon<O extends DailyUseOperation>(endpoint: string, op: O, fields: Fields<O>,
+  options?: RequestOptions): Promise<DailyUseResponse<O>> {
+  return decodeDailyUseResponse(op, await requestDaemon(endpoint, op, fields as Record<string, unknown>, options))
+}
 export type SendIntent = { requestId: string; draftText: string; revision: number; text: string; attachments: unknown[];
   state: 'pending' | 'rejected'; preparing: boolean; inFlight: Promise<Record<string, unknown>> | null;
   reviewSelection?: { senderId: number; workspaceId: string; conversationId: string; epoch: number };
@@ -107,9 +116,9 @@ export function flushDraft(entry: DraftEntry): Promise<void> {
   const draft = { ...entry.draft }
   entry.pending = entry.pending.catch(() => undefined).then(async () => {
     if (entry.savedRevision >= draft.revision) return
-    const response = await requestDaemon(entry.endpoint, 'draft.save', {
+    const response = await daemon(entry.endpoint, 'draft.save', {
       conversation_id: entry.conversationId, window_id: entry.windowId,
-      text: draft.text, revision: draft.revision, attachments: draft.attachments,
+      text: draft.text, revision: draft.revision, attachments: draft.attachments as Attachments,
     })
     const saved = response.draft as Draft
     if (!saved || saved.revision < draft.revision) throw new Error('Draft was not saved')
@@ -138,8 +147,8 @@ export async function loadDraft(senderId: number, endpoint: string, conversation
   const profileId = journalProfileId(endpoint)
   const fields = { conversation_id: conversationId, window_id: windowId }
   const [response, pending, journalRecords] = await Promise.all([
-    requestDaemon(endpoint, 'draft.get', fields),
-    requestDaemon(endpoint, 'draft.send.get', fields),
+    daemon(endpoint, 'draft.get', fields),
+    daemon(endpoint, 'draft.send.get', fields),
     journal().list(),
   ])
   const value = response.draft as Draft
@@ -209,7 +218,7 @@ async function acceptedSend(entry: DraftEntry, intent: SendIntent, response: Rec
   if (recorded?.restoreHold) {
     throw new Error('Restored prompt is held until its source outcome is reconciled')
   }
-  const result = await requestDaemon(entry.endpoint, 'draft.send.complete', {
+  const result = await daemon(entry.endpoint, 'draft.send.complete', {
     conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
   }, { timeoutMs })
   const cleared = result.draft as Draft
@@ -266,7 +275,7 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
       try { return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true }) }
       catch { /* The original provider turn may still be running or its outcome may be unavailable. */ }
       try {
-        const previous = await requestDaemon(entry.endpoint, 'draft.send.get', {
+        const previous = await daemon(entry.endpoint, 'draft.send.get', {
           conversation_id: entry.conversationId, window_id: entry.windowId,
         })
         const saved = previous.intent as { request_id?: string; text?: string; draft_text?: string;
@@ -280,7 +289,7 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
       } catch { return uncertain() }
     } else {
       try {
-        const response = await requestDaemon(entry.endpoint, 'draft.get', {
+        const response = await daemon(entry.endpoint, 'draft.get', {
           conversation_id: entry.conversationId, window_id: entry.windowId,
         })
         let saved = response.draft as Draft
@@ -288,9 +297,9 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
           (saved.attachments !== undefined && !Array.isArray(saved.attachments))) return uncertain()
         saved.attachments ??= []
         if (saved.revision < intent.revision) {
-          const result = await requestDaemon(entry.endpoint, 'draft.save', {
+          const result = await daemon(entry.endpoint, 'draft.save', {
             conversation_id: entry.conversationId, window_id: entry.windowId,
-            revision: intent.revision, text: intent.draftText, attachments: intent.attachments,
+            revision: intent.revision, text: intent.draftText, attachments: intent.attachments as Attachments,
           })
           saved = result.draft as Draft
           if (saved) saved.attachments ??= []
@@ -301,10 +310,10 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
     }
     if (!activeProfile()) return uncertain()
     try {
-      const prepared = await requestDaemon(entry.endpoint, 'draft.send.prepare', {
+      const prepared = await daemon(entry.endpoint, 'draft.send.prepare', {
         conversation_id: entry.conversationId, window_id: entry.windowId,
         request_id: intent.requestId, draft_text: intent.draftText, text: intent.text,
-        revision: intent.revision, attachments: intent.attachments,
+        revision: intent.revision, attachments: intent.attachments as Attachments,
         ...(intent.reviewAnchor ? { review_anchor: intent.reviewAnchor } : {}),
         ...(intent.reviewFeedback ? { review_feedback: intent.reviewFeedback } : {}),
       })
@@ -321,7 +330,7 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
     } catch (error) {
       if (!activeProfile()) return uncertain()
       try {
-        const state = await requestDaemon(entry.endpoint, 'draft.send.get', {
+        const state = await daemon(entry.endpoint, 'draft.send.get', {
           conversation_id: entry.conversationId, window_id: entry.windowId,
         })
         const persisted = state.intent as { request_id?: string; state?: string } | null
@@ -365,12 +374,12 @@ export function dispatchSend(entry: DraftEntry, intent: SendIntent): Promise<Rec
         return await acceptedSend(entry, intent, { type: 'ack', request_id: intent.requestId, reconciled: true })
       } catch { /* No matching durable user message is visible yet. */ }
       try {
-        const state = await requestDaemon(entry.endpoint, 'draft.send.get', {
+        const state = await daemon(entry.endpoint, 'draft.send.get', {
           conversation_id: entry.conversationId, window_id: entry.windowId,
         })
         const persisted = state.intent as { request_id?: string; state?: string } | null
         if (persisted?.request_id === intent.requestId && persisted.state === 'rejected') {
-          await requestDaemon(entry.endpoint, 'draft.send.abort', {
+          await daemon(entry.endpoint, 'draft.send.abort', {
             conversation_id: entry.conversationId, window_id: entry.windowId, request_id: intent.requestId,
           })
           if (!activeProfile()) return uncertain()
