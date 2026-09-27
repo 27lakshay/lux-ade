@@ -42,8 +42,8 @@ This is the complete 140-item catalogue reconstructed from the agreed conversati
 | F020 | Replaceable workspace UI | V1 | [01-foundation](01-foundation/spec.md) | Unverified |
 | F021 | Claude Code, Codex and Oh My Pi | V1 | [02-providers](02-providers/spec.md) | Unverified |
 | F022 | Additional bundled providers | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F023 | Provider plugins | V1 | [02-providers](02-providers/spec.md) | Unverified |
-| F024 | Generic ACP and custom executable adapters | V1 | [02-providers](02-providers/spec.md) | Unverified |
+| F023 | Provider plugins | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `63966d4` ([evidence](evidence/e2e-fix-plugin-providers.md)) |
+| F024 | Generic ACP and custom executable adapters | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `63966d4` ([evidence](evidence/e2e-fix-plugin-providers.md)) |
 | F025 | Multiple accounts | V1 | [02-providers](02-providers/spec.md) | Unverified |
 | F026 | Explicit in-conversation account switching | V1 | [02-providers](02-providers/spec.md) | Unverified |
 | F027 | Provider setup, authentication and readiness | V1 | [02-providers](02-providers/spec.md) | Accepted: headless E2E `3401554` ([evidence](evidence/e2e-providers.md)) |
