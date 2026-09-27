@@ -12543,6 +12543,14 @@
       ],
       "type": "object"
     },
+    "HookPhase": {
+      "description": "Whether a hook ran as a setup or a teardown hook.",
+      "enum": [
+        "setup",
+        "teardown"
+      ],
+      "type": "string"
+    },
     "HookSubscription": {
       "description": "One plugin's subscription to one event, from its live activation.",
       "properties": {
@@ -12601,6 +12609,32 @@
         "op"
       ],
       "type": "object"
+    },
+    "HookVerdict": {
+      "description": "How one hook run ended.",
+      "oneOf": [
+        {
+          "enum": [
+            "succeeded"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Exited with a non-zero status, or could not start.",
+          "type": "string"
+        },
+        {
+          "const": "timed_out",
+          "description": "Killed at its time limit; descendants that left its process group may\nstill run.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Its output pipes stayed open after it exited, or its state could not\nbe read; descendants may still run.",
+          "type": "string"
+        }
+      ]
     },
     "HostCapabilities": {
       "description": "What a host can run and expose.",
@@ -25658,6 +25692,118 @@
       ],
       "type": "object"
     },
+    "WorktreeHookProgress": {
+      "description": "A hook that is still running: which one, how far the operation has got,\nand the latest output, bounded to its last 16 KiB.",
+      "properties": {
+        "completed": {
+          "description": "The hooks of this phase that have finished, without their output.",
+          "items": {
+            "$ref": "#/$defs/WorktreeHookRun"
+          },
+          "type": "array"
+        },
+        "elapsed_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "index": {
+          "description": "The hook's position in its phase, from 0.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "output": {
+          "description": "The last 16 KiB of stdout and stderr, interleaved as they arrived.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The tree the hook runs in.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/HookPhase"
+        },
+        "started_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "total": {
+          "description": "How many hooks the phase has configured.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "Whether earlier output was dropped.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "phase",
+        "path",
+        "index",
+        "total",
+        "started_at",
+        "elapsed_ms",
+        "output",
+        "truncated",
+        "completed"
+      ],
+      "type": "object"
+    },
+    "WorktreeHookRun": {
+      "description": "One hook run, as recorded in an operation's `result.hooks` or in a\ncleanup tree's `hooks`.",
+      "properties": {
+        "elapsed_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exit_code": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "output": {
+          "description": "The last 64 KiB of stdout, then of stderr. `worktree_state` omits it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/HookPhase"
+        },
+        "truncated": {
+          "description": "Whether earlier output was dropped.",
+          "type": "boolean"
+        },
+        "verdict": {
+          "$ref": "#/$defs/HookVerdict"
+        }
+      },
+      "required": [
+        "name",
+        "phase",
+        "verdict",
+        "exit_code",
+        "elapsed_ms",
+        "truncated"
+      ],
+      "type": "object"
+    },
     "WorktreeItem": {
       "description": "One entry of `git worktree list`, with ADE's ownership and setup state.",
       "properties": {
@@ -25809,6 +25955,17 @@
       "properties": {
         "operation": {
           "$ref": "#/$defs/WorktreeOperation"
+        },
+        "running_hook": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorktreeHookProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The setup or teardown hook the operation is running now. Present only\nwhile a hook runs; the daemon keeps it in memory, so a restarted daemon\nreports the interrupted operation without it."
         },
         "type": {
           "description": "The `worktree_operation` type tag.",

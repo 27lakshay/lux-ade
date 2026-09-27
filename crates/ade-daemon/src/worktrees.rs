@@ -53,7 +53,7 @@ mod policy;
 pub use policy::{LeaseRefresh, needs_live_leases};
 mod resources;
 mod transfer;
-use hooks::{HookContext, last_verdict, run_hooks};
+use hooks::{HookContext, LiveHooks, last_verdict, run_hooks};
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Repository {
@@ -536,6 +536,8 @@ pub struct Worktrees {
     /// Claims shared with every profile's daemon on this host. Lock order:
     /// `data`, then the registry.
     resources: HostResources,
+    /// The hook each running operation is executing (F067).
+    live: LiveHooks,
 }
 pub struct Lease {
     hub: Arc<Worktrees>,
@@ -631,7 +633,7 @@ pub(crate) fn run_input(
     lock: Option<&File>,
     input: Option<Vec<u8>>,
 ) -> Result<Value> {
-    let captured = capture(command, timeout, lock, input, 4 * 1024 * 1024, false)?;
+    let captured = capture(command, timeout, lock, input, 4 * 1024 * 1024, false, None)?;
     ensure!(
         captured.pipes_closed,
         LifecycleFailure::LifecycleOutcomeUnknown
@@ -660,6 +662,9 @@ struct Captured {
     elapsed_ms: u64,
 }
 
+/// Receives each chunk of a supervised process's output as it arrives.
+type Tap = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
 /// Runs a command in its own process group, draining both pipes
 /// concurrently and keeping at most `cap` bytes of each: the first bytes, or
 /// with `tail` the last. Only a failure to start is an error; after that the
@@ -671,6 +676,7 @@ fn capture(
     input: Option<Vec<u8>>,
     cap: usize,
     tail: bool,
+    tap: Option<Tap>,
 ) -> Result<Captured> {
     if input.is_some() {
         command.stdin(Stdio::piped());
@@ -711,6 +717,7 @@ fn capture(
         mut pipe: impl Read + Send + 'static,
         cap: usize,
         tail: bool,
+        tap: Option<Tap>,
     ) -> std::thread::JoinHandle<std::io::Result<(Vec<u8>, bool)>> {
         std::thread::spawn(move || {
             let mut kept = Vec::new();
@@ -720,6 +727,9 @@ fn capture(
                 let n = pipe.read(&mut buf)?;
                 if n == 0 {
                     break;
+                }
+                if let Some(tap) = &tap {
+                    tap(&buf[..n]);
                 }
                 if tail {
                     kept.extend_from_slice(&buf[..n]);
@@ -745,8 +755,8 @@ fn capture(
         let mut pipe = child.stdin.take().unwrap();
         std::thread::spawn(move || pipe.write_all(&bytes))
     });
-    let stdout = drain(child.stdout.take().unwrap(), cap, tail);
-    let stderr = drain(child.stderr.take().unwrap(), cap, tail);
+    let stdout = drain(child.stdout.take().unwrap(), cap, tail, tap.clone());
+    let stderr = drain(child.stderr.take().unwrap(), cap, tail, tap);
     let start = Instant::now();
     let mut timed_out = false;
     let code = loop {
@@ -1109,6 +1119,7 @@ impl Worktrees {
             directory: directory.into(),
             worker: std::env::current_exe()?,
             resources,
+            live: LiveHooks::default(),
         }))
     }
     pub fn active_operations(&self) -> usize {
@@ -1416,6 +1427,7 @@ impl Worktrees {
             root: &repo.root,
             operation_id: &job.id,
             lock,
+            live: &self.live,
         }
     }
     /// Runs the setup hooks in `path` and records the phase they leave. The
@@ -1847,9 +1859,13 @@ impl Worktrees {
                     operation.repository_id == id,
                     "Operation belongs to another repository"
                 );
+                let running_hook = (operation.status == JobStatus::Running)
+                    .then(|| self.live.progress(&operation.id))
+                    .flatten();
                 reply(&WorktreeOperationReply {
                     tag: Default::default(),
                     operation,
+                    running_hook,
                 })
             }
             "worktree.get" => {

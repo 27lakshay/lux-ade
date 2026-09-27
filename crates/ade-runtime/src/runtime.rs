@@ -82,6 +82,76 @@ pub fn lock(directory: &Path, name: &str) -> Result<File> {
     Ok(file)
 }
 
+/// The user ID of the process on the other end of a Unix socket, or `None`
+/// when the kernel will not say.
+pub fn peer_uid(stream: &UnixStream) -> Option<libc::uid_t> {
+    #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd"))]
+    {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        (unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0).then_some(uid)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        (unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut credentials as *mut libc::ucred).cast(),
+                &mut length,
+            )
+        } == 0)
+            .then_some(credentials.uid)
+    }
+}
+
+/// Whether a peer may use a profile socket: only the profile's own user.
+/// An unknown identity is refused.
+pub fn peer_authorized(peer: Option<libc::uid_t>, owner: libc::uid_t) -> bool {
+    peer == Some(owner)
+}
+
+/// The user a profile socket admits: this process's effective user. Debug
+/// builds let an E2E test name another user through a file that `variable`
+/// points at, so a refusal can be observed without a second account.
+pub fn socket_owner(variable: &str) -> libc::uid_t {
+    if cfg!(debug_assertions)
+        && let Some(path) = std::env::var_os(variable)
+        && let Ok(text) = std::fs::read_to_string(path)
+        && let Ok(uid) = text.trim().parse()
+    {
+        return uid;
+    }
+    unsafe { libc::geteuid() }
+}
+
+/// Authenticates an accepted connection. The socket file is owner-only, so
+/// this is a second check: it also covers a socket whose mode was loosened
+/// and the moment between `bind` and `chmod`.
+pub fn authenticate_peer(stream: &UnixStream, variable: &str) -> Result<()> {
+    ensure!(
+        peer_authorized(peer_uid(stream), socket_owner(variable)),
+        "unauthenticated: the peer is not the profile's user"
+    );
+    Ok(())
+}
+
+/// Answers an unauthenticated peer with one refusal line and closes. Its
+/// request is discarded unread, for at most a second and 128 KiB, so the peer
+/// can finish writing and read the refusal instead of a broken pipe.
+pub fn refuse_peer(mut stream: UnixStream, refusal: Value) {
+    std::thread::spawn(move || {
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+        let _ = writeln!(stream, "{refusal}");
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+        let _ = std::io::copy(&mut (&stream).take(MAX_CONTROL), &mut std::io::sink());
+    });
+}
+
 pub struct SocketGuard {
     path: PathBuf,
     device: u64,
@@ -505,6 +575,14 @@ impl Drop for Supervisor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_profile_user_is_authorized() {
+        assert!(peer_authorized(Some(501), 501));
+        assert!(!peer_authorized(Some(502), 501));
+        assert!(!peer_authorized(Some(0), 501));
+        assert!(!peer_authorized(None, 501));
+    }
+
     use super::*;
     use serde_json::json;
     #[test]

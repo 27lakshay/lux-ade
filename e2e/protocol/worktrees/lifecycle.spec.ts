@@ -171,10 +171,7 @@ test('a failed teardown keeps the tree; a timed-out teardown quarantines its cla
     .toEqual(expect.arrayContaining(['claim_uncertain', 'teardown_incomplete']))
 })
 
-test.fixme('setup hooks stream their status while they run', async () => {
-  // Gap (F067): hooks report only on completion. The spec asks for streamed
-  // status; no frame or query exposes a running hook's progress yet.
-})
+// Streamed hook status (F067) is proven in e2e/protocol/hooks-auth/hooks.spec.ts.
 
 test('cleanup archives only eligible trees, skips dirty, locked, active and external ones, and reports branch deletion separately', async ({ ade, profile }) => {
   const repo = await ade.repo()

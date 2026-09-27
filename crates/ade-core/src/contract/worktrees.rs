@@ -694,6 +694,33 @@ pub struct WorktreeOperationReply {
     #[serde(rename = "type")]
     pub tag: WorktreeOperationTag,
     pub operation: WorktreeOperation,
+    /// The setup or teardown hook the operation is running now. Present only
+    /// while a hook runs; the daemon keeps it in memory, so a restarted daemon
+    /// reports the interrupted operation without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_hook: Option<WorktreeHookProgress>,
+}
+
+/// A hook that is still running: which one, how far the operation has got,
+/// and the latest output, bounded to its last 16 KiB.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorktreeHookProgress {
+    pub name: String,
+    pub phase: HookPhase,
+    /// The tree the hook runs in.
+    pub path: String,
+    /// The hook's position in its phase, from 0.
+    pub index: u32,
+    /// How many hooks the phase has configured.
+    pub total: u32,
+    pub started_at: i64,
+    pub elapsed_ms: u64,
+    /// The last 16 KiB of stdout and stderr, interleaved as they arrived.
+    pub output: String,
+    /// Whether earlier output was dropped.
+    pub truncated: bool,
+    /// The hooks of this phase that have finished, without their output.
+    pub completed: Vec<WorktreeHookRun>,
 }
 
 /// How a path differs from `HEAD` in the source tree.
@@ -1075,6 +1102,15 @@ mod tests {
         reply::<WorktreeOperationReply>(
             "worktree.operation",
             json!({"type": "worktree_operation", "operation": operation()}),
+        );
+        reply::<WorktreeOperationReply>(
+            "worktree.operation",
+            json!({"type": "worktree_operation", "operation": operation(),
+                "running_hook": {"name": "install", "phase": "setup", "path": "/tmp/tree",
+                    "index": 1, "total": 2, "started_at": 1, "elapsed_ms": 5,
+                    "output": "step one\n", "truncated": false,
+                    "completed": [{"name": "context", "phase": "setup", "verdict": "succeeded",
+                        "exit_code": 0, "elapsed_ms": 3, "truncated": false}]}}),
         );
         reply::<WorktreeRebindCatalog>(
             "worktree.rebind.list",

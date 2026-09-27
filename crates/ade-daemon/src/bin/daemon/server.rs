@@ -1927,6 +1927,16 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
                 if host.stopping.load(Ordering::Acquire) {
                     break;
                 }
+                // Only the profile's user may command it (F083).
+                if let Err(error) =
+                    runtime::authenticate_peer(&stream, "ADE_E2E_DAEMON_PEER_UID_FILE")
+                {
+                    runtime::refuse_peer(
+                        stream,
+                        json!({"type":"error","code":"unauthenticated","message":error.to_string()}),
+                    );
+                    continue;
+                }
                 let host = host.clone();
                 std::thread::spawn(move || {
                     let mut errors = stream.try_clone().ok();
