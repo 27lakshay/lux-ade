@@ -121,7 +121,29 @@ Coordinator fix: carrying changes with source cleanup could lose the staged
 version of a file that also had unstaged edits. Cleanup now keeps the source
 in that case (`2d42c18`). The carry Git steps are verified only statically; the
 worker could not run Git outside its tree, and the first E2E pass must run a
-carry end to end. None of these is E2E-verified;
+carry end to end.
+
+**Phase 2 round E, merged green at `350dfa3`** (685 in-process tests)
+
+| Slice | Result | Requirements advanced |
+|---|---|---|
+| provider-plugins | One provider interface for bundled, generic and plugin providers; plugin workers speak a documented JSON-RPC (`docs/provider-worker-protocol.md`); sessions stay leased to their worker version | F023, F021, F024 |
+| slash-commands | Native slash commands and skills listed per conversation and invoked in native form, or reported unavailable | F037 |
+| context-attachments | Typed context nodes (file ranges, diff hunks, terminal and log ranges, browser captures) with per-provider mapping | F032, F033 |
+| account-switching | Explicit account switch where the provider supports it; otherwise a new native session with transferred context | F026 |
+| api-parity | Typed `call(op, request)` in `@ade/client`; every operation has CLI and SDK exposure, enforced by a new `check:static` step | F101, F102, F103 |
+| resource-claims | HostResources claims for service ports and simulators or emulators | Architecture §5 |
+| browser-automation | Click, type, bounded evaluate, wait and screenshot on an explicit owner and tab (adapted from Paseo, Apache-2.0) | F095 |
+| plugin-dev-reload | Development-mode plugins reload by activation generation with bounded drain; active provider sessions stay leased | F139 |
+| runtime-crash-recovery | After a runtime restart, attempts are classified settled, orphaned or unknown from evidence, never replayed; the rules are in architecture section 4 | R005, R006 |
+| draft-stash | Draft history, recall and named stash with revision checks | F036 |
+
+**Boot smoke (not an E2E spec, not committed).** A real daemon and runtime
+started on a scratch profile. Through the CLI, 15 read paths answered correctly:
+status, workspace open, conversations, provider capabilities, MCP, skills,
+plugins, activity, history search, resources, diagnostics, retention preview,
+remote hosts, devices and hooks. Six runtimes left by worker checks in removed
+worktrees were found and stopped. None of these is E2E-verified;
 each evidence file under `evidence/phase2-*.md` lists what needs E2E later.
 
 ## Scope baseline and daily-use gate
