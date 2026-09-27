@@ -8,9 +8,9 @@ use super::*;
 use ade_core::contract::agents::AgentList;
 use ade_core::contract::daemon::{
     DiagnosticClaims, DiagnosticCounter, DiagnosticCounterKind, DiagnosticIdentity, DiagnosticLive,
-    DiagnosticProvenance, DiagnosticQueue, DiagnosticRetention, DiagnosticRun, DiagnosticUnit,
-    DiagnosticUnknown, DiagnosticUnknownSource, DiagnosticWindow, DiagnosticsExport,
-    DiagnosticsExportRequest, DiagnosticsStatus, DiagnosticsStatusRequest,
+    DiagnosticProcessKind, DiagnosticProvenance, DiagnosticQueue, DiagnosticRetention,
+    DiagnosticRun, DiagnosticUnit, DiagnosticUnknown, DiagnosticUnknownSource, DiagnosticWindow,
+    DiagnosticsExport, DiagnosticsExportRequest, DiagnosticsStatus, DiagnosticsStatusRequest,
 };
 use ade_daemon::observability::{self as observe, redact};
 use ade_daemon::sessions::FEED_QUEUE_CAPACITY;
@@ -260,7 +260,7 @@ impl Host {
                 Some(inspection.feed_subscribers),
                 None,
                 &format!(
-                    "live feed connections; each queues at most {FEED_QUEUE_CAPACITY} frames and is evicted when full"
+                    "live feed connections; each queues at most {FEED_QUEUE_CAPACITY} frames and is evicted when full or when a write to it times out"
                 ),
             ),
             queue(
@@ -298,7 +298,7 @@ impl Host {
                 DiagnosticCounterKind::Dropped,
                 Some(inspection.feed_evictions),
                 DiagnosticWindow::DaemonBoot,
-                "each eviction drops that subscriber's queued frames; the client must resubscribe",
+                "subscribers removed because their queue filled or a write to them timed out; each loses its queued frames and must resubscribe",
             ),
             counter(
                 "prompt_queue.wakes_coalesced",
@@ -365,6 +365,48 @@ impl Host {
             terminals: terminals.unwrap_or_default(),
             services,
         };
+        // Whole process trees, measured from one read of the process table.
+        let mut roots = vec![
+            observe::processes::Root {
+                kind: DiagnosticProcessKind::Daemon,
+                subject: self.sessions.boot_id.clone(),
+                incarnation: None,
+                pid: std::process::id(),
+            },
+            observe::processes::Root {
+                kind: DiagnosticProcessKind::Runtime,
+                subject: self.runtime.instance.clone(),
+                incarnation: None,
+                pid: self.runtime.pid,
+            },
+        ];
+        roots.extend(live.runs.iter().filter_map(|run| {
+            Some(observe::processes::Root {
+                kind: DiagnosticProcessKind::Agent,
+                subject: run.conversation_id.clone(),
+                incarnation: Some(run.run_id.clone()),
+                pid: run.pid?,
+            })
+        }));
+        roots.extend(live.terminals.iter().filter_map(|terminal| {
+            Some(observe::processes::Root {
+                kind: DiagnosticProcessKind::Terminal,
+                subject: terminal.terminal_id.clone(),
+                incarnation: terminal.transfer_id.clone(),
+                pid: terminal.shell_pid.filter(|_| terminal.shell_running)?,
+            })
+        }));
+        let table = observe::processes::read_table();
+        if table.is_none() {
+            degraded.push("the process table could not be read".into());
+        }
+        let resources = observe::processes::measure(
+            &roots,
+            table.as_deref(),
+            now_ms(),
+            observe::processes::METHOD,
+            observe::processes::host(),
+        );
         let (unknown, unknown_truncated) = observe::bound_unknown(unknown, observe::UNKNOWN_LIMIT);
         DiagnosticsStatus {
             tag: Default::default(),
@@ -386,6 +428,7 @@ impl Host {
             counters,
             receipts,
             live,
+            resources,
             claims,
             retention,
             unknown,

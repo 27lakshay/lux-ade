@@ -568,6 +568,71 @@ pub struct DiagnosticLive {
     pub services: Vec<DiagnosticService>,
 }
 
+/// What a measured process group is rooted at.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticProcessKind {
+    Daemon,
+    Runtime,
+    /// A provider process of a live Agent run.
+    Agent,
+    /// A terminal's shell: a workspace, service or script terminal.
+    Terminal,
+}
+
+/// One process and its descendants, measured once at `observed_at`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticProcessGroup {
+    pub kind: DiagnosticProcessKind,
+    /// The daemon boot, runtime incarnation, Conversation or terminal.
+    pub subject: String,
+    /// The Agent run or terminal incarnation, when there is one.
+    pub incarnation: Option<String>,
+    pub root_pid: u32,
+    /// Every process counted in this group: the root and its descendants.
+    /// Groups nest (the runtime's tree holds its Agents and terminals), so a
+    /// process can appear in more than one group.
+    pub pids: Vec<u32>,
+    /// Summed physical footprint of `pids`, or `null` when none could be read.
+    pub footprint_bytes: Option<u64>,
+    /// Summed user and system CPU time of `pids` since each started.
+    pub cpu_time_ms: Option<u64>,
+    /// `exact` when every process was read; `approximate` when some were
+    /// not; `unavailable` when the root process was not found or unreadable.
+    pub provenance: DiagnosticProvenance,
+    pub note: String,
+}
+
+/// Host capacity at `observed_at`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticHost {
+    pub logical_cpus: Option<u64>,
+    pub memory_bytes: Option<u64>,
+    /// The one-minute load average times 1000 (1.5 is 1500).
+    pub load_average_milli: Option<u64>,
+}
+
+/// Measured process and host resources (F136).
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticResources {
+    /// False when the process table could not be read; every group is then
+    /// `unavailable` and the totals are `null`.
+    pub observed: bool,
+    /// When the measurement was taken, in Unix milliseconds. A client shows
+    /// the values as stale once this is old.
+    pub observed_at: i64,
+    /// How memory was measured, such as `phys_footprint`, which leaves out
+    /// memory shared with other processes.
+    pub method: String,
+    pub groups: Vec<DiagnosticProcessGroup>,
+    /// Distinct processes across all groups; nested groups are counted once.
+    pub total_processes: u64,
+    /// Footprint of the distinct processes, each counted once.
+    pub total_footprint_bytes: Option<u64>,
+    pub total_cpu_time_ms: Option<u64>,
+    pub host: DiagnosticHost,
+}
+
 /// A lease the daemon holds as unresolved.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct DiagnosticUnresolvedClaim {
@@ -644,6 +709,7 @@ pub struct DiagnosticsStatus {
     pub counters: Vec<DiagnosticCounter>,
     pub receipts: Vec<DiagnosticReceipts>,
     pub live: DiagnosticLive,
+    pub resources: DiagnosticResources,
     pub claims: DiagnosticClaims,
     pub retention: DiagnosticRetention,
     /// At most 100 entries.
@@ -1085,6 +1151,16 @@ mod tests {
                 "services": [{"workspace_id": "workspace_1", "name": "web", "identity": "service_1",
                     "revision": 3, "terminal_id": "terminal_2", "last_run_transfer_id": null,
                     "running": null}]},
+            "resources": {"observed": true, "observed_at": 1_700_000_000_000_i64,
+                "method": "phys_footprint",
+                "groups": [{"kind": "agent", "subject": "conversation_1", "incarnation": "run_1",
+                    "root_pid": 42, "pids": [42, 44], "footprint_bytes": 2048,
+                    "cpu_time_ms": 15, "provenance": "exact", "note": ""},
+                    {"kind": "terminal", "subject": "terminal_1", "incarnation": "transfer_1",
+                    "root_pid": 43, "pids": [], "footprint_bytes": null, "cpu_time_ms": null,
+                    "provenance": "unavailable", "note": "process not found"}],
+                "total_processes": 2, "total_footprint_bytes": 2048, "total_cpu_time_ms": 15,
+                "host": {"logical_cpus": 8, "memory_bytes": 17_179_869_184_u64, "load_average_milli": 1500}},
             "claims": {"terminal_worktree_leases": ["workspace_1"], "session_worktree_leases": 1,
                 "unresolved": [{"kind": "agent", "workspace_id": "workspace_1",
                     "subject": "conversation_1", "incarnation": "run_1",

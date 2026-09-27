@@ -8789,6 +8789,42 @@
       ],
       "type": "string"
     },
+    "DiagnosticHost": {
+      "description": "Host capacity at `observed_at`.",
+      "properties": {
+        "load_average_milli": {
+          "description": "The one-minute load average times 1000 (1.5 is 1500).",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "logical_cpus": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "memory_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "logical_cpus",
+        "memory_bytes",
+        "load_average_milli"
+      ],
+      "type": "object"
+    },
     "DiagnosticIdentity": {
       "description": "The identities a report correlates.",
       "properties": {
@@ -8926,6 +8962,98 @@
         "daily_byte_budget"
       ],
       "type": "object"
+    },
+    "DiagnosticProcessGroup": {
+      "description": "One process and its descendants, measured once at `observed_at`.",
+      "properties": {
+        "cpu_time_ms": {
+          "description": "Summed user and system CPU time of `pids` since each started.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "footprint_bytes": {
+          "description": "Summed physical footprint of `pids`, or `null` when none could be read.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "incarnation": {
+          "description": "The Agent run or terminal incarnation, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/DiagnosticProcessKind"
+        },
+        "note": {
+          "type": "string"
+        },
+        "pids": {
+          "description": "Every process counted in this group: the root and its descendants.\nGroups nest (the runtime's tree holds its Agents and terminals), so a\nprocess can appear in more than one group.",
+          "items": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "provenance": {
+          "$ref": "#/$defs/DiagnosticProvenance",
+          "description": "`exact` when every process was read; `approximate` when some were\nnot; `unavailable` when the root process was not found or unreadable."
+        },
+        "root_pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subject": {
+          "description": "The daemon boot, runtime incarnation, Conversation or terminal.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "subject",
+        "incarnation",
+        "root_pid",
+        "pids",
+        "footprint_bytes",
+        "cpu_time_ms",
+        "provenance",
+        "note"
+      ],
+      "type": "object"
+    },
+    "DiagnosticProcessKind": {
+      "description": "What a measured process group is rooted at.",
+      "oneOf": [
+        {
+          "enum": [
+            "daemon",
+            "runtime"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "A provider process of a live Agent run.",
+          "type": "string"
+        },
+        {
+          "const": "terminal",
+          "description": "A terminal's shell: a workspace, service or script terminal.",
+          "type": "string"
+        }
+      ]
     },
     "DiagnosticProvenance": {
       "description": "How far a reported number can be trusted.",
@@ -9114,6 +9242,68 @@
         "secret_patterns",
         "home_paths",
         "truncations"
+      ],
+      "type": "object"
+    },
+    "DiagnosticResources": {
+      "description": "Measured process and host resources (F136).",
+      "properties": {
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticProcessGroup"
+          },
+          "type": "array"
+        },
+        "host": {
+          "$ref": "#/$defs/DiagnosticHost"
+        },
+        "method": {
+          "description": "How memory was measured, such as `phys_footprint`, which leaves out\nmemory shared with other processes.",
+          "type": "string"
+        },
+        "observed": {
+          "description": "False when the process table could not be read; every group is then\n`unavailable` and the totals are `null`.",
+          "type": "boolean"
+        },
+        "observed_at": {
+          "description": "When the measurement was taken, in Unix milliseconds. A client shows\nthe values as stale once this is old.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "total_cpu_time_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total_footprint_bytes": {
+          "description": "Footprint of the distinct processes, each counted once.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total_processes": {
+          "description": "Distinct processes across all groups; nested groups are counted once.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "observed",
+        "observed_at",
+        "method",
+        "groups",
+        "total_processes",
+        "total_footprint_bytes",
+        "total_cpu_time_ms",
+        "host"
       ],
       "type": "object"
     },
@@ -9585,6 +9775,9 @@
           },
           "type": "array"
         },
+        "resources": {
+          "$ref": "#/$defs/DiagnosticResources"
+        },
         "retention": {
           "$ref": "#/$defs/DiagnosticRetention"
         },
@@ -9615,6 +9808,7 @@
         "counters",
         "receipts",
         "live",
+        "resources",
         "claims",
         "retention",
         "unknown",

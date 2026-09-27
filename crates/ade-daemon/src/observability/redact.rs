@@ -683,6 +683,12 @@ mod tests {
             "counters": [{"name": "feed.subscribers_evicted", "kind": "dropped", "value": 0}],
             "live": {"terminals": [{"scrollback_bytes": 10, "reply_dropped_bytes": 0,
                 "transfer_id": "transfer_1"}]},
+            "resources": {"observed": true, "observed_at": 5, "method": "phys_footprint",
+                "groups": [{"kind": "agent", "subject": "conversation_1", "incarnation": "run_1",
+                    "root_pid": 42, "pids": [42, 43], "footprint_bytes": 2048, "cpu_time_ms": 3,
+                    "provenance": "exact", "note": ""}],
+                "total_processes": 2, "total_footprint_bytes": 2048, "total_cpu_time_ms": 3,
+                "host": {"logical_cpus": 8, "memory_bytes": 1024, "load_average_milli": 1500}},
             "claims": {"unresolved": [{"reason": "the runtime could not verify its exit",
                 "holds_worktree": true}]}});
         let mut redactor = Redactor::new(Some("/Users/person"));

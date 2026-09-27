@@ -48,6 +48,19 @@ impl Sessions {
         }
     }
 
+    /// Removes a subscriber whose connection stopped taking frames (its write
+    /// timed out) and counts it as an eviction, like a full queue. Its queued
+    /// frames are dropped. A subscriber already removed, by a full queue or a
+    /// close, is not counted again.
+    pub fn evict_stalled(&self, id: &str) {
+        let mut d = self.data.lock().unwrap();
+        if d.subscribers.remove(id).is_some() {
+            self.counters.feed_evictions.fetch_add(1, Ordering::Relaxed);
+        }
+        self.subscribers
+            .store(d.subscribers.len(), Ordering::Relaxed);
+    }
+
     pub fn inspection(&self) -> SessionInspection {
         let d = self.data.lock().unwrap();
         let mut unresolved: Vec<_> = d
