@@ -212,5 +212,34 @@ output.write_text('tool completed once')
     elif method == "turn/interrupt":
         finish("interrupted")
         send({"id": rpc_id, "result": {}})
+    elif method == "turn/steer":
+        # Codex 0.157.0 accepts steering only for the active turn it names.
+        if (root / "refuse-steer").exists():
+            send({"id": rpc_id, "error": {"code": -32000, "message": "Fixture steer refused"}})
+        elif active is None or active["status"] != "inProgress" or params.get("expectedTurnId") != active["id"]:
+            send({"id": rpc_id, "error": {"code": -32000, "message": "Fixture has no matching active turn"}})
+        else:
+            key = params["clientUserMessageId"]
+            steered = {"id": "user-" + key, "type": "userMessage", "clientId": key,
+                       "content": [{"type": "text", "text": params["input"][0]["text"]}]}
+            active["items"].append(steered)
+            save()
+            note("item/completed", {"threadId": thread["id"], "turnId": active["id"], "item": steered})
+            send({"id": rpc_id, "result": {"turnId": active["id"]}})
+    elif method == "thread/compact/start":
+        if (root / "refuse-compact").exists():
+            send({"id": rpc_id, "error": {"code": -32000, "message": "Fixture compaction refused"}})
+        else:
+            # The start is acknowledged at once; a contextCompaction item in
+            # its own turn reports the result, as Codex does.
+            send({"id": rpc_id, "result": {}})
+            item = {"id": "compaction-" + str(uuid.uuid4()), "type": "contextCompaction"}
+            active = {"id": "compact-turn-" + str(uuid.uuid4()), "status": "inProgress", "items": [item]}
+            thread["turns"].append(active)
+            base = {"threadId": thread["id"], "turnId": active["id"]}
+            note("turn/started", {"threadId": thread["id"], "turn": active})
+            note("item/started", {**base, "item": item})
+            note("item/completed", {**base, "item": item})
+            finish()
     else:
         send({"id": rpc_id, "error": {"code": -32601, "message": "Fixture unsupported method"}})
