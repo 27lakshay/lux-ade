@@ -15150,7 +15150,7 @@
     },
     "PluginHostRestartRequest": {
       "additionalProperties": false,
-      "description": "`plugin.host.restart`: clear the crash count and start a fresh host for\nthe current activation. Invocations running in the old host settle as\n`outcome_unknown`.",
+      "description": "`plugin.host.restart`: clear the crash count and start a fresh host for\nthe current activation. Invocations running in the old host settle as\n`outcome_unknown`. The error code `not_applied` means the request was\nrefused before any host was touched. The code `failed` means a start was\nattempted and failed, after the old host, if one ran, was already\nstopped; `plugin.host.status` then shows the backoff or errored host.",
       "properties": {
         "op": {
           "const": "plugin.host.restart"

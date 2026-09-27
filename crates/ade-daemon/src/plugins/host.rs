@@ -716,14 +716,11 @@ impl Hosts {
     /// Stops the host and retires every generation up to `through`, so a
     /// late invocation for a disabled activation cannot start it again. The
     /// plugin's `deactivate` runs with a bounded wait, outside the slot lock.
+    /// A newer generation's host, started after the disable that chose
+    /// `through`, is current and keeps running.
     pub fn stop(&self, plugin_id: &str, through: u64) {
         let slot = self.slot(plugin_id);
-        let process = {
-            let mut guard = slot.state.lock().unwrap();
-            let state = guard.get_or_insert_with(|| empty(0));
-            state.retired_through = state.retired_through.max(through);
-            retire(state)
-        };
+        let process = fence(&mut slot.state.lock().unwrap(), through);
         if let Some(process) = process {
             let _ = process.call(
                 "deactivate",
@@ -743,15 +740,17 @@ impl Hosts {
 
     /// Clears the crash count, stops any running host after a bounded
     /// deactivation, and starts a fresh attempt.
-    pub fn restart(&self, spec: &LaunchSpec) -> Result<(), String> {
+    /// Only a refusal before any host was touched is `NotApplied`.
+    pub fn restart(&self, spec: &LaunchSpec) -> Result<(), RestartError> {
         let slot = self.slot(&spec.plugin_id);
         let mut guard = slot.state.lock().unwrap();
-        let state = adopt(&mut guard, spec)?;
+        let state = adopt(&mut guard, spec).map_err(RestartError::NotApplied)?;
         if let Some(old) = state.superseded.take() {
             self.drain(&spec.plugin_id, old);
         }
         state.supervision.reset();
-        if let Some(process) = retire(state) {
+        let stopped = retire(state);
+        if let Some(process) = &stopped {
             let _ = process.call(
                 "deactivate",
                 json!({"generation": process.key.generation}),
@@ -759,10 +758,11 @@ impl Hosts {
             );
             process.kill();
         }
-        match state.supervision.decide_start(now_ms()) {
+        let started = match state.supervision.decide_start(now_ms()) {
             StartDecision::Start(key) => self.start(state, key).map(|_| ()),
             other => Err(format!("Plugin host could not restart: {other:?}")),
-        }
+        };
+        started.map_err(|error| RestartError::failed(stopped.is_some(), error))
     }
 
     /// Kills the host that ran attempt `key`, as after an invocation timeout.
@@ -922,6 +922,39 @@ fn refresh(guard: &mut Option<SlotState>, spec: &LaunchSpec) -> bool {
     }
 }
 
+/// Why `Hosts::restart` did not leave a fresh host running.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RestartError {
+    /// Refused before any host was stopped or started; nothing changed.
+    NotApplied(String),
+    /// A start was attempted and failed. A running host may have been
+    /// stopped first, and the failed start counts as a crash.
+    Failed(String),
+}
+
+impl RestartError {
+    fn failed(stopped_running: bool, error: String) -> Self {
+        Self::Failed(if stopped_running {
+            format!("The previous backend host was stopped, but the new one did not start: {error}")
+        } else {
+            error
+        })
+    }
+}
+
+/// Retires every generation up to `through` and takes the running process
+/// only when it belongs to one of them. A newer generation is current: it
+/// was activated after the disable that chose `through`, so it is left alone.
+fn fence(guard: &mut Option<SlotState>, through: u64) -> Option<Arc<HostProcess>> {
+    let state = guard.get_or_insert_with(|| empty(0));
+    state.retired_through = state.retired_through.max(through);
+    if state.supervision.generation <= through {
+        retire(state)
+    } else {
+        None
+    }
+}
+
 /// Marks the running attempt as stopped on purpose and takes its process.
 fn retire(state: &mut SlotState) -> Option<Arc<HostProcess>> {
     if let Phase::Running { key, .. } = state.supervision.phase {
@@ -1027,5 +1060,52 @@ mod tests {
         );
         slot.as_mut().unwrap().retired_through = 5;
         assert!(!refresh(&mut slot, &with_setting(5, 9)));
+    }
+
+    /// Disable chose `through = 1`, but before its stop reached the slot an
+    /// enable activated generation 2 and an invocation started its host. The
+    /// stop fences generation 1 and leaves generation 2 running.
+    #[test]
+    fn stopping_through_an_older_generation_spares_a_newer_host() {
+        let mut slot = None;
+        let state = adopt(&mut slot, &spec(2)).unwrap();
+        let key = HostKey {
+            generation: 2,
+            attempt: 1,
+        };
+        assert!(state.supervision.started(key, 10));
+        fence(&mut slot, 1);
+        let state = slot.as_ref().unwrap();
+        assert_eq!(state.retired_through, 1);
+        assert!(matches!(state.supervision.phase, Phase::Running { key: k, .. } if k == key));
+
+        fence(&mut slot, 2);
+        let state = slot.as_ref().unwrap();
+        assert_eq!(state.retired_through, 2);
+        assert_eq!(state.supervision.phase, Phase::Stopped);
+    }
+
+    /// A restart that reached a start attempt and failed is `Failed`, never
+    /// `NotApplied`; only a stale activation is refused before anything
+    /// changes. The artifact directory does not exist, so no process starts.
+    #[test]
+    fn restart_reports_a_failed_start_as_failed() {
+        let hosts = Hosts::new();
+        let mut missing = spec(3);
+        missing.artifact_path = "/nonexistent/ade-plugin-artifact".into();
+        assert!(matches!(
+            hosts.restart(&missing),
+            Err(RestartError::Failed(_))
+        ));
+        assert!(matches!(
+            hosts.restart(&spec(2)),
+            Err(RestartError::NotApplied(_))
+        ));
+        assert_eq!(
+            RestartError::failed(true, "boom".into()),
+            RestartError::Failed(
+                "The previous backend host was stopped, but the new one did not start: boom".into()
+            )
+        );
     }
 }

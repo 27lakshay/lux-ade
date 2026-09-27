@@ -8458,7 +8458,10 @@ export interface PluginHostStatus {
 /**
  * `plugin.host.restart`: clear the crash count and start a fresh host for
  * the current activation. Invocations running in the old host settle as
- * `outcome_unknown`.
+ * `outcome_unknown`. The error code `not_applied` means the request was
+ * refused before any host was touched. The code `failed` means a start was
+ * attempted and failed, after the old host, if one ran, was already
+ * stopped; `plugin.host.status` then shows the backoff or errored host.
  */
 export interface PluginHostRestartRequest {
   op: 'plugin.host.restart'
