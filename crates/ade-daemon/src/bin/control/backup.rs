@@ -70,6 +70,25 @@ fn hash(path: &Path) -> Result<Value> {
         .collect::<String>();
     Ok(json!({"size":size,"sha256":digest}))
 }
+/// The oldest `sessions.sqlite` schema that carries the execution fence restore
+/// relies on (`restore_fence`, `send_intents.restore_hold`).
+const FENCE_SCHEMA: i64 = 12;
+
+/// Decides whether a database schema version is readable. A versioned database may
+/// be one schema behind; the daemon migrates it when it opens. How much further
+/// back restore reaches is decision D15. A profile database from before the
+/// execution fence gets its own named rejection.
+fn supported_schema(name: &str, version: i64, expected: i64) -> Result<()> {
+    ensure!(
+        name != "sessions.sqlite" || version >= FENCE_SCHEMA,
+        "Restore requires a schema-12 backup with an execution fence; {name} has schema version {version}"
+    );
+    ensure!(
+        version == expected || (expected > 0 && version == expected - 1),
+        "Unsupported {name} schema version {version}"
+    );
+    Ok(())
+}
 fn schema(path: &Path, name: &str) -> Result<i64> {
     regular(path)?;
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
@@ -79,15 +98,58 @@ fn schema(path: &Path, name: &str) -> Result<i64> {
         .find(|(entry, _, _)| *entry == name)
         .context("Unknown database")?
         .2;
-    // A versioned database may also be one schema behind; the daemon migrates it
-    // when it opens. How much further back restore reaches is decision D15.
-    ensure!(
-        version == expected || (expected > 0 && version == expected - 1),
-        "Unsupported {name} schema version {version}"
-    );
+    supported_schema(name, version, expected)?;
     let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
     ensure!(check == "ok", "Invalid SQLite database: {name}");
+    if name == "sessions.sqlite" {
+        attachments(&db)?;
+    }
     Ok(version)
+}
+/// Checks one attachment row: its metadata names it, a live payload is exactly
+/// the declared size, a discarded payload is empty, and it has a generation.
+/// Every supported `sessions.sqlite` schema has the schema-11 columns.
+fn attachment_verdict(
+    id: &str,
+    metadata: &str,
+    length: i64,
+    generation: &str,
+    state: &str,
+) -> Result<()> {
+    let value: Value = serde_json::from_str(metadata)
+        .with_context(|| format!("Attachment record is invalid: {id}"))?;
+    ensure!(
+        value["id"] == id && matches!(state, "live" | "discarded"),
+        "Attachment record is invalid: {id}"
+    );
+    ensure!(
+        !generation.is_empty(),
+        "Attachment generation is invalid: {id}"
+    );
+    let complete = match state {
+        "live" => value["size"].as_i64() == Some(length),
+        _ => length == 0,
+    };
+    ensure!(complete, "Attachment payload is incomplete: {id}");
+    Ok(())
+}
+fn attachments(db: &Connection) -> Result<()> {
+    let mut query =
+        db.prepare("SELECT id,metadata,length(data),generation,state FROM attachments")?;
+    let rows = query.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, metadata, length, generation, state) = row?;
+        attachment_verdict(&id, &metadata, length, &generation, &state)?;
+    }
+    Ok(())
 }
 fn no_replace(from: &Path, to: &Path) -> Result<()> {
     let from = CString::new(from.as_os_str().as_bytes())?;
@@ -118,6 +180,62 @@ fn stage(parent: &Path) -> Result<PathBuf> {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
     Ok(path)
 }
+/// A test-only hold on a running online backup of `sessions.sqlite`. After the
+/// first page is copied it writes the signal file, then waits up to 10 s for the
+/// release file. It exists only in debug builds and only when
+/// `ADE_E2E_BACKUP_PAUSE_ENABLED=1` names it; release builds compile it out.
+struct Pause {
+    signal: PathBuf,
+    release: PathBuf,
+}
+impl Pause {
+    fn wait(self) -> Result<()> {
+        fs::write(&self.signal, "sqlite-backup-active\n")?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !self.release.exists() {
+            ensure!(Instant::now() < deadline, "Backup test pause timed out");
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    }
+}
+/// Decides whether a backup pause is armed. The build flag and the enable
+/// variable must both hold, the database must be `sessions.sqlite`, and both
+/// paths must be present and absolute; a half-configured pause is refused.
+fn pause_plan(
+    compiled: bool,
+    enabled: Option<&str>,
+    name: &str,
+    signal: Option<&str>,
+    release: Option<&str>,
+) -> Result<Option<Pause>> {
+    if !compiled || enabled != Some("1") || name != "sessions.sqlite" {
+        return Ok(None);
+    }
+    let (Some(signal), Some(release)) = (signal, release) else {
+        ensure!(
+            signal.is_none() && release.is_none(),
+            "Backup test pause needs both a signal and a release path"
+        );
+        return Ok(None);
+    };
+    let (signal, release) = (PathBuf::from(signal), PathBuf::from(release));
+    ensure!(
+        signal.is_absolute() && release.is_absolute(),
+        "Backup test pause paths must be absolute"
+    );
+    Ok(Some(Pause { signal, release }))
+}
+fn test_pause(name: &str) -> Result<Option<Pause>> {
+    let read = |key: &str| std::env::var(key).ok();
+    pause_plan(
+        cfg!(debug_assertions),
+        read("ADE_E2E_BACKUP_PAUSE_ENABLED").as_deref(),
+        name,
+        read("ADE_E2E_BACKUP_PAUSE_SIGNAL").as_deref(),
+        read("ADE_E2E_BACKUP_PAUSE_RELEASE").as_deref(),
+    )
+}
 fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
     let expected = FILES
         .iter()
@@ -127,11 +245,22 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
         schema(source, name)?;
         let reader = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut writer = Connection::open(target)?;
+        let mut pause = test_pause(name)?;
         {
             let copy = Backup::new(&reader, &mut writer)?;
             let deadline = Instant::now() + Duration::from_secs(30);
+            // One page per step while a pause is armed, so the copy is still
+            // unfinished when it holds.
+            let pages = if pause.is_some() { 1 } else { 128 };
             loop {
-                match copy.step(128)? {
+                let step = copy.step(pages)?;
+                if step == StepResult::More
+                    && copy.progress().remaining > 0
+                    && let Some(hold) = pause.take()
+                {
+                    hold.wait()?;
+                }
+                match step {
                     StepResult::Done => break,
                     StepResult::More | StepResult::Busy | StepResult::Locked => {
                         ensure!(Instant::now() < deadline, "Online backup timed out");
@@ -162,6 +291,23 @@ fn snapshot(source: &Path, target: &Path, name: &str) -> Result<Value> {
     }
     Ok(info)
 }
+/// Refuses a backup destination inside a directory the backup copies. Both
+/// paths must already be canonical; a bundle nested in its own source would copy
+/// itself on the next backup and move with the profile it protects.
+fn outside(destination: &Path, source: &Path) -> Result<()> {
+    ensure!(
+        !destination.starts_with(source),
+        "Backup destination must be outside the profile it copies: {}",
+        destination.display()
+    );
+    Ok(())
+}
+/// Resolves a destination that does not exist yet through its existing parent.
+fn resolved_destination(output: &Path) -> Result<PathBuf> {
+    let parent = output.parent().context("Backup has no parent")?;
+    let name = output.file_name().context("Backup has no name")?;
+    Ok(fs::canonicalize(parent)?.join(name))
+}
 fn create(source: &Path, output: &Path) -> Result<Value> {
     directory(source)?;
     ensure!(
@@ -170,6 +316,7 @@ fn create(source: &Path, output: &Path) -> Result<Value> {
     );
     let parent = output.parent().context("Backup has no parent")?;
     directory(parent)?;
+    outside(&resolved_destination(output)?, &fs::canonicalize(source)?)?;
     ensure!(
         !output.exists() && !output.is_symlink(),
         "Backup destination already exists"
@@ -284,6 +431,20 @@ fn rewrite(
     }
     Ok(())
 }
+/// Marks a lifecycle operation that was running in the source profile as
+/// interrupted. Restore does not resume it, so the daemon reports that the
+/// original repository needs inspection before a retry.
+fn interrupt(record: &mut Value, now_ms: i64) {
+    if record["status"] == "running" {
+        record["status"] = json!("interrupted");
+        record["code"] = json!("restored_without_runtime_owner");
+        record["error"] = json!(
+            "Source-profile lifecycle work was not resumed by restore; inspect the original repository"
+        );
+        record["recovery"] = json!("inspect_repository_before_retry");
+        record["finished_at"] = json!(now_ms);
+    }
+}
 fn fence(data: &Path, final_data: &Path) -> Result<()> {
     let core = data.join("sessions.sqlite");
     let mut db = Connection::open(&core)?;
@@ -341,12 +502,12 @@ fn fence(data: &Path, final_data: &Path) -> Result<()> {
         // ledger in `operations`.
         let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         let ledger = if version >= 4 { "jobs" } else { "operations" };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis();
+        let now = i64::try_from(now)?;
         rewrite(&tx, ledger, |_id, record| {
-            if record["status"] == "running" {
-                record["status"] = json!("interrupted");
-                record["code"] = json!("restored_without_runtime_owner");
-                record["error"] = json!("Source-profile lifecycle work was not resumed by restore");
-            }
+            interrupt(record, now);
             Ok(())
         })?;
         tx.commit()?;
@@ -467,6 +628,9 @@ fn profile_backup(home: &Path, item: &Profile, output: &Path) -> Result<Value> {
     directory(&data)?;
     let parent = output.parent().context("Backup has no parent")?;
     directory(parent)?;
+    let destination = resolved_destination(output)?;
+    outside(&destination, &fs::canonicalize(&path)?)?;
+    outside(&destination, &fs::canonicalize(&data)?)?;
     ensure!(
         !output.exists() && !output.is_symlink(),
         "Backup destination already exists"
@@ -775,5 +939,97 @@ pub(super) fn profile_command(
         }
         "resume-restore" => resume(home, value, args.first().context("Missing profile ID")?),
         _ => bail!("Unknown profile backup action"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_range_is_current_and_one_behind_with_a_named_pre_fence_rejection() {
+        assert!(supported_schema("sessions.sqlite", 17, 17).is_ok());
+        assert!(supported_schema("sessions.sqlite", 16, 17).is_ok());
+        let old = supported_schema("sessions.sqlite", 11, 17).unwrap_err();
+        assert!(
+            old.to_string()
+                .starts_with("Restore requires a schema-12 backup")
+        );
+        let between = supported_schema("sessions.sqlite", 15, 17).unwrap_err();
+        assert_eq!(
+            between.to_string(),
+            "Unsupported sessions.sqlite schema version 15"
+        );
+        let future = supported_schema("sessions.sqlite", 99, 17).unwrap_err();
+        assert_eq!(
+            future.to_string(),
+            "Unsupported sessions.sqlite schema version 99"
+        );
+        assert!(supported_schema("sessions.review.sqlite3", 0, 0).is_ok());
+        assert!(supported_schema("sessions.review.sqlite3", 1, 0).is_err());
+        assert!(supported_schema("sessions.worktrees/lifecycle.sqlite3", 3, 4).is_ok());
+        assert!(supported_schema("sessions.worktrees/lifecycle.sqlite3", 2, 4).is_err());
+    }
+
+    #[test]
+    fn attachment_payloads_must_be_complete() {
+        let meta = r#"{"id":"a1","name":"x","media_type":"text/plain","size":3}"#;
+        assert!(attachment_verdict("a1", meta, 3, "g", "live").is_ok());
+        assert!(attachment_verdict("a1", meta, 0, "g", "discarded").is_ok());
+        let cases = [
+            ("a1", meta, 2, "g", "live", "incomplete"),
+            ("a1", meta, 3, "g", "discarded", "incomplete"),
+            ("a2", meta, 3, "g", "live", "record is invalid"),
+            ("a1", meta, 3, "g", "gone", "record is invalid"),
+            ("a1", meta, 3, "", "live", "generation is invalid"),
+            ("a1", "not json", 3, "g", "live", "record is invalid"),
+            ("a1", r#"{"id":"a1"}"#, 0, "g", "live", "incomplete"),
+        ];
+        for (id, metadata, length, generation, state, expected) in cases {
+            let error = attachment_verdict(id, metadata, length, generation, state).unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "{id} {state} {length}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn destination_must_be_outside_the_source() {
+        let profile = Path::new("/home/p/profiles/one");
+        assert!(outside(Path::new("/home/p/backups/b"), profile).is_ok());
+        assert!(outside(Path::new("/home/p/profiles/one-backup"), profile).is_ok());
+        assert!(outside(Path::new("/home/p/profiles/one/b"), profile).is_err());
+        assert!(outside(Path::new("/home/p/profiles/one/runtime/data/b"), profile).is_err());
+        assert!(outside(profile, profile).is_err());
+    }
+
+    #[test]
+    fn pause_is_armed_only_when_compiled_enabled_and_fully_configured() {
+        let armed = |compiled, enabled, name, signal, release| {
+            pause_plan(compiled, enabled, name, signal, release).map(|plan| plan.is_some())
+        };
+        let (s, r) = (Some("/tmp/signal"), Some("/tmp/release"));
+        assert!(armed(true, Some("1"), "sessions.sqlite", s, r).unwrap());
+        assert!(!armed(false, Some("1"), "sessions.sqlite", s, r).unwrap());
+        assert!(!armed(true, None, "sessions.sqlite", s, r).unwrap());
+        assert!(!armed(true, Some("0"), "sessions.sqlite", s, r).unwrap());
+        assert!(!armed(true, Some("1"), "sessions.review.sqlite3", s, r).unwrap());
+        assert!(!armed(true, Some("1"), "sessions.sqlite", None, None).unwrap());
+        assert!(armed(true, Some("1"), "sessions.sqlite", s, None).is_err());
+        assert!(armed(true, Some("1"), "sessions.sqlite", Some("rel"), r).is_err());
+    }
+
+    #[test]
+    fn restore_interrupts_running_lifecycle_work_with_recovery_fields() {
+        let mut running = json!({"status":"running","finished_at":null});
+        interrupt(&mut running, 42);
+        assert_eq!(running["status"], "interrupted");
+        assert_eq!(running["code"], "restored_without_runtime_owner");
+        assert_eq!(running["recovery"], "inspect_repository_before_retry");
+        assert_eq!(running["finished_at"], 42);
+        let mut done = json!({"status":"succeeded","finished_at":7});
+        interrupt(&mut done, 42);
+        assert_eq!(done, json!({"status":"succeeded","finished_at":7}));
     }
 }
