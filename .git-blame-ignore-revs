@@ -1,0 +1,4 @@
+# Repo-wide formatting passes. git blame skips them with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# Format TypeScript and JavaScript with oxfmt
+8d642f4ade5b3685f5473df5d25b59e0726d777e

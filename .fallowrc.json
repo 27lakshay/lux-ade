@@ -4,5 +4,27 @@
     "apps/desktop/src/main/index.ts",
     "apps/desktop/src/preload/index.ts",
     "apps/desktop/src/renderer/src/main.tsx"
-  ]
+  ],
+  "boundaries": {
+    "zones": [
+      { "name": "desktop-main", "patterns": ["apps/desktop/src/main/**"] },
+      { "name": "desktop-preload", "patterns": ["apps/desktop/src/preload/**"] },
+      { "name": "desktop-renderer", "patterns": ["apps/desktop/src/renderer/**"] },
+      { "name": "cli", "patterns": ["apps/cli/**"] },
+      { "name": "sdk", "patterns": ["packages/client/**"] },
+      { "name": "contracts", "patterns": ["packages/contracts/**"] },
+      { "name": "terminal", "patterns": ["packages/terminal/**"] },
+      { "name": "plugin-host", "patterns": ["packages/plugin-host/**"] }
+    ],
+    "rules": [
+      { "from": "desktop-main", "allow": ["sdk", "contracts"] },
+      { "from": "desktop-preload", "allow": ["terminal"], "allowTypeOnly": ["desktop-renderer", "sdk", "contracts"] },
+      { "from": "desktop-renderer", "allow": ["terminal"], "allowTypeOnly": ["sdk", "contracts"] },
+      { "from": "cli", "allow": ["sdk", "contracts"] },
+      { "from": "sdk", "allow": ["contracts"] },
+      { "from": "terminal", "allow": [] },
+      { "from": "contracts", "allow": [] },
+      { "from": "plugin-host", "allow": ["sdk", "contracts"] }
+    ]
+  }
 }
