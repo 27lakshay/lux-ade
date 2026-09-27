@@ -540,6 +540,13 @@ impl Sessions {
         } else {
             self.launch_pins(&c)?
         };
+        // The profile MCP catalog resolved for this workspace and provider
+        // (F131), read at each launch so a resume sees the current catalog.
+        let mcp_servers = if restore {
+            None
+        } else {
+            super::mcp::launch_servers(&self.data.lock().unwrap().store, &w, &c.provider)?
+        };
         let rpc = Remote::new(
             self.runtime.clone(),
             Spec {
@@ -550,6 +557,7 @@ impl Sessions {
                 account,
                 worker,
                 adapter,
+                mcp_servers,
             },
         );
         if !restore {

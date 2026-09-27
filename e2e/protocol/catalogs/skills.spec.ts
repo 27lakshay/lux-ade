@@ -181,13 +181,15 @@ test('an adopted skill edited outside ADE is reported as drifted, not rewritten'
   expect(await treeSnapshot(path)).toEqual(edited)
 })
 
-// F132 asks for skills invoked through adapter rules. Placement into provider
-// paths and adapter invocation are not built, so no provider sees an
-// installed bundle; remote installation is out of scope for v1 so far.
-test.fixme('an installed bundle is placed for a provider and invoked through its adapter', async ({ ade, profile }) => {
+// F132: skill.place writes an installed bundle where a provider reads it.
+// Invocation through the adapters is proved in e2e/protocol/ops3/skill-place.spec.ts.
+test('an installed bundle is placed for a provider and invoked through its adapter', async ({ ade, profile }) => {
   const source = join(ade.root, 'sources', 'greet')
   await writeSkill(source, 'greet', 'Greets.')
-  await call(profile, 'skill.install', { operation_id: nextOperation('install'), source_path: source })
+  const installed = await call(profile, 'skill.install', { operation_id: nextOperation('install'), source_path: source })
+  await call(profile, 'skill.place', { operation_id: nextOperation('place'), name: 'greet',
+    expected_content_hash: installed.skill.content_hash, provider: 'claude', scope: 'global' })
   const inspection = await call(profile, 'skill.inspect', { name: 'greet' })
-  expect(inspection.projection.some((entry: any) => entry.observed === 'external_identical')).toBe(true)
+  expect(inspection.projection.find((entry: any) => entry.provider === 'claude'))
+    .toMatchObject({ observed: 'adopted_unchanged', decision: 'up_to_date' })
 })

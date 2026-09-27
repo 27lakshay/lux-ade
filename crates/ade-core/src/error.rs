@@ -55,6 +55,14 @@ pub struct NeedsRebind;
 #[error("Restored prompt is held until its source outcome is reconciled")]
 pub struct RestoredSendHeld;
 
+/// An effect whose outcome cannot be known, such as a Git command interrupted
+/// by a crash. The message is the operation's own account of what to inspect;
+/// the envelope types it `outcome_unknown`, so a client can tell it from a
+/// failure without parsing text.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct OperationOutcomeUnknown(pub String);
+
 /// Another claim on the same physical resource refuses this one. The message
 /// names the conflicting claim, its purpose and its owning profile.
 #[derive(Debug, thiserror::Error)]
@@ -290,6 +298,10 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if error.downcast_ref::<RestoredSendHeld>().is_some() {
         return serde_json::json!({"type":"error","message":RestoredSendHeld.to_string(),
             "code":"restored_send_held","recovery":"reconcile_source_send"});
+    }
+    if let Some(unknown) = error.downcast_ref::<OperationOutcomeUnknown>() {
+        return serde_json::json!({"type":"error","message":unknown.to_string(),
+            "code":"outcome_unknown","recovery":"inspect_before_retry"});
     }
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),

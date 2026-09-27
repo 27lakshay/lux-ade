@@ -16,6 +16,8 @@ export function fakeSdk(directory) {
     getSubagentMessages:async(id,child,{offset,limit})=>JSON.parse(readFileSync(file(id),'utf8')).filter(m=>child==='fixture-child'&&m.parent_tool_use_id==='fixture-spawn').slice(offset,offset+limit),
     query({prompt,options}) {
       const session=options.resume??options.sessionId;
+      // Recorded only when the catalog passed servers, so other call logs are unchanged.
+      if(options.mcpServers)record({method:'query',session,resume:options.resume??null,mcpServers:options.mcpServers});
       const history=options.resume?JSON.parse(readFileSync(file(session),'utf8')):[];
       const messages=[];let wake=null,closed=false,current=null;
       // Cumulative per query() call, as the SDK reports modelUsage and total_cost_usd.

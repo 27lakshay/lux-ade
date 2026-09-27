@@ -23635,6 +23635,120 @@
         }
       ]
     },
+    "SkillPlaceOutcome": {
+      "description": "What a placement did at its provider path.",
+      "oneOf": [
+        {
+          "const": "created",
+          "description": "The directory was absent; ADE wrote the bundle and owns the path.",
+          "type": "string"
+        },
+        {
+          "const": "replaced",
+          "description": "ADE replaced its own unchanged placement with this bundle.",
+          "type": "string"
+        },
+        {
+          "const": "up_to_date",
+          "description": "The catalog-owned path already held this bundle.",
+          "type": "string"
+        },
+        {
+          "const": "external_identical",
+          "description": "An external directory already holds identical content. ADE wrote\nnothing and does not own it.",
+          "type": "string"
+        }
+      ]
+    },
+    "SkillPlaceRequest": {
+      "additionalProperties": false,
+      "description": "`skill.place`: write an installed bundle where one provider reads skills,\nso that provider's adapter rules invoke it. The path must be absent or\ncatalog-owned and unchanged; an external skill is never overwritten.",
+      "properties": {
+        "expected_content_hash": {
+          "description": "The installed bundle's content hash the caller reviewed.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "skill.place"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "provider": {
+          "description": "`claude`, `codex`, `opencode` or `omp`: whose skill root receives it.",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillScope"
+        },
+        "workspace_id": {
+          "description": "Required for `workspace` scope. Placement is local: a workspace on a\nremote host is refused, never placed on this host instead.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "name",
+        "expected_content_hash",
+        "provider",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "SkillPlaced": {
+      "description": "The `skill.place` reply.",
+      "properties": {
+        "content_hash": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/SkillPlaceOutcome"
+        },
+        "path": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SkillScope"
+        },
+        "type": {
+          "description": "The `skill_placed` type tag.",
+          "enum": [
+            "skill_placed"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "content_hash",
+        "provider",
+        "scope",
+        "workspace_id",
+        "path",
+        "outcome"
+      ],
+      "type": "object"
+    },
     "SkillPlacementDecision": {
       "description": "What a placement of the bundle at that path would need.",
       "oneOf": [
@@ -27844,6 +27958,13 @@
       "name": "skill.remove",
       "request": "SkillRemoveRequest",
       "response": "SkillRemoved",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "skills",
+      "name": "skill.place",
+      "request": "SkillPlaceRequest",
+      "response": "SkillPlaced",
       "tier": "effect_command"
     },
     {

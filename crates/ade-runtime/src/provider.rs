@@ -31,6 +31,12 @@ pub trait Provider: Send + Sync {
     fn pid(&self) -> Option<u32> {
         None
     }
+    /// Receives the provider-native MCP server map (F131) before `open`. Only
+    /// adapters in `ade_core::mcp::WIRED_PROVIDERS` accept it; any other
+    /// adapter refuses rather than launch without servers it was given.
+    fn configure_mcp(&self, _servers: Value) -> Result<()> {
+        bail!("This provider adapter does not pass MCP servers at launch")
+    }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected>;
     fn send(
         &self,

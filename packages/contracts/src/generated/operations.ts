@@ -151,6 +151,7 @@ export const operations = {
   "skill.install": { tier: "effect_command", domain: "skills", request: "SkillInstallRequest", response: "SkillInstalled" },
   "skill.adopt": { tier: "effect_command", domain: "skills", request: "SkillAdoptRequest", response: "SkillInstalled" },
   "skill.remove": { tier: "effect_command", domain: "skills", request: "SkillRemoveRequest", response: "SkillRemoved" },
+  "skill.place": { tier: "effect_command", domain: "skills", request: "SkillPlaceRequest", response: "SkillPlaced" },
   "skill.list": { tier: "query", domain: "skills", request: "SkillListRequest", response: "SkillList" },
   "skill.inspect": { tier: "query", domain: "skills", request: "SkillInspectRequest", response: "SkillInspection" },
   "skill.discover": { tier: "idempotent_command", domain: "skills", request: "SkillDiscoverRequest", response: "SkillDiscovery" },

@@ -42,6 +42,10 @@ pub struct Spec {
     /// Absent for every other provider, so their wire shape is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<ade_core::contract::providers::adapters::AdapterPin>,
+    /// The provider-native MCP server map the daemon resolved from the
+    /// profile catalog (F131). Absent when no entry applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Value>,
 }
 /// Starts the provider a run names. A plugin provider must arrive with the
 /// worker pin its session leases, and an adapter with its pinned definition;
@@ -169,6 +173,12 @@ impl Run {
     pub fn spawn(spec: Spec) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::sync_channel(256);
         let adapter = launch(&spec, tx)?;
+        if let Some(servers) = &spec.mcp_servers {
+            if let Err(error) = adapter.configure_mcp(servers.clone()) {
+                adapter.stop();
+                return Err(error);
+            }
+        }
         let run = Arc::new(Self {
             spec,
             adapter,
@@ -743,6 +753,7 @@ mod tests {
                     account: None,
                     worker: None,
                     adapter: None,
+                    mcp_servers: None,
                 },
                 adapter: fake.clone(),
                 journal: Mutex::new(Journal::new()),

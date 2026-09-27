@@ -323,7 +323,7 @@ pub fn merge(facts: &Facts, found: Vec<Found>, catalog: &[Catalogued]) -> Vec<Co
             invocation: None,
             mechanism: None,
             reason: Some(format!(
-                "Installed in ADE's skill catalog but not in a path {} reads; ADE does not place skills yet",
+                "Installed in ADE's skill catalog but not in a path {} reads; place it there with skill.place",
                 facts.provider
             )),
         });

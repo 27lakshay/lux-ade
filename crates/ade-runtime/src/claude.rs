@@ -13,6 +13,8 @@ use std::{
 };
 pub struct Adapter {
     rpc: Arc<Rpc>,
+    /// The `mcpServers` map from the profile MCP catalog (F131).
+    mcp_servers: std::sync::Mutex<Option<Value>>,
 }
 impl Adapter {
     pub fn spawn(
@@ -45,6 +47,7 @@ impl Adapter {
         }
         Ok(Arc::new(Self {
             rpc: Rpc::spawn(command, events, provider::bridge_event)?,
+            mcp_servers: std::sync::Mutex::new(None),
         }))
     }
 }
@@ -64,8 +67,27 @@ impl Provider for Adapter {
     fn pid(&self) -> Option<u32> {
         Some(self.rpc.pid())
     }
+    /// The bridge passes the map as the Agent SDK's `mcpServers` query option.
+    fn configure_mcp(&self, servers: Value) -> Result<()> {
+        ensure!(servers.is_object(), "Claude MCP servers must be an object");
+        *self.mcp_servers.lock().unwrap() = Some(servers);
+        Ok(())
+    }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
-        provider::response_session(&self.rpc, resume, config)
+        let servers = self.mcp_servers.lock().unwrap().clone();
+        let Some(servers) = servers else {
+            return provider::response_session(&self.rpc, resume, config);
+        };
+        let result = self.rpc.request(
+            "open",
+            json!({"resume":resume,"config":config,"mcp_servers":servers}),
+        )?;
+        let connected: Connected = serde_json::from_value(result)?;
+        ensure!(
+            resume.is_none_or(|id| id == connected.session),
+            "Provider resumed a different session; original identity retained"
+        );
+        Ok(connected)
     }
     fn send(
         &self,

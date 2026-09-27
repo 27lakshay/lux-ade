@@ -82,7 +82,7 @@ export class Bridge {
     return items;
   }
   event(value) {this.emit({method:'event',params:value});}
-  async open({resume,config={}}) {
+  async open({resume,config={},mcp_servers}) {
     if(this.query)throw new Error('Claude session already opened');
     this.session=resume??randomUUID();
     this.taskPlans.open(this.session,process.env.ADE_DATA_DIR?join(process.env.ADE_DATA_DIR,'claude-task-results'):null);
@@ -104,6 +104,8 @@ export class Bridge {
       includePartialMessages:true,canUseTool:(name,input,options)=>this.permission(name,input,options),
       onElicitation:async()=>({action:'decline'}),
       ...(config.model?{model:config.model}:{}),
+      // The profile MCP catalog resolved by the daemon (F131); references stay ${VAR}.
+      ...(mcp_servers&&typeof mcp_servers==='object'?{mcpServers:mcp_servers}:{}),
       ...(resume?{resume}:{sessionId:this.session}),
       pathToClaudeCodeExecutable:executable(),
     };
