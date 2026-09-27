@@ -1,0 +1,96 @@
+// A provisional load workload (architecture section 12): fixture agents,
+// terminals and services on one profile, plus latency helpers. Agents are
+// Codex mock Conversations, terminals are real shells attached over the
+// protocol, and services are the node HTTP fixture. Nothing calls a model.
+import { performance } from 'node:perf_hooks'
+import { send, waitForIdle } from './conversations'
+import type { ScratchProfile } from './profile'
+import { turnReply } from './providers'
+import { configureService, nodeService, waitForReadiness, writeServicePrograms } from './services'
+import { TerminalStream } from './terminals'
+import { expect } from '@playwright/test'
+
+export type Workload = {
+  workspaceId: string
+  /** Conversations that have each finished one turn. */
+  conversations: string[]
+  /** One attached stream per terminal; the first is the workspace's own terminal. */
+  terminals: TerminalStream[]
+  services: string[]
+  /** Close the streams and stop the services. */
+  stop(): Promise<void>
+}
+
+export type LoadShape = { agents: number; terminals: number; services: number }
+
+/** Start `shape` in the workspace at `workspacePath`. Every resource is ready when it resolves. */
+export async function startWorkload(profile: ScratchProfile, workspacePath: string, shape: LoadShape): Promise<Workload> {
+  const { workspace } = await profile.call('workspace.open', { path: workspacePath })
+  const conversations = await Promise.all(Array.from({ length: shape.agents }, async () => {
+    const conversationId = (await profile.call('conversation.create', { workspace_id: workspace.id, provider: 'codex' }))
+      .conversation.id
+    await send(profile, conversationId, 'hello')
+    await expect.poll(async () => (await profile.call('conversation.get', { conversation_id: conversationId })).messages
+      .some((message) => message.text?.includes(turnReply.codex)), { timeout: 60_000 }).toBe(true)
+    await waitForIdle(profile, conversationId, 60_000)
+    return conversationId
+  }))
+
+  const terminalIds = [workspace.terminal_id]
+  for (let index = 1; index < shape.terminals; index++) {
+    terminalIds.push((await profile.call('terminal.create', { workspace_id: workspace.id })).terminal_id)
+  }
+  const terminals = terminalIds.map((terminalId) => TerminalStream.open(profile, workspace.id, terminalId))
+  await Promise.all(terminals.map((terminal) => terminal.snapshot()))
+
+  const files = await writeServicePrograms(workspacePath)
+  const services = Array.from({ length: shape.services }, (_, index) => `load-${index + 1}`)
+  for (const name of services) {
+    await configureService(profile, workspace.id, name, nodeService(files.server))
+    await profile.call('service.start', { workspace_id: workspace.id, name })
+  }
+  await Promise.all(services.map((name) => waitForReadiness(profile, workspace.id, name, 'tcp_listening', 60_000)))
+
+  return {
+    workspaceId: workspace.id, conversations, terminals, services,
+    async stop() {
+      for (const terminal of terminals) terminal.close()
+      for (const name of services) await profile.call('service.stop', { workspace_id: workspace.id, name })
+    },
+  }
+}
+
+/** Run `action` and return its wall time in milliseconds with its result. */
+export async function timed<T>(action: () => Promise<T>): Promise<{ ms: number; value: T }> {
+  const started = performance.now()
+  const value = await action()
+  return { ms: performance.now() - started, value }
+}
+
+export type LatencySummary = { count: number; p50: number; p95: number; max: number }
+
+/** Nearest-rank percentiles of `samples`, rounded to 0.1 ms. */
+export function summarize(samples: number[]): LatencySummary {
+  const sorted = [...samples].sort((a, b) => a - b)
+  const rank = (p: number) => sorted[Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)] ?? 0
+  const round = (value: number) => Math.round(value * 10) / 10
+  return { count: sorted.length, p50: round(rank(50)), p95: round(rank(95)), max: round(sorted.at(-1) ?? 0) }
+}
+
+/**
+ * Time terminal echo: write a shell arithmetic expression and wait for its
+ * result, which the input echo cannot contain. Returns one sample per round.
+ */
+export async function terminalEcho(terminal: TerminalStream, rounds: number, base: number): Promise<number[]> {
+  const samples: number[] = []
+  for (let round = 0; round < rounds; round++) {
+    const value = base + round
+    const pattern = new RegExp(`(^|\\n)${value}\\r?\\n`)
+    const { ms } = await timed(async () => {
+      terminal.send({ op: 'input', data: `echo $((${value - 1}+1))\n` })
+      await terminal.waitForText(pattern, 30_000)
+    })
+    samples.push(ms)
+  }
+  return samples
+}
