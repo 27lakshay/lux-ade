@@ -9,6 +9,8 @@ const ADD_BUDGET_MS = 40_000
 const PROBE_BUDGET_MS = 45_000
 /** A probe, then the start script (60 s). */
 const START_BUDGET_MS = PROBE_BUDGET_MS + 60_000
+/** A probe, three uploads (120 s each) and the closing probe. */
+const INSTALL_BUDGET_MS = PROBE_BUDGET_MS * 2 + 3 * 120_000
 const DEFAULT_MS = 30_000
 
 export function remoteDeadlineMs(op: string): number {
@@ -16,6 +18,7 @@ export function remoteDeadlineMs(op: string): number {
     case 'remote.host.add': return ADD_BUDGET_MS + MARGIN_MS
     case 'remote.host.probe': return PROBE_BUDGET_MS + MARGIN_MS
     case 'remote.host.start': return START_BUDGET_MS + MARGIN_MS
+    case 'remote.host.install': return INSTALL_BUDGET_MS + MARGIN_MS
     default: return DEFAULT_MS
   }
 }

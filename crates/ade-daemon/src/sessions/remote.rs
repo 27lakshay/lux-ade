@@ -10,10 +10,11 @@ use super::*;
 use crate::receipts::{self, Admission, Status};
 use crate::remote::{self as decide, Finished, HostKey};
 use ade_core::contract::remote::{
-    PairingState, RemoteHost, RemoteHostAddRequest, RemoteHostListRequest, RemoteHostProbe,
-    RemoteHostProbeRequest, RemoteHostRemoveRequest, RemoteHostRemoved, RemoteHostReply,
-    RemoteHostStart, RemoteHostStartRequest, RemoteHosts, RemotePairRequest, RemotePairing,
-    RemotePairingReply, RemoteRevokeRequest, StartOutcome,
+    InstallOutcome, PairingState, RemoteHost, RemoteHostAddRequest, RemoteHostInstall,
+    RemoteHostInstallRequest, RemoteHostListRequest, RemoteHostProbe, RemoteHostProbeRequest,
+    RemoteHostRemoveRequest, RemoteHostRemoved, RemoteHostReply, RemoteHostStart,
+    RemoteHostStartRequest, RemoteHosts, RemotePairRequest, RemotePairing, RemotePairingReply,
+    RemoteRevokeRequest, StartOutcome,
 };
 use ade_core::protocol::{APPLICATION_PROTOCOL, RUNTIME_PROTOCOL};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -24,7 +25,8 @@ use std::{
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS remote_hosts(host_id TEXT PRIMARY KEY, label TEXT NOT NULL, ssh_target TEXT NOT NULL, host_key TEXT NOT NULL, host_key_fingerprint TEXT NOT NULL, backend_path TEXT, remote_profile_id TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS remote_pairings(pairing_id TEXT PRIMARY KEY, host_id TEXT NOT NULL, token_reference TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','revoked')), paired_at INTEGER NOT NULL, revoked_at INTEGER);
-CREATE UNIQUE INDEX IF NOT EXISTS remote_pairings_one_active ON remote_pairings(host_id) WHERE state='active';";
+CREATE UNIQUE INDEX IF NOT EXISTS remote_pairings_one_active ON remote_pairings(host_id) WHERE state='active';
+CREATE TABLE IF NOT EXISTS remote_host_installs(host_id TEXT PRIMARY KEY, control_path TEXT NOT NULL, installed_at INTEGER NOT NULL);";
 
 /// Each host's last settled start. Receipt retention empties old receipts, so
 /// current readiness lives here and never in receipt history.
@@ -38,6 +40,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(45);
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 const _: () =
     assert!(PROBE_TIMEOUT.as_secs() + START_TIMEOUT.as_secs() == decide::START_BUDGET_SECS);
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(decide::UPLOAD_TIMEOUT_SECS);
+const _: () = assert!(
+    PROBE_TIMEOUT.as_secs() * 2 + UPLOAD_TIMEOUT.as_secs() * 3 == decide::INSTALL_BUDGET_SECS
+);
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(10);
 const KEYSCAN_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -99,6 +105,7 @@ fn now_ms() -> i64 {
 }
 
 /// A registry row with its pinned key.
+#[derive(Clone)]
 struct Stored {
     host: RemoteHost,
     key: HostKey,
@@ -142,6 +149,13 @@ fn read_host(connection: &Connection, host_id: &str) -> Result<Option<Stored>> {
             host_public_key: key.public_line(),
             backend_path,
             remote_profile_id,
+            installed_backend_path: connection
+                .query_row(
+                    "SELECT control_path FROM remote_host_installs WHERE host_id=?1",
+                    [host_id],
+                    |row| row.get(0),
+                )
+                .optional()?,
             created_at_ms: created,
             pairing: latest_pairing(connection, host_id)?,
         },
@@ -234,26 +248,36 @@ impl Drop for KnownHosts {
     }
 }
 
+/// What a program reads on stdin.
+enum Input<'a> {
+    Nothing,
+    Text(&'a str),
+    File(&'a std::path::Path),
+}
+
 /// Runs a program with bounded output and a deadline; a late process is killed
 /// and reported as timed out, never as finished.
-fn run(program: &str, args: &[String], stdin: Option<&str>, timeout: Duration) -> Result<Finished> {
+fn run(program: &str, args: &[String], stdin: Input, timeout: Duration) -> Result<Finished> {
     let mut command = Command::new(program);
     command
         .args(args)
         .env("SSH_ASKPASS_REQUIRE", "never")
         .env_remove("SSH_ASKPASS")
         .env_remove("DISPLAY")
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
+        .stdin(match stdin {
+            Input::Nothing => Stdio::null(),
+            Input::Text(_) => Stdio::piped(),
+            Input::File(path) => Stdio::from(
+                std::fs::File::open(path)
+                    .with_context(|| format!("Could not read {}", path.display()))?,
+            ),
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .with_context(|| format!("Could not run {program}"))?;
-    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+    if let (Input::Text(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
         let text = text.to_owned();
         std::thread::spawn(move || {
             let _ = pipe.write_all(text.as_bytes());
@@ -294,6 +318,16 @@ fn run(program: &str, args: &[String], stdin: Option<&str>, timeout: Duration) -
 
 /// Runs `/bin/sh -s` on the host with `script` on stdin, pinned to its key.
 fn remote_shell(stored: &Stored, script: &str, timeout: Duration) -> Result<Finished> {
+    remote_command(stored, "/bin/sh -s", Input::Text(script), timeout)
+}
+
+/// Runs one command on the host, pinned to its key.
+fn remote_command(
+    stored: &Stored,
+    command: &str,
+    stdin: Input,
+    timeout: Duration,
+) -> Result<Finished> {
     let alias = decide::host_key_alias(&stored.host.host_id);
     let known_hosts = KnownHosts::write(&alias, &stored.key)?;
     let args = decide::ssh_args(
@@ -301,9 +335,19 @@ fn remote_shell(stored: &Stored, script: &str, timeout: Duration) -> Result<Fini
         &known_hosts.file,
         &alias,
         &stored.key,
-        "/bin/sh -s",
+        command,
     )?;
-    run("ssh", &args, Some(script), timeout)
+    run("ssh", &args, stdin, timeout)
+}
+
+/// The `ade-control` probe and start use: the one the user named, else the
+/// one ADE installed, else the host's PATH.
+fn effective_backend(stored: &Stored) -> Option<&str> {
+    stored
+        .host
+        .backend_path
+        .as_deref()
+        .or(stored.host.installed_backend_path.as_deref())
 }
 
 /// The host key `remote.host.add` pins, or why none can be.
@@ -315,7 +359,7 @@ fn obtain_key(request: &RemoteHostAddRequest) -> Result<HostKey> {
     let resolved = run(
         "ssh",
         &["-G".to_owned(), "--".to_owned(), request.ssh_target.clone()],
-        None,
+        Input::Nothing,
         RESOLVE_TIMEOUT,
     )?;
     ensure!(
@@ -342,7 +386,7 @@ fn obtain_key(request: &RemoteHostAddRequest) -> Result<HostKey> {
             "--".to_owned(),
             target.hostname.clone(),
         ],
-        None,
+        Input::Nothing,
         KEYSCAN_TIMEOUT,
     )?;
     ensure!(
@@ -357,7 +401,7 @@ fn obtain_key(request: &RemoteHostAddRequest) -> Result<HostKey> {
 
 /// The probe: connect with the pinned key and describe the backend.
 fn probe(stored: &Stored) -> Result<RemoteHostProbe> {
-    let backend_path = stored.host.backend_path.as_deref();
+    let backend_path = effective_backend(stored);
     let finished = remote_shell(stored, &decide::probe_script(backend_path), PROBE_TIMEOUT)?;
     ensure!(
         !finished.timed_out,
@@ -454,6 +498,171 @@ fn attempt_start(stored: &Stored, operation_id: &str) -> RemoteHostStart {
     start_reply(operation_id, host_id, outcome, detail, daemon)
 }
 
+fn install_reply(
+    operation_id: &str,
+    host_id: &str,
+    outcome: InstallOutcome,
+    detail: Option<String>,
+    control_path: Option<String>,
+    installed: Vec<String>,
+) -> RemoteHostInstall {
+    RemoteHostInstall {
+        tag: Default::default(),
+        operation_id: operation_id.to_owned(),
+        host_id: host_id.to_owned(),
+        outcome,
+        detail,
+        control_path,
+        installed,
+    }
+}
+
+/// This installation's own backend executables, beside the running daemon.
+fn local_artifacts() -> Result<Vec<(&'static str, std::path::PathBuf)>> {
+    let executable = std::env::current_exe()?;
+    let directory = executable
+        .parent()
+        .context("The daemon executable has no directory")?;
+    decide::INSTALL_ARTIFACTS
+        .iter()
+        .map(|name| {
+            let path = directory.join(name);
+            ensure!(
+                path.is_file(),
+                "This installation has no {name} to install at {}",
+                path.display()
+            );
+            Ok((*name, path))
+        })
+        .collect()
+}
+
+/// Probes, then copies this installation's backend into the ADE-owned
+/// directory when the plan allows, then probes again through what it wrote.
+fn attempt_install(stored: &Stored, operation_id: &str) -> RemoteHostInstall {
+    let host_id = &stored.host.host_id;
+    let done = |outcome, detail: String, control: Option<String>, installed: Vec<String>| {
+        install_reply(
+            operation_id,
+            host_id,
+            outcome,
+            Some(detail),
+            control,
+            installed,
+        )
+    };
+    let failed = |detail: String| done(InstallOutcome::Failed, detail, None, vec![]);
+    let artifacts = match local_artifacts() {
+        Ok(artifacts) => artifacts,
+        Err(error) => return failed(format!("{error:#}; nothing was installed")),
+    };
+    let probed = match probe(stored) {
+        Ok(probed) => probed,
+        Err(error) => return failed(format!("{error:#}; nothing was installed")),
+    };
+    match decide::install_plan(
+        &decide::local_platform(),
+        &probed.platform,
+        &probed.backend,
+        stored.host.backend_path.as_deref(),
+    ) {
+        decide::InstallPlan::AlreadyCompatible(control) => {
+            return done(
+                InstallOutcome::AlreadyCompatible,
+                "The host already has a compatible backend; nothing was written".to_owned(),
+                Some(control),
+                vec![],
+            );
+        }
+        decide::InstallPlan::Refuse(reason) => return failed(reason),
+        decide::InstallPlan::Install => {}
+    }
+    let directory = decide::install_directory(APPLICATION_PROTOCOL, RUNTIME_PROTOCOL);
+    let mut installed = Vec::new();
+    let mut control = None;
+    for (index, (name, path)) in artifacts.iter().enumerate() {
+        let command = decide::upload_command(&directory, name);
+        let finished = match remote_command(stored, &command, Input::File(path), UPLOAD_TIMEOUT) {
+            Ok(finished) => finished,
+            Err(error) if index == 0 => {
+                return failed(format!("{error:#}; nothing was installed"));
+            }
+            Err(error) => {
+                return done(
+                    InstallOutcome::Unknown,
+                    format!(
+                        "{error:#}; some artifacts may have been written. Probe the host; installing again is safe"
+                    ),
+                    None,
+                    installed,
+                );
+            }
+        };
+        let written = (finished.code == Some(0) && !finished.timed_out)
+            .then(|| decide::uploaded_path(&finished.stdout))
+            .flatten();
+        let Some(written) = written else {
+            let (outcome, detail) = decide::upload_failure(&finished, index == 0);
+            return done(outcome, detail, None, installed);
+        };
+        installed.push((*name).to_owned());
+        if *name == "ade-control" {
+            control = Some(written);
+        }
+    }
+    let Some(control) = control else {
+        return done(
+            InstallOutcome::Unknown,
+            "The upload did not report where ade-control was installed; probe the host".to_owned(),
+            None,
+            installed,
+        );
+    };
+    // The install counts only when the host now probes compatible through it.
+    let mut installed_host = stored.clone();
+    installed_host.host.installed_backend_path = Some(control.clone());
+    installed_host.host.backend_path = None;
+    match probe(&installed_host) {
+        Ok(verified)
+            if verified.backend.compatible
+                && verified.backend.control_path.as_deref() == Some(control.as_str()) =>
+        {
+            done(
+                InstallOutcome::Installed,
+                format!(
+                    "Installed this installation's backend at {control}; the host's own configuration was not changed"
+                ),
+                Some(control),
+                installed,
+            )
+        }
+        Ok(verified) => done(
+            InstallOutcome::Unknown,
+            format!(
+                "The artifacts were written to {control}, but the host does not probe compatible: {}",
+                verified
+                    .backend
+                    .missing
+                    .iter()
+                    .chain(verified.backend.incompatible.iter())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            None,
+            installed,
+        ),
+        Err(error) => done(
+            InstallOutcome::Unknown,
+            format!(
+                "The artifacts were written to {control}, but the closing probe failed: {error:#}"
+            ),
+            None,
+            installed,
+        ),
+    }
+}
+
 impl Sessions {
     pub(super) fn remote_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         match request["op"].as_str().unwrap_or("") {
@@ -497,6 +706,10 @@ impl Sessions {
                         "DELETE FROM remote_host_starts WHERE host_id=?1",
                         [&remove.host_id],
                     )?;
+                    tx.execute(
+                        "DELETE FROM remote_host_installs WHERE host_id=?1",
+                        [&remove.host_id],
+                    )?;
                     let removed = tx.execute(
                         "DELETE FROM remote_hosts WHERE host_id=?1",
                         [&remove.host_id],
@@ -525,6 +738,7 @@ impl Sessions {
                 self.remote_store(|connection| revoke_pairing(connection, &revoke))
             }
             "remote.host.start" => self.remote_start(request),
+            "remote.host.install" => self.remote_install(request),
             _ => bail!("Unknown session operation"),
         }
     }
@@ -604,36 +818,31 @@ impl Sessions {
         })
     }
 
-    fn remote_start(&self, request: &Value) -> Result<Value> {
-        let start: RemoteHostStartRequest = decode(request)?;
-        let operation_id = start.operation_id.as_str();
+    /// Admits an effect command on a paired host: a new receipt moves to
+    /// `dispatched` before any `ssh` runs. A stored result is replayed; an
+    /// attempt that never recorded one is not run again, and `unsettled`
+    /// builds the reply that says so.
+    fn admit_effect(
+        &self,
+        op: &str,
+        request: &Value,
+        operation_id: &str,
+        host_id: &str,
+        verb: &str,
+        unsettled: impl FnOnce(&str) -> Result<Value>,
+    ) -> Result<std::result::Result<Stored, Value>> {
         ensure!(
             !operation_id.is_empty() && operation_id.len() <= 512,
             "Missing operation_id"
         );
-        let admitted = self.remote_store(|connection| {
+        self.remote_store(|connection| {
             let tx = transaction(connection)?;
-            match receipts::begin(
-                &tx,
-                operation_id,
-                "remote.host.start",
-                request,
-                None,
-                now_ms(),
-            )? {
+            match receipts::begin(&tx, operation_id, op, request, None, now_ms())? {
                 Admission::New => {}
-                // A stored result is replayed; an attempt that never recorded
-                // one is not run again.
                 Admission::Replay(receipt) => {
                     return Ok(Err(match receipt.result {
                         Some(result) => result,
-                        None => reply(&start_reply(
-                            operation_id,
-                            &start.host_id,
-                            StartOutcome::Unknown,
-                            Some(decide::unsettled_start_detail(receipt.status.as_str())),
-                            None,
-                        ))?,
+                        None => unsettled(receipt.status.as_str())?,
                     }));
                 }
                 Admission::Conflict => {
@@ -645,23 +854,40 @@ impl Sessions {
                     )
                 }
             }
-            let stored = required_host(&tx, &start.host_id)?;
+            let stored = required_host(&tx, host_id)?;
             match &stored.host.pairing {
                 Some(pairing) if pairing.state == PairingState::Active => {}
                 Some(pairing) => bail!(
-                    "Pairing {} with {} was revoked; pair again before starting it",
+                    "Pairing {} with {host_id} was revoked; pair again before {verb} it",
                     pairing.pairing_id,
-                    start.host_id
                 ),
-                None => bail!(
-                    "{} is not paired; pair it before starting it",
-                    start.host_id
-                ),
+                None => bail!("{host_id} is not paired; pair it before {verb} it"),
             }
             receipts::settle(&tx, operation_id, Status::Dispatched, None, now_ms())?;
             tx.commit()?;
             Ok(Ok(stored))
-        })?;
+        })
+    }
+
+    fn remote_start(&self, request: &Value) -> Result<Value> {
+        let start: RemoteHostStartRequest = decode(request)?;
+        let operation_id = start.operation_id.as_str();
+        let admitted = self.admit_effect(
+            "remote.host.start",
+            request,
+            operation_id,
+            &start.host_id,
+            "starting",
+            |status| {
+                reply(&start_reply(
+                    operation_id,
+                    &start.host_id,
+                    StartOutcome::Unknown,
+                    Some(decide::unsettled_start_detail(status)),
+                    None,
+                ))
+            },
+        )?;
         let stored = match admitted {
             Ok(stored) => stored,
             Err(replayed) => return Ok(replayed),
@@ -674,6 +900,56 @@ impl Sessions {
         };
         self.remote_store(|connection| {
             settle_start(connection, operation_id, status, &result, now_ms())
+        })?;
+        Ok(result)
+    }
+
+    fn remote_install(&self, request: &Value) -> Result<Value> {
+        let install: RemoteHostInstallRequest = decode(request)?;
+        let operation_id = install.operation_id.as_str();
+        let admitted = self.admit_effect(
+            "remote.host.install",
+            request,
+            operation_id,
+            &install.host_id,
+            "installing on",
+            |status| {
+                reply(&install_reply(
+                    operation_id,
+                    &install.host_id,
+                    InstallOutcome::Unknown,
+                    Some(format!(
+                        "An earlier attempt with this operation ID is {status} and has no recorded outcome; it may still be running, so it was not run again. Probe the host; installing again under a new operation ID is safe once it has finished"
+                    )),
+                    None,
+                    vec![],
+                ))
+            },
+        )?;
+        let stored = match admitted {
+            Ok(stored) => stored,
+            Err(replayed) => return Ok(replayed),
+        };
+        let outcome = attempt_install(&stored, operation_id);
+        let result = reply(&outcome)?;
+        self.remote_store(|connection| {
+            let tx = transaction(connection)?;
+            let status = if outcome.outcome == InstallOutcome::Unknown {
+                Status::Unknown
+            } else {
+                Status::Settled
+            };
+            receipts::settle(&tx, operation_id, status, Some(&result), now_ms())?;
+            if let (InstallOutcome::Installed, Some(control)) =
+                (outcome.outcome, &outcome.control_path)
+            {
+                tx.execute(
+                    "INSERT INTO remote_host_installs(host_id,control_path,installed_at) VALUES(?1,?2,?3) ON CONFLICT(host_id) DO UPDATE SET control_path=excluded.control_path,installed_at=excluded.installed_at",
+                    params![install.host_id, control, now_ms()],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
         })?;
         Ok(result)
     }

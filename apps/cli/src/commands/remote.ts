@@ -13,6 +13,9 @@ export const remoteUsage = `  remote list                           List registe
                                         Record a pairing; only the token's location is stored
   remote revoke HOST_ID PAIRING_ID      Revoke a pairing; this profile stops starting the host
   remote start HOST_ID --request-id ID  Start or attach the remote profile daemon
+  remote install HOST_ID --request-id ID
+                                        Copy this installation's backend into ~/.ade/backend on
+                                        the host when it lacks a compatible one; changes nothing else
 `
 
 function split(rest: string[], positional: number, allowed: readonly string[], command: string):
@@ -84,6 +87,16 @@ export async function runRemoteCommand(socketPath: string, area: string | undefi
       const detail = typeof reply.detail === 'string' ? reply.detail : undefined
       if (reply.outcome === 'unknown') throw new CliError('outcome_unknown', detail ?? 'Remote start outcome is unknown.')
       if (reply.outcome === 'failed') throw new CliError('not_applied', detail ?? 'Remote start failed.')
+      return reply
+    }
+    case 'install': {
+      const { args, options } = split(rest, 1, ['--request-id'], 'install')
+      const reply = await call(socketPath, 'remote.host.install', {
+        host_id: required(args[0], 'HOST_ID'), operation_id: required(options['--request-id'], '--request-id') },
+      { timeoutMs: remoteDeadlineMs('remote.host.install') })
+      const detail = typeof reply.detail === 'string' ? reply.detail : undefined
+      if (reply.outcome === 'unknown') throw new CliError('outcome_unknown', detail ?? 'Remote install outcome is unknown.')
+      if (reply.outcome === 'failed') throw new CliError('not_applied', detail ?? 'Remote install failed.')
       return reply
     }
     default:

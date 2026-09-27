@@ -12,7 +12,8 @@
 //! The SSH failure classification follows the pattern of Herdr's
 //! `ssh_error_requires_authentication` (herdr/src/remote/attach.rs, Apache-2.0).
 use ade_core::contract::remote::{
-    BackendCompatibility, RemoteDaemon, RemotePlatform, StartOutcome, TokenReference,
+    BackendCompatibility, InstallOutcome, RemoteDaemon, RemotePlatform, StartOutcome,
+    TokenReference,
 };
 use anyhow::{Context, Result, bail, ensure};
 use base64::{
@@ -418,8 +419,8 @@ pub fn parse_probe(stdout: &str) -> Result<ProbeReport> {
     Ok(report)
 }
 
-/// The compatibility decision for a probed backend. Every gap is named; none
-/// is filled by installing anything.
+/// The compatibility decision for a probed backend. Every gap is named; only
+/// the explicit `remote.host.install` fills one.
 pub fn compatibility(
     report: &ProbeReport,
     backend_path: Option<&str>,
@@ -574,6 +575,122 @@ pub const START_BUDGET_SECS: u64 = 45 + 60;
 pub fn unsettled_start_detail(status: &str) -> String {
     format!(
         "An earlier attempt with this operation ID is {status} and has no recorded outcome; it may still be running, so it was not run again. Retry this same operation ID after {START_BUDGET_SECS} seconds to read its outcome. If it still has none, the daemon stopped during it: probe the host before starting it under a new operation ID"
+    )
+}
+
+/// The artifacts `remote.host.install` copies, in upload order. `ade-control`
+/// goes last, so an interrupted install leaves nothing a probe would use.
+pub const INSTALL_ARTIFACTS: [&str; 3] = ["ade-runtime", "ade-daemon", "ade-control"];
+
+/// Deadlines for one install: a probe, each upload, and the closing probe.
+pub const UPLOAD_TIMEOUT_SECS: u64 = 120;
+pub const INSTALL_BUDGET_SECS: u64 = 45 + 3 * UPLOAD_TIMEOUT_SECS + 45;
+
+/// The ADE-owned directory, relative to the remote HOME, that holds an
+/// installed backend. One directory per protocol pair, so an install never
+/// replaces a backend another ADE version on the host still uses.
+pub fn install_directory(application_protocol: &str, runtime_protocol: &str) -> String {
+    format!(".ade/backend/{application_protocol}+{runtime_protocol}")
+}
+
+/// The platform this daemon's executables run on, named as `uname -s` and
+/// `uname -m` name it.
+pub fn local_platform() -> RemotePlatform {
+    let os = match std::env::consts::OS {
+        "macos" => "Darwin",
+        "linux" => "Linux",
+        other => other,
+    };
+    let arch = match (os, std::env::consts::ARCH) {
+        ("Darwin", "aarch64") => "arm64",
+        (_, other) => other,
+    };
+    RemotePlatform {
+        os: os.to_owned(),
+        arch: arch.to_owned(),
+    }
+}
+
+/// What `remote.host.install` should do after probing the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InstallPlan {
+    /// The host already has a compatible backend at this `ade-control`.
+    AlreadyCompatible(String),
+    /// Nothing may be written; the reason says why.
+    Refuse(String),
+    Install,
+}
+
+/// The install decision. ADE copies only its own executables, only to a host
+/// of the same platform, and never over a backend the user named.
+pub fn install_plan(
+    local: &RemotePlatform,
+    remote: &RemotePlatform,
+    backend: &BackendCompatibility,
+    backend_path: Option<&str>,
+) -> InstallPlan {
+    if backend.compatible
+        && let Some(control) = &backend.control_path
+    {
+        return InstallPlan::AlreadyCompatible(control.clone());
+    }
+    if local != remote {
+        return InstallPlan::Refuse(format!(
+            "This installation's backend is built for {}/{}, and the host is {}/{}; nothing was installed",
+            local.os, local.arch, remote.os, remote.arch
+        ));
+    }
+    if let Some(path) = backend_path {
+        return InstallPlan::Refuse(format!(
+            "The host definition names the backend at {path}; ADE does not replace a backend the user named. \
+             Fix that installation, or remove the host and add it without backend_path; nothing was installed"
+        ));
+    }
+    InstallPlan::Install
+}
+
+/// The remote command that writes one artifact from stdin into the install
+/// directory under the remote HOME. It writes a private temporary file, makes
+/// it executable and renames it into place, so a reader never sees a partial
+/// executable. It runs under `/bin/sh` whatever the user's login shell is.
+pub fn upload_command(directory: &str, artifact: &str) -> String {
+    let script = format!(
+        "umask 022; d=\"$HOME\"/{dir}; mkdir -p \"$d\" || exit 70; t=\"$d/.{artifact}.partial.$$\"; \
+         if cat > \"$t\" && chmod 755 \"$t\" && mv -f \"$t\" \"$d/{artifact}\"; then \
+         printf 'ade-installed=%s\\n' \"$d/{artifact}\"; else rm -f \"$t\"; exit 70; fi",
+        dir = sh_quote(directory),
+    );
+    format!("/bin/sh -c {}", sh_quote(&script))
+}
+
+/// The installed path an upload reported, when it reported one.
+pub fn uploaded_path(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("ade-installed="))
+        .filter(|path| path.starts_with('/'))
+        .map(str::to_owned)
+}
+
+/// Whether a failed upload can have written anything. Only a connection that
+/// failed before its session, on the first artifact, wrote nothing.
+pub fn upload_failure(finished: &Finished, first: bool) -> (InstallOutcome, String) {
+    let reason = if finished.timed_out {
+        "the upload did not finish in time".to_owned()
+    } else {
+        diagnostic(&finished.stderr)
+    };
+    if first && finished.code == Some(255) && failed_before_session(&finished.stderr) {
+        return (
+            InstallOutcome::Failed,
+            format!("ssh could not connect; nothing was installed: {reason}"),
+        );
+    }
+    (
+        InstallOutcome::Unknown,
+        format!(
+            "The upload stopped ({reason}); some artifacts may have been written to the ADE backend directory. Probe the host; installing again is safe"
+        ),
     )
 }
 
@@ -1022,6 +1139,89 @@ mod tests {
         assert_eq!(
             classify_start(&timed_out, "a", "r").0,
             StartOutcome::Unknown
+        );
+    }
+
+    fn backend(compatible: bool, control: Option<&str>) -> BackendCompatibility {
+        BackendCompatibility {
+            compatible,
+            control_path: control.map(str::to_owned),
+            application_protocol: None,
+            runtime_protocol: None,
+            missing: vec![],
+            incompatible: vec![],
+        }
+    }
+
+    #[test]
+    fn install_copies_only_to_the_same_platform_and_never_over_a_named_backend() {
+        let mac = RemotePlatform {
+            os: "Darwin".into(),
+            arch: "arm64".into(),
+        };
+        let linux = RemotePlatform {
+            os: "Linux".into(),
+            arch: "x86_64".into(),
+        };
+        assert_eq!(
+            install_plan(&mac, &mac, &backend(true, Some("/opt/ade-control")), None),
+            InstallPlan::AlreadyCompatible("/opt/ade-control".into())
+        );
+        assert_eq!(
+            install_plan(&mac, &mac, &backend(false, None), None),
+            InstallPlan::Install
+        );
+        // An incompatible ade-control the user did not name is left in place;
+        // the install goes to ADE's own directory.
+        assert_eq!(
+            install_plan(
+                &mac,
+                &mac,
+                &backend(false, Some("/usr/bin/ade-control")),
+                None
+            ),
+            InstallPlan::Install
+        );
+        let InstallPlan::Refuse(reason) = install_plan(&mac, &linux, &backend(false, None), None)
+        else {
+            panic!("a different platform must be refused")
+        };
+        assert!(reason.contains("Darwin/arm64") && reason.contains("Linux/x86_64"));
+        let InstallPlan::Refuse(reason) = install_plan(
+            &mac,
+            &mac,
+            &backend(false, None),
+            Some("/opt/ade/ade-control"),
+        ) else {
+            panic!("a named backend must not be replaced")
+        };
+        assert!(reason.contains("/opt/ade/ade-control"));
+        assert!(reason.contains("nothing was installed"));
+    }
+
+    #[test]
+    fn uploads_write_atomically_under_the_remote_home() {
+        let directory = install_directory("ade-application-v1", "ade-runtime-v8");
+        assert_eq!(directory, ".ade/backend/ade-application-v1+ade-runtime-v8");
+        let command = upload_command(&directory, "ade-control");
+        assert!(command.starts_with("/bin/sh -c '"));
+        assert!(command.contains("mv -f"));
+        assert!(command.contains(".ade-control.partial."));
+        assert_eq!(
+            uploaded_path("noise\nade-installed=/home/me/.ade/backend/v/ade-control\n"),
+            Some("/home/me/.ade/backend/v/ade-control".into())
+        );
+        assert_eq!(uploaded_path("ade-installed=relative\n"), None);
+        let refused = finished(
+            Some(255),
+            "",
+            "ssh: connect to host h port 22: Connection refused",
+        );
+        assert_eq!(upload_failure(&refused, true).0, InstallOutcome::Failed);
+        assert_eq!(upload_failure(&refused, false).0, InstallOutcome::Unknown);
+        assert_eq!(
+            upload_failure(&finished(Some(70), "", ""), true).0,
+            InstallOutcome::Unknown
         );
     }
 }
