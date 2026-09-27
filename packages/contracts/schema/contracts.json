@@ -5182,6 +5182,350 @@
       ],
       "type": "object"
     },
+    "CommandEntry": {
+      "description": "One command or skill and whether ADE can hand it to the provider.",
+      "properties": {
+        "argument_hint": {
+          "description": "The provider's argument hint, such as `<file>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "invocable": {
+          "type": "boolean"
+        },
+        "invocation": {
+          "description": "The native text the provider receives without arguments, such as `/review`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandKind"
+        },
+        "mechanism": {
+          "description": "The native path ADE uses, such as `claude.prompt_slash`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/CommandProvenance"
+        },
+        "reason": {
+          "description": "Why the entry cannot be invoked, or a caveat when it can.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "description",
+        "argument_hint",
+        "provenance",
+        "invocable",
+        "invocation",
+        "mechanism",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "CommandInvokeOutcome": {
+      "description": "How an invocation ended.",
+      "oneOf": [
+        {
+          "const": "queued",
+          "description": "The native text is in the Conversation's prompt queue. The queue\ndelivers it; this is not a provider acknowledgement.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Nothing was queued; `reason` says why. No receipt was recorded.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "ADE cannot prove whether the invocation was queued and will not queue it again.",
+          "type": "string"
+        }
+      ]
+    },
+    "CommandInvokeRequest": {
+      "additionalProperties": false,
+      "description": "`command.invoke`: hand a listed command or skill to the Conversation's\nprovider in its native form. The invocation joins the Conversation's\nprompt queue under the derived queue ID `<operation_id>:command`.",
+      "properties": {
+        "arguments": {
+          "description": "Free text passed after the command, as the provider's own input would.",
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandKind"
+        },
+        "name": {
+          "description": "The entry name as `command.list` reported it, without a leading slash.",
+          "type": "string"
+        },
+        "op": {
+          "const": "command.invoke"
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id",
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "CommandInvoked": {
+      "description": "The `command.invoke` reply.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandKind"
+        },
+        "mechanism": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "native_text": {
+          "description": "The exact text queued for the provider.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CommandInvokeOutcome"
+        },
+        "queue_id": {
+          "description": "The queued prompt's ID.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `command_invoked` type tag.",
+          "enum": [
+            "command_invoked"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "conversation_id",
+        "name",
+        "kind",
+        "outcome",
+        "native_text",
+        "queue_id",
+        "mechanism",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "CommandKind": {
+      "description": "Whether an entry is a slash command or a skill.",
+      "enum": [
+        "command",
+        "skill"
+      ],
+      "type": "string"
+    },
+    "CommandList": {
+      "description": "The `command.list` reply.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "entries": {
+          "description": "Sorted by kind, then name, then path.",
+          "items": {
+            "$ref": "#/$defs/CommandEntry"
+          },
+          "type": "array"
+        },
+        "native_catalog": {
+          "$ref": "#/$defs/CommandNativeCatalog"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "skipped": {
+          "description": "Provider paths or scopes this listing did not read, and why.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `command_list` type tag.",
+          "enum": [
+            "command_list"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "provider",
+        "entries",
+        "native_catalog",
+        "skipped"
+      ],
+      "type": "object"
+    },
+    "CommandListRequest": {
+      "additionalProperties": false,
+      "description": "`command.list`: the commands and skills available to one Conversation.\nReads provider paths and the skill catalog; writes nothing.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "command.list"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "CommandNativeCatalog": {
+      "description": "What the provider itself reports about its commands. ADE does not yet ask\na live provider session for its list, so built-in and plugin commands are\nnot shown and cannot be invoked through ADE.",
+      "properties": {
+        "method": {
+          "description": "The provider method that would list them, when one exists.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queried": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "queried",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "CommandProvenance": {
+      "description": "Where an entry came from.",
+      "properties": {
+        "catalog_name": {
+          "description": "The ADE catalog bundle with the same content, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_hash": {
+          "description": "The skill bundle content hash, when the entry is a valid skill.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The file or directory ADE read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SkillScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent for catalog-only bundles."
+        },
+        "source": {
+          "$ref": "#/$defs/CommandSource"
+        }
+      },
+      "required": [
+        "source",
+        "scope",
+        "path",
+        "content_hash",
+        "catalog_name"
+      ],
+      "type": "object"
+    },
+    "CommandSource": {
+      "description": "Where an entry was found.",
+      "oneOf": [
+        {
+          "const": "provider_file",
+          "description": "A command file in a directory the provider reads.",
+          "type": "string"
+        },
+        {
+          "const": "provider_skill",
+          "description": "A skill directory in a root the provider reads.",
+          "type": "string"
+        },
+        {
+          "const": "ade_catalog",
+          "description": "A bundle in ADE's skill catalog that is not in any path the provider reads.",
+          "type": "string"
+        }
+      ]
+    },
     "CommittedChanges": {
       "description": "What a run committed between the group's start and its current HEAD.",
       "oneOf": [
@@ -24828,6 +25172,20 @@
       "request": "PlacementReleaseRequest",
       "response": "PlacementReleased",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "commands",
+      "name": "command.list",
+      "request": "CommandListRequest",
+      "response": "CommandList",
+      "tier": "query"
+    },
+    {
+      "domain": "commands",
+      "name": "command.invoke",
+      "request": "CommandInvokeRequest",
+      "response": "CommandInvoked",
+      "tier": "effect_command"
     }
   ]
 }
