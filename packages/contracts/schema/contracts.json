@@ -1911,7 +1911,7 @@
           "type": "integer"
         },
         "protected_by": {
-          "description": "`message`, `draft`, `queued_prompt`, `send_intent` or `already_discarded`.",
+          "description": "`message`, `draft`, `queued_prompt`, `send_intent`, `draft_stash` or `already_discarded`.",
           "items": {
             "type": "string"
           },
@@ -9639,6 +9639,24 @@
       ],
       "type": "object"
     },
+    "DraftContextNode": {
+      "description": "A reference the prompt carried besides its text and attachments, such as a\nfile, selection, terminal excerpt or review comment. ADE keeps `data`\nexactly as the client supplied it.",
+      "properties": {
+        "data": true,
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
     "DraftGetRequest": {
       "additionalProperties": false,
       "description": "`draft.get`: read one window's draft of a Conversation.",
@@ -9660,6 +9678,189 @@
       ],
       "type": "object"
     },
+    "DraftHistoryEntry": {
+      "description": "One recalled draft of a window.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "context_nodes": {
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "draft_revision": {
+          "description": "The window draft revision this text had when it was recorded.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/DraftHistoryKind"
+        },
+        "recorded_at": {
+          "description": "Milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "conversation_id",
+        "window_id",
+        "kind",
+        "text",
+        "attachments",
+        "context_nodes",
+        "draft_revision",
+        "recorded_at"
+      ],
+      "type": "object"
+    },
+    "DraftHistoryKind": {
+      "description": "Why a draft entered a window's history.",
+      "oneOf": [
+        {
+          "const": "sent",
+          "description": "The draft was sent and its prompt accepted.",
+          "type": "string"
+        },
+        {
+          "const": "discarded",
+          "description": "The draft was cleared, or a restore replaced it.",
+          "type": "string"
+        }
+      ]
+    },
+    "DraftHistoryList": {
+      "description": "The `draft.history.list` reply.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/DraftHistoryEntry"
+          },
+          "type": "array"
+        },
+        "next_before": {
+          "description": "The `before` value of the next page; null on the last page.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The `draft_history` type tag.",
+          "enum": [
+            "draft_history"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "entries",
+        "next_before"
+      ],
+      "type": "object"
+    },
+    "DraftHistoryListRequest": {
+      "additionalProperties": false,
+      "description": "`draft.history.list`: a Conversation's recalled drafts, newest first.",
+      "properties": {
+        "before": {
+          "description": "Return entries with an ID below this one.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "limit": {
+          "description": "Page size from 1 to 100; the daemon uses 20 when it is absent.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "draft.history.list"
+        },
+        "window_id": {
+          "description": "Only this window's drafts; every window's when it is absent, so a\nclosed or crashed window's drafts stay reachable.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "DraftHistoryRestoreRequest": {
+      "additionalProperties": false,
+      "description": "`draft.history.restore`: make a recalled draft the window's draft. The\nentry may come from any window of the Conversation.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "entry_id": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "expected_revision": {
+          "description": "The window draft revision the caller last saw; 0 when it saw none.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "op": {
+          "const": "draft.history.restore"
+        },
+        "revision": {
+          "description": "The revision the restored draft takes; greater than `expected_revision`.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id",
+        "entry_id",
+        "expected_revision",
+        "revision"
+      ],
+      "type": "object"
+    },
     "DraftReply": {
       "description": "The reply to `draft.get`, `draft.save`, `draft.send.complete` and `draft.send.abort`.",
       "properties": {
@@ -9677,6 +9878,70 @@
       "required": [
         "type",
         "draft"
+      ],
+      "type": "object"
+    },
+    "DraftRestoreOutcome": {
+      "description": "How a restore settled.",
+      "oneOf": [
+        {
+          "enum": [
+            "restored"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "already_restored",
+          "description": "A retry: the draft already holds this content at `revision`.",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "The window draft moved past `expected_revision`; nothing was written.\n`draft` is the current one; review it and restore again with its revision.",
+          "type": "string"
+        }
+      ]
+    },
+    "DraftRestored": {
+      "description": "The `draft.history.restore` and `draft.stash.restore` reply.",
+      "properties": {
+        "context_nodes": {
+          "description": "The restored context nodes. The window draft does not store them, so\nthe caller reattaches them; empty on a conflict.",
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
+          },
+          "type": "array"
+        },
+        "displaced_entry_id": {
+          "description": "The history entry that keeps the draft this restore replaced; null\nwhen it replaced nothing worth keeping.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "draft": {
+          "$ref": "#/$defs/Draft",
+          "description": "The window's draft after the call."
+        },
+        "outcome": {
+          "$ref": "#/$defs/DraftRestoreOutcome"
+        },
+        "type": {
+          "description": "The `draft_restore` type tag.",
+          "enum": [
+            "draft_restore"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "outcome",
+        "draft",
+        "context_nodes",
+        "displaced_entry_id"
       ],
       "type": "object"
     },
@@ -9892,6 +10157,289 @@
         "conversation_id",
         "window_id",
         "request_id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "DraftStash": {
+      "description": "A named draft kept for a Conversation.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "context_nodes": {
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "Starts at 1 and grows each time the stash is replaced.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "saved_at": {
+          "description": "Milliseconds since the Unix epoch.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "window_id": {
+          "description": "The window that last saved it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "name",
+        "revision",
+        "text",
+        "attachments",
+        "context_nodes",
+        "window_id",
+        "saved_at"
+      ],
+      "type": "object"
+    },
+    "DraftStashDropRequest": {
+      "additionalProperties": false,
+      "description": "`draft.stash.drop`: delete a stash at the revision the caller saw.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.stash.drop"
+        },
+        "stash_revision": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "name",
+        "stash_revision"
+      ],
+      "type": "object"
+    },
+    "DraftStashDropped": {
+      "description": "The `draft.stash.drop` reply. `dropped` is false when no stash had the name.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "dropped": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `draft_stash_dropped` type tag.",
+          "enum": [
+            "draft_stash_dropped"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "name",
+        "dropped"
+      ],
+      "type": "object"
+    },
+    "DraftStashList": {
+      "description": "The `draft.stash.list` reply.",
+      "properties": {
+        "stashes": {
+          "items": {
+            "$ref": "#/$defs/DraftStash"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `draft_stashes` type tag.",
+          "enum": [
+            "draft_stashes"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "stashes"
+      ],
+      "type": "object"
+    },
+    "DraftStashListRequest": {
+      "additionalProperties": false,
+      "description": "`draft.stash.list`: a Conversation's stashes, most recently saved first.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.stash.list"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "DraftStashReply": {
+      "description": "The `draft.stash.save` reply.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/DraftStashSaveOutcome"
+        },
+        "stash": {
+          "$ref": "#/$defs/DraftStash"
+        },
+        "type": {
+          "description": "The `draft_stash` type tag.",
+          "enum": [
+            "draft_stash"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "outcome",
+        "stash"
+      ],
+      "type": "object"
+    },
+    "DraftStashRestoreRequest": {
+      "additionalProperties": false,
+      "description": "`draft.stash.restore`: make a stash the window's draft. The stash stays.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "expected_revision": {
+          "description": "The window draft revision the caller last saw; 0 when it saw none.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.stash.restore"
+        },
+        "revision": {
+          "description": "The revision the restored draft takes; greater than `expected_revision`.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "stash_revision": {
+          "description": "The stash revision the caller listed; a replaced stash is refused.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id",
+        "name",
+        "stash_revision",
+        "expected_revision",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "DraftStashSaveOutcome": {
+      "description": "How a stash save settled.",
+      "oneOf": [
+        {
+          "enum": [
+            "created",
+            "replaced"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "The stash already held this draft; nothing was written.",
+          "type": "string"
+        }
+      ]
+    },
+    "DraftStashSaveRequest": {
+      "additionalProperties": false,
+      "description": "`draft.stash.save`: keep a draft under a name. Saving a different draft\nunder a taken name needs the stash's current revision.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "context_nodes": {
+          "items": {
+            "$ref": "#/$defs/DraftContextNode"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "expected_revision": {
+          "description": "Replace the stash only if it is still at this revision.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "name": {
+          "description": "1 to 128 characters, without control characters.",
+          "type": "string"
+        },
+        "op": {
+          "const": "draft.stash.save"
+        },
+        "text": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "window_id",
+        "name",
         "text"
       ],
       "type": "object"
@@ -25882,6 +26430,48 @@
       "request": "ConversationSnoozeListRequest",
       "response": "ConversationSnoozeList",
       "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.history.list",
+      "request": "DraftHistoryListRequest",
+      "response": "DraftHistoryList",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.history.restore",
+      "request": "DraftHistoryRestoreRequest",
+      "response": "DraftRestored",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.stash.save",
+      "request": "DraftStashSaveRequest",
+      "response": "DraftStashReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.stash.list",
+      "request": "DraftStashListRequest",
+      "response": "DraftStashList",
+      "tier": "query"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.stash.restore",
+      "request": "DraftStashRestoreRequest",
+      "response": "DraftRestored",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "draft.stash.drop",
+      "request": "DraftStashDropRequest",
+      "response": "DraftStashDropped",
+      "tier": "idempotent_command"
     },
     {
       "domain": "agents",

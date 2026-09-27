@@ -57,6 +57,9 @@ fn attachment_reclaim_preview_from(
             protected_by.push(name.to_owned());
         }
     }
+    if super::drafts::stash_keeps_attachment(db, conversation, id)? {
+        protected_by.push("draft_stash".to_owned());
+    }
     if state == "discarded" {
         protected_by.push("already_discarded".to_owned());
     }

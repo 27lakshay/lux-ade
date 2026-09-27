@@ -13,6 +13,7 @@ import { conversationUsage, runConversationCommand } from './commands/conversati
 import { contextUsage, runContextCommand } from './commands/context.js'
 import { conversationControlUsage, runConversationControlCommand } from './commands/conversation-controls.js'
 import { diagnosticsUsage, runDiagnosticsCommand } from './commands/diagnostics.js'
+import { draftUsage, runDraftCommand } from './commands/drafts.js'
 import { deviceUsage, runDeviceCommand } from './commands/devices.js'
 import { resourcesUsage, runResourcesCommand } from './commands/resources.js'
 import { remoteUsage, runRemoteCommand } from './commands/remote.js'
@@ -95,6 +96,7 @@ const usage = [
   contextUsage,
   queueUsage,
   attachmentUsage,
+  draftUsage,
   historyUsage,
   importUsage,
   usageAnalyticsUsage,
@@ -247,6 +249,7 @@ const commandAreas = [
   runConversationCommand,
   runConversationControlCommand,
   runContextCommand,
+  runDraftCommand,
   runHistoryCommand,
   runImportCommand,
   runUsageCommand,

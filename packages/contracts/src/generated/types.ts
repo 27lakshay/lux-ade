@@ -282,8 +282,16 @@ export type ContractDefinition =
   | DiagnosticsStatus
   | DiagnosticsStatusRequest
   | Draft
+  | DraftContextNode
   | DraftGetRequest
+  | DraftHistoryEntry
+  | DraftHistoryKind
+  | DraftHistoryList
+  | DraftHistoryListRequest
+  | DraftHistoryRestoreRequest
   | DraftReply
+  | DraftRestoreOutcome
+  | DraftRestored
   | DraftSaveRequest
   | DraftSendAbortRequest
   | DraftSendAcknowledgeRequest
@@ -291,6 +299,15 @@ export type ContractDefinition =
   | DraftSendGetRequest
   | DraftSendListRequest
   | DraftSendPrepareRequest
+  | DraftStash
+  | DraftStashDropRequest
+  | DraftStashDropped
+  | DraftStashList
+  | DraftStashListRequest
+  | DraftStashReply
+  | DraftStashRestoreRequest
+  | DraftStashSaveOutcome
+  | DraftStashSaveRequest
   | Excluded
   | Exclusion
   | ExecutableIdentity
@@ -1269,6 +1286,18 @@ export type DiagnosticUnit = 'items' | 'bytes'
  * Where an unknown execution was found.
  */
 export type DiagnosticUnknownSource = 'receipt' | 'claim' | 'terminal' | 'conversation' | 'runtime'
+/**
+ * Why a draft entered a window's history.
+ */
+export type DraftHistoryKind = 'sent' | 'discarded'
+/**
+ * How a restore settled.
+ */
+export type DraftRestoreOutcome = 'restored' | 'already_restored' | 'conflict'
+/**
+ * How a stash save settled.
+ */
+export type DraftStashSaveOutcome = ('created' | 'replaced') | 'unchanged'
 /**
  * Why an entry does not reach a provider.
  */
@@ -2627,7 +2656,7 @@ export interface AttachmentReclaimPreview {
   generation: string
   payload_bytes: number
   /**
-   * `message`, `draft`, `queued_prompt`, `send_intent` or `already_discarded`.
+   * `message`, `draft`, `queued_prompt`, `send_intent`, `draft_stash` or `already_discarded`.
    */
   protected_by: string[]
   reclaimable: boolean
@@ -5836,11 +5865,96 @@ export interface Draft {
   [k: string]: unknown
 }
 /**
+ * A reference the prompt carried besides its text and attachments, such as a
+ * file, selection, terminal excerpt or review comment. ADE keeps `data`
+ * exactly as the client supplied it.
+ */
+export interface DraftContextNode {
+  data: unknown
+  id: string
+  kind: string
+  [k: string]: unknown
+}
+/**
  * `draft.get`: read one window's draft of a Conversation.
  */
 export interface DraftGetRequest {
   conversation_id: string
   op: 'draft.get'
+  window_id: string
+}
+/**
+ * One recalled draft of a window.
+ */
+export interface DraftHistoryEntry {
+  attachments: Attachment[]
+  context_nodes: DraftContextNode[]
+  conversation_id: string
+  /**
+   * The window draft revision this text had when it was recorded.
+   */
+  draft_revision: number
+  id: number
+  kind: DraftHistoryKind
+  /**
+   * Milliseconds since the Unix epoch.
+   */
+  recorded_at: number
+  text: string
+  window_id: string
+  [k: string]: unknown
+}
+/**
+ * The `draft.history.list` reply.
+ */
+export interface DraftHistoryList {
+  entries: DraftHistoryEntry[]
+  /**
+   * The `before` value of the next page; null on the last page.
+   */
+  next_before: number | null
+  /**
+   * The `draft_history` type tag.
+   */
+  type: 'draft_history'
+  [k: string]: unknown
+}
+/**
+ * `draft.history.list`: a Conversation's recalled drafts, newest first.
+ */
+export interface DraftHistoryListRequest {
+  /**
+   * Return entries with an ID below this one.
+   */
+  before?: number
+  conversation_id: string
+  /**
+   * Page size from 1 to 100; the daemon uses 20 when it is absent.
+   */
+  limit?: number | null
+  op: 'draft.history.list'
+  /**
+   * Only this window's drafts; every window's when it is absent, so a
+   * closed or crashed window's drafts stay reachable.
+   */
+  window_id?: string
+}
+/**
+ * `draft.history.restore`: make a recalled draft the window's draft. The
+ * entry may come from any window of the Conversation.
+ */
+export interface DraftHistoryRestoreRequest {
+  conversation_id: string
+  entry_id: number
+  /**
+   * The window draft revision the caller last saw; 0 when it saw none.
+   */
+  expected_revision: number
+  op: 'draft.history.restore'
+  /**
+   * The revision the restored draft takes; greater than `expected_revision`.
+   */
+  revision: number
   window_id: string
 }
 /**
@@ -5852,6 +5966,37 @@ export interface DraftReply {
    * The `draft` type tag.
    */
   type: 'draft'
+  [k: string]: unknown
+}
+/**
+ * The `draft.history.restore` and `draft.stash.restore` reply.
+ */
+export interface DraftRestored {
+  /**
+   * The restored context nodes. The window draft does not store them, so
+   * the caller reattaches them; empty on a conflict.
+   */
+  context_nodes: DraftContextNode[]
+  /**
+   * The history entry that keeps the draft this restore replaced; null
+   * when it replaced nothing worth keeping.
+   */
+  displaced_entry_id: number | null
+  draft: Draft1
+  outcome: DraftRestoreOutcome
+  /**
+   * The `draft_restore` type tag.
+   */
+  type: 'draft_restore'
+  [k: string]: unknown
+}
+/**
+ * The schema of [`Draft`], which the model defines without one.
+ */
+export interface Draft1 {
+  attachments?: Attachment[]
+  revision: number
+  text: string
   [k: string]: unknown
 }
 /**
@@ -5938,6 +6083,122 @@ export interface DraftSendPrepareRequest {
    */
   review_feedback?: unknown
   revision: number
+  text: string
+  window_id: string
+}
+/**
+ * A named draft kept for a Conversation.
+ */
+export interface DraftStash {
+  attachments: Attachment[]
+  context_nodes: DraftContextNode[]
+  conversation_id: string
+  name: string
+  /**
+   * Starts at 1 and grows each time the stash is replaced.
+   */
+  revision: number
+  /**
+   * Milliseconds since the Unix epoch.
+   */
+  saved_at: number
+  text: string
+  /**
+   * The window that last saved it.
+   */
+  window_id: string
+  [k: string]: unknown
+}
+/**
+ * `draft.stash.drop`: delete a stash at the revision the caller saw.
+ */
+export interface DraftStashDropRequest {
+  conversation_id: string
+  name: string
+  op: 'draft.stash.drop'
+  stash_revision: number
+}
+/**
+ * The `draft.stash.drop` reply. `dropped` is false when no stash had the name.
+ */
+export interface DraftStashDropped {
+  conversation_id: string
+  dropped: boolean
+  name: string
+  /**
+   * The `draft_stash_dropped` type tag.
+   */
+  type: 'draft_stash_dropped'
+  [k: string]: unknown
+}
+/**
+ * The `draft.stash.list` reply.
+ */
+export interface DraftStashList {
+  stashes: DraftStash[]
+  /**
+   * The `draft_stashes` type tag.
+   */
+  type: 'draft_stashes'
+  [k: string]: unknown
+}
+/**
+ * `draft.stash.list`: a Conversation's stashes, most recently saved first.
+ */
+export interface DraftStashListRequest {
+  conversation_id: string
+  op: 'draft.stash.list'
+}
+/**
+ * The `draft.stash.save` reply.
+ */
+export interface DraftStashReply {
+  outcome: DraftStashSaveOutcome
+  stash: DraftStash
+  /**
+   * The `draft_stash` type tag.
+   */
+  type: 'draft_stash'
+  [k: string]: unknown
+}
+/**
+ * `draft.stash.restore`: make a stash the window's draft. The stash stays.
+ */
+export interface DraftStashRestoreRequest {
+  conversation_id: string
+  /**
+   * The window draft revision the caller last saw; 0 when it saw none.
+   */
+  expected_revision: number
+  name: string
+  op: 'draft.stash.restore'
+  /**
+   * The revision the restored draft takes; greater than `expected_revision`.
+   */
+  revision: number
+  /**
+   * The stash revision the caller listed; a replaced stash is refused.
+   */
+  stash_revision: number
+  window_id: string
+}
+/**
+ * `draft.stash.save`: keep a draft under a name. Saving a different draft
+ * under a taken name needs the stash's current revision.
+ */
+export interface DraftStashSaveRequest {
+  attachments?: Attachment[]
+  context_nodes?: DraftContextNode[]
+  conversation_id: string
+  /**
+   * Replace the stash only if it is still at this revision.
+   */
+  expected_revision?: number
+  /**
+   * 1 to 128 characters, without control characters.
+   */
+  name: string
+  op: 'draft.stash.save'
   text: string
   window_id: string
 }
@@ -11924,7 +12185,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -11963,6 +12224,12 @@ export interface RequestByOperation {
   "conversation.snooze": ConversationSnoozeRequest
   "conversation.unsnooze": ConversationUnsnoozeRequest
   "conversation.snooze.list": ConversationSnoozeListRequest
+  "draft.history.list": DraftHistoryListRequest
+  "draft.history.restore": DraftHistoryRestoreRequest
+  "draft.stash.save": DraftStashSaveRequest
+  "draft.stash.list": DraftStashListRequest
+  "draft.stash.restore": DraftStashRestoreRequest
+  "draft.stash.drop": DraftStashDropRequest
   "agent.cancel": AgentCancelRequest
   "agent.resume": AgentResumeRequest
   "agent.disconnect": AgentDisconnectRequest
@@ -12221,6 +12488,12 @@ export interface ResponseByOperation {
   "conversation.snooze": ConversationSnoozeReply
   "conversation.unsnooze": ConversationSnoozeReply
   "conversation.snooze.list": ConversationSnoozeList
+  "draft.history.list": DraftHistoryList
+  "draft.history.restore": DraftRestored
+  "draft.stash.save": DraftStashReply
+  "draft.stash.list": DraftStashList
+  "draft.stash.restore": DraftRestored
+  "draft.stash.drop": DraftStashDropped
   "agent.cancel": Ack
   "agent.resume": Ack
   "agent.disconnect": Ack

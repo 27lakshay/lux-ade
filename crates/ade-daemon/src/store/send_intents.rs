@@ -31,7 +31,7 @@ pub(super) fn send_intent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendI
     })
 }
 
-fn draft_from(db: &Connection, conversation: &str, window: &str) -> Result<Draft> {
+pub(super) fn draft_from(db: &Connection, conversation: &str, window: &str) -> Result<Draft> {
     one::<Conversation>(db, "conversations", conversation)?;
     check_id(window)?;
     Ok(db.query_row("SELECT text,revision,attachments FROM drafts WHERE conversation_id=?1 AND window_id=?2",
@@ -224,6 +224,15 @@ impl Store {
             .context("Draft revision exhausted")?;
         tx.execute("UPDATE drafts SET revision=?3,text='',attachments='[]' WHERE conversation_id=?1 AND window_id=?2",
             params![conversation,window,next])?;
+        // The sent draft stays recallable; it settles with the clear.
+        super::drafts::record_history(
+            &tx,
+            conversation,
+            window,
+            ade_core::contract::conversations::DraftHistoryKind::Sent,
+            &saved,
+            &format!("send:{request_id}"),
+        )?;
         tx.execute(
             "UPDATE send_intents SET state='completed' WHERE request_id=?1",
             [request_id],
@@ -316,7 +325,22 @@ impl Store {
         );
         // Each window owns a separate draft. Older asynchronous writes cannot
         // overwrite newer text, including a clear after successful submission.
-        self.connection.execute("INSERT INTO drafts(conversation_id,window_id,revision,text,attachments) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation_id,window_id) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachments=excluded.attachments WHERE excluded.revision>drafts.revision",params![conversation,window,draft.revision,draft.text,encode(&draft.attachments)?])?;
-        self.draft(conversation, window)
+        let tx = self.transaction()?;
+        let previous = draft_from(&tx, conversation, window)?;
+        let written = tx.execute("INSERT INTO drafts(conversation_id,window_id,revision,text,attachments) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation_id,window_id) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachments=excluded.attachments WHERE excluded.revision>drafts.revision",params![conversation,window,draft.revision,draft.text,encode(&draft.attachments)?])?;
+        // A save that clears a non-empty draft keeps it recallable.
+        if written == 1 && super::drafts::discarded_by(&previous, draft) {
+            super::drafts::record_history(
+                &tx,
+                conversation,
+                window,
+                ade_core::contract::conversations::DraftHistoryKind::Discarded,
+                &previous,
+                &format!("draft:{}", previous.revision),
+            )?;
+        }
+        let saved = draft_from(&tx, conversation, window)?;
+        tx.commit()?;
+        Ok(saved)
     }
 }
