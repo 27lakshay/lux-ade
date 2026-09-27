@@ -5318,6 +5318,511 @@
       ],
       "type": "object"
     },
+    "ContextCaptureRequest": {
+      "additionalProperties": false,
+      "description": "`context.capture`: capture one selection into a context node.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "context.capture"
+        },
+        "request_id": {
+          "description": "The node ID, and the ID of the attachment a text capture stores.",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ContextSource"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "request_id",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ContextGetRequest": {
+      "additionalProperties": false,
+      "description": "`context.get`: read one recorded context node.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "context.get"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id",
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "ContextKind": {
+      "description": "What a context node was captured from.",
+      "enum": [
+        "file_range",
+        "diff_hunk",
+        "terminal_output",
+        "service_log",
+        "browser_capture"
+      ],
+      "type": "string"
+    },
+    "ContextNode": {
+      "description": "One captured selection and the attachments that carry it.",
+      "properties": {
+        "attachments": {
+          "description": "Add these to a draft or send to include the node.",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "captured_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ContextKind"
+        },
+        "omitted_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "omitted_lines": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "origin": {
+          "$ref": "#/$defs/ContextOrigin"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ContextProvenance"
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of each attachment's bytes, in order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "description": "Whether bounds cut the selection. The stored document says so too.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "conversation_id",
+        "kind",
+        "origin",
+        "provenance",
+        "attachments",
+        "sha256",
+        "truncated",
+        "omitted_bytes",
+        "omitted_lines",
+        "captured_at"
+      ],
+      "type": "object"
+    },
+    "ContextNodeReply": {
+      "description": "The `context.capture` and `context.get` reply.",
+      "properties": {
+        "available": {
+          "description": "False when an attachment was reclaimed; attach the context again.",
+          "type": "boolean"
+        },
+        "node": {
+          "$ref": "#/$defs/ContextNode"
+        },
+        "type": {
+          "description": "The `context_node` type tag.",
+          "enum": [
+            "context_node"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "node",
+        "available"
+      ],
+      "type": "object"
+    },
+    "ContextOrigin": {
+      "description": "Who produced the captured bytes.",
+      "oneOf": [
+        {
+          "const": "daemon_read",
+          "description": "The daemon read the source itself.",
+          "type": "string"
+        },
+        {
+          "const": "client_supplied",
+          "description": "The client supplied the text; the daemon checked only the source's identity.",
+          "type": "string"
+        },
+        {
+          "const": "browser_owner",
+          "description": "The browser owner captured it through `browser.context.capture`.",
+          "type": "string"
+        }
+      ]
+    },
+    "ContextPlan": {
+      "description": "The `context.plan` reply.",
+      "properties": {
+        "admissible": {
+          "description": "True only when there are no rejections.",
+          "type": "boolean"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/PlannedPart"
+          },
+          "type": "array"
+        },
+        "rejections": {
+          "items": {
+            "$ref": "#/$defs/PlanRejection"
+          },
+          "type": "array"
+        },
+        "support": {
+          "$ref": "#/$defs/ProviderMediaSupport"
+        },
+        "type": {
+          "description": "The `context_plan` type tag.",
+          "enum": [
+            "context_plan"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "support",
+        "parts",
+        "rejections",
+        "admissible"
+      ],
+      "type": "object"
+    },
+    "ContextPlanRequest": {
+      "additionalProperties": false,
+      "description": "`context.plan`: how the conversation's provider would receive these\nattachments, and which it would refuse, before anything is sent.",
+      "properties": {
+        "attachments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "context.plan"
+        },
+        "text": {
+          "default": "",
+          "description": "The prompt text, which counts toward request limits.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ContextProvenance": {
+      "description": "Where a node came from. Fields that do not apply to its kind are null.",
+      "properties": {
+        "capture_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff_token": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end_line": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hunk": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "service": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "staged": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "start_line": {
+          "description": "The captured lines, 1-based and inclusive, within the source.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "terminal_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total_lines": {
+          "description": "The source's line count when the daemon read the whole source.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "The captured page's URL, without user information, query or fragment.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "workspace_id",
+        "path",
+        "start_line",
+        "end_line",
+        "total_lines",
+        "terminal_id",
+        "service",
+        "staged",
+        "diff_token",
+        "hunk",
+        "capture_id",
+        "url",
+        "title"
+      ],
+      "type": "object"
+    },
+    "ContextSource": {
+      "description": "One selection to capture.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Lines `start_line` to `end_line`, 1-based and inclusive, of one\nworkspace file. The daemon reads the file.",
+          "properties": {
+            "end_line": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "file_range",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "start_line": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id",
+            "path",
+            "start_line",
+            "end_line"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One hunk of a `review.diff` reply. The daemon reads the diff again and\nrefuses the capture when its token no longer matches.",
+          "properties": {
+            "hunk": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "diff_hunk",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "staged": {
+              "default": false,
+              "type": "boolean"
+            },
+            "token": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id",
+            "path",
+            "token",
+            "hunk"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Text selected from a workspace terminal, supplied by the client.",
+          "properties": {
+            "first_row": {
+              "description": "The selection's first buffer row, when the client knows it.",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "terminal_output",
+              "type": "string"
+            },
+            "terminal_id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id",
+            "terminal_id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The last `lines` lines of a service's output, supplied by the client.",
+          "properties": {
+            "kind": {
+              "const": "service_log",
+              "type": "string"
+            },
+            "lines": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "service": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "workspace_id",
+            "service",
+            "text",
+            "lines"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The attachments a completed `browser.context.capture` stored.",
+          "properties": {
+            "capture_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "browser_capture",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "capture_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ControlAvailability": {
       "description": "Whether one control may run on a Conversation now.",
       "properties": {
@@ -11723,6 +12228,31 @@
       ],
       "type": "string"
     },
+    "PartForm": {
+      "description": "How one attachment reaches a provider.",
+      "oneOf": [
+        {
+          "const": "native_image",
+          "description": "A native image input: base64 image block, data URL or file part.",
+          "type": "string"
+        },
+        {
+          "const": "text_block",
+          "description": "A separate text content block, introduced by `text_prefix`.",
+          "type": "string"
+        },
+        {
+          "const": "prompt_text",
+          "description": "Appended to the prompt text after a blank line, introduced by `text_prefix`.",
+          "type": "string"
+        },
+        {
+          "const": "adapter_declared",
+          "description": "The adapter decides from its handshake at dispatch; it refuses what it\ndid not declare.",
+          "type": "string"
+        }
+      ]
+    },
     "PathOverlap": {
       "description": "A path that runs in different workspaces both changed. ADE merges nothing;\nthe person chooses.",
       "properties": {
@@ -12252,6 +12782,54 @@
       "required": [
         "type",
         "placements"
+      ],
+      "type": "object"
+    },
+    "PlanRejection": {
+      "description": "One refusal found before dispatch.",
+      "properties": {
+        "attachment_id": {
+          "description": "Null when the refusal covers the whole prompt.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/RejectionCode"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "PlannedPart": {
+      "description": "One attachment's planned form.",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "form": {
+          "$ref": "#/$defs/PartForm"
+        },
+        "text_prefix": {
+          "description": "The exact text placed before a text attachment's contents.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "attachment_id",
+        "form",
+        "text_prefix"
       ],
       "type": "object"
     },
@@ -14151,6 +14729,72 @@
       ],
       "type": "object"
     },
+    "ProviderMediaSupport": {
+      "description": "What a provider accepts, and where each limit comes from.",
+      "properties": {
+        "image_form": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "known": {
+          "description": "False for a provider ADE has no table for, such as a generic adapter.",
+          "type": "boolean"
+        },
+        "max_image_bytes": {
+          "description": "The largest image, in raw bytes, this provider takes.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_request_bytes": {
+          "description": "The largest whole prompt request, in bytes, this provider takes.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "sources": {
+          "description": "Where the limits come from.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text_form": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "known",
+        "image_types",
+        "image_form",
+        "text_form",
+        "max_image_bytes",
+        "max_request_bytes",
+        "sources"
+      ],
+      "type": "object"
+    },
     "ProviderQuota": {
       "description": "The `provider.quota` reply.",
       "properties": {
@@ -14798,6 +15442,16 @@
         "reason"
       ],
       "type": "object"
+    },
+    "RejectionCode": {
+      "description": "Why a provider would refuse an attachment or the whole prompt.",
+      "enum": [
+        "unsupported_media_type",
+        "image_too_large",
+        "request_too_large",
+        "attachments_unsupported"
+      ],
+      "type": "string"
     },
     "RemoteDaemon": {
       "description": "The remote daemon's identity as its `hello` reported it.",
@@ -24644,6 +25298,27 @@
       "request": "PlacementReleaseRequest",
       "response": "PlacementReleased",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "context",
+      "name": "context.capture",
+      "request": "ContextCaptureRequest",
+      "response": "ContextNodeReply",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "context",
+      "name": "context.get",
+      "request": "ContextGetRequest",
+      "response": "ContextNodeReply",
+      "tier": "query"
+    },
+    {
+      "domain": "context",
+      "name": "context.plan",
+      "request": "ContextPlanRequest",
+      "response": "ContextPlan",
+      "tier": "query"
     }
   ]
 }

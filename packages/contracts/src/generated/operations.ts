@@ -236,6 +236,9 @@ export const operations = {
   "placement.resolve": { tier: "query", domain: "placement", request: "PlacementResolveRequest", response: "PlacementReply" },
   "placement.list": { tier: "query", domain: "placement", request: "PlacementListRequest", response: "Placements" },
   "placement.release": { tier: "idempotent_command", domain: "placement", request: "PlacementReleaseRequest", response: "PlacementReleased" },
+  "context.capture": { tier: "idempotent_command", domain: "context", request: "ContextCaptureRequest", response: "ContextNodeReply" },
+  "context.get": { tier: "query", domain: "context", request: "ContextGetRequest", response: "ContextNodeReply" },
+  "context.plan": { tier: "query", domain: "context", request: "ContextPlanRequest", response: "ContextPlan" },
 } as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

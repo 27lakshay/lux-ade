@@ -33,6 +33,7 @@ mod activity;
 mod agents;
 mod capabilities;
 mod checkpoints;
+mod context;
 mod controls;
 mod conversations;
 mod devices;
@@ -789,6 +790,7 @@ impl Sessions {
                 self.capability_command(request)
             }
             op if op.starts_with("device.") => self.device_command(request),
+            op if op.starts_with("context.") => self.context_command(request),
             _ => bail!("Unknown session operation"),
         }
     }
