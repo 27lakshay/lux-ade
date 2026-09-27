@@ -71,6 +71,9 @@ impl Provider for Adapter {
     fn pid(&self) -> Option<u32> {
         Some(self.rpc.pid())
     }
+    fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
+        Some(self.rpc.descendants())
+    }
     /// The bridge passes the map as the Agent SDK's `mcpServers` query option.
     fn configure_mcp(&self, servers: Value) -> Result<()> {
         ensure!(servers.is_object(), "Claude MCP servers must be an object");

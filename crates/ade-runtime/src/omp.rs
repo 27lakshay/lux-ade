@@ -75,6 +75,9 @@ impl Provider for Adapter {
     fn pid(&self) -> Option<u32> {
         Some(self.rpc.pid())
     }
+    fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
+        Some(self.rpc.descendants())
+    }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
         if let Some(account) = &self.account {
             provider::omp_probe::ensure_identity(account)?;

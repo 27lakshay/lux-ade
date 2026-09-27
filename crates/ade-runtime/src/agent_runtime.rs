@@ -340,7 +340,14 @@ impl Run {
     }
     pub fn describe(&self) -> Value {
         let receipts = self.receipts.lock().unwrap();
-        json!({"spec":self.spec,"pid":self.adapter.pid(),"commands":receipts.keys().collect::<Vec<_>>()})
+        let mut described = json!({"spec":self.spec,"pid":self.adapter.pid(),"commands":receipts.keys().collect::<Vec<_>>()});
+        if let Some(descendants) = self.adapter.descendants() {
+            described["descendants"] = descendants
+                .iter()
+                .map(|identity| json!({"pid":identity.pid,"started":identity.started}))
+                .collect();
+        }
+        described
     }
     pub fn connected(&self) -> Result<Value> {
         let receipt = self

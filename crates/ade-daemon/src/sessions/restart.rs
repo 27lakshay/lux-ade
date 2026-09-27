@@ -15,7 +15,7 @@ use super::*;
 use crate::store::runtime_recovery::{
     ATTEMPT_DESCENDANTS_MAX, AttemptRecord, RecoveryNotice, RuntimeIncarnation,
 };
-use ade_core::contract::agents::AgentList;
+use ade_core::contract::agents::{AgentList, TrackedDescendant};
 use ade_core::contract::daemon::{
     RecoveredAttempt, RecoveredAttemptKind, RecoveryClassification, RecoveryReport,
     RuntimeRecovery, RuntimeRecoveryReleaseRequest, RuntimeRecoveryReleased,
@@ -118,6 +118,20 @@ fn reported_descendants(value: &Value) -> Vec<Identity> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The descendants the runtime reports it tracks for one Agent run. Like a
+/// terminal's report, it only adds candidates that a fresh read confirms.
+fn agent_descendants(reported: Option<&[TrackedDescendant]>) -> Vec<Identity> {
+    reported
+        .unwrap_or_default()
+        .iter()
+        .map(|descendant| Identity {
+            pid: descendant.pid,
+            started: descendant.started,
+        })
+        .take(ATTEMPT_DESCENDANTS_MAX)
+        .collect()
 }
 
 /// Extends one recorded process's tree from a fresh table read and returns
@@ -780,7 +794,7 @@ impl Sessions {
                     format!("agent:{}", run.spec.conversation),
                     Some(run.spec.run),
                     pid,
-                    Vec::new(),
+                    agent_descendants(run.descendants.as_deref()),
                 ));
             }
         }
@@ -814,7 +828,7 @@ impl Sessions {
             let mut tracker = trackers
                 .remove(&tracker_key)
                 .unwrap_or_else(|| Tracker::new(pid as i32, pid as i32));
-            // The runtime observes the tree every second; what it saw joins
+            // The runtime observes the tree while it runs; what it saw joins
             // this tracker, which keeps it only while the same identity runs.
             tracker.adopt(&reported);
             let descendants = track_descendants(&mut tracker, pid, started);

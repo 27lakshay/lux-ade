@@ -784,6 +784,7 @@ export type ContractDefinition =
   | TerminalRetireRequest
   | TerminalStopRequest
   | TokenReference
+  | TrackedDescendant
   | TransportCoverage
   | UsageCostMeasure
   | UsageGroup
@@ -2683,10 +2684,31 @@ export interface AgentRun {
    */
   commands: string[]
   /**
+   * The processes the runtime tracks in the provider's tree other than the
+   * provider itself, as last observed. It includes descendants that left
+   * the provider's process group. The daemon records them with the attempt,
+   * so one that escapes between the daemon's own observations stays
+   * attributed after a runtime loss (R006). Absent from a runtime that
+   * does not track provider trees.
+   */
+  descendants?: TrackedDescendant[] | null
+  /**
    * The provider process ID, when the adapter has one.
    */
   pid: number | null
   spec: AgentRunSpec
+  [k: string]: unknown
+}
+/**
+ * One process a runtime tracks by identity: a PID with the platform start
+ * stamp that tells a reused PID apart.
+ */
+export interface TrackedDescendant {
+  pid: number
+  /**
+   * Platform start stamp; only equality and ordering are meaningful.
+   */
+  started: number
   [k: string]: unknown
 }
 /**

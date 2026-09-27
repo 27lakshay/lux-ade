@@ -302,6 +302,9 @@ impl Provider for Worker {
     fn pid(&self) -> Option<u32> {
         Some(self.rpc.pid())
     }
+    fn descendants(&self) -> Option<Vec<crate::descendants::Identity>> {
+        Some(self.rpc.descendants())
+    }
     fn open(&self, resume: Option<&str>, config: &Config) -> Result<Connected> {
         config.validate_against(&self.handshake.descriptor)?;
         ensure!(
