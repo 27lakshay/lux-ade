@@ -1,3 +1,5 @@
+mod diagnostics;
+
 use crate::browser_reconcile::{HeldReceipt, owner_settlement};
 use ade_core::contract::conversations::Ack;
 use ade_core::contract::daemon::{
@@ -386,6 +388,8 @@ impl Drop for ProbePermit<'_> {
 }
 struct Host {
     socket: PathBuf,
+    /// The profile's durable state directory.
+    directory: PathBuf,
     profile_id: String,
     sessions: Arc<Sessions>,
     runtime: Arc<Supervisor>,
@@ -1517,6 +1521,26 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
             result?;
             return Ok(());
         }
+        if op == "diagnostics.status" || op == "diagnostics.export" {
+            // A read that must work while the daemon drains or degrades, so it
+            // takes no admission lock.
+            let event = host.diagnostics(&request).unwrap_or_else(error_response);
+            let result = writeln!(stream, "{event}");
+            if let Some(diagnostic_id) = diagnostic_id {
+                let elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+                if event["type"] == "error" || result.is_err() {
+                    tracing::warn!(target: "ade", event = "rpc_failed", diagnostic_id, operation_family, elapsed_ms);
+                } else {
+                    tracing::info!(target: "ade", event = "rpc_succeeded", diagnostic_id, operation_family, elapsed_ms);
+                }
+            }
+            result?;
+            let Some(next) = read_request(&mut reader)? else {
+                return Ok(());
+            };
+            first = next;
+            continue;
+        }
         if op == "runtime.status" {
             let event = host.status(&request)?;
             writeln!(stream, "{event}")?;
@@ -1723,6 +1747,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
 
     let host = Arc::new(Host {
         socket: PathBuf::from(&socket),
+        directory: directory.clone(),
         profile_id: daemon_browser_profile(&socket)?,
         sessions,
         runtime,

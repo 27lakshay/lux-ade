@@ -30,6 +30,7 @@ pub fn operation_family(op: &str) -> &'static str {
         "attachment" => "attachment",
         "catalog" => "catalog",
         "conversation" => "conversation",
+        "diagnostics" => "diagnostics",
         "draft" => "draft",
         "queue" => "queue",
         "review" => "review",

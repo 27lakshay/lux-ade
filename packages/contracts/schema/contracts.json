@@ -2062,6 +2062,935 @@
       ],
       "type": "object"
     },
+    "DiagnosticClaims": {
+      "description": "Lease and claim state.",
+      "properties": {
+        "active_git_operations": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_worktree_leases": {
+          "description": "Worktree leases the session layer holds for service and script terminals.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminal_worktree_leases": {
+          "description": "Workspaces whose worktree lease a live terminal holds.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unresolved": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticUnresolvedClaim"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "terminal_worktree_leases",
+        "session_worktree_leases",
+        "unresolved",
+        "active_git_operations"
+      ],
+      "type": "object"
+    },
+    "DiagnosticCounter": {
+      "description": "A dropped or coalesced count.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/DiagnosticCounterKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/DiagnosticProvenance"
+        },
+        "value": {
+          "description": "`null` when the source was unavailable.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "window": {
+          "$ref": "#/$defs/DiagnosticWindow"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "value",
+        "window",
+        "provenance",
+        "note"
+      ],
+      "type": "object"
+    },
+    "DiagnosticCounterKind": {
+      "description": "What a diagnostic counter counts.",
+      "enum": [
+        "dropped",
+        "coalesced"
+      ],
+      "type": "string"
+    },
+    "DiagnosticIdentity": {
+      "description": "The identities a report correlates.",
+      "properties": {
+        "application_protocol": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "boot_id": {
+          "type": "string"
+        },
+        "build_id": {
+          "description": "`ADE_BUILD_ID`, or `null` when the daemon was built without one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "daemon_pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "host_key": {
+          "description": "A stable, non-reversible key for this host: 16 hex digits of the\nSHA-256 of its host name, or `unknown`.",
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "runtime_instance": {
+          "description": "The runtime incarnation.",
+          "type": "string"
+        },
+        "runtime_pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtime_protocol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_key",
+        "os",
+        "arch",
+        "profile_id",
+        "boot_id",
+        "daemon_pid",
+        "build_id",
+        "application_protocol",
+        "runtime_protocol",
+        "runtime_instance",
+        "runtime_pid"
+      ],
+      "type": "object"
+    },
+    "DiagnosticLive": {
+      "description": "Live execution as the runtime reports it.",
+      "properties": {
+        "observed": {
+          "description": "False when the runtime could not be asked; runs and terminals are then\nempty and every service's `running` is `null`.",
+          "type": "boolean"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticRun"
+          },
+          "type": "array"
+        },
+        "runtime_instance": {
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticService"
+          },
+          "type": "array"
+        },
+        "terminals": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticTerminal"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "observed",
+        "runtime_instance",
+        "runs",
+        "terminals",
+        "services"
+      ],
+      "type": "object"
+    },
+    "DiagnosticLogs": {
+      "description": "The local diagnostic log folder against its budget.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "daily_byte_budget": {
+          "description": "Bytes one process may write to its current daily file.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "files": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_files_per_process": {
+          "description": "Rotated files kept per process.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "available",
+        "files",
+        "bytes",
+        "max_files_per_process",
+        "daily_byte_budget"
+      ],
+      "type": "object"
+    },
+    "DiagnosticProvenance": {
+      "description": "How far a reported number can be trusted.",
+      "oneOf": [
+        {
+          "const": "exact",
+          "description": "Read from the owner of the state at report time.",
+          "type": "string"
+        },
+        {
+          "const": "approximate",
+          "description": "Counted in memory or over a partial window; `note` says which.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "The source could not be read; the value is absent.",
+          "type": "string"
+        }
+      ]
+    },
+    "DiagnosticQueue": {
+      "description": "The depth of one queue or spool.",
+      "properties": {
+        "capacity": {
+          "description": "The bound, when the queue has one.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "depth": {
+          "description": "`null` when the source was unavailable.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/DiagnosticProvenance"
+        },
+        "unit": {
+          "$ref": "#/$defs/DiagnosticUnit"
+        }
+      },
+      "required": [
+        "name",
+        "unit",
+        "depth",
+        "capacity",
+        "provenance",
+        "note"
+      ],
+      "type": "object"
+    },
+    "DiagnosticReceipts": {
+      "description": "Effect receipts in one database, counted by status.",
+      "properties": {
+        "accepted": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "acknowledged": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "available": {
+          "description": "False when the database could not be read; every count is then zero.",
+          "type": "boolean"
+        },
+        "dispatched": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expired": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "oldest_created_at": {
+          "description": "Creation time of the oldest unexpired receipt, in Unix milliseconds.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "other": {
+          "description": "Rows with a status this build does not know.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "past_retention": {
+          "description": "Unexpired receipts older than the retention window, awaiting pruning.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settled": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "store": {
+          "description": "`sessions`, `lifecycle`, `review` or `browser`.",
+          "type": "string"
+        },
+        "unknown": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "store",
+        "available",
+        "accepted",
+        "dispatched",
+        "acknowledged",
+        "settled",
+        "unknown",
+        "expired",
+        "other",
+        "past_retention",
+        "oldest_created_at"
+      ],
+      "type": "object"
+    },
+    "DiagnosticRedaction": {
+      "description": "What redaction removed from a bundle.",
+      "properties": {
+        "credential_fields": {
+          "description": "Values dropped because their key names a credential.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "home_paths": {
+          "description": "Home-directory prefixes replaced with `~`.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "policy": {
+          "description": "The rule set's version.",
+          "type": "string"
+        },
+        "secret_patterns": {
+          "description": "Credential-shaped substrings replaced inside strings.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "transcript_fields": {
+          "description": "Values dropped because their key names transcript or output content.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncations": {
+          "description": "Strings, arrays, objects or nesting cut to their bounds.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy",
+        "credential_fields",
+        "transcript_fields",
+        "secret_patterns",
+        "home_paths",
+        "truncations"
+      ],
+      "type": "object"
+    },
+    "DiagnosticRetention": {
+      "description": "Retention state.",
+      "properties": {
+        "attachment_bytes": {
+          "description": "Bytes of stored attachment data, or `null` when unreadable.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "logs": {
+          "$ref": "#/$defs/DiagnosticLogs"
+        },
+        "receipt_retention_ms": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "receipts_past_retention": {
+          "description": "Receipts past retention across every readable store, awaiting pruning.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "receipt_retention_ms",
+        "receipts_past_retention",
+        "logs",
+        "attachment_bytes"
+      ],
+      "type": "object"
+    },
+    "DiagnosticRun": {
+      "description": "One live Agent run in the runtime.",
+      "properties": {
+        "account_pinned": {
+          "description": "Whether the run holds a pinned account context. The context itself is\nnever reported.",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "run_id": {
+          "description": "The execution attempt.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "run_id",
+        "provider",
+        "pid",
+        "account_pinned"
+      ],
+      "type": "object"
+    },
+    "DiagnosticService": {
+      "description": "One configured service and whether its terminal is live.",
+      "properties": {
+        "identity": {
+          "description": "The service identity.",
+          "type": "string"
+        },
+        "last_run_transfer_id": {
+          "description": "The incarnation of the service's last run.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "running": {
+          "description": "`null` when the runtime was not observed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "terminal_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "name",
+        "identity",
+        "revision",
+        "terminal_id",
+        "last_run_transfer_id",
+        "running"
+      ],
+      "type": "object"
+    },
+    "DiagnosticTerminal": {
+      "description": "One runtime terminal.",
+      "properties": {
+        "clients": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "durable_log_failed": {
+          "type": "boolean"
+        },
+        "exit_kind": {
+          "description": "The recorded exit kind, when the shell exited.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reply_dropped_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scrollback_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shell_pid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shell_running": {
+          "type": "boolean"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "description": "The terminal incarnation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "terminal_id",
+        "run_id",
+        "transfer_id",
+        "shell_running",
+        "shell_pid",
+        "clients",
+        "scrollback_bytes",
+        "reply_dropped_bytes",
+        "exit_kind",
+        "durable_log_failed"
+      ],
+      "type": "object"
+    },
+    "DiagnosticUnit": {
+      "description": "The unit a queue gauge counts.",
+      "enum": [
+        "items",
+        "bytes"
+      ],
+      "type": "string"
+    },
+    "DiagnosticUnknown": {
+      "description": "One execution whose outcome ADE cannot prove, and why.",
+      "properties": {
+        "operation": {
+          "description": "The operation name, for a receipt.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "scope": {
+          "description": "The store or workspace that holds it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "description": "When it was last updated, in Unix milliseconds.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/DiagnosticUnknownSource"
+        },
+        "subject": {
+          "description": "The operation, Conversation, terminal or claim subject.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "subject",
+        "operation",
+        "scope",
+        "reason",
+        "since"
+      ],
+      "type": "object"
+    },
+    "DiagnosticUnknownSource": {
+      "description": "Where an unknown execution was found.",
+      "oneOf": [
+        {
+          "const": "receipt",
+          "description": "An effect receipt in `unknown` status.",
+          "type": "string"
+        },
+        {
+          "const": "claim",
+          "description": "A lease the daemon could not resolve after a restart.",
+          "type": "string"
+        },
+        {
+          "const": "terminal",
+          "description": "A runtime terminal whose exit could not be verified.",
+          "type": "string"
+        },
+        {
+          "const": "conversation",
+          "description": "A Conversation whose run was interrupted or disconnected.",
+          "type": "string"
+        },
+        {
+          "const": "runtime",
+          "description": "The runtime itself could not be observed.",
+          "type": "string"
+        }
+      ]
+    },
+    "DiagnosticUnresolvedClaim": {
+      "description": "A lease the daemon holds as unresolved.",
+      "properties": {
+        "holds_worktree": {
+          "description": "Whether the unresolved lease still holds the worktree lease.",
+          "type": "boolean"
+        },
+        "incarnation": {
+          "description": "The run or terminal incarnation the lease expects, when recorded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`agent`, `service` or `script`.",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "subject": {
+          "description": "The Conversation ID, service name or script run ID.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "workspace_id",
+        "subject",
+        "incarnation",
+        "reason",
+        "holds_worktree"
+      ],
+      "type": "object"
+    },
+    "DiagnosticWindow": {
+      "description": "The window a counter covers.",
+      "oneOf": [
+        {
+          "const": "daemon_boot",
+          "description": "Since this daemon process started; a restart resets it.",
+          "type": "string"
+        },
+        {
+          "const": "live_incarnations",
+          "description": "Summed over the runtime's current terminal incarnations only.",
+          "type": "string"
+        }
+      ]
+    },
+    "DiagnosticsExport": {
+      "description": "The `diagnostics.export` reply: a bounded, redacted, inspectable bundle.",
+      "properties": {
+        "events": {
+          "description": "Allow-listed operational log records, oldest first. Each carries only\nknown fields: event, timestamp, process, pid, diagnostic and run IDs,\noperation family, elapsed time and fixed error codes.",
+          "items": true,
+          "type": "array"
+        },
+        "events_truncated": {
+          "description": "Whether older records were left out to meet a bound.",
+          "type": "boolean"
+        },
+        "excluded": {
+          "description": "What the bundle never contains.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "format": {
+          "description": "The bundle format, `ade-diagnostics-v1`.",
+          "type": "string"
+        },
+        "generated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "max_bytes": {
+          "description": "The bound the serialized bundle stays under.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redaction": {
+          "$ref": "#/$defs/DiagnosticRedaction"
+        },
+        "status": {
+          "$ref": "#/$defs/DiagnosticsStatus"
+        },
+        "type": {
+          "description": "The `diagnostics_export` type tag.",
+          "enum": [
+            "diagnostics_export"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "format",
+        "generated_at",
+        "max_bytes",
+        "excluded",
+        "redaction",
+        "status",
+        "events",
+        "events_truncated"
+      ],
+      "type": "object"
+    },
+    "DiagnosticsExportRequest": {
+      "additionalProperties": false,
+      "description": "`diagnostics.export`: build a bounded, redacted diagnostics bundle. The\ndaemon returns it; the caller decides where to save it.",
+      "properties": {
+        "max_events": {
+          "description": "The most recent operational log records to include, from 0 to 1000.\nDefaults to 200.",
+          "maximum": 1000,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "diagnostics.export"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "DiagnosticsStatus": {
+      "description": "The `diagnostics.status` reply.",
+      "properties": {
+        "claims": {
+          "$ref": "#/$defs/DiagnosticClaims"
+        },
+        "counters": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticCounter"
+          },
+          "type": "array"
+        },
+        "degraded": {
+          "description": "Fixed descriptions of sources that could not be read.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "generated_at": {
+          "description": "Unix milliseconds.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "identity": {
+          "$ref": "#/$defs/DiagnosticIdentity"
+        },
+        "live": {
+          "$ref": "#/$defs/DiagnosticLive"
+        },
+        "queues": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticQueue"
+          },
+          "type": "array"
+        },
+        "receipts": {
+          "items": {
+            "$ref": "#/$defs/DiagnosticReceipts"
+          },
+          "type": "array"
+        },
+        "retention": {
+          "$ref": "#/$defs/DiagnosticRetention"
+        },
+        "type": {
+          "description": "The `diagnostics_status` type tag.",
+          "enum": [
+            "diagnostics_status"
+          ],
+          "type": "string"
+        },
+        "unknown": {
+          "description": "At most 100 entries.",
+          "items": {
+            "$ref": "#/$defs/DiagnosticUnknown"
+          },
+          "type": "array"
+        },
+        "unknown_truncated": {
+          "description": "Whether `unknown` was cut to its bound.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "generated_at",
+        "identity",
+        "queues",
+        "counters",
+        "receipts",
+        "live",
+        "claims",
+        "retention",
+        "unknown",
+        "unknown_truncated",
+        "degraded"
+      ],
+      "type": "object"
+    },
+    "DiagnosticsStatusRequest": {
+      "additionalProperties": false,
+      "description": "`diagnostics.status`: read queue, counter, receipt, execution, claim and\nretention state, with the reasons behind every unknown execution.",
+      "properties": {
+        "op": {
+          "const": "diagnostics.status"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "Draft": {
       "description": "The schema of [`Draft`], which the model defines without one.",
       "properties": {
@@ -8051,6 +8980,20 @@
       "name": "browser.operation",
       "request": "BrowserOperationRequest",
       "response": "BrowserOperation",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "diagnostics.status",
+      "request": "DiagnosticsStatusRequest",
+      "response": "DiagnosticsStatus",
+      "tier": "query"
+    },
+    {
+      "domain": "daemon",
+      "name": "diagnostics.export",
+      "request": "DiagnosticsExportRequest",
+      "response": "DiagnosticsExport",
       "tier": "query"
     }
   ]

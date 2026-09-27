@@ -55,6 +55,14 @@ pub fn operations() -> Vec<OperationSpec> {
             "browser.operation",
             Tier::Query,
         ),
+        OperationSpec::new::<DiagnosticsStatusRequest, DiagnosticsStatus>(
+            "diagnostics.status",
+            Tier::Query,
+        ),
+        OperationSpec::new::<DiagnosticsExportRequest, DiagnosticsExport>(
+            "diagnostics.export",
+            Tier::Query,
+        ),
     ]
 }
 
@@ -179,6 +187,8 @@ wire_tag!(BrowserTabsTag, "browser_tabs");
 wire_tag!(BrowserTabTag, "browser_tab");
 wire_tag!(BrowserMutationTag, "browser_mutation");
 wire_tag!(BrowserOperationTag, "browser_operation");
+wire_tag!(DiagnosticsStatusTag, "diagnostics_status");
+wire_tag!(DiagnosticsExportTag, "diagnostics_export");
 
 /// The `hello` reply: build identity and every protocol version.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -345,6 +355,325 @@ pub struct BrowserOperation {
     pub result: Option<Value>,
 }
 
+/// `diagnostics.status`: read queue, counter, receipt, execution, claim and
+/// retention state, with the reasons behind every unknown execution.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct DiagnosticsStatusRequest {}
+
+/// `diagnostics.export`: build a bounded, redacted diagnostics bundle. The
+/// daemon returns it; the caller decides where to save it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
+pub struct DiagnosticsExportRequest {
+    /// The most recent operational log records to include, from 0 to 1000.
+    /// Defaults to 200.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(max = 1000))]
+    pub max_events: Option<u32>,
+}
+
+/// How far a reported number can be trusted.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticProvenance {
+    /// Read from the owner of the state at report time.
+    Exact,
+    /// Counted in memory or over a partial window; `note` says which.
+    Approximate,
+    /// The source could not be read; the value is absent.
+    Unavailable,
+}
+
+/// The unit a queue gauge counts.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticUnit {
+    Items,
+    Bytes,
+}
+
+/// What a diagnostic counter counts.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticCounterKind {
+    Dropped,
+    Coalesced,
+}
+
+/// The window a counter covers.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticWindow {
+    /// Since this daemon process started; a restart resets it.
+    DaemonBoot,
+    /// Summed over the runtime's current terminal incarnations only.
+    LiveIncarnations,
+}
+
+/// Where an unknown execution was found.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticUnknownSource {
+    /// An effect receipt in `unknown` status.
+    Receipt,
+    /// A lease the daemon could not resolve after a restart.
+    Claim,
+    /// A runtime terminal whose exit could not be verified.
+    Terminal,
+    /// A Conversation whose run was interrupted or disconnected.
+    Conversation,
+    /// The runtime itself could not be observed.
+    Runtime,
+}
+
+/// The identities a report correlates.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticIdentity {
+    /// A stable, non-reversible key for this host: 16 hex digits of the
+    /// SHA-256 of its host name, or `unknown`.
+    pub host_key: String,
+    pub os: String,
+    pub arch: String,
+    pub profile_id: String,
+    pub boot_id: String,
+    pub daemon_pid: u32,
+    /// `ADE_BUILD_ID`, or `null` when the daemon was built without one.
+    pub build_id: Option<String>,
+    pub application_protocol: String,
+    pub runtime_protocol: String,
+    /// The runtime incarnation.
+    pub runtime_instance: String,
+    pub runtime_pid: u32,
+}
+
+/// The depth of one queue or spool.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticQueue {
+    pub name: String,
+    pub unit: DiagnosticUnit,
+    /// `null` when the source was unavailable.
+    pub depth: Option<u64>,
+    /// The bound, when the queue has one.
+    pub capacity: Option<u64>,
+    pub provenance: DiagnosticProvenance,
+    pub note: String,
+}
+
+/// A dropped or coalesced count.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticCounter {
+    pub name: String,
+    pub kind: DiagnosticCounterKind,
+    /// `null` when the source was unavailable.
+    pub value: Option<u64>,
+    pub window: DiagnosticWindow,
+    pub provenance: DiagnosticProvenance,
+    pub note: String,
+}
+
+/// Effect receipts in one database, counted by status.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiagnosticReceipts {
+    /// `sessions`, `lifecycle`, `review` or `browser`.
+    pub store: String,
+    /// False when the database could not be read; every count is then zero.
+    pub available: bool,
+    pub accepted: u64,
+    pub dispatched: u64,
+    pub acknowledged: u64,
+    pub settled: u64,
+    pub unknown: u64,
+    pub expired: u64,
+    /// Rows with a status this build does not know.
+    pub other: u64,
+    /// Unexpired receipts older than the retention window, awaiting pruning.
+    pub past_retention: u64,
+    /// Creation time of the oldest unexpired receipt, in Unix milliseconds.
+    pub oldest_created_at: Option<i64>,
+}
+
+/// One live Agent run in the runtime.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticRun {
+    pub conversation_id: String,
+    /// The execution attempt.
+    pub run_id: String,
+    pub provider: String,
+    pub pid: Option<u32>,
+    /// Whether the run holds a pinned account context. The context itself is
+    /// never reported.
+    pub account_pinned: bool,
+}
+
+/// One runtime terminal.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticTerminal {
+    pub workspace_id: String,
+    pub terminal_id: String,
+    pub run_id: Option<String>,
+    /// The terminal incarnation.
+    pub transfer_id: Option<String>,
+    pub shell_running: bool,
+    pub shell_pid: Option<u32>,
+    pub clients: Option<u64>,
+    pub scrollback_bytes: Option<u64>,
+    pub reply_dropped_bytes: Option<u64>,
+    /// The recorded exit kind, when the shell exited.
+    pub exit_kind: Option<String>,
+    pub durable_log_failed: bool,
+}
+
+/// One configured service and whether its terminal is live.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticService {
+    pub workspace_id: String,
+    pub name: String,
+    /// The service identity.
+    pub identity: String,
+    pub revision: u64,
+    pub terminal_id: Option<String>,
+    /// The incarnation of the service's last run.
+    pub last_run_transfer_id: Option<String>,
+    /// `null` when the runtime was not observed.
+    pub running: Option<bool>,
+}
+
+/// Live execution as the runtime reports it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticLive {
+    /// False when the runtime could not be asked; runs and terminals are then
+    /// empty and every service's `running` is `null`.
+    pub observed: bool,
+    pub runtime_instance: String,
+    pub runs: Vec<DiagnosticRun>,
+    pub terminals: Vec<DiagnosticTerminal>,
+    pub services: Vec<DiagnosticService>,
+}
+
+/// A lease the daemon holds as unresolved.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticUnresolvedClaim {
+    /// `agent`, `service` or `script`.
+    pub kind: String,
+    pub workspace_id: String,
+    /// The Conversation ID, service name or script run ID.
+    pub subject: String,
+    /// The run or terminal incarnation the lease expects, when recorded.
+    pub incarnation: Option<String>,
+    pub reason: String,
+    /// Whether the unresolved lease still holds the worktree lease.
+    pub holds_worktree: bool,
+}
+
+/// Lease and claim state.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticClaims {
+    /// Workspaces whose worktree lease a live terminal holds.
+    pub terminal_worktree_leases: Vec<String>,
+    /// Worktree leases the session layer holds for service and script terminals.
+    pub session_worktree_leases: u64,
+    pub unresolved: Vec<DiagnosticUnresolvedClaim>,
+    pub active_git_operations: u64,
+}
+
+/// The local diagnostic log folder against its budget.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticLogs {
+    pub available: bool,
+    pub files: u64,
+    pub bytes: u64,
+    /// Rotated files kept per process.
+    pub max_files_per_process: u64,
+    /// Bytes one process may write to its current daily file.
+    pub daily_byte_budget: u64,
+}
+
+/// Retention state.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticRetention {
+    pub receipt_retention_ms: i64,
+    /// Receipts past retention across every readable store, awaiting pruning.
+    pub receipts_past_retention: u64,
+    pub logs: DiagnosticLogs,
+    /// Bytes of stored attachment data, or `null` when unreadable.
+    pub attachment_bytes: Option<u64>,
+}
+
+/// One execution whose outcome ADE cannot prove, and why.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticUnknown {
+    pub source: DiagnosticUnknownSource,
+    /// The operation, Conversation, terminal or claim subject.
+    pub subject: String,
+    /// The operation name, for a receipt.
+    pub operation: Option<String>,
+    /// The store or workspace that holds it.
+    pub scope: Option<String>,
+    pub reason: String,
+    /// When it was last updated, in Unix milliseconds.
+    pub since: Option<i64>,
+}
+
+/// The `diagnostics.status` reply.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticsStatus {
+    #[serde(rename = "type")]
+    pub tag: DiagnosticsStatusTag,
+    /// Unix milliseconds.
+    pub generated_at: i64,
+    pub identity: DiagnosticIdentity,
+    pub queues: Vec<DiagnosticQueue>,
+    pub counters: Vec<DiagnosticCounter>,
+    pub receipts: Vec<DiagnosticReceipts>,
+    pub live: DiagnosticLive,
+    pub claims: DiagnosticClaims,
+    pub retention: DiagnosticRetention,
+    /// At most 100 entries.
+    pub unknown: Vec<DiagnosticUnknown>,
+    /// Whether `unknown` was cut to its bound.
+    pub unknown_truncated: bool,
+    /// Fixed descriptions of sources that could not be read.
+    pub degraded: Vec<String>,
+}
+
+/// What redaction removed from a bundle.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiagnosticRedaction {
+    /// The rule set's version.
+    pub policy: String,
+    /// Values dropped because their key names a credential.
+    pub credential_fields: u64,
+    /// Values dropped because their key names transcript or output content.
+    pub transcript_fields: u64,
+    /// Credential-shaped substrings replaced inside strings.
+    pub secret_patterns: u64,
+    /// Home-directory prefixes replaced with `~`.
+    pub home_paths: u64,
+    /// Strings, arrays, objects or nesting cut to their bounds.
+    pub truncations: u64,
+}
+
+/// The `diagnostics.export` reply: a bounded, redacted, inspectable bundle.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct DiagnosticsExport {
+    #[serde(rename = "type")]
+    pub tag: DiagnosticsExportTag,
+    /// The bundle format, `ade-diagnostics-v1`.
+    pub format: String,
+    pub generated_at: i64,
+    /// The bound the serialized bundle stays under.
+    pub max_bytes: u64,
+    /// What the bundle never contains.
+    pub excluded: Vec<String>,
+    pub redaction: DiagnosticRedaction,
+    pub status: DiagnosticsStatus,
+    /// Allow-listed operational log records, oldest first. Each carries only
+    /// known fields: event, timestamp, process, pid, diagnostic and run IDs,
+    /// operation family, elapsed time and fixed error codes.
+    pub events: Vec<Value>,
+    /// Whether older records were left out to meet a bound.
+    pub events_truncated: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +772,8 @@ mod tests {
             ("browser.navigate", "effect_command"),
             ("browser.close", "effect_command"),
             ("browser.operation", "query"),
+            ("diagnostics.status", "query"),
+            ("diagnostics.export", "query"),
         ]
         .iter()
         .map(|(name, tier)| ((*name).to_owned(), (*tier).to_owned()))
@@ -597,6 +928,70 @@ mod tests {
             !validator("BrowserOperation").is_valid(&json!({"type": "browser_operation",
             "profile_id": "fixed", "owner_id": "owner_1", "request_id": "op_1",
             "payload_fingerprint": fingerprint, "state": "done"}))
+        );
+    }
+
+    fn diagnostics_status_wire() -> Value {
+        json!({"type": "diagnostics_status", "generated_at": 1_700_000_000_000_i64,
+            "identity": {"host_key": "0123456789abcdef", "os": "macos", "arch": "aarch64",
+                "profile_id": "fixed-1", "boot_id": "boot_1", "daemon_pid": 12, "build_id": null,
+                "application_protocol": "ade-application-v1", "runtime_protocol": "ade-runtime-v8",
+                "runtime_instance": "instance_1", "runtime_pid": 11},
+            "queues": [{"name": "conversation.queued_prompts", "unit": "items", "depth": 2,
+                "capacity": null, "provenance": "exact", "note": ""},
+                {"name": "send.outbox", "unit": "items", "depth": null, "capacity": null,
+                "provenance": "unavailable", "note": "sessions store unreadable"}],
+            "counters": [{"name": "feed.subscribers_evicted", "kind": "dropped", "value": 0,
+                "window": "daemon_boot", "provenance": "approximate", "note": ""}],
+            "receipts": [{"store": "sessions", "available": true, "accepted": 0, "dispatched": 1,
+                "acknowledged": 0, "settled": 4, "unknown": 1, "expired": 0, "other": 0,
+                "past_retention": 0, "oldest_created_at": 1_699_000_000_000_i64}],
+            "live": {"observed": true, "runtime_instance": "instance_1",
+                "runs": [{"conversation_id": "conversation_1", "run_id": "run_1",
+                    "provider": "codex", "pid": 42, "account_pinned": true}],
+                "terminals": [{"workspace_id": "workspace_1", "terminal_id": "terminal_1",
+                    "run_id": "run_2", "transfer_id": "transfer_1", "shell_running": true,
+                    "shell_pid": 43, "clients": 1, "scrollback_bytes": 10,
+                    "reply_dropped_bytes": 0, "exit_kind": null, "durable_log_failed": false}],
+                "services": [{"workspace_id": "workspace_1", "name": "web", "identity": "service_1",
+                    "revision": 3, "terminal_id": "terminal_2", "last_run_transfer_id": null,
+                    "running": null}]},
+            "claims": {"terminal_worktree_leases": ["workspace_1"], "session_worktree_leases": 1,
+                "unresolved": [{"kind": "agent", "workspace_id": "workspace_1",
+                    "subject": "conversation_1", "incarnation": "run_1",
+                    "reason": "the runtime Agent catalogue was not observed", "holds_worktree": true}],
+                "active_git_operations": 0},
+            "retention": {"receipt_retention_ms": 2_592_000_000_i64, "receipts_past_retention": 0,
+                "logs": {"available": true, "files": 2, "bytes": 100, "max_files_per_process": 7,
+                    "daily_byte_budget": 8_388_608},
+                "attachment_bytes": null},
+            "unknown": [{"source": "receipt", "subject": "op_1", "operation": "terminal.create",
+                "scope": "sessions", "reason": "the outcome was lost", "since": 1_700_000_000_000_i64}],
+            "unknown_truncated": false,
+            "degraded": []})
+    }
+
+    #[test]
+    fn diagnostics_operations_round_trip() {
+        request::<DiagnosticsStatusRequest>("diagnostics.status", json!({}));
+        response::<DiagnosticsStatus>("diagnostics.status", diagnostics_status_wire());
+        let export: DiagnosticsExportRequest = request("diagnostics.export", json!({}));
+        assert!(export.max_events.is_none());
+        request::<DiagnosticsExportRequest>("diagnostics.export", json!({"max_events": 0}));
+        let (name, _) = operation("diagnostics.export");
+        assert!(
+            !validator(&name).is_valid(&json!({"op": "diagnostics.export", "max_events": 1001}))
+        );
+        response::<DiagnosticsExport>(
+            "diagnostics.export",
+            json!({"type": "diagnostics_export", "format": "ade-diagnostics-v1",
+                "generated_at": 1_700_000_000_000_i64, "max_bytes": 1_048_576,
+                "excluded": ["credentials"],
+                "redaction": {"policy": "ade-redaction-v1", "credential_fields": 0,
+                    "transcript_fields": 0, "secret_patterns": 1, "home_paths": 0, "truncations": 0},
+                "status": diagnostics_status_wire(),
+                "events": [{"event": "rpc_failed", "operation_family": "agent"}],
+                "events_truncated": true}),
         );
     }
 }
