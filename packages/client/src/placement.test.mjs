@@ -7,7 +7,7 @@ import { admitPlacement, deviceCapability, previewCapability, sshPreviewForwardA
 import { initialRemoteState, reduceRemote } from '../dist/remote-state.js'
 
 const target = { hostId: 'devbox', profileId: 'p-1', destination: 'me@devbox.lan',
-  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock' }
+  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock', hostPublicKey: null }
 const remoteHost = { kind: 'remote', host_id: 'devbox' }
 const local = { kind: 'local' }
 
@@ -125,13 +125,23 @@ test('remote device control is unsupported and never redirected locally', () => 
 
 test('the preview forward binds loopback and reaches only the capability it was given', () => {
   const capability = previewCapability(entry(remoteHost), 'http://localhost:5173', connected(), target)
-  const args = sshPreviewForwardArgs(target, capability, 41000)
+  const args = sshPreviewForwardArgs(target, capability, 41000, null)
   assert.deepEqual(args.slice(-4), ['-L', '127.0.0.1:41000:127.0.0.1:5173', '--', 'me@devbox.lan'])
   assert.ok(args.includes('StrictHostKeyChecking=yes') && args.includes('ForwardAgent=no'))
   const v6 = previewCapability(entry(remoteHost), 'http://[::1]:8080', connected(), target)
-  assert.equal(sshPreviewForwardArgs(target, v6, 41001).at(-3), '127.0.0.1:41001:[::1]:8080')
-  assert.throws(() => sshPreviewForwardArgs(target, capability, 80), /Local port/)
-  assert.throws(() => sshPreviewForwardArgs({ ...target, hostId: 'other' }, capability, 41000), /different host/)
+  assert.equal(sshPreviewForwardArgs(target, v6, 41001, null).at(-3), '127.0.0.1:41001:[::1]:8080')
+  assert.throws(() => sshPreviewForwardArgs(target, capability, 80, null), /Local port/)
+  assert.throws(() => sshPreviewForwardArgs({ ...target, hostId: 'other' }, capability, 41000, null), /different host/)
   const unavailable = previewCapability(entry(remoteHost), 'http://localhost:5173', lost(), target)
-  assert.throws(() => sshPreviewForwardArgs(target, unavailable, 41000), /unknown/)
+  assert.throws(() => sshPreviewForwardArgs(target, unavailable, 41000, null), /unknown/)
+  // A host with a pinned key forwards previews under that key only.
+  const key = Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from('ssh-ed25519'), Buffer.from([0, 0, 0, 32]),
+    Buffer.alloc(32, 1)]).toString('base64')
+  const pinned = { ...target, hostPublicKey: `ssh-ed25519 ${key}` }
+  const pinnedCapability = previewCapability(entry(remoteHost), 'http://localhost:5173', connected(), pinned)
+  const pinnedArgs = sshPreviewForwardArgs(pinned, pinnedCapability, 41000, '/tmp/ade-remote-1/known_hosts')
+  assert.ok(pinnedArgs.includes('HostKeyAlias=ade-remote-devbox'))
+  assert.ok(pinnedArgs.includes('UserKnownHostsFile=/tmp/ade-remote-1/known_hosts'))
+  assert.ok(pinnedArgs.includes('GlobalKnownHostsFile=/dev/null'))
+  assert.throws(() => sshPreviewForwardArgs(pinned, pinnedCapability, 41000, null), /known_hosts/)
 })

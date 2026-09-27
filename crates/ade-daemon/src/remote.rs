@@ -230,6 +230,27 @@ pub fn validate_token_reference(reference: &TokenReference) -> Result<()> {
     Ok(())
 }
 
+/// Whether `remote.host.remove` must refuse. A host with an active pairing,
+/// or with recorded placements, stays registered: removing it would let a
+/// later host with the same ID inherit resources that live on this machine.
+pub fn removal_refusal(
+    host_id: &str,
+    active_pairing: Option<&str>,
+    placements: u64,
+) -> Option<String> {
+    if let Some(pairing) = active_pairing {
+        return Some(format!(
+            "Revoke pairing {pairing} before removing {host_id}"
+        ));
+    }
+    (placements > 0).then(|| {
+        format!(
+            "{host_id} still has {placements} recorded placement(s); release them with \
+             placement release before removing {host_id}. Nothing was removed"
+        )
+    })
+}
+
 /// The known-hosts alias that ties one registry host to its pinned key.
 pub fn host_key_alias(host_id: &str) -> String {
     format!("ade-remote-{host_id}")
@@ -713,6 +734,21 @@ mod tests {
     fn keyscan_lines_are_read_and_comments_skipped() {
         let output = format!("# devbox:22 SSH-2.0-OpenSSH_9.6\ndevbox {ED25519}\ngarbage\n");
         assert_eq!(parse_keyscan(&output), vec![ed25519()]);
+    }
+
+    #[test]
+    fn removal_refuses_while_placements_or_an_active_pairing_remain() {
+        // Audit scenario: `build` holds workspace W; removing it and re-adding
+        // `build` for another machine would hand W to that machine.
+        let refusal = removal_refusal("build", None, 1).unwrap();
+        assert!(refusal.contains("placement release"));
+        assert!(refusal.contains("Nothing was removed"));
+        assert!(
+            removal_refusal("build", Some("p1"), 0)
+                .unwrap()
+                .contains("Revoke pairing p1")
+        );
+        assert_eq!(removal_refusal("build", None, 0), None);
     }
 
     #[test]

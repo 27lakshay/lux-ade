@@ -14,7 +14,7 @@
 // Pattern studied, not copied: Orca src/main/ssh/ssh-port-forward.ts and
 // system-ssh-port-forward-provider.ts (MIT): bind the local end to 127.0.0.1.
 import type { ExecutionHost, ExecutionHostEntry, PlacementDecision } from '@ade/contracts'
-import { connectionKey, validateTarget, type RemoteState, type RemoteTarget } from './remote-state.js'
+import { connectionKey, hostTrustArgs, validateTarget, type RemoteState, type RemoteTarget } from './remote-state.js'
 
 export type PlacementAdmission =
   | { admitted: true; host: ExecutionHost; via: 'local_daemon' | 'remote_transport' }
@@ -164,10 +164,11 @@ function validPort(port: number, min: number): boolean {
  * OpenSSH arguments for `ssh -L 127.0.0.1:localPort:remoteHost:remotePort`.
  * The local end binds loopback only; the remote end must be the remote host's
  * own loopback address from {@link previewCapability}. Hardened like the
- * daemon socket forward: strict host keys, no prompts, no agent forwarding.
+ * daemon socket forward: strict host keys (only the pinned key when the target
+ * pins one), no prompts, no agent forwarding.
  */
 export function sshPreviewForwardArgs(target: RemoteTarget, capability: PreviewCapability,
-  localPort: number): string[] {
+  localPort: number, knownHostsFile: string | null): string[] {
   const invalid = validateTarget(target)
   if (invalid) throw new TypeError(invalid)
   if (capability.host.kind !== 'remote' || capability.host.host_id !== target.hostId) {
@@ -182,8 +183,7 @@ export function sshPreviewForwardArgs(target: RemoteTarget, capability: PreviewC
   const remote = capability.remoteHost.includes(':') ? `[${capability.remoteHost}]` : capability.remoteHost
   return [
     '-N', '-T',
-    '-o', 'BatchMode=yes',
-    '-o', 'StrictHostKeyChecking=yes',
+    ...hostTrustArgs(target, knownHostsFile),
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ForwardAgent=no',
     '-o', 'ForwardX11=no',

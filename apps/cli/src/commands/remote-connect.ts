@@ -1,15 +1,16 @@
 import { RemoteDaemonTransport, validateTarget, type RemoteTarget } from '@ade/client/remote'
 import { CliError, jsonObject, namedOptions, required, type CommandResult } from '../shared.js'
 
-export const remoteConnectUsage = `  remote status --host ID --remote-profile ID --ssh DEST --remote-socket PATH
+export const remoteConnectUsage = `  remote status --host ID --remote-profile ID --ssh DEST --remote-socket PATH [--host-key 'TYPE BASE64']
                                         Connect to a remote profile daemon through an SSH-forwarded
-                                        socket and return its hello; never uses a local daemon
-  remote request OP [JSON_OBJECT] --host ID --remote-profile ID --ssh DEST --remote-socket PATH
+                                        socket and return its hello; never uses a local daemon.
+                                        --host-key trusts only that key; without it ssh uses known_hosts
+  remote request OP [JSON_OBJECT] --host ID --remote-profile ID --ssh DEST --remote-socket PATH [--host-key KEY]
                                         Send one command to the remote daemon; a lost reply is
                                         reported with delivery unknown and is not retried
 `
 
-const targetOptions = ['--host', '--remote-profile', '--ssh', '--remote-socket', '--timeout-ms'] as const
+const targetOptions = ['--host', '--remote-profile', '--ssh', '--remote-socket', '--host-key', '--timeout-ms'] as const
 
 function remoteTarget(options: Record<string, string>): RemoteTarget {
   const target = {
@@ -17,6 +18,7 @@ function remoteTarget(options: Record<string, string>): RemoteTarget {
     profileId: required(options['--remote-profile'], '--remote-profile'),
     destination: required(options['--ssh'], '--ssh'),
     remoteSocket: required(options['--remote-socket'], '--remote-socket'),
+    hostPublicKey: options['--host-key'] ?? null,
   }
   const invalid = validateTarget(target)
   if (invalid) throw new CliError('usage', invalid)

@@ -5,11 +5,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   admitRemoteRequest, classifySshExit, connectionKey, initialRemoteState, reduceRemote, remoteStatus,
-  retryDelay, sshForwardArgs, validateLocalSocket, validateTarget,
+  pinnedKnownHosts, retryDelay, sshForwardArgs, validateLocalSocket, validateTarget,
 } from '../dist/remote-state.js'
 
 const target = { hostId: 'build-box', profileId: 'p-1', destination: 'me@build.lan',
-  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock' }
+  remoteSocket: '/home/me/.ade/profiles/p-1/daemon.sock', hostPublicKey: null }
 const hello = (runtimeSocket = '/home/me/.ade/profiles/p-1/runtime.sock', boot = 'boot-1') => ({
   type: 'hello', application_protocol: 'ade-application-v1', session_protocol: 'ade-sessions-v1',
   runtime_socket: runtimeSocket, boot_id: boot, build_id: null,
@@ -123,12 +123,57 @@ test('targets reject option injection and unusable paths', () => {
 })
 
 test('ssh arguments forward the socket, pin host keys and end options before the destination', () => {
-  const args = sshForwardArgs(target, '/tmp/ade-remote-1/daemon.sock')
+  const args = sshForwardArgs(target, '/tmp/ade-remote-1/daemon.sock', null)
   assert.deepEqual(args.slice(-2), ['--', 'me@build.lan'])
   assert.ok(args.includes('StrictHostKeyChecking=yes'))
   assert.ok(args.includes('BatchMode=yes'))
   const forward = args[args.indexOf('-L') + 1]
   assert.equal(forward, '/tmp/ade-remote-1/daemon.sock:/home/me/.ade/profiles/p-1/daemon.sock')
+})
+
+function keyLine(type = 'ssh-ed25519') {
+  const name = Buffer.from(type)
+  const head = Buffer.alloc(4)
+  head.writeUInt32BE(name.length)
+  const size = Buffer.alloc(4)
+  size.writeUInt32BE(32)
+  return `${type} ${Buffer.concat([head, name, size, Buffer.alloc(32, 7)]).toString('base64')}`
+}
+
+test('a pinned target trusts only the key the daemon pinned, never the user known_hosts', () => {
+  // Audit scenario: `ade remote add build user@box SHA256:X` pinned a key. The
+  // forward must check that key under the daemon's alias, so a host missing
+  // from ~/.ssh/known_hosts still connects and a different key there is ignored.
+  const pinned = { ...target, hostId: 'build', hostPublicKey: keyLine() }
+  assert.equal(validateTarget(pinned), null)
+  assert.equal(pinnedKnownHosts(pinned), `ade-remote-build ${keyLine()}\n`)
+  const args = sshForwardArgs(pinned, '/tmp/ade-remote-1/daemon.sock', '/tmp/ade-remote-1/known_hosts')
+  const option = (value) => {
+    const index = args.indexOf(value)
+    return index > 0 && args[index - 1] === '-o'
+  }
+  for (const value of ['StrictHostKeyChecking=yes', 'BatchMode=yes', 'UserKnownHostsFile=/tmp/ade-remote-1/known_hosts',
+    'GlobalKnownHostsFile=/dev/null', 'HostKeyAlias=ade-remote-build', 'HostKeyAlgorithms=ssh-ed25519',
+    'UpdateHostKeys=no', 'KnownHostsCommand=none']) {
+    assert.ok(option(value), value)
+  }
+  assert.deepEqual(args.slice(-2), ['--', 'me@build.lan'])
+  // Without its private known_hosts file a pinned target refuses to build a command.
+  assert.throws(() => sshForwardArgs(pinned, '/tmp/s.sock', null), /known_hosts/)
+  assert.throws(() => sshForwardArgs(pinned, '/tmp/s.sock', '/tmp/a b'), /known_hosts/)
+  // RSA keys are checked with SHA-2 signatures, as the daemon does.
+  const rsa = sshForwardArgs({ ...pinned, hostPublicKey: keyLine('ssh-rsa') }, '/tmp/s.sock', '/tmp/kh')
+  assert.ok(rsa.includes('HostKeyAlgorithms=rsa-sha2-512,rsa-sha2-256'))
+  // An unreadable pinned key fails the target closed instead of falling back to known_hosts.
+  for (const bad of ['ssh-dss AAAA', 'ssh-ed25519 not*base64', `ssh-rsa ${keyLine().split(' ')[1]}`, '']) {
+    const invalid = { ...pinned, hostPublicKey: bad }
+    assert.ok(validateTarget(invalid), bad)
+    assert.equal(initialRemoteState(invalid).failure, 'invalid_target')
+  }
+  // An unpinned, explicitly typed destination keeps the user's known_hosts.
+  const unpinned = sshForwardArgs(target, '/tmp/s.sock', null)
+  assert.ok(!unpinned.some((arg) => arg.startsWith('UserKnownHostsFile=') || arg.startsWith('HostKeyAlias=')))
+  assert.equal(pinnedKnownHosts(target), null)
 })
 
 test('connection keys separate hosts and profiles', () => {
