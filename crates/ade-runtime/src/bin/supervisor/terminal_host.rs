@@ -558,6 +558,21 @@ pub struct Runtime {
     master: Master,
     input: Input,
     killer: Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
+    /// Descendant tracking for terminal-owned programs; absent for shells.
+    tree: Option<Tree>,
+}
+type Tree = Arc<Mutex<ade_runtime::descendants::Shutdown>>;
+/// Record a reaped terminal child under the state lock, so a later stop never
+/// signals a reused process ID.
+fn record_exit(s: &mut State, status: &portable_pty::ExitStatus) {
+    s.exit_status = Some(match status.signal() {
+        Some(signal) => json!({"kind":"signaled","signal":signal}),
+        None if status.success() => {
+            json!({"kind":"success","code":status.exit_code()})
+        }
+        None => json!({"kind":"failure","code":status.exit_code()}),
+    });
+    s.shell_running = false;
 }
 pub fn spawn_runtime(
     workspace: &WorkspaceRecord,
@@ -601,6 +616,14 @@ pub fn spawn_runtime(
     command.env("ADE_PROTOTYPE", "1");
     let mut child = pair.slave.spawn_command(command)?;
     let killer = Mutex::new(child.clone_killer());
+    // portable-pty starts the child in its own session, so its PID is the
+    // group ID. Track the tree from the start so descendants that leave the
+    // group are still known when the program stops.
+    let tree: Option<Tree> = launch.and(child.process_id()).map(|pid| {
+        let mut shutdown = ade_runtime::descendants::Shutdown::new(pid);
+        shutdown.track();
+        Arc::new(Mutex::new(shutdown))
+    });
     drop(pair.slave);
     let mut output = pair.master.try_clone_reader()?;
     let input = Arc::new(Mutex::new(pair.master.take_writer()?));
@@ -662,6 +685,7 @@ pub fn spawn_runtime(
         durable_log_error,
     }));
     let terminal_state = state.clone();
+    let reader_tree = tree.clone();
     std::thread::spawn(move || {
         let mut buffer = [0u8; 8192];
         loop {
@@ -678,63 +702,92 @@ pub fn spawn_runtime(
                 }
             }
         }
-        // A terminal-owned agent may have a private server in its process
-        // group. End it before releasing ownership, while the child PID is
-        // still reserved by the OS (we have not reaped it yet).
-        {
-            let s = terminal_state.lock().unwrap();
-            if s.transfer_id.is_some()
-                && let Some(pid) = s.shell_pid
-            {
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGKILL);
+        // A terminal-owned program may have a private server in its process
+        // group, or descendants that left it. The direct child's exit proves
+        // nothing about them: signal the tracked tree (TERM, then KILL) and
+        // require evidence that it has stopped. The tree reaps the child only
+        // after the group is empty, so the group ID stays ours while signalled.
+        // Lock order is tree, then state; stop() only try-locks the tree.
+        let descendants = reader_tree.as_ref().map(|tree| {
+            let mut shutdown = tree.lock().unwrap_or_else(|poison| poison.into_inner());
+            shutdown.stop(&ade_runtime::descendants::Policy::default(), &mut || {
+                let mut s = terminal_state.lock().unwrap();
+                match child.try_wait()? {
+                    Some(status) => {
+                        record_exit(&mut s, &status);
+                        Ok(true)
+                    }
+                    None => Ok(false),
                 }
-            }
-        }
-        loop {
+            })
+        });
+        let exited = loop {
             let mut s = terminal_state.lock().unwrap();
+            if !s.shell_running {
+                break true;
+            }
             match child.try_wait() {
                 Ok(Some(status)) => {
                     // Reap and update the state under the same lock as stop(),
                     // so a later stop never signals a reused process ID.
-                    s.exit_status = Some(match status.signal() {
-                        Some(signal) => json!({"kind":"signaled","signal":signal}),
-                        None if status.success() => {
-                            json!({"kind":"success","code":status.exit_code()})
-                        }
-                        None => json!({"kind":"failure","code":status.exit_code()}),
-                    });
-                    s.shell_running = false;
-                    let message = if s.transfer_id.is_some() {
-                        "The process has exited. Its terminal output remains available."
-                    } else {
-                        "The shell has exited. Use New shell to start another."
-                    };
-                    s.broadcast(json!({"type":"error","message":message}));
-                    break;
+                    record_exit(&mut s, &status);
+                    break true;
                 }
                 Err(error) => {
                     s.exit_status = Some(json!({"kind":"unknown","reason":error.to_string()}));
                     s.broadcast(json!({"type":"error","message":format!("Could not confirm terminal exit: {error}")}));
-                    break;
+                    break false;
                 }
                 Ok(None) => {}
             }
             drop(s);
             std::thread::sleep(Duration::from_millis(10));
+        };
+        let mut s = terminal_state.lock().unwrap();
+        if let Some(verdict) = &descendants
+            && let Some(Value::Object(outcome)) = s.exit_status.as_mut()
+        {
+            // Additive: the child's own status stays as it was reported.
+            outcome.insert(
+                "descendants".into(),
+                json!({"verdict":verdict.code(),"detail":verdict.detail()}),
+            );
+        }
+        if exited {
+            let message = match &descendants {
+                Some(ade_runtime::descendants::Verdict::Exited) => {
+                    "The process has exited. Its terminal output remains available.".to_owned()
+                }
+                Some(verdict) => format!(
+                    "The process has exited, but its process tree was not confirmed stopped: {}. Some of its processes may still be running.",
+                    verdict.detail()
+                ),
+                None => "The shell has exited. Use New shell to start another.".to_owned(),
+            };
+            s.broadcast(json!({"type":"error","message":message}));
         }
     });
     let metric_state = state.clone();
+    let metric_tree = tree.clone();
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(1));
-            let mut s = metric_state.lock().unwrap();
-            if !s.shell_running {
-                break;
+            {
+                let mut s = metric_state.lock().unwrap();
+                if !s.shell_running {
+                    break;
+                }
+                if !s.clients.is_empty() {
+                    let event = json!({"type":"metrics","metrics":s.metrics()});
+                    s.broadcast(event);
+                }
             }
-            if !s.clients.is_empty() {
-                let event = json!({"type":"metrics","metrics":s.metrics()});
-                s.broadcast(event);
+            // Keep the tracked tree current while the program runs. Never wait
+            // for the tree lock: the reader holds it while proving shutdown.
+            if let Some(tree) = &metric_tree
+                && let Ok(mut shutdown) = tree.try_lock()
+            {
+                shutdown.track();
             }
         }
     });
@@ -744,6 +797,7 @@ pub fn spawn_runtime(
         master,
         input,
         killer,
+        tree,
     })
 }
 
@@ -771,7 +825,16 @@ impl Runtime {
         let state = self.state.lock().unwrap();
         if state.shell_running {
             if state.transfer_id.is_some() {
-                if let Some(pid) = state.shell_pid {
+                // Observe the tree before signalling so descendants outside
+                // the group are killed too. The reader thread then proves the
+                // tree stopped; when it already holds the tree it is doing so.
+                if let Some(tree) = &self.tree
+                    && let Ok(mut shutdown) = tree.try_lock()
+                {
+                    shutdown.kill_now();
+                } else if self.tree.is_none()
+                    && let Some(pid) = state.shell_pid
+                {
                     let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
                     if result != 0
                         && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)

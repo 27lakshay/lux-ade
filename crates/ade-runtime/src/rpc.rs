@@ -22,14 +22,19 @@ pub enum WireEvent {
 }
 
 type Reply = std::result::Result<Value, Failure>;
+/// The owned child and the shutdown state of its process tree, under one lock
+/// so the group is never signalled after its leader was reaped.
+struct Owned {
+    child: Child,
+    shutdown: crate::descendants::Shutdown,
+}
 pub struct Rpc {
-    child: Mutex<Child>,
+    child: Mutex<Owned>,
     pid: u32,
     input: Mutex<ChildStdin>,
     pending: Mutex<HashMap<String, mpsc::SyncSender<Reply>>>,
     next_id: AtomicU64,
     closed: AtomicBool,
-    kill_sent: AtomicBool,
 }
 impl Rpc {
     pub fn pid(&self) -> u32 {
@@ -77,13 +82,15 @@ impl Rpc {
             tracing::info!(target: "ade", event = "provider_stderr_drained", pid, bytes = summary.bytes, newline_count = summary.newline_count, read_failed = summary.read_failed);
         });
         let this = Arc::new(Self {
-            child: Mutex::new(child),
+            child: Mutex::new(Owned {
+                child,
+                shutdown: crate::descendants::Shutdown::new(pid),
+            }),
             pid,
             input: Mutex::new(input),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
-            kill_sent: AtomicBool::new(false),
         });
         let weak = Arc::downgrade(&this);
         std::thread::spawn(move || {
@@ -153,8 +160,11 @@ impl Rpc {
                 {
                     let _ = reply.try_send(Err(failure));
                 }
-                let error = failure.to_string();
-                this.stop();
+                // Direct-child exit is not proof the tree stopped; say so when unproven.
+                let error = match this.stop_confirmed() {
+                    Ok(()) => failure.to_string(),
+                    Err(stop) => format!("{failure}. {stop}"),
+                };
                 // Blocking only after pending RPCs have been released; no lost lifecycle event.
                 let _ = events.send(crate::provider::Event::Exited { error });
             }
@@ -256,32 +266,25 @@ impl Rpc {
         {
             let _ = reply.try_send(Err(Failure::Disconnected));
         }
-        let mut child = self
+        let mut owned = self
             .child
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        // Never signal this numeric process group again after reaping the child:
-        // the OS can reuse its ID while other Arc<Rpc> references still exist.
-        if !self.kill_sent.load(Ordering::SeqCst) {
-            let result = unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
-            if result != 0 {
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(error).context("Could not stop provider process group");
-                }
+        let Owned { child, shutdown } = &mut *owned;
+        // Direct-child exit is not proof of shutdown. Signal the whole tree
+        // (TERM, then KILL after a grace period) and require positive evidence
+        // that every observed process has exited. Only the tree's verdict step
+        // reaps the child, so the group ID stays reserved while it is signalled
+        // and is never signalled again after reaping.
+        let verdict = shutdown.stop(&crate::descendants::Policy::default(), &mut || {
+            child.try_wait().map(|status| status.is_some())
+        });
+        match verdict {
+            crate::descendants::Verdict::Exited => Ok(()),
+            verdict => {
+                tracing::warn!(target: "ade", event = "provider_shutdown_unconfirmed", pid = self.pid, verdict = verdict.code());
+                Err(crate::descendants::Unconfirmed(verdict).into())
             }
-            self.kill_sent.store(true, Ordering::SeqCst);
-        }
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            if child.try_wait()?.is_some() {
-                return Ok(());
-            }
-            ensure!(
-                std::time::Instant::now() < deadline,
-                "Provider has not exited; ownership remains reserved"
-            );
-            std::thread::sleep(Duration::from_millis(5));
         }
     }
 }
