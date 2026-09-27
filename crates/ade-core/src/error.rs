@@ -293,6 +293,104 @@ impl LifecycleFailure {
     }
 }
 
+/// A failed write to the daemon's own storage, classified from the SQLite
+/// result code and the operating-system error number. Only a real full disk
+/// (`SQLITE_FULL` or `ENOSPC`) says to check disk space. A busy or locked
+/// database, an unwritable data folder and a damaged file each say what they
+/// are. Messages carry no SQL, values or paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+pub enum StorageFailure {
+    /// The disk holding the data folder is full. It keeps the code and
+    /// wording `Failure::SaveFailed` has always sent.
+    #[serde(rename = "save_failed")]
+    #[error(
+        "lux-ade could not save these changes. Check available disk space and data-folder access, then retry"
+    )]
+    Full,
+    /// Another writer held the database past the wait and every safe retry.
+    /// The transaction was rolled back, so nothing was saved.
+    #[serde(rename = "storage_busy")]
+    #[error(
+        "lux-ade could not save these changes because its database stayed busy. Nothing was saved; retry"
+    )]
+    Busy,
+    /// The data folder or a database file cannot be written.
+    #[serde(rename = "storage_unwritable")]
+    #[error(
+        "lux-ade could not save these changes because its data folder is not writable. Check the folder's permissions, then retry"
+    )]
+    Unwritable,
+    /// A database file is damaged or is not a database.
+    #[serde(rename = "storage_corrupt")]
+    #[error(
+        "lux-ade could not save these changes because a database file is damaged. Restore the profile from a backup"
+    )]
+    Corrupt,
+    /// Any other storage failure, such as an I/O error.
+    #[serde(rename = "storage_failed")]
+    #[error(
+        "lux-ade could not save these changes because of a storage error. Retry; if it repeats, check the daemon log"
+    )]
+    Failed,
+}
+
+impl StorageFailure {
+    /// Classify a failure from its SQLite result code (primary or extended)
+    /// and its `errno`, when either is known. `ENOSPC` wins over a generic
+    /// SQLite I/O code, because SQLite can report a full-disk write as
+    /// `SQLITE_IOERR_WRITE`.
+    pub fn classify(sqlite_code: Option<i32>, os_error: Option<i32>) -> Self {
+        // POSIX numbers; macOS and Linux agree on each of these.
+        const EPERM: i32 = 1;
+        const EACCES: i32 = 13;
+        const ENOSPC: i32 = 28;
+        const EROFS: i32 = 30;
+        match os_error {
+            Some(ENOSPC) => return Self::Full,
+            Some(EPERM | EACCES | EROFS) => return Self::Unwritable,
+            _ => {}
+        }
+        match sqlite_code.map(|code| code & 0xff) {
+            // SQLITE_FULL
+            Some(13) => Self::Full,
+            // SQLITE_BUSY, SQLITE_LOCKED and their extended codes
+            Some(5 | 6) => Self::Busy,
+            // SQLITE_PERM, SQLITE_READONLY, SQLITE_CANTOPEN, SQLITE_AUTH
+            Some(3 | 8 | 14 | 23) => Self::Unwritable,
+            // SQLITE_CORRUPT, SQLITE_NOTADB
+            Some(11 | 26) => Self::Corrupt,
+            _ => Self::Failed,
+        }
+    }
+
+    /// Whether a new attempt may succeed with no action from the user. Only
+    /// a busy or locked database qualifies, and a caller retries only where
+    /// no work of the failed attempt survived.
+    pub fn retryable(self) -> bool {
+        self == Self::Busy
+    }
+
+    /// The stable code the error envelope carries.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Full => "save_failed",
+            Self::Busy => "storage_busy",
+            Self::Unwritable => "storage_unwritable",
+            Self::Corrupt => "storage_corrupt",
+            Self::Failed => "storage_failed",
+        }
+    }
+
+    pub fn recovery(self) -> &'static str {
+        match self {
+            Self::Full => "check_storage",
+            Self::Busy | Self::Failed => "retry",
+            Self::Unwritable => "check_data_folder",
+            Self::Corrupt => "restore_backup",
+        }
+    }
+}
+
 /// Additive error envelope: unclassified local validation keeps its legacy shape.
 pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if error.downcast_ref::<RestoredSendHeld>().is_some() {
@@ -314,6 +412,10 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if let Some(unavailable) = error.downcast_ref::<HostResourcesUnavailable>() {
         return serde_json::json!({"type":"error","message":unavailable.to_string(),
             "code":"host_resources_unavailable","recovery":"recover_host_resources"});
+    }
+    if let Some(failure) = error.downcast_ref::<StorageFailure>() {
+        return serde_json::json!({"type":"error","message":failure.to_string(),
+            "code":failure.code(),"recovery":failure.recovery()});
     }
     if let Some(failure) = error.downcast_ref::<LifecycleFailure>() {
         return serde_json::json!({"type":"error","message":failure.to_string(),"code":failure,"recovery":failure.recovery()});
@@ -377,5 +479,75 @@ mod failure_tests {
             Failure::RateLimit.recovery(),
             Recovery::WaitThenRetryManually
         );
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_full_disk_reports_disk_space() {
+        for (code, errno) in [
+            (Some(13), None),      // SQLITE_FULL
+            (None, Some(28)),      // ENOSPC
+            (Some(778), Some(28)), // SQLITE_IOERR_WRITE carrying ENOSPC
+        ] {
+            let failure = StorageFailure::classify(code, errno);
+            assert_eq!(failure, StorageFailure::Full, "{code:?} {errno:?}");
+            assert!(failure.to_string().contains("disk space"));
+        }
+        for (code, errno, expected) in [
+            (Some(5), None, StorageFailure::Busy),        // SQLITE_BUSY
+            (Some(517), None, StorageFailure::Busy),      // SQLITE_BUSY_SNAPSHOT
+            (Some(261), None, StorageFailure::Busy),      // SQLITE_BUSY_RECOVERY
+            (Some(6), None, StorageFailure::Busy),        // SQLITE_LOCKED
+            (Some(262), None, StorageFailure::Busy),      // SQLITE_LOCKED_SHAREDCACHE
+            (Some(8), None, StorageFailure::Unwritable),  // SQLITE_READONLY
+            (Some(14), None, StorageFailure::Unwritable), // SQLITE_CANTOPEN
+            (Some(3), None, StorageFailure::Unwritable),  // SQLITE_PERM
+            (None, Some(13), StorageFailure::Unwritable), // EACCES
+            (None, Some(30), StorageFailure::Unwritable), // EROFS
+            (Some(11), None, StorageFailure::Corrupt),    // SQLITE_CORRUPT
+            (Some(26), None, StorageFailure::Corrupt),    // SQLITE_NOTADB
+            (Some(10), None, StorageFailure::Failed),     // SQLITE_IOERR
+            (Some(778), Some(5), StorageFailure::Failed), // SQLITE_IOERR_WRITE with EIO
+            (Some(19), None, StorageFailure::Failed),     // SQLITE_CONSTRAINT
+            (None, None, StorageFailure::Failed),
+        ] {
+            let failure = StorageFailure::classify(code, errno);
+            assert_eq!(failure, expected, "{code:?} {errno:?}");
+            assert!(
+                !failure.to_string().contains("disk space"),
+                "{code:?} {errno:?} must not blame disk space"
+            );
+        }
+    }
+
+    #[test]
+    fn only_busy_is_retried_and_each_class_keeps_its_code() {
+        use StorageFailure::*;
+        let all = [Full, Busy, Unwritable, Corrupt, Failed];
+        let retried: Vec<_> = all.into_iter().filter(|f| f.retryable()).collect();
+        assert_eq!(retried, [Busy]);
+        let codes: Vec<_> = all.iter().map(|f| f.code()).collect();
+        assert_eq!(
+            codes,
+            [
+                "save_failed",
+                "storage_busy",
+                "storage_unwritable",
+                "storage_corrupt",
+                "storage_failed"
+            ]
+        );
+        // A full disk keeps the wording `Failure::SaveFailed` has always sent.
+        assert_eq!(Full.to_string(), Failure::SaveFailed.to_string());
+        for failure in all {
+            assert_eq!(serde_json::to_value(failure).unwrap(), failure.code());
+            let envelope = error_envelope(failure.into());
+            assert_eq!(envelope["code"], failure.code());
+            assert_eq!(envelope["recovery"], failure.recovery());
+        }
     }
 }

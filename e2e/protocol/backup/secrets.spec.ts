@@ -55,7 +55,7 @@ test('a backup withholds secret service values and the restored service needs th
     expect((await readFile(file)).includes(SECRET), file).toBe(false)
   }
   const manifest = await readManifest(bundle)
-  expect(manifest.format_version).toBe(6)
+  expect(manifest.format_version).toBe(7)
   expect(manifest.excluded.join('\n')).toMatch(/secret service environment values/)
   expect(manifest.coverage).toEqual(expect.arrayContaining([
     expect.objectContaining({ store: 'sessions.sqlite#service_secrets', disposition: 'excluded' })]))

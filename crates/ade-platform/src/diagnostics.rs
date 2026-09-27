@@ -245,6 +245,10 @@ pub fn safe_record(value: &serde_json::Value) -> Option<serde_json::Value> {
                 | "provider_outcome_unknown"
                 | "provider_transport_failed"
                 | "save_failed"
+                | "storage_busy"
+                | "storage_unwritable"
+                | "storage_corrupt"
+                | "storage_failed"
         )
     {
         safe.insert("code".into(), code.into());
