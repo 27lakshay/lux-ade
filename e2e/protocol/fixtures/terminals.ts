@@ -181,6 +181,13 @@ export async function settledExit(profile: ScratchProfile, workspaceId: string, 
   return metrics!
 }
 
+/** A rate limit on the PTY relay's reads, lifted when `releaseFile` exists. */
+export interface TtyThrottle {
+  bytesPerTick?: number
+  tickMs?: number
+  releaseFile?: string
+}
+
 /**
  * `ade terminal attach` under a pseudo-terminal, so the CLI sees the TTY it
  * requires. A small Python relay gives the terminal an 80x24 size, copies the
@@ -188,9 +195,15 @@ export async function settledExit(profile: ScratchProfile, workspaceId: string, 
  * The relay is owned by the test's ledger.
  */
 export async function attachThroughTty(profile: ScratchProfile, ledger: ProcessLedger, workspaceId: string,
-  terminalId: string): Promise<{ child: ChildProcess; output: () => string; exited: Promise<number | null> }> {
+  terminalId: string, options: TtyThrottle = {}): Promise<{ child: ChildProcess; output: () => string; exited: Promise<number | null> }> {
+  // With a throttle, the relay reads at most `bytesPerTick` from the PTY per
+  // tick until `releaseFile` exists, so the CLI's TTY writes block and it
+  // reads its terminal stream slower than the terminal produces output.
+  const throttle = options.bytesPerTick === undefined ? 'None'
+    : `(${options.bytesPerTick}, ${options.tickMs ?? 50}, ${JSON.stringify(options.releaseFile ?? '')})`
   const script = [
-    'import fcntl, os, pty, select, struct, sys, termios',
+    'import fcntl, os, pty, select, struct, sys, termios, time',
+    `throttle = ${throttle}`,
     'pid, fd = pty.fork()',
     'if pid == 0:',
     '    os.execv(sys.argv[1], sys.argv[1:])',
@@ -199,13 +212,16 @@ export async function attachThroughTty(profile: ScratchProfile, ledger: ProcessL
     'while True:',
     '    ready = select.select(sources, [], [])[0]',
     '    if fd in ready:',
+    '        limited = throttle is not None and not os.path.exists(throttle[2])',
     '        try:',
-    '            data = os.read(fd, 65536)',
+    '            data = os.read(fd, throttle[0] if limited else 65536)',
     '        except OSError:',
     "            data = b''",
     '        if not data:',
     '            break',
     '        os.write(1, data)',
+    '        if limited:',
+    '            time.sleep(throttle[1] / 1000)',
     '    if 0 in ready:',
     '        data = os.read(0, 65536)',
     '        if data:',
