@@ -38,6 +38,7 @@ mod windows;
 pub use account_switches::SwitchCommit;
 pub use attachments::*;
 pub use bindings::*;
+pub(crate) use conversations::HISTORY_EPOCHS;
 use conversations::*;
 pub use conversations::{QUEUE_DISPATCH_STATUSES, QueueEntry};
 pub use drafts::{DraftContent, Restored};

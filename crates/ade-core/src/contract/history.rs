@@ -137,6 +137,11 @@ pub struct HistoryMatch {
     pub kind: String,
     /// The message's position in its conversation.
     pub sequence: i64,
+    /// The conversation's `history_epoch` when this match was read. A rewind
+    /// reuses sequence numbers, so pass it with `before` to `conversation.get`
+    /// when opening the match: a late match is then refused, not shown at a
+    /// position that now holds another message.
+    pub history_epoch: u64,
     /// A short excerpt of the current message text, or of its review feedback
     /// when only the feedback matched.
     pub excerpt: String,
@@ -440,7 +445,7 @@ mod tests {
         response::<HistorySearch>(
             "history.search",
             json!({"type": "history_search", "results": [{
-                "message_id": "m", "role": "assistant", "kind": "message", "sequence": 4,
+                "message_id": "m", "role": "assistant", "kind": "message", "sequence": 4, "history_epoch": 1,
                 "excerpt": "…the flaky test…", "has_review_feedback": false,
                 "observed_at": null, "provenance": provenance(),
             }], "next_cursor": "2.40", "index": status()}),

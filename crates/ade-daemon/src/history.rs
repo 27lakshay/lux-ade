@@ -62,6 +62,8 @@ impl History {
         db.busy_timeout(Duration::from_secs(5))?;
         let tx = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA)?;
+        // Search reports each conversation's rewind epoch with its matches.
+        tx.execute_batch(crate::store::HISTORY_EPOCHS)?;
         import::ensure_table(&tx)?;
         tx.commit()?;
         let history = Arc::new(Self {
@@ -230,12 +232,14 @@ impl History {
         )?;
         let mut statement = tx.prepare(
             "SELECT history_fts.rowid,d.observed_at,m.data,c.data,
-                    i.native_session_id,i.source_path,i.native_cwd,i.account_id,i.imported_at
+                    i.native_session_id,i.source_path,i.native_cwd,i.account_id,i.imported_at,
+                    COALESCE(e.epoch,0)
              FROM history_fts
              JOIN history_docs d ON d.doc=history_fts.rowid
              JOIN messages m ON m.id=d.message_id
              JOIN conversations c ON c.id=m.conversation_id
              LEFT JOIN history_imports i ON i.conversation_id=c.id
+             LEFT JOIN conversation_history_epochs e ON e.conversation_id=c.id
              WHERE history_fts MATCH ?1 AND (?2 IS NULL OR history_fts.rowid<?2)
                AND (?3 IS NULL OR c.workspace_id=?3)
                AND (?4 IS NULL OR json_extract(c.data,'$.provider')=?4)
@@ -273,6 +277,7 @@ impl History {
                 role: message.role,
                 kind: message.kind,
                 sequence: message.sequence,
+                history_epoch: u64::try_from(row.get::<_, i64>(9)?).unwrap_or(0),
                 excerpt,
             });
             last = Some(doc);
