@@ -3,6 +3,7 @@
 //! terminal key, so a daemon handoff can inspect and stop the same process.
 use ade_core::runtime_protocol::terminal::Command as TerminalCommand;
 use ade_core::{
+    contract::placement::ExecutionHost,
     contract::scripts::{
         OutputCoverage, OutputCoverageReason, OutputCoverageStatus, ScriptInspectRequest,
         ScriptInspection, ScriptList, ScriptListRequest, ScriptRetireRequest, ScriptRetired,
@@ -80,10 +81,16 @@ fn stop_settled(metrics: &Value) -> bool {
         && metrics["exit_status"]["verifying"] != true
 }
 
-fn script_run(workspace_id: &str, run: ScriptRunState, toolchain: Option<Value>) -> Result<Value> {
+fn script_run(
+    workspace_id: &str,
+    host: &ExecutionHost,
+    run: ScriptRunState,
+    toolchain: Option<Value>,
+) -> Result<Value> {
     Ok(serde_json::to_value(ScriptRun {
         tag: Default::default(),
         workspace_id: workspace_id.to_owned(),
+        execution_host: host.clone(),
         run,
         toolchain,
     })?)
@@ -126,8 +133,11 @@ fn output_coverage(metrics: &Value, durable: &Value) -> OutputCoverage {
     }
 }
 
+/// Runs one `script.*` operation for a workspace on `host`, the execution
+/// host its placement resolves to.
 pub fn command(
     workspace: WorkspaceRecord,
+    host: &ExecutionHost,
     runtime: &Supervisor,
     subscribers: usize,
     request: &Value,
@@ -162,6 +172,7 @@ pub fn command(
             Ok(serde_json::to_value(ScriptRuns {
                 tag: Default::default(),
                 workspace_id: workspace.id,
+                execution_host: host.clone(),
                 runs,
             })?)
         }
@@ -207,6 +218,18 @@ pub fn command(
                     }
                 }
             };
+            // The run knows which workspace, host and run it is.
+            let mut env = env;
+            env.extend([
+                ("ADE_WORKSPACE_ID".to_owned(), workspace.id.clone()),
+                ("ADE_WORKSPACE_ROOT".to_owned(), workspace.root.clone()),
+                (
+                    "ADE_EXECUTION_HOST".to_owned(),
+                    crate::placement::env_value(host),
+                ),
+                ("ADE_SCRIPT_NAME".to_owned(), name.to_owned()),
+                ("ADE_SCRIPT_RUN_ID".to_owned(), run_id.clone()),
+            ]);
             let launch = Launch {
                 transfer_id: transfer_id.clone(),
                 program,
@@ -249,7 +272,7 @@ pub fn command(
                 "Script launch returned another transfer identity"
             );
             let run = run_state(&json!({"metrics":result["metrics"]}), &run_id);
-            script_run(&workspace.id, run, toolchain)
+            script_run(&workspace.id, host, run, toolchain)
         }
         "script.inspect" => {
             let inspect: ScriptInspectRequest = decode(request, MISSING_RUN_ID)?;
@@ -289,6 +312,7 @@ pub fn command(
             Ok(serde_json::to_value(ScriptInspection {
                 tag: Default::default(),
                 workspace_id: workspace.id.clone(),
+                execution_host: host.clone(),
                 run,
                 output: tail,
                 output_coverage: output_coverage(&item["metrics"], &durable),
@@ -311,7 +335,7 @@ pub fn command(
                 .to_owned();
             if item["metrics"]["exit_status"]["kind"] == "unknown" && stop_settled(&item["metrics"])
             {
-                return script_run(&workspace.id, run_state(item, run_id), None);
+                return script_run(&workspace.id, host, run_state(item, run_id), None);
             }
             if item["metrics"]["shell_running"] == true {
                 runtime.command(TerminalCommand::Stop {
@@ -328,7 +352,7 @@ pub fn command(
                     "Script run changed during stop"
                 );
                 if stop_settled(&item["metrics"]) {
-                    return script_run(&workspace.id, run_state(item, run_id), None);
+                    return script_run(&workspace.id, host, run_state(item, run_id), None);
                 }
                 if Instant::now() >= deadline {
                     bail!("Script has not exited; retry stop to confirm cleanup");

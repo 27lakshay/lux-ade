@@ -366,6 +366,15 @@ fn validate_resource(resource: &PlacedResource) -> Result<()> {
     Ok(())
 }
 
+/// The host as `ADE_EXECUTION_HOST` gives it to services and scripts:
+/// `local`, or the remote host's registry ID (which is never `local`).
+pub fn env_value(host: &ExecutionHost) -> String {
+    match host {
+        ExecutionHost::Local {} => "local".into(),
+        ExecutionHost::Remote { host_id } => host_id.clone(),
+    }
+}
+
 pub fn name(host: &ExecutionHost) -> String {
     match host {
         ExecutionHost::Local {} => "this Mac".into(),

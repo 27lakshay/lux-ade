@@ -10408,6 +10408,18 @@ export interface ScriptInspection {
    */
   durable_output: unknown
   /**
+   * An execution host. `local` is the host this daemon runs on; a remote host
+   * is named by its `remote.host.*` registry ID.
+   */
+  execution_host:
+    | {
+        kind: 'local'
+      }
+    | {
+        host_id: string
+        kind: 'remote'
+      }
+  /**
    * The runtime's exit outcome (`kind` is `success`, `failure`, `signaled`
    * or `unknown`), present once the runtime reports one.
    */
@@ -10478,6 +10490,18 @@ export interface ScriptRetired {
  */
 export interface ScriptRun {
   /**
+   * An execution host. `local` is the host this daemon runs on; a remote host
+   * is named by its `remote.host.*` registry ID.
+   */
+  execution_host:
+    | {
+        kind: 'local'
+      }
+    | {
+        host_id: string
+        kind: 'remote'
+      }
+  /**
    * The runtime's exit outcome (`kind` is `success`, `failure`, `signaled`
    * or `unknown`), present once the runtime reports one.
    */
@@ -10528,6 +10552,18 @@ export interface ScriptRunState {
  * The `script.runs` reply.
  */
 export interface ScriptRuns {
+  /**
+   * An execution host. `local` is the host this daemon runs on; a remote host
+   * is named by its `remote.host.*` registry ID.
+   */
+  execution_host:
+    | {
+        kind: 'local'
+      }
+    | {
+        host_id: string
+        kind: 'remote'
+      }
   runs: ScriptRunState[]
   /**
    * The `script_runs` type tag.
@@ -10622,6 +10658,11 @@ export interface Service {
      */
     ports: string[]
     program: string
+    /**
+     * Names of `env` entries whose values are secret. Replies show each one
+     * as [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.
+     */
+    secret_env?: string[]
   }
   hostname: string
   /**
@@ -10688,6 +10729,11 @@ export interface ServiceConfigureRequest {
      */
     ports?: string[]
     program: string
+    /**
+     * Names of `env` entries whose values are secret. Replies show each one
+     * as [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.
+     */
+    secret_env?: string[]
   }
   name: string
   op: 'service.configure'
@@ -10822,6 +10868,18 @@ export interface ServiceProxy {
    * Present, as `port_occupied`, only from `service.proxy.inspect` on a blocked route.
    */
   availability?: ProxyAvailability | null
+  /**
+   * An execution host. `local` is the host this daemon runs on; a remote host
+   * is named by its `remote.host.*` registry ID.
+   */
+  execution_host:
+    | {
+        kind: 'local'
+      }
+    | {
+        host_id: string
+        kind: 'remote'
+      }
   /**
    * The `runtime` type tag.
    */

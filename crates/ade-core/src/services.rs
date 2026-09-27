@@ -1,8 +1,8 @@
-use anyhow::{Result, ensure};
+use anyhow::{Result, bail, ensure};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     path::{Component, Path, PathBuf},
 };
 
@@ -17,6 +17,10 @@ pub struct Config {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Names of `env` entries whose values are secret. Replies show each one
+    /// as [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub secret_env: BTreeSet<String>,
     #[serde(default = "default_cwd")]
     pub cwd: String,
     /// Environment variables that receive stable, host-local TCP ports.
@@ -42,6 +46,8 @@ pub struct HealthPolicy {
     pub timeout_ms: u64,
     pub interval_ms: u64,
 }
+/// What replies show in place of a secret environment value.
+pub const REDACTED: &str = "[redacted]";
 fn default_cwd() -> String {
     ".".into()
 }
@@ -74,6 +80,10 @@ impl Config {
                     .iter()
                     .all(|(k, v)| env_name(k) && !k.starts_with("ADE_") && text(v, 8192)),
             "Invalid service environment"
+        );
+        ensure!(
+            self.secret_env.iter().all(|k| self.env.contains_key(k)),
+            "Secret service environment names must be configured environment variables"
         );
         ensure!(
             self.ports.len() <= 8
@@ -143,6 +153,39 @@ impl Config {
         );
         Ok(())
     }
+    /// This configuration as replies show it: secret values replaced by
+    /// [`REDACTED`].
+    pub fn redacted(&self) -> Self {
+        let mut shown = self.clone();
+        for key in &self.secret_env {
+            if let Some(value) = shown.env.get_mut(key) {
+                *value = REDACTED.into();
+            }
+        }
+        shown
+    }
+    /// Replaces each secret value sent as [`REDACTED`] with the value stored
+    /// for it, so a client can save a configuration it read without knowing
+    /// its secrets. A secret with no stored value is refused, never saved as
+    /// the placeholder.
+    pub fn keep_secrets(&mut self, stored: Option<&Config>) -> Result<()> {
+        for key in &self.secret_env {
+            let Some(value) = self.env.get_mut(key) else {
+                continue;
+            };
+            if value != REDACTED {
+                continue;
+            }
+            match stored
+                .filter(|stored| stored.secret_env.contains(key))
+                .and_then(|stored| stored.env.get(key))
+            {
+                Some(kept) => value.clone_from(kept),
+                None => bail!("Secret {key} has no stored value; send its value"),
+            }
+        }
+        Ok(())
+    }
     pub fn directory(&self, root: &str) -> Result<PathBuf> {
         self.validate()?;
         let root = Path::new(root).canonicalize()?;
@@ -174,4 +217,60 @@ pub struct Service {
     /// URLs placed in the environment of the currently reserved service run.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub launch_peers: BTreeMap<String, String>,
+}
+impl Service {
+    /// This service as replies and feed frames show it; see [`Config::redacted`].
+    pub fn redacted(&self) -> Self {
+        Self {
+            config: self.config.redacted(),
+            ..self.clone()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(env: &[(&str, &str)], secret: &[&str]) -> Config {
+        Config {
+            program: "serve".into(),
+            args: Vec::new(),
+            env: env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            secret_env: secret.iter().map(|k| k.to_string()).collect(),
+            cwd: ".".into(),
+            ports: Vec::new(),
+            peers: BTreeMap::new(),
+            health: None,
+        }
+    }
+
+    #[test]
+    fn secret_values_are_redacted_and_kept_only_from_a_stored_secret() {
+        let stored = config(&[("TOKEN", "s3cret"), ("MODE", "dev")], &["TOKEN"]);
+        stored.validate().unwrap();
+        let shown = stored.redacted();
+        assert_eq!(shown.env["TOKEN"], REDACTED);
+        assert_eq!(shown.env["MODE"], "dev");
+        assert!(!serde_json::to_string(&shown).unwrap().contains("s3cret"));
+
+        // Saving what was shown keeps the stored secret.
+        let mut edited = shown.clone();
+        edited.env.insert("MODE".into(), "prod".into());
+        edited.keep_secrets(Some(&stored)).unwrap();
+        assert_eq!(edited.env["TOKEN"], "s3cret");
+        // A new value replaces it.
+        let mut replaced = config(&[("TOKEN", "n3w")], &["TOKEN"]);
+        replaced.keep_secrets(Some(&stored)).unwrap();
+        assert_eq!(replaced.env["TOKEN"], "n3w");
+        // The placeholder never becomes a stored value.
+        assert!(shown.clone().keep_secrets(None).is_err());
+        let plain = config(&[("TOKEN", "visible")], &[]);
+        assert!(shown.clone().keep_secrets(Some(&plain)).is_err());
+        // A secret name must be a configured variable.
+        assert!(config(&[], &["TOKEN"]).validate().is_err());
+    }
 }

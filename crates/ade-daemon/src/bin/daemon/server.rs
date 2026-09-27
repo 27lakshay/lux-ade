@@ -113,6 +113,18 @@ fn runtime_reply<T: serde::de::DeserializeOwned + serde::Serialize>(
     Ok(serde_json::to_value(typed)?)
 }
 
+/// Adds the routed service's execution host to a runtime `service_proxy`
+/// reply; the runtime does not know host placement.
+fn routed(
+    mut reply: Value,
+    host: &ade_core::contract::placement::ExecutionHost,
+) -> anyhow::Result<Value> {
+    if let Some(fields) = reply.as_object_mut() {
+        fields.insert("execution_host".into(), serde_json::to_value(host)?);
+    }
+    runtime_reply::<ServiceProxy>(reply)
+}
+
 /// Narrows a port the daemon already bounded to the runtime protocol's `u16`.
 fn port(value: u64) -> anyhow::Result<u16> {
     u16::try_from(value).map_err(|_| anyhow::anyhow!("Port {value} is out of range"))
@@ -1016,8 +1028,17 @@ impl Host {
             .into())
     }
 
-    fn proxy_service(&self, workspace: &str, name: &str, variable: &str) -> anyhow::Result<Value> {
+    /// Lists the workspace's services for one routed service, and returns the
+    /// execution host they run on. A route only ever targets a service on
+    /// this host.
+    fn proxy_service(
+        &self,
+        workspace: &str,
+        name: &str,
+        variable: &str,
+    ) -> anyhow::Result<(Value, ade_core::contract::placement::ExecutionHost)> {
         self.sessions.ensure_workspace_bound(workspace)?;
+        let host = self.sessions.execution_host(workspace)?;
         let listed = self
             .sessions
             .command(&json!({"op":"service.list","workspace_id":workspace}))?;
@@ -1029,7 +1050,7 @@ impl Host {
             service["ports"][variable].as_u64().is_some(),
             "Service has no configured port variable"
         );
-        Ok(listed)
+        Ok((listed, host))
     }
 
     fn proxy_ensure(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1068,7 +1089,7 @@ impl Host {
                 decode_request(request, &[SERVICE_NAME, PORT_VARIABLE])?;
             (ensure.workspace_id, ensure.name, ensure.port_variable, None)
         };
-        let listed = self.proxy_service(&workspace, &name, &variable)?;
+        let (listed, host) = self.proxy_service(&workspace, &name, &variable)?;
         let service = listed["services"]
             .as_array()
             .unwrap()
@@ -1102,19 +1123,22 @@ impl Host {
             }
             None => ("", 0),
         };
-        runtime_reply::<ServiceProxy>(self.runtime.command(Proxy::Ensure(ProxyEnsure {
-            target: ProxyTarget {
-                workspace_id: workspace,
-                service_name: name,
-                port_variable: variable,
-            },
-            service_identity: identity.into(),
-            target_port: port(target_port)?,
-            remap,
-            expected_route_identity: expected_route_identity.into(),
-            expected_route_port: port(expected_route_port)?,
-            daemon_socket: self.daemon_socket()?,
-        }))?)
+        routed(
+            self.runtime.command(Proxy::Ensure(ProxyEnsure {
+                target: ProxyTarget {
+                    workspace_id: workspace,
+                    service_name: name,
+                    port_variable: variable,
+                },
+                service_identity: identity.into(),
+                target_port: port(target_port)?,
+                remap,
+                expected_route_identity: expected_route_identity.into(),
+                expected_route_port: port(expected_route_port)?,
+                daemon_socket: self.daemon_socket()?,
+            }))?,
+            &host,
+        )
     }
 
     fn proxy_inspect(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1122,11 +1146,15 @@ impl Host {
             decode_request(request, &[SERVICE_NAME, PORT_VARIABLE])?;
         self.sessions
             .ensure_workspace_bound(&inspect.workspace_id)?;
-        runtime_reply::<ServiceProxy>(self.runtime.command(Proxy::Inspect(ProxyTarget {
-            workspace_id: inspect.workspace_id,
-            service_name: inspect.name,
-            port_variable: inspect.port_variable,
-        }))?)
+        let host = self.sessions.execution_host(&inspect.workspace_id)?;
+        routed(
+            self.runtime.command(Proxy::Inspect(ProxyTarget {
+                workspace_id: inspect.workspace_id,
+                service_name: inspect.name,
+                port_variable: inspect.port_variable,
+            }))?,
+            &host,
+        )
     }
 
     fn proxy_retire(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1159,6 +1187,7 @@ impl Host {
     fn proxy_recovery_retry(&self, request: &Value) -> anyhow::Result<Value> {
         let retry: ServiceProxyRecoveryRetryRequest = decode_request(request, ROUTE_FIELDS)?;
         self.sessions.ensure_workspace_bound(&retry.workspace_id)?;
+        let host = self.sessions.execution_host(&retry.workspace_id)?;
         let (route_id, identity, target_port, proxy_port) = expected_route(
             &retry.expected_route_id,
             &retry.expected_service_identity,
@@ -1176,12 +1205,14 @@ impl Host {
             expected_target_port: port(target_port)?,
             expected_proxy_port: port(proxy_port)?,
         };
-        runtime_reply::<ServiceProxy>(self.runtime.command(Proxy::RecoveryRetry(
-            ProxyRecoveryRetry {
-                route,
-                daemon_socket: self.daemon_socket()?,
-            },
-        ))?)
+        routed(
+            self.runtime
+                .command(Proxy::RecoveryRetry(ProxyRecoveryRetry {
+                    route,
+                    daemon_socket: self.daemon_socket()?,
+                }))?,
+            &host,
+        )
     }
 
     fn proxy_recovery_reset(&self, request: &Value) -> anyhow::Result<Value> {
@@ -1214,7 +1245,7 @@ impl Host {
             target.name.as_str(),
             target.port_variable.as_str(),
         );
-        let listed = self.proxy_service(workspace, name, variable)?;
+        let (listed, _) = self.proxy_service(workspace, name, variable)?;
         anyhow::ensure!(
             listed["states"][name]["state"] == "running",
             "Managed service is unavailable"

@@ -727,6 +727,7 @@ impl Sessions {
                 );
             }
             let workspace = self.workspace(string("workspace_id")?)?;
+            let host = self.execution_host(&workspace.id)?;
             let register = |run_id: &str| -> Result<()> {
                 self.ensure_workspace_bound(&workspace.id)?;
                 let lease = self.worktrees.agent_lease(&workspace.root)?;
@@ -755,6 +756,7 @@ impl Sessions {
             };
             return crate::scripts::command(
                 workspace.clone(),
+                &host,
                 &self.runtime,
                 self.subscribers.load(Ordering::Relaxed),
                 request,
