@@ -88,7 +88,8 @@ impl Event {
             ActivityKind::OperationUnknown => "unknown",
             ActivityKind::ApprovalRequested
             | ActivityKind::QuestionRequested
-            | ActivityKind::SnoozeEnded => return None,
+            | ActivityKind::SnoozeEnded
+            | ActivityKind::AccountSwitched => return None,
         };
         Some(Self {
             kind: HookEvent::TurnSettled,

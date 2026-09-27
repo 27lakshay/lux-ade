@@ -30,6 +30,20 @@ pub fn operations() -> Vec<OperationSpec> {
             "account.disable",
             Tier::IdempotentCommand,
         ),
+        // Reports whether and how a conversation could switch account; changes nothing.
+        OperationSpec::new::<AccountSwitchPreviewRequest, AccountSwitchPreview>(
+            "account.switch.preview",
+            Tier::Query,
+        ),
+        // Rebinds a conversation to another account for future turns (F026).
+        OperationSpec::new::<AccountSwitchRequest, AccountSwitched>(
+            "account.switch",
+            Tier::EffectCommand,
+        ),
+        OperationSpec::new::<AccountSwitchListRequest, AccountSwitches>(
+            "account.switch.list",
+            Tier::Query,
+        ),
     ]
 }
 
@@ -76,6 +90,130 @@ pub struct AccountVerifyRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct AccountDisableRequest {
     pub account_id: String,
+}
+
+/// How a conversation keeps going after an account switch.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchContinuity {
+    /// The adapter declares that its native session continues under another
+    /// account; the native session ID is kept.
+    NativeContinuation,
+    /// The next turn opens a new native session under the new account. ADE
+    /// sends a bounded excerpt of the ADE transcript with that turn; the
+    /// earlier native session, its tool state and hidden context do not carry over.
+    NewNativeSession,
+}
+
+/// Whether ADE still owes the new native session the transferred context.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextTransfer {
+    /// Nothing to transfer: native continuation, or an empty transcript.
+    None,
+    /// The next turn's prompt carries the excerpt.
+    Pending,
+    /// The provider acknowledged a turn that carried the excerpt.
+    Delivered,
+    /// A later switch replaced this one before its excerpt was delivered.
+    Superseded,
+}
+
+/// `account.switch.preview`: ask how a conversation could move to an account.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AccountSwitchPreviewRequest {
+    pub conversation_id: String,
+    /// The account the conversation would use for future turns.
+    pub account_id: String,
+}
+
+/// `account.switch`: rebind a conversation to another account of the same
+/// provider for future turns. Refused while a turn is active.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AccountSwitchRequest {
+    /// Caller-chosen; reuse it only to retry the same switch.
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub account_id: String,
+    /// The conversation's current account, or null for a legacy ambient
+    /// conversation. Any other current account refuses the switch.
+    #[serde(default)]
+    pub expected_account_id: Option<String>,
+    /// The target account's `generation` from the preview or `account.list`.
+    pub expected_generation: u64,
+    /// The continuity the preview offered. The daemon refuses any other.
+    pub continuity: SwitchContinuity,
+}
+
+/// `account.switch.list`: the switches recorded for a conversation.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AccountSwitchListRequest {
+    pub conversation_id: String,
+}
+
+/// One recorded account switch: the provenance of a conversation's account.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct AccountSwitch {
+    /// The operation ID that made the switch.
+    pub id: String,
+    pub conversation_id: String,
+    pub provider: String,
+    /// Null when the conversation used the legacy ambient account.
+    pub from_account_id: Option<String>,
+    pub from_generation: Option<u64>,
+    pub to_account_id: String,
+    pub to_generation: u64,
+    pub continuity: SwitchContinuity,
+    /// The native session the conversation used before the switch.
+    pub previous_native_session: Option<String>,
+    pub context_transfer: ContextTransfer,
+    /// How many ADE transcript messages the excerpt carries.
+    pub context_messages: u32,
+    /// True when older messages did not fit the excerpt.
+    pub context_truncated: bool,
+    /// True when the switch stopped the conversation's idle Agent process.
+    pub agent_stopped: bool,
+    /// What does and does not carry over, in words a user can read.
+    pub disclosure: String,
+    pub created_at: i64,
+}
+
+wire_tag!(AccountSwitchPreviewTag, "account_switch_preview");
+wire_tag!(AccountSwitchedTag, "account_switched");
+wire_tag!(AccountSwitchesTag, "account_switches");
+
+/// The `account.switch.preview` reply. Exactly one of `continuity` and
+/// `refusal` is set.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AccountSwitchPreview {
+    #[serde(rename = "type")]
+    pub tag: AccountSwitchPreviewTag,
+    pub conversation_id: String,
+    pub from_account_id: Option<String>,
+    pub to_account_id: String,
+    /// Pass as `expected_generation`.
+    pub to_generation: u64,
+    pub continuity: Option<SwitchContinuity>,
+    pub refusal: Option<String>,
+    /// The adapter's declared account-switch support and its note.
+    pub capability: super::providers::Capability,
+    pub disclosure: Option<String>,
+}
+
+/// The `account.switch` reply. A retry with the same operation ID returns it again.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AccountSwitched {
+    #[serde(rename = "type")]
+    pub tag: AccountSwitchedTag,
+    pub switch: AccountSwitch,
+}
+
+/// The `account.switch.list` reply, oldest first.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct AccountSwitches {
+    #[serde(rename = "type")]
+    pub tag: AccountSwitchesTag,
+    pub switches: Vec<AccountSwitch>,
 }
 
 wire_tag!(ProvidersTag, "providers");
@@ -176,6 +314,22 @@ mod tests {
         assert_eq!(full.expected_identity, Some(json!({"email":"x"})));
         let bare: AccountVerifyRequest = serde_json::from_value(json!({"account_id":"a"})).unwrap();
         assert!(bare.expected_generation.is_none() && bare.expected_identity.is_none());
+    }
+
+    #[test]
+    fn switch_contracts_keep_their_wire_shape() {
+        round_trip::<AccountSwitched>(json!({"type":"account_switched","switch":{
+            "id":"op","conversation_id":"c","provider":"claude","from_account_id":null,
+            "from_generation":null,"to_account_id":"a","to_generation":1,
+            "continuity":"new_native_session","previous_native_session":"s",
+            "context_transfer":"pending","context_messages":2,"context_truncated":false,
+            "agent_stopped":true,"disclosure":"d","created_at":5}}));
+        let request: AccountSwitchRequest = serde_json::from_value(json!({"operation_id":"o",
+            "conversation_id":"c","account_id":"a","expected_generation":0,
+            "continuity":"native_continuation"}))
+        .unwrap();
+        assert_eq!(request.expected_account_id, None);
+        assert_eq!(request.continuity, SwitchContinuity::NativeContinuation);
     }
 
     #[test]

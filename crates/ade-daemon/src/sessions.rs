@@ -28,6 +28,7 @@ use std::{
     },
 };
 
+mod account_switch;
 mod accounts;
 mod activity;
 mod agents;
@@ -737,6 +738,7 @@ impl Sessions {
             | "service.remove" => self.service_command(request),
             "provider.list" | "account.list" | "account.create" | "account.inspect"
             | "account.verify" | "account.disable" => self.account_command(request),
+            op if op.starts_with("account.switch") => self.account_switch_command(request),
             "catalog.get"
             | "workspace.rebind.list"
             | "repository.rebind.list"
