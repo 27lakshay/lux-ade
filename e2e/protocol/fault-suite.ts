@@ -98,7 +98,6 @@ export const faultClasses: FaultClass[] = [
     { fault: 'expire a cursor', tests: [
       t('files-git/browse.spec.ts', 'changed paths invalidate cursors, a daemon restart drops them')] },
     { fault: 'late pages after a rewind', tests: [
-      t('context/rewind.spec.ts', 'a Codex conversation rewind drops later messages and invalidates stale history pages'),
       t('restarts/stale-rewind.spec.ts', 'an older page and a search cursor read before a rewind cannot resurrect'),
       t('restarts/stale-rewind.spec.ts', 'a snapshot delayed across a rewind never shows the removed turns as current')] },
     { fault: 'late pages after a deletion', tests: [
