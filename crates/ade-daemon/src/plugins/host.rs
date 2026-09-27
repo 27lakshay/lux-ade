@@ -734,6 +734,13 @@ impl Hosts {
         }
     }
 
+    /// Stores `spec` for the next start of its generation's host, as after a
+    /// setting change. A running host keeps its activation until restarted.
+    pub fn refresh(&self, spec: &LaunchSpec) {
+        let slot = self.slot(&spec.plugin_id);
+        refresh(&mut slot.state.lock().unwrap(), spec);
+    }
+
     /// Clears the crash count, stops any running host after a bounded
     /// deactivation, and starts a fresh attempt.
     pub fn restart(&self, spec: &LaunchSpec) -> Result<(), String> {
@@ -883,18 +890,36 @@ fn adopt<'a>(
             spec.plugin_id, spec.generation
         ));
     }
-    if spec.generation != state.supervision.generation || state.spec.is_none() {
-        if spec.generation != state.supervision.generation {
-            // The caller drains the older host instead of cutting its calls off.
-            if let Some(old) = retire(state) {
-                state.superseded = Some(old);
-            }
-            state.supervision = Supervision::new(spec.generation);
-            state.last_error = None;
+    if spec.generation != state.supervision.generation {
+        // The caller drains the older host instead of cutting its calls off.
+        if let Some(old) = retire(state) {
+            state.superseded = Some(old);
         }
-        state.spec = Some(spec.clone());
+        state.supervision = Supervision::new(spec.generation);
+        state.last_error = None;
     }
+    // Always keep the newest spec for the current generation: its settings
+    // may have changed since the running host activated, and the next start
+    // (explicit or after a crash) must activate with them.
+    state.spec = Some(spec.clone());
     Ok(state)
+}
+
+/// Replaces the stored spec when `spec` belongs to the slot's current,
+/// unretired generation, so the next start activates with its settings. It
+/// never creates a slot, changes supervision, or touches a running host.
+fn refresh(guard: &mut Option<SlotState>, spec: &LaunchSpec) -> bool {
+    match guard.as_mut() {
+        Some(state)
+            if state.supervision.generation == spec.generation
+                && spec.generation > state.retired_through
+                && state.spec.is_some() =>
+        {
+            state.spec = Some(spec.clone());
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Marks the running attempt as stopped on purpose and takes its process.
@@ -962,5 +987,45 @@ mod tests {
             adopt(&mut slot, &spec(4)).unwrap().supervision.generation,
             4
         );
+    }
+
+    fn with_setting(generation: u64, value: i64) -> LaunchSpec {
+        let mut spec = spec(generation);
+        spec.settings.insert("foo".into(), json!(value));
+        spec
+    }
+
+    /// Setting foo=2 then restarting generation N must activate with foo=2,
+    /// not the spec stored when foo was 1.
+    #[test]
+    fn adopting_the_same_generation_takes_its_new_settings() {
+        let mut slot = None;
+        adopt(&mut slot, &with_setting(5, 1)).unwrap();
+        slot.as_mut().unwrap().supervision.crashes = 2;
+        let state = adopt(&mut slot, &with_setting(5, 2)).unwrap();
+        assert_eq!(state.spec.as_ref().unwrap().settings["foo"], json!(2));
+        assert_eq!(state.supervision.generation, 5);
+        assert_eq!(state.supervision.crashes, 2, "supervision is kept");
+    }
+
+    /// A setting change reaches crash restarts, which never call adopt.
+    #[test]
+    fn refreshing_updates_only_the_current_generation() {
+        let mut slot = None;
+        assert!(
+            !refresh(&mut slot, &with_setting(5, 2)),
+            "no slot is created"
+        );
+        assert!(slot.is_none());
+        adopt(&mut slot, &with_setting(5, 1)).unwrap();
+        assert!(!refresh(&mut slot, &with_setting(4, 3)));
+        assert!(!refresh(&mut slot, &with_setting(6, 3)));
+        assert!(refresh(&mut slot, &with_setting(5, 2)));
+        assert_eq!(
+            slot.as_ref().unwrap().spec.as_ref().unwrap().settings["foo"],
+            json!(2)
+        );
+        slot.as_mut().unwrap().retired_through = 5;
+        assert!(!refresh(&mut slot, &with_setting(5, 9)));
     }
 }
