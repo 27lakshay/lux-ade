@@ -1,6 +1,6 @@
 import {
+  dailyUseCommand,
   openTerminalConnection,
-  requestDaemon,
   type TerminalConnection,
   type TerminalFrame,
 } from '@ade/client'
@@ -247,15 +247,16 @@ export async function runTerminalCommand(socketPath: string, area: string | unde
       rest[2].startsWith('--') || rest[2].length > 256) {
       throw new CliError('usage', 'terminal create requires WORKSPACE_ID --request-id ID.')
     }
-    const response = await requestDaemon(socketPath, 'terminal.create', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), request_id: rest[2],
+    const response = await dailyUseCommand(socketPath, {
+      op: 'terminal.create', workspace_id: required(rest[0], 'WORKSPACE_ID'), operation_id: rest[2],
     })
     return { ...response, request_id: rest[2] }
   }
   if (area === 'terminal' && action === 'operation') {
     if (rest.length !== 2) throw new CliError('usage', 'terminal operation requires WORKSPACE_ID REQUEST_ID.')
-    return requestDaemon(socketPath, 'terminal.operation', {
-      workspace_id: required(rest[0], 'WORKSPACE_ID'), request_id: required(rest[1], 'REQUEST_ID'),
+    return dailyUseCommand(socketPath, {
+      op: 'terminal.operation', workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      operation_id: required(rest[1], 'REQUEST_ID'),
     })
   }
   if (area === 'terminal' && (action === 'stop' || action === 'retire')) {
@@ -263,7 +264,7 @@ export async function runTerminalCommand(socketPath: string, area: string | unde
     const workspaceId = required(rest[0], 'WORKSPACE_ID')
     const terminalId = required(rest[1], 'TERMINAL_ID')
     await terminalTarget(socketPath, workspaceId, terminalId)
-    return requestDaemon(socketPath, `terminal.${action}`, { workspace_id: workspaceId, terminal_id: terminalId })
+    return dailyUseCommand(socketPath, { op: `terminal.${action}`, workspace_id: workspaceId, terminal_id: terminalId })
   }
   if (area === 'terminal' && ['inspect', 'send', 'resize'].includes(action ?? '')) {
     const workspaceId = required(rest[0], 'WORKSPACE_ID')

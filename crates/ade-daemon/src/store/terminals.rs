@@ -1,4 +1,43 @@
 use super::*;
+use crate::receipts;
+
+const TERMINAL_CREATE: &str = "terminal.create";
+const CREATION_CONFLICT: &str = "Terminal request ID conflicts with another workspace";
+
+fn valid_creation_id(operation_id: &str) -> Result<()> {
+    ensure!(
+        !operation_id.is_empty() && operation_id.len() <= 256,
+        "Invalid terminal request ID"
+    );
+    Ok(())
+}
+
+/// The `(workspace_id, terminal_id)` stored in a `terminal.create` receipt.
+fn creation(result: &Value) -> Result<(String, String)> {
+    let field = |key: &str| {
+        result[key]
+            .as_str()
+            .map(str::to_owned)
+            .context("Terminal creation receipt is invalid")
+    };
+    Ok((field("workspace_id")?, field("terminal_id")?))
+}
+
+/// Creations recorded in `terminal_creations` before receipts moved to the
+/// shared `operations` table. Nothing writes that table any more.
+fn legacy_creation(
+    connection: &Connection,
+    operation_id: &str,
+) -> Result<Option<(String, String)>> {
+    connection
+        .query_row(
+            "SELECT workspace_id,terminal_id FROM terminal_creations WHERE request_id=?1",
+            [operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(Into::into)
+}
 
 pub(crate) fn forget_terminal_views(tx: &Connection, terminal: &str) -> Result<()> {
     for mut window in all::<WindowRecord>(tx, "SELECT data FROM windows")? {
@@ -91,40 +130,51 @@ impl Store {
         );
         self.retire_terminal(workspace_id, run_id)
     }
-    pub fn terminal_creation(&self, request_id: &str) -> Result<Option<(String, String)>> {
-        ensure!(
-            !request_id.is_empty() && request_id.len() <= 256,
-            "Invalid terminal request ID"
-        );
-        self.connection
+    /// The workspace and terminal a settled `terminal.create` receipt produced.
+    pub fn terminal_creation(&self, operation_id: &str) -> Result<Option<(String, String)>> {
+        valid_creation_id(operation_id)?;
+        let receipt: Option<(String, String, Option<String>)> = self
+            .connection
             .query_row(
-                "SELECT workspace_id,terminal_id FROM terminal_creations WHERE request_id=?1",
-                [request_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                "SELECT op,status,result FROM operations WHERE id=?1",
+                [operation_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
-            .optional()
-            .map_err(Into::into)
+            .optional()?;
+        match receipt {
+            Some((op, status, Some(result)))
+                if op == TERMINAL_CREATE && status == receipts::Status::Settled.as_str() =>
+            {
+                creation(&serde_json::from_str(&result)?).map(Some)
+            }
+            Some(_) => Ok(None),
+            None => legacy_creation(&self.connection, operation_id),
+        }
     }
-    pub fn create_terminal(&self, id: &str, request_id: Option<&str>) -> Result<String> {
+    /// Adds a terminal to a workspace. With an operation ID, the receipt
+    /// commits with the new terminal, and a retry returns the same terminal.
+    pub fn create_terminal(&self, id: &str, operation_id: Option<&str>) -> Result<String> {
         let tx = self.connection.unchecked_transaction()?;
-        if let Some(request_id) = request_id {
-            ensure!(
-                !request_id.is_empty() && request_id.len() <= 256,
-                "Invalid terminal request ID"
-            );
-            let prior: Option<(String, String)> = tx
-                .query_row(
-                    "SELECT workspace_id,terminal_id FROM terminal_creations WHERE request_id=?1",
-                    [request_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?;
-            if let Some((workspace_id, terminal_id)) = prior {
-                ensure!(
-                    workspace_id == id,
-                    "Terminal request ID conflicts with another workspace"
-                );
+        let now = now_ms();
+        if let Some(operation_id) = operation_id {
+            valid_creation_id(operation_id)?;
+            if let Some((workspace_id, terminal_id)) = legacy_creation(&tx, operation_id)? {
+                ensure!(workspace_id == id, CREATION_CONFLICT);
                 return Ok(terminal_id);
+            }
+            let payload = json!({"workspace_id": id});
+            match receipts::begin(&tx, operation_id, TERMINAL_CREATE, &payload, None, now)? {
+                receipts::Admission::New => {}
+                receipts::Admission::Replay(receipt) => {
+                    let result = receipt
+                        .result
+                        .context("Terminal creation has no recorded result")?;
+                    return Ok(creation(&result)?.1);
+                }
+                receipts::Admission::Conflict => anyhow::bail!(CREATION_CONFLICT),
+                receipts::Admission::Expired => {
+                    anyhow::bail!("Terminal request ID has expired; use a new ID")
+                }
             }
         }
         let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
@@ -138,10 +188,13 @@ impl Store {
             "UPDATE workspaces SET data=?1 WHERE id=?2",
             params![encode(&workspace)?, id],
         )?;
-        if let Some(request_id) = request_id {
-            tx.execute(
-                "INSERT INTO terminal_creations VALUES(?1,?2,?3)",
-                params![request_id, id, terminal],
+        if let Some(operation_id) = operation_id {
+            receipts::settle(
+                &tx,
+                operation_id,
+                receipts::Status::Settled,
+                Some(&json!({"workspace_id": id, "terminal_id": terminal})),
+                now,
             )?;
         }
         tx.commit()?;

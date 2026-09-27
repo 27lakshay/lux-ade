@@ -609,6 +609,96 @@
       ],
       "type": "object"
     },
+    "TerminalCreateRequest": {
+      "additionalProperties": false,
+      "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID; `request_id` is accepted as\nits older name. Without one, every call creates a new terminal.",
+      "properties": {
+        "op": {
+          "const": "terminal.create"
+        },
+        "operation_id": {
+          "description": "Absent or a string of 1 to 256 bytes; the daemon rejects `null`.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "TerminalCreated": {
+      "description": "The `terminal.create` reply.",
+      "properties": {
+        "terminal_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `ack` type tag.",
+          "enum": [
+            "ack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "terminal_id"
+      ],
+      "type": "object"
+    },
+    "TerminalOperation": {
+      "description": "The `terminal.operation` reply. `request_id` echoes the requested\noperation ID under its older name.",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "type": {
+          "description": "The `terminal_operation` type tag.",
+          "enum": [
+            "terminal_operation"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id",
+        "request_id",
+        "terminal_id"
+      ],
+      "type": "object"
+    },
+    "TerminalOperationRequest": {
+      "additionalProperties": false,
+      "description": "`terminal.operation`: read the terminal a `terminal.create` receipt produced.\n`request_id` is accepted as the older name of `operation_id`.",
+      "properties": {
+        "op": {
+          "const": "terminal.operation"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "operation_id"
+      ],
+      "type": "object"
+    },
     "TerminalOwner": {
       "properties": {
         "runtime_instance": {
@@ -625,6 +715,73 @@
         "terminal_id",
         "transfer_id",
         "runtime_instance"
+      ],
+      "type": "object"
+    },
+    "TerminalRestartRequest": {
+      "additionalProperties": false,
+      "description": "`terminal.restart`: start a new shell in an exited terminal. Without\n`workspace_id` the daemon uses its default workspace; without\n`terminal_id` it uses the workspace's primary terminal.",
+      "properties": {
+        "op": {
+          "const": "terminal.restart"
+        },
+        "terminal_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "TerminalRetireRequest": {
+      "additionalProperties": false,
+      "description": "`terminal.retire`: remove a stopped terminal from its workspace.",
+      "properties": {
+        "op": {
+          "const": "terminal.retire"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "terminal_id"
+      ],
+      "type": "object"
+    },
+    "TerminalStopRequest": {
+      "additionalProperties": false,
+      "description": "`terminal.stop`: stop a workspace terminal's shell.",
+      "properties": {
+        "op": {
+          "const": "terminal.stop"
+        },
+        "terminal_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "terminal_id"
       ],
       "type": "object"
     },
@@ -717,6 +874,41 @@
       "domain": "conversations",
       "name": "agent.answer",
       "request": "AgentAnswerRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.create",
+      "request": "TerminalCreateRequest",
+      "response": "TerminalCreated",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.operation",
+      "request": "TerminalOperationRequest",
+      "response": "TerminalOperation",
+      "tier": "query"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.restart",
+      "request": "TerminalRestartRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.stop",
+      "request": "TerminalStopRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.retire",
+      "request": "TerminalRetireRequest",
       "response": "Ack",
       "tier": "effect_command"
     }

@@ -1,3 +1,7 @@
+use ade_core::contract::conversations::Ack;
+use ade_core::contract::terminals::{
+    TerminalRestartRequest, TerminalRetireRequest, TerminalStopRequest, runtime as terminal_runtime,
+};
 use ade_daemon::{
     runtime::{self, Supervisor},
     sessions::Sessions,
@@ -19,6 +23,20 @@ use std::{
     },
     time::{Duration, Instant},
 };
+/// Decodes a terminal request into its typed contract. An absent field keeps
+/// the `Missing <field>` wording the handlers used before typing.
+fn decode_terminal_request<T: serde::de::DeserializeOwned>(request: &Value) -> anyhow::Result<T> {
+    T::deserialize(request).map_err(|error| {
+        let text = error.to_string();
+        match text
+            .strip_prefix("missing field `")
+            .and_then(|rest| rest.split('`').next())
+        {
+            Some(field) => anyhow::anyhow!("Missing {field}"),
+            None => anyhow::anyhow!("Invalid request: {text}"),
+        }
+    })
+}
 fn error_response(error: impl Into<anyhow::Error>) -> Value {
     ade_core::error::error_envelope(error.into())
 }
@@ -917,23 +935,24 @@ impl Host {
 
     fn refresh_leases(&self) -> anyhow::Result<()> {
         let mut leases = self.leases.lock().unwrap();
-        let state = self.runtime.command(json!({"op":"terminal.list"}))?;
         let mut live = HashSet::new();
-        for terminal in state["terminals"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("Invalid terminal catalogue"))?
-        {
-            let workspace: ade_daemon::model::WorkspaceRecord =
-                serde_json::from_value(terminal["workspace"].clone())?;
+        for terminal in self.runtime_terminals()? {
+            let workspace = terminal.workspace;
             if self.sessions.ensure_workspace_bound(&workspace.id).is_err() {
                 continue;
             }
-            if terminal["metrics"]["shell_running"] != true {
+            if terminal.metrics["shell_running"] != true {
                 let stored = self.sessions.workspace(&workspace.id)?;
                 if stored.terminal_id != workspace.terminal_id
                     && !stored.extra_terminals.contains(&workspace.terminal_id)
                 {
-                    self.runtime.command(json!({"op":"terminal.retire","workspace_id":workspace.id,"terminal_id":workspace.terminal_id}))?;
+                    self.runtime.command(
+                        terminal_runtime::Command::Retire {
+                            workspace_id: workspace.id,
+                            terminal_id: workspace.terminal_id,
+                        }
+                        .to_value(),
+                    )?;
                 }
                 continue;
             }
@@ -991,8 +1010,20 @@ impl Host {
             None
         };
         self.sessions.ensure_workspace_bound(id)?;
-        let result=self.runtime.command(json!({"op":if restart {"terminal.restart"}else{"terminal.ensure"},"workspace":workspace,"terminal_key":key,"existing_only":reserved,"session_subscribers":self.sessions.subscribers.load(Ordering::Relaxed)}))?;
-        if result["metrics"]["shell_running"] == true
+        let ensure = terminal_runtime::Ensure {
+            workspace,
+            terminal_key: key,
+            existing_only: reserved,
+            session_subscribers: self.sessions.subscribers.load(Ordering::Relaxed),
+        };
+        let command = if restart {
+            terminal_runtime::Command::Restart(ensure)
+        } else {
+            terminal_runtime::Command::Ensure(ensure)
+        };
+        let result: terminal_runtime::Ensured =
+            serde_json::from_value(self.runtime.command(command.to_value())?)?;
+        if result.metrics["shell_running"] == true
             && let Some(lease) = lease
         {
             leases.insert(id.to_owned(), lease);
@@ -1014,44 +1045,84 @@ impl Host {
             "stopping":self.stopping.load(Ordering::Acquire),"terminals":terminals["terminals"],"agents":agents["agents"]}),
         )
     }
+    /// The runtime's terminal catalogue.
+    fn runtime_terminals(&self) -> anyhow::Result<Vec<terminal_runtime::Terminal>> {
+        let state = self
+            .runtime
+            .command(terminal_runtime::Command::List.to_value())?;
+        let state: terminal_runtime::Terminals = serde_json::from_value(state)
+            .map_err(|_| anyhow::anyhow!("Invalid terminal catalogue"))?;
+        Ok(state.terminals)
+    }
+    /// `terminal.restart`: start a new shell in an exited workspace terminal.
+    fn terminal_restart(&self, request: &Value) -> anyhow::Result<Value> {
+        let restart: TerminalRestartRequest = decode_terminal_request(request)?;
+        self.ensure_terminal(
+            restart
+                .workspace_id
+                .as_deref()
+                .unwrap_or(&self.default_workspace),
+            restart.terminal_id.as_deref(),
+            true,
+        )?;
+        Ok(serde_json::to_value(Ack::default())?)
+    }
+    /// `terminal.stop` and `terminal.retire`.
     fn terminal_lifecycle(&self, request: &Value) -> anyhow::Result<Value> {
+        let stop = request["op"] == "terminal.stop";
+        let (workspace, terminal) = if stop {
+            let TerminalStopRequest {
+                workspace_id,
+                terminal_id,
+            } = decode_terminal_request(request)?;
+            (workspace_id, terminal_id)
+        } else {
+            let TerminalRetireRequest {
+                workspace_id,
+                terminal_id,
+            } = decode_terminal_request(request)?;
+            (workspace_id, terminal_id)
+        };
         let _leases = self.leases.lock().unwrap();
-        let workspace = request["workspace_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing workspace_id"))?;
-        self.sessions.ensure_workspace_bound(workspace)?;
-        let terminal = request["terminal_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing terminal_id"))?;
-        let stored = self.sessions.workspace(workspace)?;
-        if request["op"] == "terminal.stop" {
+        self.sessions.ensure_workspace_bound(&workspace)?;
+        let stored = self.sessions.workspace(&workspace)?;
+        if stop {
             anyhow::ensure!(
-                stored.terminal_id == terminal
-                    || stored.extra_terminals.iter().any(|id| id == terminal),
+                stored.terminal_id == terminal || stored.extra_terminals.contains(&terminal),
                 "Unknown workspace terminal"
             );
-            return self.runtime.command(request.clone());
+            self.runtime.command(
+                terminal_runtime::Command::Stop {
+                    workspace_id: workspace,
+                    terminal_id: terminal,
+                }
+                .to_value(),
+            )?;
+            return Ok(serde_json::to_value(Ack::default())?);
         }
         anyhow::ensure!(
-            !self.sessions.terminal_reserved(terminal)?,
+            !self.sessions.terminal_reserved(&terminal)?,
             "Remove its service, or return the Conversation to the GUI before retiring this terminal"
         );
-        let state = self.runtime.command(json!({"op":"terminal.list"}))?;
-        if let Some(entry) = state["terminals"].as_array().and_then(|items| {
-            items.iter().find(|entry| {
-                entry["workspace"]["id"] == workspace
-                    && entry["workspace"]["terminal_id"] == terminal
-            })
+        if let Some(entry) = self.runtime_terminals()?.iter().find(|entry| {
+            entry.workspace.id == workspace && entry.workspace.terminal_id == terminal
         }) {
             anyhow::ensure!(
-                entry["metrics"]["shell_running"] != true,
+                !entry.shell_running(),
                 "Stop the shell before retiring its terminal"
             );
         }
         // Commit retirement before releasing runtime storage. If the daemon
         // dies between these steps, refresh_leases reaps the exited orphan.
-        self.sessions.retire_terminal(workspace, terminal)?;
-        self.runtime.command(request.clone())
+        self.sessions.retire_terminal(&workspace, &terminal)?;
+        self.runtime.command(
+            terminal_runtime::Command::Retire {
+                workspace_id: workspace,
+                terminal_id: terminal,
+            }
+            .to_value(),
+        )?;
+        Ok(serde_json::to_value(Ack::default())?)
     }
     fn prepare_restart(&self, request: &Value) -> anyhow::Result<Value> {
         let _gate = self
@@ -1218,14 +1289,7 @@ fn handle_connection(mut stream: UnixStream, host: Arc<Host>) -> anyhow::Result<
                 } else if op == "terminal.stop" || op == "terminal.retire" {
                     host.terminal_lifecycle(&request)
                 } else if op == "terminal.restart" {
-                    host.ensure_terminal(
-                        request["workspace_id"]
-                            .as_str()
-                            .unwrap_or(&host.default_workspace),
-                        request["terminal_id"].as_str(),
-                        true,
-                    )
-                    .map(|()| json!({"type":"ack"}))
+                    host.terminal_restart(&request)
                 } else if matches!(
                     op,
                     "browser.owner.register"
