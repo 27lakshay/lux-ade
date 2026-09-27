@@ -10540,6 +10540,421 @@
       ],
       "type": "object"
     },
+    "RetentionApply": {
+      "description": "The `retention.apply` reply.",
+      "properties": {
+        "applied_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "complete": {
+          "description": "True only when every previewed item was removed.",
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "removed_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "replayed": {
+          "description": "True when this reply is the stored result of an earlier apply.",
+          "type": "boolean"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/RetentionItemResult"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `retention_apply` type tag.",
+          "enum": [
+            "retention_apply"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "generation",
+        "replayed",
+        "complete",
+        "results",
+        "removed_bytes",
+        "applied_at"
+      ],
+      "type": "object"
+    },
+    "RetentionApplyRequest": {
+      "additionalProperties": false,
+      "description": "`retention.apply`: remove exactly the set a preview listed.",
+      "properties": {
+        "generation": {
+          "description": "The preview's `generation`. A changed candidate set is refused.",
+          "type": "string"
+        },
+        "op": {
+          "const": "retention.apply"
+        }
+      },
+      "required": [
+        "op",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "RetentionCandidate": {
+      "description": "One item the preview would remove.",
+      "properties": {
+        "bytes": {
+          "description": "Estimated bytes freed. Attachment and skill bytes free space inside the\nprofile database, which the file keeps until SQLite reuses it.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "The attachment ID, skill content hash, service log key or log file name.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RetentionKind"
+        },
+        "last_activity_at": {
+          "description": "When the item last changed, in Unix milliseconds, when known.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why retention selected it.",
+          "type": "string"
+        },
+        "scope": {
+          "description": "The owning Conversation for an attachment; otherwise null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "scope",
+        "bytes",
+        "last_activity_at",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "RetentionItemResult": {
+      "description": "One item's result.",
+      "properties": {
+        "bytes": {
+          "description": "Bytes freed; zero unless removed.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RetentionKind"
+        },
+        "outcome": {
+          "$ref": "#/$defs/RetentionOutcome"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "outcome",
+        "bytes",
+        "error"
+      ],
+      "type": "object"
+    },
+    "RetentionKind": {
+      "description": "What a retention candidate is.",
+      "oneOf": [
+        {
+          "const": "attachment",
+          "description": "An uploaded attachment nothing references, past the in-flight grace period.",
+          "type": "string"
+        },
+        {
+          "const": "skill_blob",
+          "description": "Skill bundle files no installed skill references.",
+          "type": "string"
+        },
+        {
+          "const": "service_log",
+          "description": "Durable service or script output whose terminal no workspace, service\nor runtime terminal still owns.",
+          "type": "string"
+        },
+        {
+          "const": "diagnostic_log",
+          "description": "A rotated diagnostic log file past its age limit.",
+          "type": "string"
+        }
+      ]
+    },
+    "RetentionObservedLog": {
+      "description": "A log the daemon observes but does not remove, with its size.",
+      "properties": {
+        "bytes": {
+          "description": "Null when the file is absent or unreadable.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "bytes",
+        "note"
+      ],
+      "type": "object"
+    },
+    "RetentionOutcome": {
+      "description": "What happened to one previewed item.",
+      "oneOf": [
+        {
+          "const": "removed",
+          "description": "Removed, and its absence was checked.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Not removed; `error` says why. Preview again to retry.",
+          "type": "string"
+        }
+      ]
+    },
+    "RetentionPolicy": {
+      "description": "The limits this daemon applies.",
+      "properties": {
+        "attachment_grace_ms": {
+          "description": "An unreferenced attachment younger than this may be an in-flight upload.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "candidate_limit": {
+          "description": "Most candidates one preview lists.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "diagnostic_log_max_age_ms": {
+          "description": "Rotated diagnostic logs older than this can go; the newest file of each\nprocess is always kept.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "receipt_prune_interval_ms": {
+          "description": "How often the daemon prunes receipts.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "receipt_retention_ms": {
+          "description": "Effect receipts older than this lose their body and keep an expired marker.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "service_log_idle_ms": {
+          "description": "A service log must be idle this long before it can go.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "receipt_retention_ms",
+        "receipt_prune_interval_ms",
+        "attachment_grace_ms",
+        "service_log_idle_ms",
+        "diagnostic_log_max_age_ms",
+        "candidate_limit"
+      ],
+      "type": "object"
+    },
+    "RetentionPreview": {
+      "description": "The `retention.preview` reply.",
+      "properties": {
+        "candidates": {
+          "description": "Sorted by kind, then ID.",
+          "items": {
+            "$ref": "#/$defs/RetentionCandidate"
+          },
+          "type": "array"
+        },
+        "generated_at": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        },
+        "generation": {
+          "description": "Names this exact candidate set for `retention.apply`.",
+          "type": "string"
+        },
+        "observed_logs": {
+          "items": {
+            "$ref": "#/$defs/RetentionObservedLog"
+          },
+          "type": "array"
+        },
+        "policy": {
+          "$ref": "#/$defs/RetentionPolicy"
+        },
+        "receipts": {
+          "items": {
+            "$ref": "#/$defs/RetentionReceiptStore"
+          },
+          "type": "array"
+        },
+        "reclaimable_bytes": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "Whether more items were eligible than `candidate_limit`; apply again\nafter a new preview to reach them.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The `retention_preview` type tag.",
+          "enum": [
+            "retention_preview"
+          ],
+          "type": "string"
+        },
+        "withheld": {
+          "items": {
+            "$ref": "#/$defs/RetentionWithheld"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "generation",
+        "generated_at",
+        "policy",
+        "candidates",
+        "truncated",
+        "reclaimable_bytes",
+        "withheld",
+        "receipts",
+        "observed_logs"
+      ],
+      "type": "object"
+    },
+    "RetentionPreviewRequest": {
+      "additionalProperties": false,
+      "description": "`retention.preview`: list what retention would remove now.",
+      "properties": {
+        "op": {
+          "const": "retention.preview"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "RetentionReceiptStore": {
+      "description": "One store's receipt pruning state.",
+      "properties": {
+        "last_error": {
+          "description": "Why the last scheduled prune failed; null after a success.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_expired": {
+          "description": "Receipts the last prune expired.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "last_pruned_at": {
+          "description": "When the schedule last pruned this store, in Unix milliseconds.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "past_retention": {
+          "description": "Receipts past retention that still hold a body; null when unreadable.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "store": {
+          "description": "`sessions`, `lifecycle`, `review` or `plugins`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "store",
+        "past_retention",
+        "last_pruned_at",
+        "last_expired",
+        "last_error"
+      ],
+      "type": "object"
+    },
+    "RetentionWithheld": {
+      "description": "A category the preview did not evaluate, and why. Nothing of that kind\nis a candidate until the reason clears.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RetentionKind"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "reason"
+      ],
+      "type": "object"
+    },
     "ReviewCommitRequest": {
       "additionalProperties": false,
       "description": "`review.commit`: commit the reviewed staged index.",
@@ -17559,6 +17974,20 @@
       "request": "RemoteHostStartRequest",
       "response": "RemoteHostStart",
       "tier": "effect_command"
+    },
+    {
+      "domain": "retention",
+      "name": "retention.preview",
+      "request": "RetentionPreviewRequest",
+      "response": "RetentionPreview",
+      "tier": "query"
+    },
+    {
+      "domain": "retention",
+      "name": "retention.apply",
+      "request": "RetentionApplyRequest",
+      "response": "RetentionApply",
+      "tier": "idempotent_command"
     },
     {
       "domain": "browser",

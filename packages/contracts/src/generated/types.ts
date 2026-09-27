@@ -332,6 +332,18 @@ export type ContractDefinition =
   | ResourcesInspectRequest
   | ResourcesRegistryAcceptRequest
   | RestartPrepared
+  | RetentionApply
+  | RetentionApplyRequest
+  | RetentionCandidate
+  | RetentionItemResult
+  | RetentionKind
+  | RetentionObservedLog
+  | RetentionOutcome
+  | RetentionPolicy
+  | RetentionPreview
+  | RetentionPreviewRequest
+  | RetentionReceiptStore
+  | RetentionWithheld
   | ReviewCommitRequest
   | ReviewDiff
   | ReviewDiffPage
@@ -917,6 +929,14 @@ export type TokenReference =
       }
     }
 export type StartOutcome = 'running' | 'failed' | 'unknown'
+/**
+ * What a retention candidate is.
+ */
+export type RetentionKind = 'attachment' | 'skill_blob' | 'service_log' | 'diagnostic_log'
+/**
+ * What happened to one previewed item.
+ */
+export type RetentionOutcome = 'removed' | 'failed'
 /**
  * What one diff line is.
  */
@@ -5254,6 +5274,193 @@ export interface RestartPrepared {
   [k: string]: unknown
 }
 /**
+ * The `retention.apply` reply.
+ */
+export interface RetentionApply {
+  applied_at: number
+  /**
+   * True only when every previewed item was removed.
+   */
+  complete: boolean
+  generation: string
+  removed_bytes: number
+  /**
+   * True when this reply is the stored result of an earlier apply.
+   */
+  replayed: boolean
+  results: RetentionItemResult[]
+  /**
+   * The `retention_apply` type tag.
+   */
+  type: 'retention_apply'
+  [k: string]: unknown
+}
+/**
+ * One item's result.
+ */
+export interface RetentionItemResult {
+  /**
+   * Bytes freed; zero unless removed.
+   */
+  bytes: number
+  error: string | null
+  id: string
+  kind: RetentionKind
+  outcome: RetentionOutcome
+  [k: string]: unknown
+}
+/**
+ * `retention.apply`: remove exactly the set a preview listed.
+ */
+export interface RetentionApplyRequest {
+  /**
+   * The preview's `generation`. A changed candidate set is refused.
+   */
+  generation: string
+  op: 'retention.apply'
+}
+/**
+ * One item the preview would remove.
+ */
+export interface RetentionCandidate {
+  /**
+   * Estimated bytes freed. Attachment and skill bytes free space inside the
+   * profile database, which the file keeps until SQLite reuses it.
+   */
+  bytes: number
+  /**
+   * The attachment ID, skill content hash, service log key or log file name.
+   */
+  id: string
+  kind: RetentionKind
+  /**
+   * When the item last changed, in Unix milliseconds, when known.
+   */
+  last_activity_at: number | null
+  /**
+   * Why retention selected it.
+   */
+  reason: string
+  /**
+   * The owning Conversation for an attachment; otherwise null.
+   */
+  scope: string | null
+  [k: string]: unknown
+}
+/**
+ * A log the daemon observes but does not remove, with its size.
+ */
+export interface RetentionObservedLog {
+  /**
+   * Null when the file is absent or unreadable.
+   */
+  bytes: number | null
+  name: string
+  note: string
+  [k: string]: unknown
+}
+/**
+ * The limits this daemon applies.
+ */
+export interface RetentionPolicy {
+  /**
+   * An unreferenced attachment younger than this may be an in-flight upload.
+   */
+  attachment_grace_ms: number
+  /**
+   * Most candidates one preview lists.
+   */
+  candidate_limit: number
+  /**
+   * Rotated diagnostic logs older than this can go; the newest file of each
+   * process is always kept.
+   */
+  diagnostic_log_max_age_ms: number
+  /**
+   * How often the daemon prunes receipts.
+   */
+  receipt_prune_interval_ms: number
+  /**
+   * Effect receipts older than this lose their body and keep an expired marker.
+   */
+  receipt_retention_ms: number
+  /**
+   * A service log must be idle this long before it can go.
+   */
+  service_log_idle_ms: number
+  [k: string]: unknown
+}
+/**
+ * The `retention.preview` reply.
+ */
+export interface RetentionPreview {
+  /**
+   * Sorted by kind, then ID.
+   */
+  candidates: RetentionCandidate[]
+  generated_at: number
+  /**
+   * Names this exact candidate set for `retention.apply`.
+   */
+  generation: string
+  observed_logs: RetentionObservedLog[]
+  policy: RetentionPolicy
+  receipts: RetentionReceiptStore[]
+  reclaimable_bytes: number
+  /**
+   * Whether more items were eligible than `candidate_limit`; apply again
+   * after a new preview to reach them.
+   */
+  truncated: boolean
+  /**
+   * The `retention_preview` type tag.
+   */
+  type: 'retention_preview'
+  withheld: RetentionWithheld[]
+  [k: string]: unknown
+}
+/**
+ * One store's receipt pruning state.
+ */
+export interface RetentionReceiptStore {
+  /**
+   * Why the last scheduled prune failed; null after a success.
+   */
+  last_error: string | null
+  /**
+   * Receipts the last prune expired.
+   */
+  last_expired: number | null
+  /**
+   * When the schedule last pruned this store, in Unix milliseconds.
+   */
+  last_pruned_at: number | null
+  /**
+   * Receipts past retention that still hold a body; null when unreadable.
+   */
+  past_retention: number | null
+  /**
+   * `sessions`, `lifecycle`, `review` or `plugins`.
+   */
+  store: string
+  [k: string]: unknown
+}
+/**
+ * A category the preview did not evaluate, and why. Nothing of that kind
+ * is a candidate until the reason clears.
+ */
+export interface RetentionWithheld {
+  kind: RetentionKind
+  reason: string
+  [k: string]: unknown
+}
+/**
+ * `retention.preview`: list what retention would remove now.
+ */
+export interface RetentionPreviewRequest {
+  op: 'retention.preview'
+}
+/**
  * `review.commit`: commit the reviewed staged index.
  */
 export interface ReviewCommitRequest {
@@ -7464,7 +7671,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "retention.preview" | "retention.apply" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -7638,6 +7845,8 @@ export interface RequestByOperation {
   "remote.host.pair": RemotePairRequest
   "remote.host.revoke": RemoteRevokeRequest
   "remote.host.start": RemoteHostStartRequest
+  "retention.preview": RetentionPreviewRequest
+  "retention.apply": RetentionApplyRequest
   "browser.diagnostics.attach": BrowserDiagnosticsAttachRequest
   "browser.diagnostics.detach": BrowserDiagnosticsDetachRequest
   "browser.diagnostics.read": BrowserDiagnosticsReadRequest
@@ -7818,6 +8027,8 @@ export interface ResponseByOperation {
   "remote.host.pair": RemotePairingReply
   "remote.host.revoke": RemotePairingReply
   "remote.host.start": RemoteHostStart
+  "retention.preview": RetentionPreview
+  "retention.apply": RetentionApply
   "browser.diagnostics.attach": BrowserDiagnosticsState
   "browser.diagnostics.detach": BrowserDiagnosticsState
   "browser.diagnostics.read": BrowserDiagnostics

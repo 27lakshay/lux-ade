@@ -39,6 +39,7 @@ mod leases;
 mod mcp;
 mod orchestration;
 mod remote;
+mod retention;
 mod services;
 mod skills;
 mod terminals;
@@ -209,6 +210,7 @@ impl Sessions {
                 }
             }
         });
+        sessions.start_retention_schedule();
         sessions.wake_queue();
         Ok(sessions)
     }
@@ -753,6 +755,7 @@ impl Sessions {
             | "window.save"
             | "window.close" => self.conversation_command(request),
             op if op.starts_with("orchestration.") => self.orchestration_command(request),
+            op if op.starts_with("retention.") => self.retention_command(request),
             _ => bail!("Unknown session operation"),
         }
     }

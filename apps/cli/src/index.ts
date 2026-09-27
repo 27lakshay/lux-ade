@@ -17,6 +17,7 @@ import { orchestrationUsage, runOrchestrationCommand } from './commands/orchestr
 import { historyUsage, runHistoryCommand } from './commands/history.js'
 import { importUsage, runImportCommand } from './commands/imports.js'
 import { runUsageCommand, usageAnalyticsUsage } from './commands/usage.js'
+import { retentionUsage, runRetentionCommand } from './commands/retention.js'
 import { listenerUsage, runListenerCommand, runServiceCommand, serviceUsage } from './commands/services.js'
 import { runSkillCommand, skillUsage } from './commands/skills.js'
 import { pluginUsage, runPluginCommand } from './commands/plugins.js'
@@ -89,6 +90,7 @@ const usage = [
   orchestrationUsage,
   diagnosticsUsage,
   remoteConnectUsage,
+  retentionUsage,
   requestUsage,
   usageFooter,
 ].join('')
@@ -223,6 +225,7 @@ const commandAreas = [
   runPluginCommand,
   runOrchestrationCommand,
   runDiagnosticsCommand,
+  runRetentionCommand,
 ] as const
 
 async function run(socketPath: string, words: string[]): Promise<CommandResult> {

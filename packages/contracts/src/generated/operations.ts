@@ -173,6 +173,8 @@ export const operations = {
   "remote.host.pair": { tier: "idempotent_command", domain: "remote", request: "RemotePairRequest", response: "RemotePairingReply" },
   "remote.host.revoke": { tier: "idempotent_command", domain: "remote", request: "RemoteRevokeRequest", response: "RemotePairingReply" },
   "remote.host.start": { tier: "effect_command", domain: "remote", request: "RemoteHostStartRequest", response: "RemoteHostStart" },
+  "retention.preview": { tier: "query", domain: "retention", request: "RetentionPreviewRequest", response: "RetentionPreview" },
+  "retention.apply": { tier: "idempotent_command", domain: "retention", request: "RetentionApplyRequest", response: "RetentionApply" },
   "browser.diagnostics.attach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsAttachRequest", response: "BrowserDiagnosticsState" },
   "browser.diagnostics.detach": { tier: "idempotent_command", domain: "browser", request: "BrowserDiagnosticsDetachRequest", response: "BrowserDiagnosticsState" },
   "browser.diagnostics.read": { tier: "query", domain: "browser", request: "BrowserDiagnosticsReadRequest", response: "BrowserDiagnostics" },
