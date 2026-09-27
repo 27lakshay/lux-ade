@@ -390,7 +390,7 @@ impl Sessions {
                     .collect();
                 reply(&ServiceList {
                     tag: Default::default(),
-                    services,
+                    services: services.iter().map(Service::redacted).collect(),
                     states,
                 })
             }
@@ -835,7 +835,7 @@ impl Sessions {
             const CHANGED: &str = "Service changed during inspection; refresh";
             return Ok(ServiceInspection {
                 tag: Default::default(),
-                service: current,
+                service: current.redacted(),
                 execution_state: ExecutionState::Unavailable,
                 execution_error: Some(CHANGED.into()),
                 readiness: Readiness {
@@ -889,7 +889,7 @@ impl Sessions {
         let health_monitor = Self::monitored_health(&d, &service, state);
         Ok(ServiceInspection {
             tag: Default::default(),
-            service,
+            service: service.redacted(),
             execution_state: state,
             execution_error,
             readiness: Readiness {
@@ -1210,6 +1210,8 @@ impl Sessions {
             name: name.to_owned(),
         };
         let key = (workspace.to_owned(), name.to_owned());
+        // A workspace recorded on another host never launches its services here.
+        let host = self.execution_host(workspace)?;
         // Phase 1, under the data lock: validate and read. Runtime calls,
         // listener observation, the worktree lease and the host registry run
         // outside it, so a slow lsof, registry or launch stalls no other
@@ -1329,7 +1331,7 @@ impl Sessions {
             (service, owner, d.store.workspace(workspace)?)
         };
         // Phase 4, without the lock: launch under the durable reservation.
-        let launch = service.launch(&w.root, &peer_endpoints)?;
+        let launch = service.launch(&w.root, &host, &peer_endpoints)?;
         w.terminal_id = owner.terminal_id.clone();
         ports.dispatch()?;
         let result = self.runtime.command(TerminalCommand::Launch {
@@ -1453,7 +1455,7 @@ impl Sessions {
     fn service_changed(&self, d: &Data, service: &Service, metrics: Option<Value>) -> Value {
         json!(ServiceChanged {
             tag: Default::default(),
-            service: service.clone(),
+            service: service.redacted(),
             metrics,
             boot_id: self.boot_id.clone(),
             revision: d.revision,

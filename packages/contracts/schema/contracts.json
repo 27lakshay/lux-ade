@@ -21005,6 +21005,10 @@
         "durable_output": {
           "description": "The durable spool tail, passed through unchanged."
         },
+        "execution_host": {
+          "$ref": "#/$defs/ExecutionHost",
+          "description": "The execution host the workspace's scripts run on, from its placement."
+        },
         "exit_status": {
           "description": "The runtime's exit outcome (`kind` is `success`, `failure`, `signaled`\nor `unknown`), present once the runtime reports one."
         },
@@ -21041,6 +21045,7 @@
       "required": [
         "type",
         "workspace_id",
+        "execution_host",
         "run_id",
         "name",
         "state",
@@ -21143,6 +21148,10 @@
     "ScriptRun": {
       "description": "The `script.start` and `script.stop` reply.",
       "properties": {
+        "execution_host": {
+          "$ref": "#/$defs/ExecutionHost",
+          "description": "The execution host the workspace's scripts run on, from its placement."
+        },
         "exit_status": {
           "description": "The runtime's exit outcome (`kind` is `success`, `failure`, `signaled`\nor `unknown`), present once the runtime reports one."
         },
@@ -21176,6 +21185,7 @@
       "required": [
         "type",
         "workspace_id",
+        "execution_host",
         "run_id",
         "name",
         "state",
@@ -21223,6 +21233,10 @@
     "ScriptRuns": {
       "description": "The `script.runs` reply.",
       "properties": {
+        "execution_host": {
+          "$ref": "#/$defs/ExecutionHost",
+          "description": "The execution host the workspace's scripts run on, from its placement."
+        },
         "runs": {
           "items": {
             "$ref": "#/$defs/ScriptRunState"
@@ -21243,6 +21257,7 @@
       "required": [
         "type",
         "workspace_id",
+        "execution_host",
         "runs"
       ],
       "type": "object"
@@ -21682,6 +21697,14 @@
             },
             "program": {
               "type": "string"
+            },
+            "secret_env": {
+              "description": "Names of `env` entries whose values are secret. Replies show each one\nas [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
             }
           },
           "required": [
@@ -21851,6 +21874,14 @@
             },
             "program": {
               "type": "string"
+            },
+            "secret_env": {
+              "description": "Names of `env` entries whose values are secret. Replies show each one\nas [`REDACTED`]; sending [`REDACTED`] back keeps the stored value.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
             }
           },
           "required": [
@@ -22105,6 +22136,10 @@
           ],
           "description": "Present, as `port_occupied`, only from `service.proxy.inspect` on a blocked route."
         },
+        "execution_host": {
+          "$ref": "#/$defs/ExecutionHost",
+          "description": "The execution host of the routed service, from its workspace's\nplacement. The runtime omits it; the daemon adds it after checking the\nservice runs on this host."
+        },
         "owner": {
           "description": "The `runtime` type tag.",
           "enum": [
@@ -22158,7 +22193,8 @@
         "owner",
         "service_identity",
         "target_port",
-        "route_id"
+        "route_id",
+        "execution_host"
       ],
       "type": "object"
     },

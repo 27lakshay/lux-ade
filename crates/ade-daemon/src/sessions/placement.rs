@@ -429,6 +429,23 @@ impl Sessions {
         }
     }
 
+    /// The execution host of a workspace whose services and scripts this
+    /// daemon runs. That is always the local host: a workspace recorded on a
+    /// remote host is refused, never run or routed here instead. Call it
+    /// without the data lock held.
+    pub fn execution_host(&self, workspace_id: &str) -> Result<ExecutionHost> {
+        self.placement_store(|connection| match workspace_host(connection, workspace_id)? {
+            WorkspaceHost::Known(ExecutionHost::Local {}) => Ok(ExecutionHost::Local {}),
+            WorkspaceHost::Known(host) => bail!(
+                "Workspace {workspace_id} runs on {}; its services and scripts run there, not on this Mac",
+                decide::name(&host)
+            ),
+            WorkspaceHost::NotApplicable | WorkspaceHost::Unknown(_) => bail!(
+                "Workspace {workspace_id} is neither held here nor recorded on a remote host"
+            ),
+        })
+    }
+
     /// Runs `work` against the profile database under the data lock.
     fn placement_store<T>(&self, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let data = self.data.lock().unwrap();

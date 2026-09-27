@@ -3,6 +3,7 @@
 //! The runtime-facing `proxy.*` calls are daemon-to-runtime and are not typed
 //! here. The daemon forwards the runtime's proxy replies with the shapes below.
 use super::conversations::Ack;
+use super::placement::ExecutionHost;
 use super::{FrameSpec, OperationSpec, Tier};
 use crate::services::{Config, Service};
 use schemars::JsonSchema;
@@ -298,10 +299,11 @@ pub struct ServiceReply {
 }
 
 impl ServiceReply {
+    /// A reply showing `service` with its secret values redacted.
     pub fn service(service: Service) -> Self {
         Self {
             tag: ServiceTag::Tag,
-            service,
+            service: service.redacted(),
             terminal_id: None,
             metrics: None,
             effective_peers: None,
@@ -419,6 +421,10 @@ pub struct ServiceProxy {
     pub service_identity: String,
     pub target_port: u16,
     pub route_id: String,
+    /// The execution host of the routed service, from its workspace's
+    /// placement. The runtime omits it; the daemon adds it after checking the
+    /// service runs on this host.
+    pub execution_host: ExecutionHost,
     /// Present, as `port_occupied`, only from `service.proxy.inspect` on a blocked route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub availability: Option<ProxyAvailability>,
@@ -879,8 +885,12 @@ mod tests {
 
     #[test]
     fn proxy_replies_round_trip() {
-        response::<ServiceProxy>("service.proxy.ensure", proxy());
-        let mut blocked = proxy();
+        let mut routed = proxy();
+        routed["execution_host"] = json!({"kind": "local"});
+        response::<ServiceProxy>("service.proxy.ensure", routed.clone());
+        // A reply without its execution host is refused, never assumed local.
+        assert!(serde_json::from_value::<ServiceProxy>(proxy()).is_err());
+        let mut blocked = routed;
         blocked["url"] = Value::Null;
         blocked["availability"] = json!("port_occupied");
         response::<ServiceProxy>("service.proxy.inspect", blocked);

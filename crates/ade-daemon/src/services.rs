@@ -92,7 +92,7 @@ impl Store {
         workspace: &str,
         name: &str,
         revision: i64,
-        config: Config,
+        mut config: Config,
     ) -> Result<Service> {
         ensure!(
             name_valid(name),
@@ -104,6 +104,7 @@ impl Store {
         let tx =
             rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
         let before = load(&tx, &workspace.id, name)?;
+        config.keep_secrets(before.as_ref().map(|s| &s.config))?;
         for peer in config.peers.values() {
             ensure!(
                 !reaches_service(&tx, &workspace.id, &peer.service, name, &mut Vec::new())?,
@@ -255,6 +256,7 @@ pub trait ServiceExt {
     fn launch(
         &self,
         root: &str,
+        host: &ade_core::contract::placement::ExecutionHost,
         peer_endpoints: &BTreeMap<String, String>,
     ) -> Result<crate::terminal_launch::Launch>;
     fn check_ports(&self) -> Result<()>;
@@ -263,6 +265,7 @@ impl ServiceExt for Service {
     fn launch(
         &self,
         root: &str,
+        host: &ade_core::contract::placement::ExecutionHost,
         peer_endpoints: &BTreeMap<String, String>,
     ) -> Result<crate::terminal_launch::Launch> {
         self.config.directory(root)?;
@@ -278,6 +281,11 @@ impl ServiceExt for Service {
                 .map(|(key, port)| (key.clone(), port.to_string())),
         );
         env.insert("ADE_WORKSPACE_ROOT".into(), root.into());
+        env.insert("ADE_WORKSPACE_ID".into(), self.workspace_id.clone());
+        env.insert(
+            "ADE_EXECUTION_HOST".into(),
+            crate::placement::env_value(host),
+        );
         env.insert("ADE_SERVICE_NAME".into(), self.name.clone());
         env.insert("ADE_SERVICE_HOST".into(), self.hostname.clone());
         env.extend(peer_endpoints.clone());

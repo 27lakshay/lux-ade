@@ -1,4 +1,5 @@
 //! Workspace script contracts: configured scripts and their supervised runs.
+use super::placement::ExecutionHost;
 use super::{FrameSpec, OperationSpec, Tier};
 use crate::scripts::Script;
 use schemars::JsonSchema;
@@ -113,6 +114,8 @@ pub struct ScriptRuns {
     #[serde(rename = "type")]
     pub tag: ScriptRunsTag,
     pub workspace_id: String,
+    /// The execution host the workspace's scripts run on, from its placement.
+    pub execution_host: ExecutionHost,
     pub runs: Vec<ScriptRunState>,
 }
 
@@ -122,6 +125,8 @@ pub struct ScriptRun {
     #[serde(rename = "type")]
     pub tag: ScriptRunTag,
     pub workspace_id: String,
+    /// The execution host the workspace's scripts run on, from its placement.
+    pub execution_host: ExecutionHost,
     #[serde(flatten)]
     pub run: ScriptRunState,
     /// The selected Node toolchain, on `script.start` of a Node-based script.
@@ -170,6 +175,8 @@ pub struct ScriptInspection {
     #[serde(rename = "type")]
     pub tag: ScriptRunTag,
     pub workspace_id: String,
+    /// The execution host the workspace's scripts run on, from its placement.
+    pub execution_host: ExecutionHost,
     #[serde(flatten)]
     pub run: ScriptRunState,
     /// The runtime's live `terminal.tail` reply, passed through unchanged.
@@ -294,7 +301,7 @@ mod tests {
         );
         response::<ScriptRuns>(
             "script.runs",
-            json!({"type": "script_runs", "workspace_id": "w", "runs": [
+            json!({"type": "script_runs", "workspace_id": "w", "execution_host": {"kind": "local"}, "runs": [
                 {"run_id": "r", "name": "dev", "state": "exited", "metrics": metrics(),
                  "exit_status": {"kind": "success", "code": 0}},
                 {"run_id": "s", "name": "", "state": "running", "metrics": {"shell_running": true}},
@@ -302,17 +309,19 @@ mod tests {
         );
         response::<ScriptRun>(
             "script.start",
-            json!({"type": "script_run", "workspace_id": "w", "run_id": "r", "name": "dev",
-                "state": "running", "metrics": {"shell_running": true}, "toolchain": {"node": "22"}}),
+            json!({"type": "script_run", "workspace_id": "w", "execution_host": {"kind": "local"},
+                "run_id": "r", "name": "dev", "state": "running", "metrics": {"shell_running": true}, "toolchain": {"node": "22"}}),
         );
         response::<ScriptRun>(
             "script.stop",
-            json!({"type": "script_run", "workspace_id": "w", "run_id": "r", "name": "dev",
+            json!({"type": "script_run", "workspace_id": "w", "execution_host": {"kind": "local"},
+                "run_id": "r", "name": "dev",
                 "state": "exited", "metrics": metrics(), "exit_status": {"kind": "success", "code": 0}}),
         );
         response::<ScriptInspection>(
             "script.inspect",
-            json!({"type": "script_run", "workspace_id": "w", "run_id": "r", "name": "dev",
+            json!({"type": "script_run", "workspace_id": "w", "execution_host": {"kind": "local"},
+                "run_id": "r", "name": "dev",
                 "state": "exited", "metrics": metrics(), "exit_status": {"kind": "success", "code": 0},
                 "output": {"transfer_id": "transfer_1", "data": "abc"},
                 "output_coverage": {"status": "complete", "reason": null, "produced_bytes": 3,
@@ -321,7 +330,8 @@ mod tests {
         );
         response::<ScriptInspection>(
             "script.inspect",
-            json!({"type": "script_run", "workspace_id": "w", "run_id": "r", "name": "dev",
+            json!({"type": "script_run", "workspace_id": "w", "execution_host": {"kind": "local"},
+                "run_id": "r", "name": "dev",
                 "state": "unknown", "metrics": null, "output": {},
                 "output_coverage": {"status": "incomplete", "reason": "durable_output_unavailable",
                     "produced_bytes": null, "captured_through_offset": null, "returned_start_offset": null},
