@@ -31,6 +31,8 @@ const steps = [
     'js pure tests',
     ['node', '--test', 'packages/*/src/**/*.test.mjs', 'apps/*/src/**/*.test.mjs', 'scripts/*.test.mjs'],
   ],
+  // Renderer stores and components, in headless Chromium (apps/desktop/vitest.config.ts).
+  ['renderer tests', ['pnpm', '--filter', '@ade/desktop', 'test']],
   ['clippy', [...cargo, 'clippy', '--locked', '--workspace', ...features, '--all-targets', '--', '-D', 'warnings']],
   ['legacy rust tests', [...cargo, 'nextest', 'run', '--locked', '--workspace', ...features, '--profile', 'ci']],
 ]
