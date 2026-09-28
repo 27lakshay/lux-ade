@@ -237,6 +237,101 @@ const iconButtonLabel = {
   },
 }
 
+// Class names in any className, however it is built.
+const classesIn = (node) =>
+  stringsIn(node)
+    .flatMap((value) => value.split(/\s+/))
+    .filter(Boolean)
+// 'hover:bg-muted/50' → 'bg-muted'
+const utility = (name) =>
+  name
+    .replace(/^!/, '')
+    .split(':')
+    .at(-1)
+    .replace(/^!/, '')
+    .replace(/\/[\w.[\]]+$/, '')
+
+const TYPE_SIZE = /^text-(xs|sm|base|lg|xl|[2-9]xl|\[[^\]]*\])$/
+
+const typeScale = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'Text sizes come from the type scale.' },
+  },
+  create(context) {
+    return {
+      JSXAttribute(node) {
+        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'className') return
+        const bad = classesIn(node.value).find((name) => TYPE_SIZE.test(utility(name)))
+        if (!bad) return
+        context.report({
+          node,
+          message: `"${bad}" is off the type scale. Use text-meta (11px), text-label (12), text-ui (13), text-body (14) or text-title (15); see shadcn.css.`,
+        })
+      },
+    }
+  },
+}
+
+// The fill steps, darkest to lightest, plus the colours that mark status and diffs.
+const SURFACES = new Set([
+  'sidebar',
+  'background',
+  'card',
+  'popover',
+  'muted',
+  'accent',
+  'secondary',
+  'primary',
+  'destructive',
+  'transparent',
+  'current',
+  'terminal',
+  'attention',
+  'attention-muted',
+  'running',
+  'success',
+  'destructive-muted',
+  'diff-add',
+  'diff-add-muted',
+  'diff-remove',
+  'diff-remove-muted',
+])
+const BORDER = /^(border|divide)(-|$)/
+const BORDER_OFF = new Set(['border-0', 'border-none', 'border-transparent', 'border-hidden'])
+
+const surfaceSteps = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'Surfaces separate by fill steps, not borders or ad hoc colours.' },
+  },
+  create(context) {
+    return {
+      JSXAttribute(node) {
+        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'className') return
+        for (const name of classesIn(node.value)) {
+          const base = utility(name)
+          if (BORDER.test(base) && !BORDER_OFF.has(base)) {
+            context.report({
+              node,
+              message: `"${name}": ADE separates surfaces by fill, not borders. Put the element on the next fill step (bg-card inside a pane, bg-popover for floating) instead.`,
+            })
+            return
+          }
+          const fill = /^bg-(.+)$/.exec(base)?.[1]
+          if (fill && !SURFACES.has(fill)) {
+            context.report({
+              node,
+              message: `"${name}" is not a fill step. Use bg-sidebar, bg-background, bg-card, bg-popover, bg-muted or bg-accent (darkest to lightest), or a status colour.`,
+            })
+            return
+          }
+        }
+      },
+    }
+  },
+}
+
 export default {
   meta: { name: 'ade' },
   rules: {
@@ -247,5 +342,7 @@ export default {
     'icons-from-table': iconsFromTable,
     'icon-size-class': iconSizeClass,
     'icon-button-label': iconButtonLabel,
+    'type-scale': typeScale,
+    'surface-steps': surfaceSteps,
   },
 }

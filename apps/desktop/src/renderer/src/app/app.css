@@ -1,47 +1,5 @@
-/* The app's stylesheet: the shadcn theme (Graphite), ADE's status colours, and what every window
-   needs. */
+/* The app's stylesheet: the theme (shadcn.css), plus what every window needs. */
 @import '../shadcn.css';
-
-/* ADE's own colours, beside the kit's. Status colours belong to the Status component: amber
-   (attention) means "needs you" and nothing else. */
-@theme inline {
-  --color-attention: var(--attention);
-  --color-attention-muted: var(--attention-muted);
-  --color-running: var(--running);
-  --color-success: var(--success);
-  --color-destructive-muted: var(--destructive-muted);
-  --color-diff-add: var(--diff-add);
-  --color-diff-add-muted: var(--diff-add-muted);
-  --color-diff-remove: var(--diff-remove);
-  --color-diff-remove-muted: var(--diff-remove-muted);
-  --color-terminal: var(--terminal);
-}
-
-:root {
-  --attention: oklch(0.606 0.136 65.3);
-  --attention-muted: oklch(0.963 0.028 79.5);
-  --running: oklch(0.561 0.178 260.3);
-  --success: oklch(0.575 0.135 153.8);
-  --destructive-muted: oklch(0.947 0.022 17.5);
-  --diff-add: oklch(0.575 0.135 153.8);
-  --diff-add-muted: oklch(0.954 0.024 159.1);
-  --diff-remove: oklch(0.541 0.191 24.8);
-  --diff-remove-muted: oklch(0.947 0.022 17.5);
-  --terminal: oklch(0.985 0 0);
-}
-
-.dark {
-  --attention: oklch(0.776 0.146 70.8);
-  --attention-muted: oklch(0.776 0.146 70.8 / 7%);
-  --running: oklch(0.717 0.137 257.1);
-  --success: oklch(0.756 0.135 156.5);
-  --destructive-muted: oklch(0.626 0.193 23 / 12%);
-  --diff-add: oklch(0.756 0.135 156.5);
-  --diff-add-muted: oklch(0.756 0.135 156.5 / 10%);
-  --diff-remove: oklch(0.715 0.145 19.3);
-  --diff-remove-muted: oklch(0.626 0.193 23 / 12%);
-  --terminal: oklch(0.165 0.004 285.9);
-}
 
 /* The terminal surface (packages/terminal) builds its elements with Tailwind classes. */
 @source '../../../../../../packages/terminal/src';

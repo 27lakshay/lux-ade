@@ -7,13 +7,13 @@ import type { ReactNode } from 'react'
 export function FullScreen({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <main className="fixed inset-0 flex flex-col bg-background text-foreground">
-      <header className="drag flex h-[52px] shrink-0 items-center justify-end px-4">
-        <Link to="/" className="no-drag text-[13px] text-muted-foreground hover:text-foreground">
+      <header className="drag flex h-(--titlebar-height) shrink-0 items-center justify-end px-4">
+        <Link to="/" className="no-drag text-ui text-muted-foreground hover:text-foreground">
           Back to workspace
         </Link>
       </header>
       <section className="flex-1 overflow-auto px-10 py-6">
-        <h1 className="text-xl font-semibold">{title}</h1>
+        <h1 className="text-title font-semibold">{title}</h1>
         {children}
       </section>
     </main>

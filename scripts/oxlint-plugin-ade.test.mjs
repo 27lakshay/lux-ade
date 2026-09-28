@@ -192,3 +192,48 @@ invalid(
   /aria-label/,
   'fixture.tsx',
 )
+
+valid(
+  'type-scale',
+  'allows the scale and text colours',
+  '<p className="text-ui text-muted-foreground md:text-body" />',
+  'fixture.tsx',
+)
+invalid('type-scale', 'reports a Tailwind size', '<p className="text-sm" />', /off the type scale/, 'fixture.tsx')
+invalid(
+  'type-scale',
+  'reports an arbitrary size inside cn()',
+  '<p className={cn("font-medium", big && "text-[13px]")} />',
+  /off the type scale/,
+  'fixture.tsx',
+)
+invalid(
+  'type-scale',
+  'reports a variant-prefixed size',
+  '<p className="hover:text-lg" />',
+  /off the type scale/,
+  'fixture.tsx',
+)
+
+valid(
+  'surface-steps',
+  'allows fill steps with opacity and variants',
+  '<div className="bg-card hover:bg-accent bg-muted/50 border-0" />',
+  'fixture.tsx',
+)
+invalid('surface-steps', 'reports a border', '<div className="rounded-lg border p-2" />', /not borders/, 'fixture.tsx')
+invalid(
+  'surface-steps',
+  'reports a coloured border side',
+  '<div className="border-t-2 border-border" />',
+  /not borders/,
+  'fixture.tsx',
+)
+invalid('surface-steps', 'reports dividers', '<ul className="divide-y" />', /not borders/, 'fixture.tsx')
+invalid(
+  'surface-steps',
+  'reports a fill off the steps',
+  '<div className="bg-neutral-900" />',
+  /not a fill step/,
+  'fixture.tsx',
+)

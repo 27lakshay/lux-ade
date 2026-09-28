@@ -140,6 +140,8 @@
         "ade/icons-from-table": "error",
         "ade/icon-size-class": "error",
         "ade/icon-button-label": "error",
+        "ade/type-scale": "error",
+        "ade/surface-steps": "error",
         "max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }]
       }
     },
@@ -172,6 +174,8 @@
         "ade/icons-from-table": "off",
         "ade/icon-size-class": "off",
         "ade/icon-button-label": "off",
+        "ade/type-scale": "off",
+        "ade/surface-steps": "off",
         "max-lines": "off"
       }
     },

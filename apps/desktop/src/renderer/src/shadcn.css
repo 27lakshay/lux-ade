@@ -119,6 +119,67 @@
   --sidebar-ring: oklch(0.541 0.014 285.9);
 }
 
+/* ADE's own colours, beside the kit's. Status colours belong to the Status component: amber
+   (attention) means "needs you" and nothing else. */
+@theme inline {
+  --color-attention: var(--attention);
+  --color-attention-muted: var(--attention-muted);
+  --color-running: var(--running);
+  --color-success: var(--success);
+  --color-destructive-muted: var(--destructive-muted);
+  --color-diff-add: var(--diff-add);
+  --color-diff-add-muted: var(--diff-add-muted);
+  --color-diff-remove: var(--diff-remove);
+  --color-diff-remove-muted: var(--diff-remove-muted);
+  --color-terminal: var(--terminal);
+}
+
+:root {
+  --attention: oklch(0.606 0.136 65.3);
+  --attention-muted: oklch(0.963 0.028 79.5);
+  --running: oklch(0.561 0.178 260.3);
+  --success: oklch(0.575 0.135 153.8);
+  --destructive-muted: oklch(0.947 0.022 17.5);
+  --diff-add: oklch(0.575 0.135 153.8);
+  --diff-add-muted: oklch(0.954 0.024 159.1);
+  --diff-remove: oklch(0.541 0.191 24.8);
+  --diff-remove-muted: oklch(0.947 0.022 17.5);
+  --terminal: oklch(0.985 0 0);
+}
+
+.dark {
+  --attention: oklch(0.776 0.146 70.8);
+  --attention-muted: oklch(0.776 0.146 70.8 / 7%);
+  --running: oklch(0.717 0.137 257.1);
+  --success: oklch(0.756 0.135 156.5);
+  --destructive-muted: oklch(0.626 0.193 23 / 12%);
+  --diff-add: oklch(0.756 0.135 156.5);
+  --diff-add-muted: oklch(0.756 0.135 156.5 / 10%);
+  --diff-remove: oklch(0.715 0.145 19.3);
+  --diff-remove-muted: oklch(0.626 0.193 23 / 12%);
+  --terminal: oklch(0.165 0.004 285.9);
+}
+
+/* The type scale, the same five sizes as the Pen components. ADE code uses only these (lint:
+   ade/type-scale); the kit keeps its own sizes.
+     meta   11px  status bar, times, counts
+     label  12px  tabs, section labels, code
+     ui     13px  rows, buttons, menus: the default for controls
+     body   14px  messages and text people read or type
+     title  15px  dialog and pane titles */
+@theme {
+  --text-meta: 11px;
+  --text-meta--line-height: 16px;
+  --text-label: 12px;
+  --text-label--line-height: 16px;
+  --text-ui: 13px;
+  --text-ui--line-height: 20px;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-title: 15px;
+  --text-title--line-height: 22px;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

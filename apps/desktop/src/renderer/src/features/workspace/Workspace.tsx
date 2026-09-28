@@ -2,7 +2,7 @@
 export function Workspace() {
   return (
     <main className="drag flex h-full items-center justify-center">
-      <h1 className="text-2xl font-semibold">Hello world</h1>
+      <h1 className="text-title font-semibold">Hello world</h1>
     </main>
   )
 }

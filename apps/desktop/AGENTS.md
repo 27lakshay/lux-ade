@@ -46,6 +46,7 @@ claiming a UI change works.
     and test it there.
   - `provisional/`: surfaces built from the stock kit until Pen designs them.
   - `icons/`: the icon table (`icons.ts`) and `<Icon>`.
+  - `components/`: ADE's shared components built from the kit (`Status`, `Shortcut`).
   - `components/ui/` (the kit), `commands/`, `state/`, `lib/`, `hooks/`.
   - Lint keeps files short: 300 lines for `.ts`, 400 for `.tsx` and 800 for tests.
 - Startup (`app/start.tsx`): theme, commands, `router.load()`, then one render. The providers are
@@ -68,15 +69,38 @@ claiming a UI change works.
   status colours belong to the Status component. `IconProvider` fixes the stroke at 1.25 screen
   pixels for every icon, the kit's included. Lint refuses `lucide-react` outside `icons/` and the
   kit, size classes on `<Icon>`, and icon-only buttons without `aria-label`.
-- Styles: `app/app.css` imports the kit's theme (`shadcn.css`) and adds only what every window
-  needs. Use the kit's tokens (`bg-background`, `text-muted-foreground`, …); there are no ADE
-  colour tokens in code. Lint (`@shadcn/lint`) refuses restyled kit components and raw colours,
-  and `ade/no-native-title` refuses the `title` attribute: use the kit's Tooltip.
+- Theme: `shadcn.css` holds everything visual: the kit's colours (Graphite), ADE's status and
+  diff colours, and the type scale. `app/app.css` imports it and adds only what every window needs.
+  Lint (`@shadcn/lint`) refuses restyled kit components and raw colours, and
+  `ade/no-native-title` refuses the `title` attribute: use the kit's Tooltip.
+- Surfaces separate by fill, never borders. The steps, darkest to lightest:
+
+  | Class | For |
+  |---|---|
+  | `bg-sidebar` | Window chrome: title bar, rail, sidebars, bottom bar |
+  | `bg-background` | Panes |
+  | `bg-card` | Blocks inside a pane: code, tool calls, the composer |
+  | `bg-popover` | Anything floating: menus, palettes, toasts, dialogs |
+  | `bg-muted` | Chips, the active tab, user messages |
+  | `bg-accent` | Hover and selected rows |
+
+  `ade/surface-steps` refuses `border`, `divide` and fills off these steps (status colours
+  excepted).
+- Type: five sizes, the Pen components' scale. `text-meta` 11px (status bar, times, counts),
+  `text-label` 12 (tabs, section labels, code), `text-ui` 13 (rows, buttons, menus), `text-body` 14
+  (messages and text people read or type), `text-title` 15 (dialog and pane titles).
+  `ade/type-scale` refuses Tailwind's sizes and arbitrary ones. shadcn's "typography" entries are
+  prose examples, not components; long-form markdown gets its own styles when it is built.
+- Status: `<Status state="needsYou" />` (`idle`, `running`, `needsYou`, `error`, `done`) is the only
+  status mark. Amber means "needs you" and nothing else.
+- Shortcuts: `<Shortcut appCommand="command-palette" />` for native-menu commands (keys from
+  `APP_COMMAND_KEYS` in `src/shared/app-commands.ts`, which the menu also binds), or
+  `<Shortcut keys={service.keybindingFor(id)} />` for command-service bindings. Never type a
+  shortcut label by hand.
 - `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI (Nova preset, all
   components), with `hooks/use-mobile.ts`, `lib/utils.ts` and its theme in `shadcn.css`. Keep the
   kit files unmodified so `shadcn add` can update them; build product components from them
-  elsewhere. Its theme holds ADE's Graphite colours; ADE's status colours (`attention`,
-  `running`, `success`, diff colours, `terminal`) live in `app/app.css`. Surfaces with no Pen design are built from the stock kit under
+  elsewhere. Surfaces with no Pen design are built from the stock kit under
   `src/renderer/src/provisional/` (root `AGENTS.md`, Design workflow).
   Use the `shadcn` skill and the `shadcn` MCP server (`.mcp.json`); config is `components.json`.
 - Terminal output stays outside React state. Terminals render with Ghostty compiled to
