@@ -29,6 +29,20 @@ pub fn operations() -> Vec<OperationSpec> {
             "workspace.remove",
             Tier::EffectCommand,
         ),
+        // Creating a worktree runs Git and setup hooks, then opens a
+        // workspace: several steps across the lifecycle and profile stores.
+        // The receipt and the operation's durable state live in the profile
+        // database; each step is recovered after a crash.
+        OperationSpec::new::<WorkspaceCreateWorktreeRequest, WorkspaceWorktreeOperation>(
+            "workspace.create_worktree",
+            Tier::EffectCommand,
+        ),
+        // Deleting a worktree removes the workspace from ADE, then removes the
+        // tree through the lifecycle; the same durable state recovers it.
+        OperationSpec::new::<WorkspaceDeleteWorktreeRequest, WorkspaceWorktreeOperation>(
+            "workspace.delete_worktree",
+            Tier::EffectCommand,
+        ),
         OperationSpec::new::<WorkspaceRebindListRequest, WorkspaceRebindCatalog>(
             "workspace.rebind.list",
             Tier::Query,
@@ -117,6 +131,95 @@ pub struct WorkspaceRemoveRequest {
     pub workspace_id: String,
 }
 
+/// `workspace.create_worktree`: create a linked worktree of a repository
+/// project and open it as a workspace named `name`.
+///
+/// The daemon creates the branch and tree through the worktree lifecycle
+/// (`worktree.create` with the project's naming defaults, setup hooks
+/// included), then opens the tree as a workspace, renames it to `name` and
+/// marks it ADE-owned. The reply carries the operation's state at once; the
+/// workspace appears in the catalog when it is ready. The lifecycle step's
+/// progress is readable with `worktree.operation` under the project ID and
+/// this operation ID. A retry with the same ID and payload returns the
+/// current state.
+///
+/// Refused before anything is recorded: an unknown project
+/// (`project_not_found`), a plain folder project (`project_not_repository`)
+/// or an invalid name (`invalid_workspace_name`).
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorkspaceCreateWorktreeRequest {
+    /// The caller's operation ID.
+    pub operation_id: String,
+    /// A repository project; a pre-unification lifecycle repository ID is
+    /// accepted as an alias.
+    pub project_id: String,
+    /// The name ADE shows; the branch is the project's branch prefix plus
+    /// its slug. Trimmed, 1 to 100 characters, no control characters.
+    pub name: String,
+    /// Start point; the project's configured default base, then `HEAD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+}
+
+/// `workspace.delete_worktree`: remove a linked worktree's workspace from
+/// ADE, then remove the tree.
+///
+/// Before changing anything the daemon checks the workspace's
+/// `workspace.remove` blockers and the tree's `worktree.cleanup.plan`
+/// blockers (except `active_work`, `setup_incomplete` and
+/// `teardown_incomplete`, which the removal itself resolves), and refuses with
+/// `worktree_delete_blocked` and `blockers: [{kind, id, label}]`. A primary
+/// checkout is refused with `primary_checkout`, a plain folder with
+/// `not_a_worktree`. A workspace already removed from ADE is accepted. If the
+/// tree cannot be removed after all, the workspace is restored. A crash
+/// between the two steps is recovered when the daemon starts again.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorkspaceDeleteWorktreeRequest {
+    /// The caller's operation ID.
+    pub operation_id: String,
+    pub workspace_id: String,
+    /// What happens to the tree's branch; `keep` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_branch: Option<super::worktrees::BranchPolicy>,
+}
+
+/// Which workspace worktree operation a state describes.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceWorktreeKind {
+    CreateWorktree,
+    DeleteWorktree,
+}
+
+/// Where a workspace worktree operation stands.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceWorktreeStatus {
+    Running,
+    Succeeded,
+    /// See `error` and `code`. A failed creation opens no workspace; a failed
+    /// deletion keeps the tree and restores its workspace.
+    Failed,
+}
+
+/// The `workspace.create_worktree` and `workspace.delete_worktree` reply:
+/// the operation's current state.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct WorkspaceWorktreeOperation {
+    #[serde(rename = "type")]
+    pub tag: WorkspaceWorktreeOperationTag,
+    pub operation_id: String,
+    pub kind: WorkspaceWorktreeKind,
+    pub status: WorkspaceWorktreeStatus,
+    pub project_id: String,
+    /// The new workspace once created, or the workspace being deleted.
+    pub workspace_id: Option<String>,
+    /// The tree's path once the lifecycle names it.
+    pub worktree_path: Option<String>,
+    pub error: Option<String>,
+    pub code: Option<String>,
+}
+
 /// `workspace.rebind.list`: restored workspaces and whether each needs a path.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
 pub struct WorkspaceRebindListRequest {}
@@ -141,6 +244,10 @@ pub struct RepositoryRebindRequest {
 
 wire_tag!(WorkspaceAckTag, "ack");
 wire_tag!(WorkspaceRemovedTag, "workspace_removed");
+wire_tag!(
+    WorkspaceWorktreeOperationTag,
+    "workspace_worktree_operation"
+);
 wire_tag!(WorkspaceRebindCatalogTag, "workspace_rebind_catalog");
 wire_tag!(RepositoryRebindCatalogTag, "repository_rebind_catalog");
 
@@ -288,6 +395,8 @@ mod tests {
             "extra_terminals": [], "id": "workspace_1", "repository_id": null,
             "root": "/tmp/project", "name": "project", "terminal_id": "terminal_1",
             "needs_rebind": false, "worktree_lifecycle_needs_rebind": false,
+            "project_id": "project_1", "kind": "folder", "branch": null,
+            "default": false, "ade_owned": false,
         })
     }
 
@@ -298,6 +407,8 @@ mod tests {
             ("workspace.rebind", "idempotent_command"),
             ("workspace.rename", "idempotent_command"),
             ("workspace.remove", "effect_command"),
+            ("workspace.create_worktree", "effect_command"),
+            ("workspace.delete_worktree", "effect_command"),
             ("repository.rebind", "idempotent_command"),
             ("workspace.rebind.list", "query"),
             ("repository.rebind.list", "query"),
@@ -317,6 +428,24 @@ mod tests {
         request::<WorkspaceRemoveRequest>(
             "workspace.remove",
             json!({"operation_id": "op_1", "workspace_id": "workspace_1"}),
+        );
+        request::<WorkspaceCreateWorktreeRequest>(
+            "workspace.create_worktree",
+            json!({"operation_id": "op_1", "project_id": "repo_1", "name": "Payments"}),
+        );
+        request::<WorkspaceCreateWorktreeRequest>(
+            "workspace.create_worktree",
+            json!({"operation_id": "op_1", "project_id": "repo_1", "name": "Payments",
+                "base": "main"}),
+        );
+        request::<WorkspaceDeleteWorktreeRequest>(
+            "workspace.delete_worktree",
+            json!({"operation_id": "op_2", "workspace_id": "workspace_1"}),
+        );
+        request::<WorkspaceDeleteWorktreeRequest>(
+            "workspace.delete_worktree",
+            json!({"operation_id": "op_2", "workspace_id": "workspace_1",
+                "delete_branch": "merged"}),
         );
         request::<RepositoryRebindListRequest>("repository.rebind.list", json!({}));
         request::<WorkspaceRebindRequest>(
@@ -344,6 +473,17 @@ mod tests {
         assert!(
             !validator(&name).is_valid(&json!({"op": "workspace.remove", "workspace_id": "w"})),
             "an effect command needs its operation ID"
+        );
+        let (name, _, _) = names("workspace.create_worktree");
+        assert!(
+            !validator(&name).is_valid(
+                &json!({"op": "workspace.create_worktree", "project_id": "p", "name": "n"})
+            )
+        );
+        let (name, _, _) = names("workspace.delete_worktree");
+        assert!(
+            !validator(&name).is_valid(&json!({"op": "workspace.delete_worktree",
+            "operation_id": "o", "workspace_id": "w", "delete_branch": "all"}))
         );
     }
 
@@ -373,6 +513,19 @@ mod tests {
         response::<WorkspaceRemoved>(
             "workspace.remove",
             json!({"type": "workspace_removed", "workspace_id": "workspace_1"}),
+        );
+        response::<WorkspaceWorktreeOperation>(
+            "workspace.create_worktree",
+            json!({"type": "workspace_worktree_operation", "operation_id": "op_1",
+                "kind": "create_worktree", "status": "running", "project_id": "repo_1",
+                "workspace_id": null, "worktree_path": null, "error": null, "code": null}),
+        );
+        response::<WorkspaceWorktreeOperation>(
+            "workspace.delete_worktree",
+            json!({"type": "workspace_worktree_operation", "operation_id": "op_2",
+                "kind": "delete_worktree", "status": "failed", "project_id": "repo_1",
+                "workspace_id": "workspace_1", "worktree_path": "/src/app-feature",
+                "error": "Git failed", "code": "lifecycle_command_failed"}),
         );
         response::<WorkspaceRebindCatalog>(
             "workspace.rebind.list",

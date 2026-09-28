@@ -49,6 +49,7 @@ mod leases;
 mod mcp;
 mod orchestration;
 mod placement;
+mod projects;
 mod recovery;
 mod registered;
 mod remote;
@@ -218,8 +219,21 @@ impl Sessions {
             subscribers: Arc::new(AtomicUsize::new(0)),
             boot_id: new_id("boot"),
         });
+        sessions.share_project_ids();
         sessions.restore()?;
         sessions.start_activity_feed()?;
+        let weak = Arc::downgrade(&sessions);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(projects::FACTS_INTERVAL);
+                let Some(hub) = weak.upgrade() else {
+                    break;
+                };
+                if let Err(error) = hub.refresh_workspace_facts(None) {
+                    eprintln!("Workspace facts: {error:#}");
+                }
+            }
+        });
         let weak = Arc::downgrade(&sessions);
         std::thread::spawn(move || {
             loop {
@@ -572,6 +586,7 @@ impl Sessions {
         let requests = frame_requests(d.store.pending(&c.id)?);
         crate::bench::agent_messages("provider_to_durable_us", messages);
         let queued = d.store.queued(&c.id)?;
+        let c = Self::presented(d, c)?;
         self.publish(d,json!({"type":"conversation_changed","conversation":c,"messages":messages,"requests":requests,"queued":queued}));
         if let Err(error) = self.flush_activity(d) {
             eprintln!("Activity feed: {error}");
@@ -675,6 +690,11 @@ impl Sessions {
             if op == "worktree.rebind" {
                 self.release_restore_fence_if_bound()?;
             }
+            // A lifecycle command can move a branch or ADE's ownership; the
+            // facts tick also catches what its worker changes later.
+            if let Err(error) = self.refresh_workspace_facts(None) {
+                eprintln!("Workspace facts after {op}: {error:#}");
+            }
             return Ok(response);
         }
         if op.starts_with("history.import.") {
@@ -716,9 +736,14 @@ impl Sessions {
                     common_binding,
                 )
             };
-            return self
+            let response = self
                 .review
                 .command(&workspace.root, binding, common_binding, request);
+            // A review Git operation can move the branch.
+            if let Err(error) = self.refresh_workspace_facts(Some(&workspace.id)) {
+                eprintln!("Workspace facts after {op}: {error:#}");
+            }
+            return response;
         }
         if op.starts_with("file.") {
             let id = string("workspace_id")?;

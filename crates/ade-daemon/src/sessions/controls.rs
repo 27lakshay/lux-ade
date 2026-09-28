@@ -846,6 +846,7 @@ impl Sessions {
         let mut reloaded = d.store.conversation(&rewind.conversation_id)?;
         reloaded.updated_at = now_ms();
         d.store.commit_conversation(&reloaded, &[], &[])?;
+        let reloaded = Self::presented(&d, &reloaded)?;
         self.publish(
             &mut d,
             json!({"type":"conversation_reload","conversation":reloaded}),

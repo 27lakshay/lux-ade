@@ -44,6 +44,10 @@ export const daemonRefusalCodes = [
   'workspace_remove_blocked',
   'terminal_busy',
   'unsupported',
+  'worktree_delete_blocked',
+  'project_not_found',
+  'project_not_repository',
+  'unknown_setting',
 ] as const
 
 export type KnownDaemonErrorCode = (typeof categoryErrorCodes)[number] | (typeof daemonRefusalCodes)[number]

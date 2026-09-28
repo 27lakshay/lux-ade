@@ -5,6 +5,7 @@ mod control;
 mod diagnostics;
 mod paired;
 mod workspaces;
+mod worktree_workspaces;
 
 use crate::browser_reconcile::{HeldReceipt, owner_settlement};
 use ade_core::contract::conversations::Ack;
@@ -521,6 +522,9 @@ struct Host {
     stopping: AtomicBool,
     /// Receipts for the effect commands whose handlers keep none of their own.
     envelope: ade_daemon::envelope::Envelope,
+    /// Serializes the steps of `workspace.create_worktree` and
+    /// `workspace.delete_worktree` (see `worktree_workspaces`).
+    worktree_steps: Mutex<()>,
 }
 impl Host {
     fn owner_is_current(&self, owner: &BrowserOwner) -> bool {
@@ -1864,6 +1868,10 @@ impl Host {
             self.layout_close(request)
         } else if op == "workspace.remove" {
             self.workspace_remove(request)
+        } else if op == "workspace.create_worktree" {
+            self.workspace_create_worktree(request)
+        } else if op == "workspace.delete_worktree" {
+            self.workspace_delete_worktree(request)
         } else if matches!(
             op,
             "browser.owner.register"
@@ -2335,6 +2343,7 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         }
     };
 
+    sessions.set_default_workspace(&default_workspace);
     let browser_identity = daemon_browser_profile(&socket)?;
     let host = Arc::new(Host {
         socket: PathBuf::from(&socket),
@@ -2360,8 +2369,26 @@ pub(super) fn serve(socket: String, directory: PathBuf) -> anyhow::Result<()> {
         envelope: ade_daemon::envelope::Envelope::open(&ade_daemon::receipts::envelope_store(
             &directory.join("sessions.sqlite"),
         ))?,
+        worktree_steps: Mutex::new(()),
     });
     host.refresh_leases()?;
+    // Workspace worktree operations continue without their caller: a
+    // lifecycle worker finishing, or a daemon that stopped between steps.
+    let ticking = Arc::downgrade(&host);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(worktree_workspaces::TICK);
+            let Some(host) = ticking.upgrade() else {
+                break;
+            };
+            if host.stopping.load(Ordering::Acquire) {
+                break;
+            }
+            if let Err(error) = host.advance_worktree_operations() {
+                eprintln!("Workspace worktree operations: {error:#}");
+            }
+        }
+    });
     if !selection
         && !pending_rebind
         && host

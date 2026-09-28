@@ -332,11 +332,11 @@ fn draft_migration_preserves_existing_conversations() {
             .is_empty()
     );
 }
-struct Database {
+pub(super) struct Database {
     directory: std::path::PathBuf,
 }
 impl Database {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             directory: std::env::temp_dir().join(new_id("ade-store-test")),
         }
@@ -344,7 +344,7 @@ impl Database {
     fn path(&self) -> std::path::PathBuf {
         self.directory.join("state.sqlite")
     }
-    fn open(&self) -> Store {
+    pub(super) fn open(&self) -> Store {
         Store::open(&self.path()).unwrap()
     }
 }
@@ -354,7 +354,7 @@ impl Drop for Database {
     }
 }
 // Workspace roots must exist: opening a missing directory fails closed.
-fn test_root(name: &str) -> String {
+pub(super) fn test_root(name: &str) -> String {
     let root = std::env::temp_dir().join("ade-store-test-roots").join(name);
     std::fs::create_dir_all(&root).unwrap();
     std::fs::canonicalize(root)
@@ -663,12 +663,14 @@ fn the_migration_replaces_the_prototype_window_table() {
     let store = db.open();
     let (workspace, _) = fixture(&store);
     store.create_window("w", &workspace.id, None).unwrap();
-    // A profile one schema behind, whose last migration is the layouts one:
-    // the prototype's window table, holding a row.
-    let current: i64 = store
+    // A profile from before the layouts migration: the prototype's window
+    // table, holding a row. The catalog projects migration follows the
+    // layouts one and runs again harmlessly.
+    let latest: i64 = store
         .connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
+    let current = latest - 1;
     store
         .connection
         .execute_batch(&format!(

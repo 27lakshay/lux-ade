@@ -19,6 +19,7 @@ pub mod listeners;
 pub mod observability;
 pub mod placement;
 pub mod plugins;
+pub mod projects;
 pub mod receipts;
 pub mod remote;
 pub mod remote_access;

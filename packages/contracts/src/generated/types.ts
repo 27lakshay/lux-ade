@@ -69,6 +69,7 @@ export type ContractDefinition =
   | AttachmentReclaimPreviewReply
   | AttachmentReclaimPreviewRequest
   | AttachmentReply
+  | Attention
   | BackendCompatibility
   | BranchPolicy
   | BrowserAttachment
@@ -140,6 +141,7 @@ export type ContractDefinition =
   | CarryChange
   | CatalogFrame
   | CatalogGetRequest
+  | CatalogProject
   | CatalogRepository
   | Catalogue
   | CheckState
@@ -559,6 +561,7 @@ export type ContractDefinition =
   | PreviewKind
   | PreviewTransport
   | ProbeOutcome
+  | ProjectKind
   | Projected
   | PromptInput
   | ProviderCapabilities
@@ -862,6 +865,9 @@ export type ContractDefinition =
   | WindowView
   | WorkspaceAck
   | WorkspaceChoice
+  | WorkspaceCreateWorktreeRequest
+  | WorkspaceDeleteWorktreeRequest
+  | WorkspaceKind
   | WorkspaceMode
   | WorkspaceOpenRequest
   | WorkspaceRebindCatalog
@@ -872,6 +878,9 @@ export type ContractDefinition =
   | WorkspaceRemoveRequest
   | WorkspaceRemoved
   | WorkspaceRenameRequest
+  | WorkspaceWorktreeKind
+  | WorkspaceWorktreeOperation
+  | WorkspaceWorktreeStatus
   | WorktreeAdoptRequest
   | WorktreeArchive
   | WorktreeArchiveEntry
@@ -997,6 +1006,10 @@ export type ProbeOutcome =
  */
 export type AdapterReadiness = 'unprobed' | 'ready' | 'failed' | 'stale'
 /**
+ * Whether a Conversation needs the person, as the navigator shows it.
+ */
+export type Attention = 'idle' | 'running' | 'needs_you' | 'error'
+/**
  * What `worktree.remove` does with the removed tree's branch.
  */
 export type BranchPolicy = 'keep' | 'merged'
@@ -1075,6 +1088,10 @@ export type CarryBlocker =
  * How a path differs from `HEAD` in the source tree.
  */
 export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | 'untracked') | 'unmerged'
+/**
+ * What a project is.
+ */
+export type ProjectKind = 'repository' | 'folder'
 /**
  * Whether a window is on screen. A closed window keeps its record, its
  * bounds and its layouts, and comes back as it was on `window.reopen`.
@@ -2194,6 +2211,18 @@ export type UsageScope = 'main_agent' | 'all_agents'
  * The dimension `usage.summary` groups turns by.
  */
 export type UsageGroupBy = ('conversation' | 'workspace' | 'provider') | 'account' | 'day'
+/**
+ * What a workspace's folder is.
+ */
+export type WorkspaceKind = 'primary_checkout' | 'linked_worktree' | 'folder'
+/**
+ * Which workspace worktree operation a state describes.
+ */
+export type WorkspaceWorktreeKind = 'create_worktree' | 'delete_worktree'
+/**
+ * Where a workspace worktree operation stands.
+ */
+export type WorkspaceWorktreeStatus = ('running' | 'succeeded') | 'failed'
 /**
  * Where a tree stands in ADE's setup and teardown lifecycle. Only `ready`
  * admits an Agent.
@@ -4498,7 +4527,13 @@ export interface CatalogFrame {
 export interface Catalogue {
   conversations: Conversation[]
   /**
-   * The repositories of the listed workspaces, in registration order.
+   * The projects of the listed workspaces, in the order their first
+   * workspace was registered.
+   */
+  projects: CatalogProject[]
+  /**
+   * Deprecated: the repository projects alone, in registration order.
+   * Kept for clients written before `projects`; read `projects` instead.
    */
   repositories: CatalogRepository[]
   /**
@@ -4516,8 +4551,23 @@ export interface Conversation {
   account_context: string
   account_id: string | null
   active_turn_id: string | null
+  /**
+   * Derived from `status` and open requests
+   * (`crate::workspaces::attention`). Set on every reply, never stored.
+   */
+  attention: 'idle' | 'running' | 'needs_you' | 'error'
   error: string | null
+  /**
+   * The orchestration group this child runs in, if any. Set on every
+   * reply, never stored.
+   */
+  group_id: string | null
   id: string
+  /**
+   * The Conversation that delegated this one, when it is an
+   * orchestration child. Set on every reply, never stored.
+   */
+  parent_conversation_id: string | null
   provider: string
   provider_config: unknown
   provider_thread_id: string | null
@@ -4534,6 +4584,11 @@ export interface Conversation {
   status: string
   terminal_owner: TerminalOwner | null
   title: string
+  /**
+   * Whether the Conversation changed after the profile last marked it
+   * seen (`conversation.mark_seen`). Set on every reply, never stored.
+   */
+  unread: boolean
   updated_at: number
   view_terminal: TerminalOwner | null
   workspace_id: string
@@ -4546,9 +4601,27 @@ export interface TerminalOwner {
   [k: string]: unknown
 }
 /**
- * A Git repository as the catalog lists it, so a client can group the
- * workspaces that share it into one project. Plain folders have none: their
- * workspace's `repository_id` is null.
+ * A project as the catalog lists it. Every workspace names its project in
+ * `WorkspaceRecord::project_id`, and the worktree lifecycle takes a
+ * repository project's ID as its `repository_id`.
+ */
+export interface CatalogProject {
+  id: string
+  kind: ProjectKind
+  /**
+   * The display name: a repository's checkout folder (see
+   * `crate::workspaces::project_name`), or the folder's own name.
+   */
+  name: string
+  /**
+   * A repository's Git common directory, or the folder.
+   */
+  root: string
+  [k: string]: unknown
+}
+/**
+ * A repository project as the deprecated `Catalogue::repositories` lists
+ * it. `Catalogue::projects` lists every project, plain folders included.
  */
 export interface CatalogRepository {
   id: string
@@ -4663,10 +4736,37 @@ export interface WindowView {
   [k: string]: unknown
 }
 export interface WorkspaceRecord {
+  /**
+   * Whether ADE made (or adopted) this linked worktree and may delete it.
+   */
+  ade_owned: boolean
+  /**
+   * The branch the checkout's `HEAD` names; null when `HEAD` is detached
+   * or the workspace is not a Git checkout. The daemon refreshes it on
+   * open, after its own Git operations and when `HEAD` changes.
+   */
+  branch: string | null
+  /**
+   * Whether this is the daemon's own workspace: attachments that name no
+   * workspace open their terminal here, and it cannot be removed. Set on
+   * every reply, never stored.
+   */
+  default: boolean
   extra_terminals: string[]
   id: string
+  /**
+   * Whether this is a repository's primary checkout, a linked worktree or
+   * a plain folder.
+   */
+  kind: 'primary_checkout' | 'linked_worktree' | 'folder'
   name: string
   needs_rebind: boolean
+  /**
+   * The project this workspace belongs to; never empty in a reply. A
+   * repository workspace's project is its repository (`repository_id` is
+   * kept as a deprecated alias of it); a plain folder is a project of its own.
+   */
+  project_id: string
   repository_id: string | null
   root: string
   terminal_id: string
@@ -13830,6 +13930,70 @@ export interface WorkspaceAck {
   [k: string]: unknown
 }
 /**
+ * `workspace.create_worktree`: create a linked worktree of a repository
+ * project and open it as a workspace named `name`.
+ *
+ * The daemon creates the branch and tree through the worktree lifecycle
+ * (`worktree.create` with the project's naming defaults, setup hooks
+ * included), then opens the tree as a workspace, renames it to `name` and
+ * marks it ADE-owned. The reply carries the operation's state at once; the
+ * workspace appears in the catalog when it is ready. The lifecycle step's
+ * progress is readable with `worktree.operation` under the project ID and
+ * this operation ID. A retry with the same ID and payload returns the
+ * current state.
+ *
+ * Refused before anything is recorded: an unknown project
+ * (`project_not_found`), a plain folder project (`project_not_repository`)
+ * or an invalid name (`invalid_workspace_name`).
+ */
+export interface WorkspaceCreateWorktreeRequest {
+  /**
+   * Start point; the project's configured default base, then `HEAD`.
+   */
+  base?: string | null
+  /**
+   * The name ADE shows; the branch is the project's branch prefix plus
+   * its slug. Trimmed, 1 to 100 characters, no control characters.
+   */
+  name: string
+  op: 'workspace.create_worktree'
+  /**
+   * The caller's operation ID.
+   */
+  operation_id: string
+  /**
+   * A repository project; a pre-unification lifecycle repository ID is
+   * accepted as an alias.
+   */
+  project_id: string
+}
+/**
+ * `workspace.delete_worktree`: remove a linked worktree's workspace from
+ * ADE, then remove the tree.
+ *
+ * Before changing anything the daemon checks the workspace's
+ * `workspace.remove` blockers and the tree's `worktree.cleanup.plan`
+ * blockers (except `active_work`, `setup_incomplete` and
+ * `teardown_incomplete`, which the removal itself resolves), and refuses with
+ * `worktree_delete_blocked` and `blockers: [{kind, id, label}]`. A primary
+ * checkout is refused with `primary_checkout`, a plain folder with
+ * `not_a_worktree`. A workspace already removed from ADE is accepted. If the
+ * tree cannot be removed after all, the workspace is restored. A crash
+ * between the two steps is recovered when the daemon starts again.
+ */
+export interface WorkspaceDeleteWorktreeRequest {
+  /**
+   * What happens to the tree's branch; `keep` when absent.
+   */
+  delete_branch?: BranchPolicy | null
+  op: 'workspace.delete_worktree'
+  /**
+   * The caller's operation ID.
+   */
+  operation_id: string
+  workspace_id: string
+}
+/**
  * `workspace.open`: register a folder, or return the workspace already at it.
  */
 export interface WorkspaceOpenRequest {
@@ -13929,6 +14093,31 @@ export interface WorkspaceRenameRequest {
   name: string
   op: 'workspace.rename'
   workspace_id: string
+}
+/**
+ * The `workspace.create_worktree` and `workspace.delete_worktree` reply:
+ * the operation's current state.
+ */
+export interface WorkspaceWorktreeOperation {
+  code: string | null
+  error: string | null
+  kind: WorkspaceWorktreeKind
+  operation_id: string
+  project_id: string
+  status: WorkspaceWorktreeStatus
+  /**
+   * The `workspace_worktree_operation` type tag.
+   */
+  type: 'workspace_worktree_operation'
+  /**
+   * The new workspace once created, or the workspace being deleted.
+   */
+  workspace_id: string | null
+  /**
+   * The tree's path once the lifecycle names it.
+   */
+  worktree_path: string | null
+  [k: string]: unknown
 }
 /**
  * `worktree.adopt`: take ADE removal authority over an existing linked tree.
@@ -14550,13 +14739,15 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "layout.replace" | "tab.close" | "pane.close"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "layout.replace" | "tab.close" | "pane.close"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
   "workspace.open": WorkspaceOpenRequest
   "workspace.rename": WorkspaceRenameRequest
   "workspace.remove": WorkspaceRemoveRequest
+  "workspace.create_worktree": WorkspaceCreateWorktreeRequest
+  "workspace.delete_worktree": WorkspaceDeleteWorktreeRequest
   "workspace.rebind.list": WorkspaceRebindListRequest
   "workspace.rebind": WorkspaceRebindRequest
   "repository.rebind.list": RepositoryRebindListRequest
@@ -14851,6 +15042,8 @@ export interface ResponseByOperation {
   "workspace.open": WorkspaceAck
   "workspace.rename": WorkspaceAck
   "workspace.remove": WorkspaceRemoved
+  "workspace.create_worktree": WorkspaceWorktreeOperation
+  "workspace.delete_worktree": WorkspaceWorktreeOperation
   "workspace.rebind.list": WorkspaceRebindCatalog
   "workspace.rebind": WorkspaceAck
   "repository.rebind.list": RepositoryRebindCatalog

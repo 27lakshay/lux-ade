@@ -19,14 +19,21 @@ impl Host {
         let remove: WorkspaceRemoveRequest = decode(request)?;
         let id = remove.workspace_id.as_str();
         anyhow::ensure!(!id.is_empty(), "Missing workspace_id");
+        self.remove_from_ade(id, &remove.operation_id)?;
+        Ok(removed(id))
+    }
+
+    /// Removes a workspace from ADE under `operation_id`, or finishes an
+    /// earlier removal: records it, stops its terminals and releases its
+    /// leases. `workspace.delete_worktree` takes the same step.
+    pub(super) fn remove_from_ade(&self, id: &str, operation_id: &str) -> anyhow::Result<()> {
         {
             // Holding the lease map serializes removal with terminal
             // attachment, which starts shells under the same lock.
             let _attachments = self.leases.lock().unwrap();
             if !self.sessions.workspace_removed(id)? {
                 let blockers = self.runtime_blockers(id)?;
-                self.sessions
-                    .remove_workspace(id, &remove.operation_id, blockers)?;
+                self.sessions.remove_workspace(id, operation_id, blockers)?;
             }
             self.stop_removed_terminals(id)?;
             // The record first, as `terminal.retire` does: runtime state of a
@@ -48,12 +55,12 @@ impl Host {
         // Drops this workspace's worktree lease at once, so the folder's
         // host-wide claim no longer reports active work.
         self.refresh_leases()?;
-        Ok(removed(id))
+        Ok(())
     }
 
     /// What only the daemon can see blocks removal: its default workspace and
     /// script runs still running in the runtime.
-    fn runtime_blockers(&self, id: &str) -> anyhow::Result<Vec<RemoveBlocker>> {
+    pub(super) fn runtime_blockers(&self, id: &str) -> anyhow::Result<Vec<RemoveBlocker>> {
         let mut blockers = Vec::new();
         if id == self.default_workspace {
             blockers.push(RemoveBlocker {

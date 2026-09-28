@@ -1,10 +1,25 @@
-import { dailyUseCommand } from '@ade/client'
-import { catalog, CliError, effectOperationId, required, type CommandResult } from '../shared.js'
+import { setTimeout as delay } from 'node:timers/promises'
+import { dailyUseCommand, type DailyUseResponse } from '@ade/client'
+import {
+  catalog,
+  CliError,
+  effectOperationId,
+  parseWords,
+  positionals,
+  required,
+  type CommandResult,
+} from '../shared.js'
 
 export const workspaceUsage = `  workspace list                        List registered workspaces
   workspace open PATH                   Register a repository or folder, or restore a removed one
   workspace rename WORKSPACE_ID NAME    Change the name ADE shows; the folder and branch stay
   workspace remove WORKSPACE_ID         Remove from ADE: stop its terminals, keep its files
+  workspace create-worktree PROJECT_ID NAME [--base REF] [--wait]
+                                        Create a worktree of a repository project and open it
+                                        as a workspace named NAME; --wait until it is ready
+  workspace delete-worktree WORKSPACE_ID [--delete-merged] [--wait]
+                                        Remove a linked worktree's workspace, then its tree;
+                                        --wait until the tree is gone
   workspace rebind-list                 List restored workspaces requiring a directory
   workspace rebind WORKSPACE_ID PATH    Bind a restored workspace to a verified directory
   repository rebind-list                List restored Git repositories requiring a path
@@ -55,12 +70,66 @@ function worktreeMutationArgs(
   return { positionals, requestId: rest[flag + 1] }
 }
 
+/** How long `--wait` follows a worktree operation, setup hooks included. */
+const WAIT_MS = 15 * 60_000
+
+type WorktreeOperation = DailyUseResponse<'workspace.create_worktree'>
+
+/**
+ * Sends a workspace worktree operation and, with `--wait`, sends it again
+ * under the same operation ID until it leaves `running`: a retry of the same
+ * request returns its current state and never runs it twice.
+ */
+async function worktreeOperation(send: () => Promise<WorktreeOperation>, wait: boolean): Promise<WorktreeOperation> {
+  const deadline = Date.now() + WAIT_MS
+  let state = await send()
+  while (wait && state.status === 'running') {
+    if (Date.now() > deadline) throw new CliError('timeout', 'The worktree operation is still running; retry it later.')
+    await delay(250)
+    state = await send()
+  }
+  if (state.status === 'failed') process.exitCode = 16
+  return state
+}
+
 export async function runWorkspaceCommand(
   socketPath: string,
   area: string | undefined,
   action: string | undefined,
   rest: string[],
 ): Promise<CommandResult | undefined> {
+  if (area === 'workspace' && action === 'create-worktree') {
+    const parsed = parseWords(rest, ['--base'], ['--wait'], 'workspace create-worktree')
+    const [projectId, name] = positionals(parsed, 2, 'workspace create-worktree requires PROJECT_ID NAME')
+    const base = parsed.options['--base']
+    const operationId = effectOperationId()
+    return worktreeOperation(
+      () =>
+        dailyUseCommand(socketPath, {
+          op: 'workspace.create_worktree',
+          operation_id: operationId,
+          project_id: projectId!,
+          name: name!,
+          ...(base ? { base } : {}),
+        }),
+      parsed.flags.has('--wait'),
+    )
+  }
+  if (area === 'workspace' && action === 'delete-worktree') {
+    const parsed = parseWords(rest, [], ['--delete-merged', '--wait'], 'workspace delete-worktree')
+    const [workspaceId] = positionals(parsed, 1, 'workspace delete-worktree requires WORKSPACE_ID')
+    const operationId = effectOperationId()
+    return worktreeOperation(
+      () =>
+        dailyUseCommand(socketPath, {
+          op: 'workspace.delete_worktree',
+          operation_id: operationId,
+          workspace_id: workspaceId!,
+          ...(parsed.flags.has('--delete-merged') ? { delete_branch: 'merged' as const } : {}),
+        }),
+      parsed.flags.has('--wait'),
+    )
+  }
   if (area === 'workspace' && action === 'list')
     return { type: 'workspaces', workspaces: (await catalog(socketPath)).workspaces }
   if (area === 'workspace' && action === 'open')

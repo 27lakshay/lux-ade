@@ -117,20 +117,23 @@ impl Sessions {
             }
             "workspace.open" => {
                 let open: WorkspaceOpenRequest = decode(request)?;
+                let opened = self.open_workspace(non_empty("path", &open.path)?)?;
                 reply(&WorkspaceAck {
                     tag: Default::default(),
-                    workspace: self.open_workspace(non_empty("path", &open.path)?)?,
+                    workspace: self.presented_workspace(&opened.id)?,
                 })
             }
             "workspace.rename" => {
                 let rename: WorkspaceRenameRequest = decode(request)?;
                 let id = non_empty("workspace_id", &rename.workspace_id)?;
-                let mut d = self.data.lock().unwrap();
-                let workspace = d.store.rename_workspace(id, &rename.name)?;
-                self.catalog_changed(&mut d)?;
+                {
+                    let mut d = self.data.lock().unwrap();
+                    d.store.rename_workspace(id, &rename.name)?;
+                    self.catalog_changed(&mut d)?;
+                }
                 reply(&WorkspaceAck {
                     tag: Default::default(),
-                    workspace,
+                    workspace: self.presented_workspace(id)?,
                 })
             }
             "repository.rebind" => {
@@ -215,7 +218,7 @@ impl Sessions {
                 self.release_restore_fence_if_bound()?;
                 reply(&WorkspaceAck {
                     tag: Default::default(),
-                    workspace,
+                    workspace: self.presented_workspace(&workspace.id)?,
                 })
             }
             _ => bail!("Unknown session operation"),

@@ -19,6 +19,8 @@ pub struct Store {
     /// command and a title a running program sets change too often to write
     /// with `synchronous=FULL` (`terminal_records::save_live`).
     live_terminals: std::sync::Mutex<std::collections::HashMap<String, terminal_records::Live>>,
+    /// The daemon's own workspace, which replies mark `default`.
+    default_workspace: Option<String>,
 }
 
 mod account_switches;
@@ -31,6 +33,7 @@ mod conversations;
 mod drafts;
 pub mod layouts;
 mod migrations;
+mod projects;
 pub mod runtime_recovery;
 mod send_intents;
 mod send_outbox;
@@ -39,6 +42,7 @@ pub(crate) mod terminal_records;
 mod terminals;
 #[cfg(test)]
 mod tests;
+mod worktree_operations;
 
 pub use account_switches::SwitchCommit;
 pub use attachments::*;
@@ -48,8 +52,10 @@ pub use conversations::{ACCOUNT_DISABLED, Deleted, delete_conversation};
 pub(crate) use conversations::{HISTORY_EPOCHS, NOT_DELETED, TOMBSTONES, is_deleted};
 pub use conversations::{QUEUE_DISPATCH_STATUSES, QueueEntry};
 pub use drafts::{DraftContent, Restored};
+pub use projects::{FactTarget, Project, WorkspaceFacts};
 pub use send_intents::*;
 pub use send_outbox::*;
+pub use worktree_operations::{WorktreeAdmission, WorktreeOperationRecord, WorktreeStep};
 
 fn decode<T: DeserializeOwned>(value: String) -> Result<T> {
     Ok(serde_json::from_str(&value)?)

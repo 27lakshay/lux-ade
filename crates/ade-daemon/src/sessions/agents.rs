@@ -689,6 +689,7 @@ impl Sessions {
                 vec![]
             };
             d.store.commit_conversation(&current, &messages, &[])?;
+            let current = Self::presented(&d, &current)?;
             self.publish(
                 &mut d,
                 json!({"type":"conversation_reload","conversation":current}),

@@ -165,6 +165,17 @@ enum Effect {
 }
 
 impl Effect {
+    /// The operations [`Self::decode`] accepts.
+    const OPS: [&str; 8] = [
+        "worktree.switch",
+        "worktree.remove",
+        "worktree.refresh",
+        "worktree.create",
+        "worktree.setup",
+        "worktree.cleanup",
+        "worktree.carry",
+        "worktree.resources.apply",
+    ];
     fn decode(op: &str, request: &Value) -> Result<Self> {
         Ok(match op {
             "worktree.switch" => Self::Switch(decode(request)?),
@@ -250,6 +261,25 @@ fn strip_hook_output(hooks: Option<&mut Value>) {
             run.remove("output");
         }
     }
+}
+
+/// The repository ID `id` names now; see [`Worktrees::resolve_repository`].
+fn resolve(db: &Connection, id: &str) -> Result<String> {
+    let known = db
+        .query_row("SELECT 1 FROM repositories WHERE id=?1", [id], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if known {
+        return Ok(id.to_owned());
+    }
+    let aliased: Option<String> = db
+        .query_row(
+            "SELECT id FROM repository_aliases WHERE alias=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(aliased.unwrap_or_else(|| id.to_owned()))
 }
 
 fn read_tree(db: &Connection, path: &str) -> Result<Option<TreeRecord>> {
@@ -538,7 +568,12 @@ pub struct Worktrees {
     resources: HostResources,
     /// The hook each running operation is executing (F067).
     live: LiveHooks,
+    /// The catalog project ID for a Git common directory. A new lifecycle
+    /// repository takes it, so the catalog and the lifecycle share one ID.
+    project_ids: std::sync::OnceLock<ProjectIds>,
 }
+/// Finds or creates the catalog project for a Git common directory.
+pub type ProjectIds = Arc<dyn Fn(&str) -> Result<String> + Send + Sync>;
 pub struct Lease {
     hub: Arc<Worktrees>,
     path: PathBuf,
@@ -1003,6 +1038,9 @@ impl Worktrees {
         // Tree phases and archive records need no schema version: both tables
         // are new and additive, and older builds ignore them.
         db.execute_batch("CREATE TABLE IF NOT EXISTS trees(id TEXT PRIMARY KEY,data TEXT NOT NULL);CREATE TABLE IF NOT EXISTS archived(id TEXT PRIMARY KEY,data TEXT NOT NULL);")?;
+        // Lifecycle IDs moved onto catalog project IDs, kept so a caller's
+        // recorded ID still resolves. Additive, like the two tables above.
+        db.execute_batch("CREATE TABLE IF NOT EXISTS repository_aliases(alias TEXT PRIMARY KEY,id TEXT NOT NULL);")?;
         if version < 2 {
             let tx = rusqlite::Transaction::new_unchecked(
                 &db,
@@ -1120,7 +1158,124 @@ impl Worktrees {
             worker: std::env::current_exe()?,
             resources,
             live: LiveHooks::default(),
+            project_ids: std::sync::OnceLock::new(),
         }))
+    }
+    /// Names the catalog's project IDs for repositories registered from now on.
+    pub fn set_project_ids(&self, ids: ProjectIds) {
+        let _ = self.project_ids.set(ids);
+    }
+    /// The repository an ID names now: itself, or the project ID an older
+    /// lifecycle ID was moved to by [`Self::unify_repository_ids`]. An unknown
+    /// ID comes back unchanged, so the caller's lookup reports it.
+    pub fn resolve_repository(&self, id: &str) -> Result<String> {
+        resolve(&self.data.lock().unwrap().db, id)
+    }
+    /// A lifecycle operation's ledger row, or `None` when none was admitted
+    /// under this ID.
+    pub fn job(&self, operation_id: &str) -> Result<Option<Operation>> {
+        let d = self.data.lock().unwrap();
+        d.db.query_row(
+            &format!("SELECT data FROM {LEDGER} WHERE id=?1"),
+            [operation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|row| Ok(serde_json::from_str(&row)?))
+        .transpose()
+    }
+    /// The canonical paths of the trees ADE holds removal authority over,
+    /// with an intact ownership marker.
+    pub fn owned_paths(&self) -> Result<HashSet<String>> {
+        let d = self.data.lock().unwrap();
+        let rows: Vec<(String, String)> =
+            d.db.prepare("SELECT id,data FROM owned")?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+        Ok(rows
+            .into_iter()
+            .filter(|(_, owner)| {
+                serde_json::from_str::<Value>(owner).is_ok_and(|owner| {
+                    std::fs::read_to_string(owner["marker"].as_str().unwrap_or(""))
+                        .ok()
+                        .as_deref()
+                        == owner["token"].as_str()
+                })
+            })
+            .map(|(path, _)| path)
+            .collect())
+    }
+    /// Moves each lifecycle repository registered under its own
+    /// `repository_…` ID onto the catalog project ID for its Git common
+    /// directory, keeping the old ID as an alias so recorded operations and
+    /// receipts still resolve. A repository that needs a rebind, runs an
+    /// operation, or whose lock a surviving supervisor holds is left for the
+    /// next start. Returns how many moved.
+    pub fn unify_repository_ids(
+        &self,
+        project_id: impl Fn(&str) -> Result<String>,
+    ) -> Result<usize> {
+        let repositories: Vec<Repository> = {
+            let d = self.data.lock().unwrap();
+            d.db.prepare("SELECT data FROM repositories ORDER BY rowid")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .map(|row| Ok(serde_json::from_str(&row?)?))
+                .collect::<Result<_>>()?
+        };
+        let mut moved = 0;
+        for mut repository in repositories {
+            if repository.needs_rebind || !repository_binding_matches(&repository) {
+                continue;
+            }
+            let target = match project_id(&repository.common_dir) {
+                Ok(target) if target != repository.id => target,
+                Ok(_) => continue,
+                Err(error) => {
+                    eprintln!(
+                        "Worktree lifecycle repository {} keeps its ID: {error:#}",
+                        repository.id
+                    );
+                    continue;
+                }
+            };
+            let lock = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .mode(0o600)
+                .open(self.directory.join(format!("{}.lock", repository.id)))?;
+            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                continue;
+            }
+            let d = self.data.lock().unwrap();
+            if d.busy.contains(&repository.id)
+                || read_json::<Repository>(&d.db, "repositories", &target).is_ok()
+            {
+                continue;
+            }
+            let old = std::mem::replace(&mut repository.id, target.clone());
+            let tx = Transaction::new_unchecked(&d.db, TransactionBehavior::Immediate)?;
+            tx.execute("DELETE FROM repositories WHERE id=?1", [&old])?;
+            put(&tx, "repositories", &target, &repository)?;
+            for table in ["trees", "owned", LEDGER, "archived"] {
+                tx.execute(
+                    &format!("UPDATE {table} SET data=json_set(data,'$.repository_id',?2) WHERE json_extract(data,'$.repository_id')=?1"),
+                    params![old, target],
+                )?;
+            }
+            tx.execute(
+                "UPDATE repository_aliases SET id=?2 WHERE id=?1",
+                params![old, target],
+            )?;
+            tx.execute(
+                "INSERT INTO repository_aliases(alias,id) VALUES(?1,?2) ON CONFLICT(alias) DO UPDATE SET id=excluded.id",
+                params![old, target],
+            )?;
+            tx.commit()?;
+            moved += 1;
+        }
+        Ok(moved)
     }
     pub fn active_operations(&self) -> usize {
         self.data.lock().unwrap().busy.len()
@@ -1854,6 +2009,20 @@ impl Worktrees {
     }
     pub fn command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         let op = field(request, "op")?;
+        // An ID from before the catalog and the lifecycle shared one names
+        // its project now. An effect keeps its request as sent, so a retry
+        // matches the receipt fingerprinted before the move; `start`
+        // resolves the ID itself.
+        let resolved;
+        let request = match request.get("repository_id").and_then(Value::as_str) {
+            Some(id) if !Effect::OPS.contains(&op) => {
+                let mut copy = request.clone();
+                copy["repository_id"] = json!(self.resolve_repository(id)?);
+                resolved = copy;
+                &resolved
+            }
+            _ => request,
+        };
         if op == "worktree.rebind.list" {
             let WorktreeRebindListRequest {} = decode(request)?;
             return self.rebind_catalog();
@@ -1948,6 +2117,9 @@ impl Worktrees {
             Path::new(&root).is_dir(),
             "Primary checkout directory is unavailable"
         );
+        // The catalog's project for this repository, found before the
+        // lifecycle lock: the catalog takes its own lock to create one.
+        let project = self.project_ids.get().map(|ids| ids(&common)).transpose()?;
         let d = self.data.lock().unwrap();
         let rows: Vec<String> =
             d.db.prepare("SELECT data FROM repositories")?
@@ -1965,8 +2137,14 @@ impl Worktrees {
                 return self.snapshot(&r.id);
             }
         }
+        let id = project
+            .filter(|id| {
+                read_json::<Repository>(&d.db, "repositories", id).is_err()
+                    && resolve(&d.db, id).is_ok_and(|resolved| resolved == *id)
+            })
+            .unwrap_or_else(|| new_id("repository"));
         let r = Repository {
-            id: new_id("repository"),
+            id,
             root_device: Some(identity(&root)?.0),
             root_inode: Some(identity(&root)?.1),
             source_root_device: Some(identity(&root)?.0),
@@ -2097,7 +2275,7 @@ impl Worktrees {
     /// reused with different parameters.
     fn start(self: &Arc<Self>, op: &str, request: &Value) -> Result<Value> {
         let effect = Effect::decode(op, request)?;
-        let id = valid("repository_id", effect.repository_id())?;
+        let id = &self.resolve_repository(valid("repository_id", effect.repository_id())?)?;
         let operation_id = valid("operation_id", effect.operation_id())?;
         ensure!(operation_id.len() <= 256, "Request ID too long");
         let payload = effect.payload()?;

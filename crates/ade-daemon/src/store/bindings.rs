@@ -572,7 +572,8 @@ impl Store {
         // return when its folder is opened again. Windows are all listed: a
         // removal moves the windows that showed it.
         let repositories: Vec<Repository> = all(&tx, VISIBLE_REPOSITORIES)?;
-        let result = Catalogue {
+        let mut result = Catalogue {
+            projects: Vec::new(),
             repositories: repositories
                 .into_iter()
                 .map(|repository| CatalogRepository {
@@ -602,6 +603,7 @@ impl Store {
                 .map(|terminal| self.terminal_record(terminal))
                 .collect(),
         };
+        self.present_catalog(&tx, &mut result)?;
         tx.commit()?;
         Ok(result)
     }
@@ -687,13 +689,9 @@ impl Store {
         ensure!(!needs_rebind, ade_core::error::NeedsRebind);
         let repository_id = if let Some(repository_root) = repository_root {
             ensure!(!repository_root.is_empty(), "Repository root is empty");
-            let existing: Option<String> = tx
-                .query_row(
-                    "SELECT id FROM repositories WHERE root=?1",
-                    [repository_root],
-                    |r| r.get(0),
-                )
-                .optional()?;
+            // The worktree lifecycle may have created the repository from its
+            // canonical common directory; the same directory is one project.
+            let existing = super::projects::repository_by_common(&tx, repository_root)?;
             Some(if let Some(id) = existing {
                 id
             } else {
@@ -720,7 +718,7 @@ impl Store {
             needs_rebind |= repository.needs_rebind
                 || !binding_matches(&tx, "repository", id, &repository.root)?;
         }
-        let workspace = WorkspaceRecord {
+        let mut workspace = WorkspaceRecord {
             extra_terminals: Vec::new(),
             id: new_id("workspace"),
             repository_id,
@@ -733,7 +731,13 @@ impl Store {
                 .unwrap_or(root)
                 .into(),
             terminal_id: new_id("terminal"),
+            project_id: String::new(),
+            kind: Default::default(),
+            branch: None,
+            default: false,
+            ade_owned: false,
         };
+        workspace.project_id = super::projects::project_of(&workspace);
         tx.execute(
             "INSERT INTO workspaces VALUES(?1,?2,?3,?4,?5)",
             params![

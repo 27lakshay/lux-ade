@@ -247,7 +247,7 @@ impl Sessions {
                 self.catalog_changed(&mut d)?;
                 reply(&ConversationCreated {
                     tag: Default::default(),
-                    conversation,
+                    conversation: Self::presented(&d, &conversation)?,
                 })
             }
             "conversation.get" => {
@@ -267,7 +267,7 @@ impl Sessions {
                 }
                 reply(&ConversationSnapshot {
                     tag: Default::default(),
-                    conversation,
+                    conversation: Self::presented(&d, &conversation)?,
                     messages: d.store.messages(id, get.before, limit)?,
                     requests: d.store.pending(id)?,
                     queued: d.store.queued(id)?,

@@ -500,7 +500,16 @@ pub fn commit(
                 active_turn_id: None,
                 error: None,
                 updated_at: last_at,
+                attention: Default::default(),
+                unread: false,
+                parent_conversation_id: None,
+                group_id: None,
             };
+            // Imported history is old work, not news: it starts read.
+            tx.execute(
+                "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_at) VALUES(?1,?2)",
+                params![conversation.id, conversation.updated_at],
+            )?;
             tx.execute(
                 "INSERT INTO conversations VALUES(?1,?2,?3)",
                 params![

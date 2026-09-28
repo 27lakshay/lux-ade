@@ -180,6 +180,35 @@ impl LayoutError {
     }
 }
 
+/// `workspace.delete_worktree` refused before changing anything. The error
+/// frame lists each blocker of the workspace and of its tree.
+#[derive(Debug, thiserror::Error)]
+#[error("{}", delete_blocked_message(.0))]
+pub struct WorktreeDeleteBlocked(pub Vec<crate::workspaces::DeleteBlocker>);
+
+fn delete_blocked_message(blockers: &[crate::workspaces::DeleteBlocker]) -> String {
+    let labels: Vec<&str> = blockers
+        .iter()
+        .map(|blocker| blocker.label.as_str())
+        .collect();
+    format!("This worktree cannot be deleted: {}", labels.join(", "))
+}
+
+/// No project has this ID, and no worktree lifecycle alias names one.
+#[derive(Debug, thiserror::Error)]
+#[error("Project {0} does not exist; reload the catalog")]
+pub struct ProjectNotFound(pub String);
+
+/// The project is a plain folder, so it has no worktrees.
+#[derive(Debug, thiserror::Error)]
+#[error("Project {0} is a plain folder; only a Git repository has worktrees")]
+pub struct ProjectNotRepository(pub String);
+
+/// `settings.set` named a key the profile does not keep.
+#[derive(Debug, thiserror::Error)]
+#[error("Unknown setting {0}")]
+pub struct UnknownSetting(pub String);
+
 /// An effect whose outcome cannot be known, such as a Git command interrupted
 /// by a crash. The message is the operation's own account of what to inspect;
 /// the envelope types it `outcome_unknown`, so a client can tell it from a
@@ -570,6 +599,23 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
         }
         return envelope;
     }
+    if let Some(blocked) = error.downcast_ref::<WorktreeDeleteBlocked>() {
+        return serde_json::json!({"type":"error","message":blocked.to_string(),
+            "code":"worktree_delete_blocked","recovery":"clear_worktree_blockers",
+            "blockers":blocked.0});
+    }
+    if let Some(missing) = error.downcast_ref::<ProjectNotFound>() {
+        return serde_json::json!({"type":"error","message":missing.to_string(),
+            "code":"project_not_found","recovery":"reload_catalog"});
+    }
+    if let Some(folder) = error.downcast_ref::<ProjectNotRepository>() {
+        return serde_json::json!({"type":"error","message":folder.to_string(),
+            "code":"project_not_repository","recovery":"choose_repository_project"});
+    }
+    if let Some(unknown) = error.downcast_ref::<UnknownSetting>() {
+        return serde_json::json!({"type":"error","message":unknown.to_string(),
+            "code":"unknown_setting","recovery":"check_setting_name"});
+    }
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),
             "code":"needs_rebind","recovery":"rebind_workspace"});
@@ -701,6 +747,24 @@ mod workspace_tests {
         );
         let unsupported = error_envelope(Unsupported("place is not supported".into()).into());
         assert_eq!(unsupported["code"], "unsupported");
+    }
+
+    #[test]
+    fn project_worktree_and_setting_errors_carry_codes() {
+        use crate::contract::worktrees::CleanupBlocker;
+        use crate::workspaces::DeleteBlocker;
+        let blocked = error_envelope(
+            WorktreeDeleteBlocked(vec![DeleteBlocker::tree(CleanupBlocker::Dirty, "/t")]).into(),
+        );
+        assert_eq!(blocked["code"], "worktree_delete_blocked");
+        assert_eq!(blocked["blockers"][0]["kind"], "dirty");
+        assert!(blocked["message"].as_str().unwrap().contains("uncommitted"));
+        let missing = error_envelope(ProjectNotFound("repo_x".into()).into());
+        assert_eq!(missing["code"], "project_not_found");
+        let folder = error_envelope(ProjectNotRepository("project_x".into()).into());
+        assert_eq!(folder["code"], "project_not_repository");
+        let unknown = error_envelope(UnknownSetting("colour".into()).into());
+        assert_eq!(unknown["code"], "unknown_setting");
     }
 }
 

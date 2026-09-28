@@ -94,3 +94,78 @@ test('a malformed terminal record is dropped alone, keeping the catalog', () => 
   }
   assert.equal(parseCatalog({ workspaces: [], conversations: [], terminals: {} }), null)
 })
+
+const conversation = (fields = {}) => ({
+  id: 'conversation_1',
+  workspace_id: 'workspace_1',
+  title: 'Fix the build',
+  provider: 'codex',
+  status: 'running',
+  ...fields,
+})
+
+test('the catalog keeps projects, workspace facts and conversation attention', () => {
+  const catalog = parseCatalog({
+    projects: [
+      { id: 'repo_1', kind: 'repository', name: 'app', root: '/src/app/.git' },
+      { id: 'project_2', kind: 'folder', name: 'notes', root: '/src/notes' },
+    ],
+    repositories: [{ id: 'repo_1', root: '/src/app/.git', name: 'app' }],
+    workspaces: [
+      workspace({
+        project_id: 'repo_1',
+        kind: 'linked_worktree',
+        branch: 'feature',
+        default: false,
+        ade_owned: true,
+      }),
+    ],
+    conversations: [
+      conversation({ attention: 'needs_you', unread: true, parent_conversation_id: 'conversation_0', group_id: null }),
+    ],
+  })
+  assert.equal(catalog.projects.length, 2)
+  assert.deepEqual(catalog.projects[1], { id: 'project_2', kind: 'folder', name: 'notes', root: '/src/notes' })
+  const [listed] = catalog.workspaces
+  assert.equal(listed.project_id, 'repo_1')
+  assert.equal(listed.kind, 'linked_worktree')
+  assert.equal(listed.branch, 'feature')
+  assert.equal(listed.ade_owned, true)
+  // The deprecated alias stays.
+  assert.equal(listed.repository_id, 'repo_1')
+  assert.deepEqual(catalog.conversations[0], {
+    ...conversation(),
+    attention: 'needs_you',
+    unread: true,
+    parent_conversation_id: 'conversation_0',
+    group_id: null,
+  })
+})
+
+test('an older daemon catalog gets projects from its repositories and plain folders', () => {
+  const catalog = parseCatalog({
+    repositories: [{ id: 'repo_1', root: '/src/app/.git', name: 'app' }],
+    workspaces: [workspace(), workspace({ id: 'workspace_2', root: '/src/notes/', repository_id: null })],
+    conversations: [conversation()],
+  })
+  assert.deepEqual(catalog.projects, [
+    { id: 'repo_1', kind: 'repository', name: 'app', root: '/src/app/.git' },
+    { id: 'workspace_2', kind: 'folder', name: 'notes', root: '/src/notes/' },
+  ])
+  assert.equal(catalog.workspaces[0].kind, 'primary_checkout')
+  assert.equal(catalog.workspaces[1].kind, 'folder')
+  assert.equal(catalog.workspaces[1].project_id, 'workspace_2')
+  assert.equal(catalog.workspaces[0].branch, null)
+  // Without attention the conversation carries only what the daemon sent.
+  assert.deepEqual(catalog.conversations[0], conversation())
+})
+
+test('a malformed project, kind or attention rejects the catalog', () => {
+  const base = { workspaces: [], conversations: [] }
+  assert.equal(parseCatalog({ ...base, projects: [{ id: 'p', kind: 'club', name: 'n', root: '/' }] }), null)
+  assert.equal(parseCatalog({ ...base, projects: {} }), null)
+  assert.equal(parseCatalog({ workspaces: [workspace({ kind: 'bare' })], conversations: [] }), null)
+  assert.equal(parseCatalog({ workspaces: [workspace({ branch: 3 })], conversations: [] }), null)
+  assert.equal(parseCatalog({ workspaces: [], conversations: [conversation({ attention: 'busy' })] }), null)
+  assert.equal(parseCatalog({ workspaces: [], conversations: [conversation({ group_id: 7 })] }), null)
+})

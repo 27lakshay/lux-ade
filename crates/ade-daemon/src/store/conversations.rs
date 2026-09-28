@@ -164,7 +164,10 @@ pub(super) fn write_conversation(db: &Connection, conversation: &Conversation) -
     }
     db.execute(
         "UPDATE conversations SET data=?2 WHERE id=?1",
-        params![conversation.id, encode(conversation)?],
+        params![
+            conversation.id,
+            encode(&conversation.without_presentation())?
+        ],
     )?;
     Ok(())
 }
@@ -258,11 +261,16 @@ impl Store {
             active_turn_id: None,
             error: None,
             updated_at: now_ms(),
+            attention: Default::default(),
+            unread: false,
+            parent_conversation_id: None,
+            group_id: None,
         };
         self.connection.execute(
             "INSERT INTO conversations VALUES(?1,?2,?3)",
             params![conversation.id, workspace_id, encode(&conversation)?],
         )?;
+        Self::created_seen(&self.connection, &conversation)?;
         Ok(conversation)
     }
     pub fn messages(&self, id: &str, before: Option<i64>, limit: usize) -> Result<Vec<Message>> {

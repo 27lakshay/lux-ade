@@ -75,8 +75,9 @@ const usageFooter = `
 Command results are JSON on stdout, except terminal attach streams raw terminal output.
 Errors are JSON on stderr: {"type":"error","code","message"}, plus "recovery"
 when the daemon names one and "delivery" for a request that reached the socket.
-A workspace_remove_blocked error also lists "blockers": [{"kind","id","label"}].
 A terminal_busy error also names the running command as "foreground".
+A workspace_remove_blocked or worktree_delete_blocked error also lists
+"blockers": [{"kind","id","label"}].
 "code" is the daemon's own code, kept as sent. Exit codes:
   2  usage, invalid_request             3  unavailable
   4  incompatible                        5  timeout
@@ -90,6 +91,9 @@ A terminal_busy error also names the running command as "foreground".
   19 workspace_not_found, workspace_removed
   20 invalid_workspace_name              21 workspace_remove_blocked
   22 terminal_busy                       23 unsupported
+  24 worktree_delete_blocked             25 project_not_found, project_not_repository
+  26 unknown_setting
+  16 also: a workspace worktree operation that ended "failed"
 Commands that change state without their own --request-id take the global
 --operation-id ID. Without it the CLI generates one, and an error names it as
 "operation_id". Retry a lost reply only with that ID and the same command and
@@ -471,6 +475,10 @@ const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
   workspace_remove_blocked: 21,
   terminal_busy: 22,
   unsupported: 23,
+  worktree_delete_blocked: 24,
+  project_not_found: 25,
+  project_not_repository: 25,
+  unknown_setting: 26,
 }
 
 void main()

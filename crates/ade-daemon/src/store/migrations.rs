@@ -23,7 +23,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=19).contains(&version),
+            (0..=20).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -300,6 +300,18 @@ impl Store {
             super::terminal_records::backfill(&tx)?;
             tx.commit()?;
         }
+        // Provisional number: the coordinator assigns the final one at merge
+        // (daemon authority ticket 01, step 5).
+        if version < 20 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            projects::migrate(&tx)?;
+            tx.execute_batch("PRAGMA user_version=20;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(20,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
         ensure!(
             connection.query_row(
                 "SELECT COUNT(*) FROM restore_fence WHERE id=1 AND restored_from_backup IN (0,1)",
@@ -315,6 +327,7 @@ impl Store {
             connection,
             data_directory,
             live_terminals: Default::default(),
+            default_workspace: None,
         })
     }
 }

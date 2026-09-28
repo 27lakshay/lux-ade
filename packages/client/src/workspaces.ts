@@ -20,7 +20,29 @@ export interface WorkspaceRemoveBlocker {
 
 /** The blockers a `workspace_remove_blocked` refusal lists; empty for any other error. */
 export function workspaceRemoveBlockers(error: unknown): WorkspaceRemoveBlocker[] {
-  if (!(error instanceof DaemonRequestError) || error.code !== 'workspace_remove_blocked') return []
+  return blockers(error, 'workspace_remove_blocked')
+}
+
+/**
+ * What blocks `workspace.delete_worktree`: a `workspace.remove` blocker, a
+ * `worktree.cleanup.plan` blocker of the tree (such as `dirty`,
+ * `primary_checkout` or `external`), or `not_a_worktree` for a plain folder.
+ * The daemon's source is `ade_core::workspaces::DeleteBlocker`.
+ */
+export interface WorktreeDeleteBlocker {
+  kind: string
+  /** The Conversation, service, script run or workspace ID, or the tree's path. */
+  id: string
+  label: string
+}
+
+/** The blockers a `worktree_delete_blocked` refusal lists; empty for any other error. */
+export function worktreeDeleteBlockers(error: unknown): WorktreeDeleteBlocker[] {
+  return blockers(error, 'worktree_delete_blocked')
+}
+
+function blockers(error: unknown, code: string): WorkspaceRemoveBlocker[] {
+  if (!(error instanceof DaemonRequestError) || error.code !== code) return []
   const listed = error.details.blockers
   if (!Array.isArray(listed)) return []
   return listed.flatMap((item: unknown) => {

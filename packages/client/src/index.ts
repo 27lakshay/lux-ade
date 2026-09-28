@@ -48,7 +48,13 @@ export {
   type ReviewAnchor,
   type ReviewFeedback,
 } from './review.js'
-export { workspaceRemoveBlockers, type WorkspaceRemoveBlocker, type WorkspaceRemoveBlockerKind } from './workspaces.js'
+export {
+  workspaceRemoveBlockers,
+  worktreeDeleteBlockers,
+  type WorkspaceRemoveBlocker,
+  type WorkspaceRemoveBlockerKind,
+  type WorktreeDeleteBlocker,
+} from './workspaces.js'
 export {
   decodeDailyUseFeedFrame,
   decodeDailyUseRequest,
@@ -92,14 +98,46 @@ export interface Workspace {
    * so hand-built fixtures stay valid.
    */
   extra_terminals?: string[]
+  /**
+   * The workspace's repository, or null for a plain folder.
+   * @deprecated Read `project_id`, which a plain folder has too; kept for one release.
+   */
   repository_id: string | null
   needs_rebind: boolean
   worktree_lifecycle_needs_rebind: boolean
+  /**
+   * The project the workspace belongs to; never empty. The SDK's catalog
+   * parser always sets it and the fields below; they are optional only so
+   * hand-built fixtures stay valid. From an older daemon, a plain folder's
+   * project is the workspace's own ID.
+   */
+  project_id?: string
+  kind?: WorkspaceKind
+  /** The branch `HEAD` names; null when detached or not a Git checkout. */
+  branch?: string | null
+  /** The daemon's own workspace, which cannot be removed. */
+  default?: boolean
+  /** ADE made or adopted this linked worktree and may delete it. */
+  ade_owned?: boolean
+}
+
+export type WorkspaceKind = 'primary_checkout' | 'linked_worktree' | 'folder'
+export type ProjectKind = 'repository' | 'folder'
+
+/** A project in the catalog: a Git repository or a plain folder. */
+export interface CatalogProject {
+  id: string
+  kind: ProjectKind
+  /** A repository's checkout folder name, or the folder's own name. */
+  name: string
+  /** A repository's Git common directory, or the folder. */
+  root: string
 }
 
 /**
  * A Git repository in the catalog: the project its workspaces
  * (`Workspace.repository_id`) belong to. A plain folder has none.
+ * @deprecated Read `Catalog.projects`; kept for one release.
  */
 export interface CatalogRepository {
   id: string
@@ -117,6 +155,17 @@ export interface Conversation {
   status: string
   account_id?: string | null
   account_context?: 'managed' | 'legacy_ambient'
+  /**
+   * Whether the Conversation needs the person, as the daemon derives it from
+   * its status and open requests. Set when the daemon sends it.
+   */
+  attention?: Attention
+  /** It changed after the profile last marked it seen (`conversation.mark_seen`). */
+  unread?: boolean
+  /** The Conversation that delegated this one, for an orchestration child. */
+  parent_conversation_id?: string | null
+  /** The orchestration group this child runs in. */
+  group_id?: string | null
 }
 
 /**
@@ -145,10 +194,19 @@ export interface Terminal {
   conversation_id: string | null
 }
 
+export type Attention = 'idle' | 'running' | 'needs_you' | 'error'
+
 export interface Catalog {
+  /**
+   * Every project of the listed workspaces. The SDK's catalog parser always
+   * sets it, building it from `repositories` for an older daemon; it is
+   * optional only so hand-built fixtures stay valid.
+   */
+  projects?: CatalogProject[]
   /**
    * The repositories the listed workspaces use. The SDK's catalog parser
    * always sets it; it is optional only so hand-built fixtures stay valid.
+   * @deprecated Read `projects`; kept for one release.
    */
   repositories?: CatalogRepository[]
   workspaces: Workspace[]
@@ -213,6 +271,14 @@ function parseWorkspace(value: unknown): Workspace | null {
     return null
   const extraTerminals = source.extra_terminals ?? []
   if (!Array.isArray(extraTerminals) || !extraTerminals.every((id) => requiredString(id) !== null)) return null
+  const projectId = source.project_id ?? null
+  if (projectId !== null && typeof projectId !== 'string') return null
+  const kind = source.kind ?? null
+  if (kind !== null && !workspaceKinds.has(kind as string)) return null
+  const branch = source.branch ?? null
+  if (branch !== null && typeof branch !== 'string') return null
+  for (const flag of ['default', 'ade_owned'] as const)
+    if (source[flag] !== undefined && typeof source[flag] !== 'boolean') return null
   return {
     id: fields[0],
     root: fields[1],
@@ -222,8 +288,17 @@ function parseWorkspace(value: unknown): Workspace | null {
     repository_id: repositoryId ?? null,
     needs_rebind: source.needs_rebind === true,
     worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true,
+    // An older daemon sends none of these: a folder is then its own project.
+    project_id: projectId || (repositoryId as string | undefined) || fields[0],
+    kind: (kind as WorkspaceKind | null) ?? (repositoryId ? 'primary_checkout' : 'folder'),
+    branch,
+    default: source.default === true,
+    ade_owned: source.ade_owned === true,
   }
 }
+
+const workspaceKinds: ReadonlySet<string> = new Set<WorkspaceKind>(['primary_checkout', 'linked_worktree', 'folder'])
+const attentions: ReadonlySet<string> = new Set<Attention>(['idle', 'running', 'needs_you', 'error'])
 
 function parseConversation(value: unknown): Conversation | null {
   const fields = stringFields(value, ['id', 'workspace_id', 'provider', 'status'])
@@ -234,6 +309,13 @@ function parseConversation(value: unknown): Conversation | null {
   const accountContext = source?.account_context
   if (accountId !== undefined && accountId !== null && typeof accountId !== 'string') return null
   if (accountContext !== undefined && accountContext !== 'managed' && accountContext !== 'legacy_ambient') return null
+  const attention = source?.attention
+  const unread = source?.unread
+  const parent = optionalLink(source?.parent_conversation_id)
+  const group = optionalLink(source?.group_id)
+  if (attention !== undefined && !attentions.has(attention as string)) return null
+  if (unread !== undefined && typeof unread !== 'boolean') return null
+  if (parent === false || group === false) return null
   return {
     id: fields[0],
     workspace_id: fields[1],
@@ -242,6 +324,10 @@ function parseConversation(value: unknown): Conversation | null {
     status: fields[3],
     ...(accountId !== undefined ? { account_id: accountId } : {}),
     ...(accountContext !== undefined ? { account_context: accountContext } : {}),
+    ...(attention !== undefined ? { attention: attention as Attention } : {}),
+    ...(unread !== undefined ? { unread } : {}),
+    ...(parent !== undefined ? { parent_conversation_id: parent } : {}),
+    ...(group !== undefined ? { group_id: group } : {}),
   }
 }
 
@@ -280,9 +366,43 @@ function parseTerminal(value: unknown): Terminal | null {
   }
 }
 
+/** An optional ID that may be null; `false` when it is something else. */
+function optionalLink(value: unknown): string | null | undefined | false {
+  if (value === undefined || value === null || typeof value === 'string') return value
+  return false
+}
+
 function parseRepository(value: unknown): CatalogRepository | null {
   const fields = stringFields(value, ['id', 'root', 'name'])
   return fields ? { id: fields[0], root: fields[1], name: fields[2] } : null
+}
+
+function parseProject(value: unknown): CatalogProject | null {
+  const fields = stringFields(value, ['id', 'kind', 'name', 'root'])
+  if (!fields || (fields[1] !== 'repository' && fields[1] !== 'folder')) return null
+  return { id: fields[0], kind: fields[1], name: fields[2], root: fields[3] }
+}
+
+/**
+ * An older daemon lists repositories only: its projects are those, then each
+ * plain folder workspace as its own project.
+ */
+function legacyProjects(repositories: CatalogRepository[], workspaces: Workspace[]): CatalogProject[] {
+  const projects: CatalogProject[] = repositories.map((repository) => ({ ...repository, kind: 'repository' }))
+  for (const workspace of workspaces)
+    if (workspace.repository_id === null)
+      projects.push({
+        id: workspace.project_id ?? workspace.id,
+        kind: 'folder',
+        name: basename(workspace.root),
+        root: workspace.root,
+      })
+  return projects
+}
+
+function basename(path: string): string {
+  const trimmed = path.replace(/\/+$/, '')
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1) || path
 }
 
 /** A catalog as the daemon sends it, or null when it is malformed. */
@@ -292,14 +412,27 @@ export function parseCatalog(value: unknown): Catalog | null {
   const listed = source.repositories ?? []
   const listedTerminals = source.terminals ?? []
   if (!Array.isArray(listed) || !Array.isArray(listedTerminals)) return null
+  const listedProjects = source.projects ?? null
+  if (!Array.isArray(listed) || (listedProjects !== null && !Array.isArray(listedProjects))) return null
   const repositories = listed.map(parseRepository)
+  const projects = listedProjects?.map(parseProject) ?? []
   const workspaces = source.workspaces.map(parseWorkspace)
   const conversations = source.conversations.map(parseConversation)
   // A malformed terminal is dropped alone, so a newer daemon's records never
   // blank an older client's catalog.
   const terminals = listedTerminals.map(parseTerminal).filter((terminal) => terminal !== null)
-  if (repositories.includes(null) || workspaces.includes(null) || conversations.includes(null)) return null
+  if (
+    repositories.includes(null) ||
+    projects.includes(null) ||
+    workspaces.includes(null) ||
+    conversations.includes(null)
+  )
+    return null
   return {
+    projects:
+      listedProjects === null
+        ? legacyProjects(repositories as CatalogRepository[], workspaces as Workspace[])
+        : (projects as CatalogProject[]),
     repositories: repositories as CatalogRepository[],
     workspaces: workspaces as Workspace[],
     conversations: conversations as Conversation[],

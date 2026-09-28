@@ -6,6 +6,8 @@ export const operations = {
   "workspace.open": { tier: "idempotent_command", domain: "workspaces", request: "WorkspaceOpenRequest", response: "WorkspaceAck" },
   "workspace.rename": { tier: "idempotent_command", domain: "workspaces", request: "WorkspaceRenameRequest", response: "WorkspaceAck" },
   "workspace.remove": { tier: "effect_command", domain: "workspaces", request: "WorkspaceRemoveRequest", response: "WorkspaceRemoved" },
+  "workspace.create_worktree": { tier: "effect_command", domain: "workspaces", request: "WorkspaceCreateWorktreeRequest", response: "WorkspaceWorktreeOperation" },
+  "workspace.delete_worktree": { tier: "effect_command", domain: "workspaces", request: "WorkspaceDeleteWorktreeRequest", response: "WorkspaceWorktreeOperation" },
   "workspace.rebind.list": { tier: "query", domain: "workspaces", request: "WorkspaceRebindListRequest", response: "WorkspaceRebindCatalog" },
   "workspace.rebind": { tier: "idempotent_command", domain: "workspaces", request: "WorkspaceRebindRequest", response: "WorkspaceAck" },
   "repository.rebind.list": { tier: "query", domain: "workspaces", request: "RepositoryRebindListRequest", response: "RepositoryRebindCatalog" },
@@ -301,6 +303,8 @@ export const operations = {
  */
 export const operationIdOperations = [
   "workspace.remove",
+  "workspace.create_worktree",
+  "workspace.delete_worktree",
   "conversation.create",
   "queue.pause",
   "conversation.steer",

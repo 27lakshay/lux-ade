@@ -24,6 +24,53 @@ pub struct WorkspaceRecord {
     pub needs_rebind: bool,
     #[serde(default)]
     pub worktree_lifecycle_needs_rebind: bool,
+    /// The project this workspace belongs to; never empty in a reply. A
+    /// repository workspace's project is its repository (`repository_id` is
+    /// kept as a deprecated alias of it); a plain folder is a project of its own.
+    #[serde(default)]
+    pub project_id: String,
+    /// Whether this is a repository's primary checkout, a linked worktree or
+    /// a plain folder.
+    #[serde(default)]
+    pub kind: WorkspaceKind,
+    /// The branch the checkout's `HEAD` names; null when `HEAD` is detached
+    /// or the workspace is not a Git checkout. The daemon refreshes it on
+    /// open, after its own Git operations and when `HEAD` changes.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// Whether this is the daemon's own workspace: attachments that name no
+    /// workspace open their terminal here, and it cannot be removed. Set on
+    /// every reply, never stored.
+    #[serde(default)]
+    pub default: bool,
+    /// Whether ADE made (or adopted) this linked worktree and may delete it.
+    #[serde(default)]
+    pub ade_owned: bool,
+}
+/// What a workspace's folder is.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceKind {
+    /// A repository's main checkout, whose `.git` is the common directory.
+    PrimaryCheckout,
+    /// A worktree linked to a repository with `git worktree add`.
+    LinkedWorktree,
+    /// A plain folder, outside any Git repository ADE registered.
+    #[default]
+    Folder,
+}
+/// Whether a Conversation needs the person, as the navigator shows it.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Attention {
+    #[default]
+    Idle,
+    /// A turn is starting, running, responding, streaming or cancelling.
+    Running,
+    /// A question or approval waits on the person.
+    NeedsYou,
+    /// The Conversation failed, or its Agent is unavailable or disconnected.
+    Error,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct Conversation {
@@ -60,6 +107,35 @@ pub struct Conversation {
     pub active_turn_id: Option<String>,
     pub error: Option<String>,
     pub updated_at: i64,
+    /// Derived from `status` and open requests
+    /// (`crate::workspaces::attention`). Set on every reply, never stored.
+    #[serde(default)]
+    pub attention: Attention,
+    /// Whether the Conversation changed after the profile last marked it
+    /// seen (`conversation.mark_seen`). Set on every reply, never stored.
+    #[serde(default)]
+    pub unread: bool,
+    /// The Conversation that delegated this one, when it is an
+    /// orchestration child. Set on every reply, never stored.
+    #[serde(default)]
+    pub parent_conversation_id: Option<String>,
+    /// The orchestration group this child runs in, if any. Set on every
+    /// reply, never stored.
+    #[serde(default)]
+    pub group_id: Option<String>,
+}
+impl Conversation {
+    /// Clears the fields the daemon derives on every reply, so a stored
+    /// record never carries a stale copy of them.
+    pub fn without_presentation(&self) -> Self {
+        Self {
+            attention: Attention::Idle,
+            unread: false,
+            parent_conversation_id: None,
+            group_id: None,
+            ..self.clone()
+        }
+    }
 }
 fn legacy_ambient_account_context() -> String {
     "legacy_ambient".into()
@@ -192,9 +268,8 @@ impl PendingRequest {
         }
     }
 }
-/// A Git repository as the catalog lists it, so a client can group the
-/// workspaces that share it into one project. Plain folders have none: their
-/// workspace's `repository_id` is null.
+/// A repository project as the deprecated `Catalogue::repositories` lists
+/// it. `Catalogue::projects` lists every project, plain folders included.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct CatalogRepository {
     pub id: String,
@@ -204,9 +279,36 @@ pub struct CatalogRepository {
     /// `crate::workspaces::project_name`).
     pub name: String,
 }
+/// What a project is.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectKind {
+    /// A Git repository: its primary checkout and linked worktrees.
+    Repository,
+    /// An ordinary folder: a project with exactly one workspace.
+    Folder,
+}
+/// A project as the catalog lists it. Every workspace names its project in
+/// `WorkspaceRecord::project_id`, and the worktree lifecycle takes a
+/// repository project's ID as its `repository_id`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct CatalogProject {
+    pub id: String,
+    pub kind: ProjectKind,
+    /// The display name: a repository's checkout folder (see
+    /// `crate::workspaces::project_name`), or the folder's own name.
+    pub name: String,
+    /// A repository's Git common directory, or the folder.
+    pub root: String,
+}
 #[derive(Serialize, Deserialize, Clone, Debug, Default, JsonSchema)]
 pub struct Catalogue {
-    /// The repositories of the listed workspaces, in registration order.
+    /// The projects of the listed workspaces, in the order their first
+    /// workspace was registered.
+    #[serde(default)]
+    pub projects: Vec<CatalogProject>,
+    /// Deprecated: the repository projects alone, in registration order.
+    /// Kept for clients written before `projects`; read `projects` instead.
     #[serde(default)]
     pub repositories: Vec<CatalogRepository>,
     pub workspaces: Vec<WorkspaceRecord>,

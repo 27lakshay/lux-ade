@@ -2101,6 +2101,32 @@
       ],
       "type": "object"
     },
+    "Attention": {
+      "description": "Whether a Conversation needs the person, as the navigator shows it.",
+      "oneOf": [
+        {
+          "enum": [
+            "idle"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "running",
+          "description": "A turn is starting, running, responding, streaming or cancelling.",
+          "type": "string"
+        },
+        {
+          "const": "needs_you",
+          "description": "A question or approval waits on the person.",
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "description": "The Conversation failed, or its Agent is unavailable or disconnected.",
+          "type": "string"
+        }
+      ]
+    },
     "BackendCompatibility": {
       "description": "Whether the remote ADE backend can serve this daemon.",
       "properties": {
@@ -4675,8 +4701,34 @@
       ],
       "type": "object"
     },
+    "CatalogProject": {
+      "description": "A project as the catalog lists it. Every workspace names its project in\n`WorkspaceRecord::project_id`, and the worktree lifecycle takes a\nrepository project's ID as its `repository_id`.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ProjectKind"
+        },
+        "name": {
+          "description": "The display name: a repository's checkout folder (see\n`crate::workspaces::project_name`), or the folder's own name.",
+          "type": "string"
+        },
+        "root": {
+          "description": "A repository's Git common directory, or the folder.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "root"
+      ],
+      "type": "object"
+    },
     "CatalogRepository": {
-      "description": "A Git repository as the catalog lists it, so a client can group the\nworkspaces that share it into one project. Plain folders have none: their\nworkspace's `repository_id` is null.",
+      "description": "A repository project as the deprecated `Catalogue::repositories` lists\nit. `Catalogue::projects` lists every project, plain folders included.",
       "properties": {
         "id": {
           "type": "string"
@@ -4705,9 +4757,17 @@
           },
           "type": "array"
         },
+        "projects": {
+          "default": [],
+          "description": "The projects of the listed workspaces, in the order their first\nworkspace was registered.",
+          "items": {
+            "$ref": "#/$defs/CatalogProject"
+          },
+          "type": "array"
+        },
         "repositories": {
           "default": [],
-          "description": "The repositories of the listed workspaces, in registration order.",
+          "description": "Deprecated: the repository projects alone, in registration order.\nKept for clients written before `projects`; read `projects` instead.",
           "items": {
             "$ref": "#/$defs/CatalogRepository"
           },
@@ -4736,6 +4796,7 @@
         }
       },
       "required": [
+        "projects",
         "repositories",
         "workspaces",
         "conversations",
@@ -7315,7 +7376,20 @@
             "null"
           ]
         },
+        "attention": {
+          "$ref": "#/$defs/Attention",
+          "default": "idle",
+          "description": "Derived from `status` and open requests\n(`crate::workspaces::attention`). Set on every reply, never stored."
+        },
         "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_id": {
+          "default": null,
+          "description": "The orchestration group this child runs in, if any. Set on every\nreply, never stored.",
           "type": [
             "string",
             "null"
@@ -7323,6 +7397,14 @@
         },
         "id": {
           "type": "string"
+        },
+        "parent_conversation_id": {
+          "default": null,
+          "description": "The Conversation that delegated this one, when it is an\norchestration child. Set on every reply, never stored.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "provider": {
           "type": "string"
@@ -7388,6 +7470,11 @@
         "title": {
           "type": "string"
         },
+        "unread": {
+          "default": false,
+          "description": "Whether the Conversation changed after the profile last marked it\nseen (`conversation.mark_seen`). Set on every reply, never stored.",
+          "type": "boolean"
+        },
         "updated_at": {
           "maximum": 9007199254740991,
           "minimum": -9007199254740991,
@@ -7426,7 +7513,11 @@
         "status",
         "active_turn_id",
         "error",
-        "updated_at"
+        "updated_at",
+        "attention",
+        "unread",
+        "parent_conversation_id",
+        "group_id"
       ],
       "type": "object"
     },
@@ -18870,6 +18961,21 @@
         }
       ]
     },
+    "ProjectKind": {
+      "description": "What a project is.",
+      "oneOf": [
+        {
+          "const": "repository",
+          "description": "A Git repository: its primary checkout and linked worktrees.",
+          "type": "string"
+        },
+        {
+          "const": "folder",
+          "description": "An ordinary folder: a project with exactly one workspace.",
+          "type": "string"
+        }
+      ]
+    },
     "Projected": {
       "description": "One entry in a provider's native shape.",
       "properties": {
@@ -28978,6 +29084,94 @@
         }
       ]
     },
+    "WorkspaceCreateWorktreeRequest": {
+      "additionalProperties": false,
+      "description": "`workspace.create_worktree`: create a linked worktree of a repository\nproject and open it as a workspace named `name`.\n\nThe daemon creates the branch and tree through the worktree lifecycle\n(`worktree.create` with the project's naming defaults, setup hooks\nincluded), then opens the tree as a workspace, renames it to `name` and\nmarks it ADE-owned. The reply carries the operation's state at once; the\nworkspace appears in the catalog when it is ready. The lifecycle step's\nprogress is readable with `worktree.operation` under the project ID and\nthis operation ID. A retry with the same ID and payload returns the\ncurrent state.\n\nRefused before anything is recorded: an unknown project\n(`project_not_found`), a plain folder project (`project_not_repository`)\nor an invalid name (`invalid_workspace_name`).",
+      "properties": {
+        "base": {
+          "description": "Start point; the project's configured default base, then `HEAD`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The name ADE shows; the branch is the project's branch prefix plus\nits slug. Trimmed, 1 to 100 characters, no control characters.",
+          "type": "string"
+        },
+        "op": {
+          "const": "workspace.create_worktree"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID.",
+          "type": "string"
+        },
+        "project_id": {
+          "description": "A repository project; a pre-unification lifecycle repository ID is\naccepted as an alias.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "project_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "WorkspaceDeleteWorktreeRequest": {
+      "additionalProperties": false,
+      "description": "`workspace.delete_worktree`: remove a linked worktree's workspace from\nADE, then remove the tree.\n\nBefore changing anything the daemon checks the workspace's\n`workspace.remove` blockers and the tree's `worktree.cleanup.plan`\nblockers (except `active_work`, `setup_incomplete` and\n`teardown_incomplete`, which the removal itself resolves), and refuses with\n`worktree_delete_blocked` and `blockers: [{kind, id, label}]`. A primary\ncheckout is refused with `primary_checkout`, a plain folder with\n`not_a_worktree`. A workspace already removed from ADE is accepted. If the\ntree cannot be removed after all, the workspace is restored. A crash\nbetween the two steps is recovered when the daemon starts again.",
+      "properties": {
+        "delete_branch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BranchPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What happens to the tree's branch; `keep` when absent."
+        },
+        "op": {
+          "const": "workspace.delete_worktree"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "WorkspaceKind": {
+      "description": "What a workspace's folder is.",
+      "oneOf": [
+        {
+          "const": "primary_checkout",
+          "description": "A repository's main checkout, whose `.git` is the common directory.",
+          "type": "string"
+        },
+        {
+          "const": "linked_worktree",
+          "description": "A worktree linked to a repository with `git worktree add`.",
+          "type": "string"
+        },
+        {
+          "const": "folder",
+          "description": "A plain folder, outside any Git repository ADE registered.",
+          "type": "string"
+        }
+      ]
+    },
     "WorkspaceMode": {
       "description": "How the child's workspace was chosen.",
       "enum": [
@@ -29091,6 +29285,24 @@
     },
     "WorkspaceRecord": {
       "properties": {
+        "ade_owned": {
+          "default": false,
+          "description": "Whether ADE made (or adopted) this linked worktree and may delete it.",
+          "type": "boolean"
+        },
+        "branch": {
+          "default": null,
+          "description": "The branch the checkout's `HEAD` names; null when `HEAD` is detached\nor the workspace is not a Git checkout. The daemon refreshes it on\nopen, after its own Git operations and when `HEAD` changes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default": {
+          "default": false,
+          "description": "Whether this is the daemon's own workspace: attachments that name no\nworkspace open their terminal here, and it cannot be removed. Set on\nevery reply, never stored.",
+          "type": "boolean"
+        },
         "extra_terminals": {
           "default": [],
           "items": {
@@ -29101,12 +29313,22 @@
         "id": {
           "type": "string"
         },
+        "kind": {
+          "$ref": "#/$defs/WorkspaceKind",
+          "default": "folder",
+          "description": "Whether this is a repository's primary checkout, a linked worktree or\na plain folder."
+        },
         "name": {
           "type": "string"
         },
         "needs_rebind": {
           "default": false,
           "type": "boolean"
+        },
+        "project_id": {
+          "default": "",
+          "description": "The project this workspace belongs to; never empty in a reply. A\nrepository workspace's project is its repository (`repository_id` is\nkept as a deprecated alias of it); a plain folder is a project of its own.",
+          "type": "string"
         },
         "repository_id": {
           "type": [
@@ -29133,7 +29355,12 @@
         "name",
         "terminal_id",
         "needs_rebind",
-        "worktree_lifecycle_needs_rebind"
+        "worktree_lifecycle_needs_rebind",
+        "project_id",
+        "kind",
+        "branch",
+        "default",
+        "ade_owned"
       ],
       "type": "object"
     },
@@ -29199,6 +29426,93 @@
         "name"
       ],
       "type": "object"
+    },
+    "WorkspaceWorktreeKind": {
+      "description": "Which workspace worktree operation a state describes.",
+      "enum": [
+        "create_worktree",
+        "delete_worktree"
+      ],
+      "type": "string"
+    },
+    "WorkspaceWorktreeOperation": {
+      "description": "The `workspace.create_worktree` and `workspace.delete_worktree` reply:\nthe operation's current state.",
+      "properties": {
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/WorkspaceWorktreeKind"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/WorkspaceWorktreeStatus"
+        },
+        "type": {
+          "description": "The `workspace_worktree_operation` type tag.",
+          "enum": [
+            "workspace_worktree_operation"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "description": "The new workspace once created, or the workspace being deleted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worktree_path": {
+          "description": "The tree's path once the lifecycle names it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "operation_id",
+        "kind",
+        "status",
+        "project_id",
+        "workspace_id",
+        "worktree_path",
+        "error",
+        "code"
+      ],
+      "type": "object"
+    },
+    "WorkspaceWorktreeStatus": {
+      "description": "Where a workspace worktree operation stands.",
+      "oneOf": [
+        {
+          "enum": [
+            "running",
+            "succeeded"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "See `error` and `code`. A failed creation opens no workspace; a failed\ndeletion keeps the tree and restores its workspace.",
+          "type": "string"
+        }
+      ]
     },
     "WorktreeAdoptRequest": {
       "additionalProperties": false,
@@ -30793,6 +31107,20 @@
       "name": "workspace.remove",
       "request": "WorkspaceRemoveRequest",
       "response": "WorkspaceRemoved",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "workspaces",
+      "name": "workspace.create_worktree",
+      "request": "WorkspaceCreateWorktreeRequest",
+      "response": "WorkspaceWorktreeOperation",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "workspaces",
+      "name": "workspace.delete_worktree",
+      "request": "WorkspaceDeleteWorktreeRequest",
+      "response": "WorkspaceWorktreeOperation",
       "tier": "effect_command"
     },
     {
