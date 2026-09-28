@@ -22,6 +22,7 @@ export function resetLayout(): void {
     layouts: { [DEFAULT_WORKSPACE]: defaultLayout('p1') },
     recent: [DEFAULT_WORKSPACE],
     keepMounted: 3,
+    keepTerminals: 1,
   })
   document.documentElement.style.setProperty('--titlebar-height', '40px')
   document.documentElement.style.setProperty('--traffic-lights-inset', '80px')

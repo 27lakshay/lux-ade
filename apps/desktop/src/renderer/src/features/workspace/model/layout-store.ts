@@ -24,6 +24,12 @@ interface LayoutState {
   layouts: Record<string, Layout>
   recent: string[]
   keepMounted: number
+  /**
+   * Of those, how many keep their terminals mounted (1: only the workspace on screen). A terminal
+   * holds its scrollback and a GPU canvas, several MB each; one that unmounts attaches again from
+   * the daemon when its workspace returns.
+   */
+  keepTerminals: number
 }
 
 export const STORAGE_KEY = `ade.layouts:${WINDOW_NAME}`
@@ -55,6 +61,7 @@ export const layoutStore = createStore<LayoutState>()(
       layouts: { [DEFAULT_WORKSPACE]: defaultLayout(newPaneId()) },
       recent: [DEFAULT_WORKSPACE],
       keepMounted: 3,
+      keepTerminals: 1,
     }),
     {
       name: STORAGE_KEY,
@@ -75,7 +82,11 @@ export const layoutStore = createStore<LayoutState>()(
           localStorage.removeItem(name)
         },
       })),
-      partialize: (state) => ({ layouts: state.layouts, keepMounted: state.keepMounted }),
+      partialize: (state) => ({
+        layouts: state.layouts,
+        keepMounted: state.keepMounted,
+        keepTerminals: state.keepTerminals,
+      }),
       // Keep only layouts that still parse; anything else starts from the default.
       merge: (saved, current) => {
         const persisted = (saved ?? {}) as Partial<LayoutState>
@@ -88,7 +99,11 @@ export const layoutStore = createStore<LayoutState>()(
           typeof persisted.keepMounted === 'number' && persisted.keepMounted >= 1
             ? persisted.keepMounted
             : current.keepMounted
-        return { ...current, layouts, keepMounted }
+        const keepTerminals =
+          typeof persisted.keepTerminals === 'number' && persisted.keepTerminals >= 1
+            ? persisted.keepTerminals
+            : current.keepTerminals
+        return { ...current, layouts, keepMounted, keepTerminals }
       },
     },
   ),
@@ -117,6 +132,10 @@ export function setKeepMounted(count: number): void {
     keepMounted: Math.max(1, Math.round(count)),
     recent: state.recent.slice(0, Math.max(1, Math.round(count))),
   }))
+}
+
+export function setKeepTerminals(count: number): void {
+  layoutStore.setState({ keepTerminals: Math.max(1, Math.round(count)) })
 }
 
 /** Reads the active layout through a selector. */

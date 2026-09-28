@@ -90,7 +90,10 @@ claiming a UI change works.
   - `content/`: every tab's content renders once into its own element (`hosts.ts`,
     `ContentHosts.tsx`); panes attach the element, so moving a tab never remounts it. Content of
     the recently used workspaces stays mounted; how many is `keepMounted` in the layout store (3).
-    Pane content is empty for now.
+    Terminals stay mounted only for `keepTerminals` of them (1: the workspace on screen): each
+    holds ~4MB of scrollback and a GPU canvas, and attaches again from the daemon's snapshot when
+    its workspace returns (measured: 4 workspaces of 6 terminals and 4 chats use ~410MB, not
+    ~560MB). Pane content is empty for now; `?bench` in development fills it (`dev/bench.tsx`).
   - Layout animations key on structure (sidebar order, tab order), never on sizes. `testing.tsx` renders the workspace for browser tests and drives drags with native
     drag events (`dragTo`, or `startDrag` to look at the page mid-drag). Browser tests run in a
     1440×900 viewport.

@@ -11,7 +11,9 @@ import { hostFor, releaseHost } from './hosts'
 // Renders the content of every tab in the recently used workspaces, once, each into its own host
 // element (hosts.ts). Mounted once for the window: panes only attach and detach the elements.
 // A tab's content unmounts when its workspace leaves the recent list (and mounts again, fresh,
-// when it returns); its element is released only when the tab itself closes.
+// when it returns); its element is released only when the tab itself closes. Terminals are kept
+// for fewer workspaces (keepTerminals, 1 by default): they cost the most memory, and a terminal
+// attaches again from the daemon.
 
 /** What a tab shows. Empty until the conversation, terminal and browser surfaces are built. */
 export type RenderContent = (tab: Tab) => ReactNode
@@ -41,8 +43,13 @@ const TabHost = memo(function TabHost({ tab, render }: { tab: Tab; render: Rende
   )
 })
 
+/** Terminals only for the most recent `keepTerminals` workspaces; other content for all kept ones. */
 const keptTabs = (state: ReturnType<typeof layoutStore.getState>): Tab[] =>
-  state.recent.flatMap((workspace) => Object.values(state.layouts[workspace]?.tabs ?? {}))
+  state.recent.flatMap((workspace, index) =>
+    Object.values(state.layouts[workspace]?.tabs ?? {}).filter(
+      (tab) => tab.kind !== 'terminal' || index < Math.min(state.keepTerminals, state.keepMounted),
+    ),
+  )
 
 export function ContentHosts({ render = empty }: { render?: RenderContent }) {
   // Compared item by item: an unrelated layout change keeps the same tabs and renders nothing.

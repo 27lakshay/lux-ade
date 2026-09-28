@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { beforeEach, expect, test } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import type { Tab } from '../model/layout'
-import { dispatch, layoutStore, openTab, setActiveWorkspace } from '../model/layout-store'
+import { dispatch, layoutStore, openTab, setActiveWorkspace, setKeepTerminals } from '../model/layout-store'
 import { renderWorkspace, resetLayout } from '../testing'
 
 beforeEach(resetLayout)
@@ -60,12 +60,35 @@ test('moving a tab to another pane keeps its content: the same element, the same
 
 test('switching workspace and back keeps content mounted for recent workspaces', async () => {
   const screen = await renderWorkspace(render)
-  openTab({ kind: 'terminal', title: 'Shell' })
-  await screen.getByRole('button', { name: 'Shell 0' }).click()
+  openTab({ kind: 'conversation', title: 'Chat' })
+  await screen.getByRole('button', { name: 'Chat 0' }).click()
   setActiveWorkspace('other')
-  await expect.element(screen.getByRole('button', { name: 'Shell 1' })).not.toBeInTheDocument()
+  await expect.element(screen.getByRole('button', { name: 'Chat 1' })).not.toBeInTheDocument()
   setActiveWorkspace('default')
-  await expect.element(screen.getByRole('button', { name: 'Shell 1' })).toBeVisible()
+  await expect.element(screen.getByRole('button', { name: 'Chat 1' })).toBeVisible()
+})
+
+test('terminals stay mounted only for the workspace on screen, unless more are kept', async () => {
+  const screen = await renderWorkspace(render)
+  openTab({ kind: 'terminal', title: 'Shell' })
+  openTab({ kind: 'conversation', title: 'Chat' })
+  await expect.element(screen.getByRole('button', { name: 'Chat 0' })).toBeVisible()
+  lifecycle.length = 0
+  setActiveWorkspace('other')
+  // The terminal unmounts; the conversation, in a recent workspace, stays.
+  await expect.poll(() => lifecycle).toContain('unmount Shell')
+  expect(lifecycle).not.toContain('unmount Chat')
+  lifecycle.length = 0
+  setActiveWorkspace('default')
+  await expect.poll(() => lifecycle).toContain('mount Shell')
+  expect(lifecycle).not.toContain('mount Chat')
+  // Keeping terminals for two workspaces keeps it across a switch.
+  setKeepTerminals(2)
+  lifecycle.length = 0
+  setActiveWorkspace('other')
+  setActiveWorkspace('default')
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  expect(lifecycle).not.toContain('unmount Shell')
 })
 
 test('content unmounts when its tab closes, or its workspace falls off the recent list', async () => {
