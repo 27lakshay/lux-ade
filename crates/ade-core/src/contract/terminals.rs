@@ -73,10 +73,15 @@ pub enum TerminalStatus {
 pub struct TerminalRecord {
     pub id: String,
     pub workspace_id: String,
+    /// A `TerminalKind`. The contract keeps it an open string so a client
+    /// built before a new kind still reads the catalog.
+    #[schemars(with = "String")]
     pub kind: TerminalKind,
     /// The title given at creation, else the title the program set, else
     /// its command or the service or script name.
     pub title: String,
+    /// A `TerminalStatus`, an open string for the same reason as `kind`.
+    #[schemars(with = "String")]
     pub status: TerminalStatus,
     /// Set when `status` is `exited` and the process reported a code. A
     /// process ended by a signal reports 128 plus the signal number.
@@ -809,6 +814,11 @@ mod tests {
         assert_eq!(wire["status"], "exited");
         assert_eq!(wire["kind"], "shell");
         assert!(valid("TerminalRecord", &wire));
+        // A kind or status added later still passes an older client's contract.
+        let mut newer = wire.clone();
+        newer["kind"] = json!("pty");
+        newer["status"] = json!("paused");
+        assert!(valid("TerminalRecord", &newer));
         let frame = TerminalChanged {
             tag: TerminalChangedTag::Tag,
             terminal: record,

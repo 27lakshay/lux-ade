@@ -68,16 +68,29 @@ test('the catalog keeps terminal records, and an older daemon lists none', () =>
   assert.equal(exited.script_run_id, null)
 })
 
-test('a malformed terminal record rejects the catalog', () => {
+test('an unknown terminal kind or status is kept as sent', () => {
+  const catalog = parseCatalog({
+    workspaces: [],
+    conversations: [],
+    terminals: [terminal({ kind: 'pty', status: 'paused' })],
+  })
+  assert.equal(catalog.terminals[0].kind, 'pty')
+  assert.equal(catalog.terminals[0].status, 'paused')
+})
+
+test('a malformed terminal record is dropped alone, keeping the catalog', () => {
   for (const bad of [
-    terminal({ kind: 'pty' }),
-    terminal({ status: 'busy' }),
+    terminal({ kind: 3 }),
+    terminal({ status: null }),
     terminal({ exit_code: 'one' }),
     terminal({ busy: 'yes' }),
     terminal({ foreground: 3 }),
     terminal({ title: undefined }),
+    terminal({ id: '' }),
   ]) {
-    assert.equal(parseCatalog({ workspaces: [], conversations: [], terminals: [bad] }), null)
+    const catalog = parseCatalog({ workspaces: [workspace()], conversations: [], terminals: [bad, terminal()] })
+    assert.deepEqual(catalog.terminals, [terminal()])
+    assert.equal(catalog.workspaces.length, 1)
   }
   assert.equal(parseCatalog({ workspaces: [], conversations: [], terminals: {} }), null)
 })

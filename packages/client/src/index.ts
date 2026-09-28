@@ -119,9 +119,12 @@ export interface Conversation {
   account_context?: 'managed' | 'legacy_ambient'
 }
 
-/** What a terminal runs; see `TerminalRecord` in `@ade/contracts`. */
-export type TerminalKind = 'shell' | 'service' | 'script' | 'conversation'
-export type TerminalStatus = 'not_started' | 'running' | 'exited' | 'stopped'
+/**
+ * What a terminal runs; see `TerminalRecord` in `@ade/contracts`. A newer
+ * daemon may send a kind or status this SDK does not know; it is kept as sent.
+ */
+export type TerminalKind = 'shell' | 'service' | 'script' | 'conversation' | (string & {})
+export type TerminalStatus = 'not_started' | 'running' | 'exited' | 'stopped' | (string & {})
 
 /**
  * A terminal record, owned by its workspace. `busy` means a command holds the
@@ -242,9 +245,6 @@ function parseConversation(value: unknown): Conversation | null {
   }
 }
 
-const terminalKinds: readonly string[] = ['shell', 'service', 'script', 'conversation']
-const terminalStatuses: readonly string[] = ['not_started', 'running', 'exited', 'stopped']
-
 function optionalString(value: unknown): string | null | undefined {
   if (value === undefined || value === null) return null
   return typeof value === 'string' ? value : undefined
@@ -255,9 +255,7 @@ function parseTerminal(value: unknown): Terminal | null {
   const source = record(value)
   if (!fields || !source) return null
   const { kind, title, status } = source
-  if (typeof kind !== 'string' || !terminalKinds.includes(kind)) return null
-  if (typeof status !== 'string' || !terminalStatuses.includes(status)) return null
-  if (typeof title !== 'string') return null
+  if (typeof kind !== 'string' || typeof status !== 'string' || typeof title !== 'string') return null
   const exitCode = source.exit_code ?? null
   if (exitCode !== null && !Number.isInteger(exitCode)) return null
   for (const flag of [source.busy, source.primary]) {
@@ -269,9 +267,9 @@ function parseTerminal(value: unknown): Terminal | null {
   return {
     id: fields[0],
     workspace_id: fields[1],
-    kind: kind as TerminalKind,
+    kind,
     title,
-    status: status as TerminalStatus,
+    status,
     exit_code: exitCode as number | null,
     busy: source.busy === true,
     foreground,
@@ -297,19 +295,15 @@ export function parseCatalog(value: unknown): Catalog | null {
   const repositories = listed.map(parseRepository)
   const workspaces = source.workspaces.map(parseWorkspace)
   const conversations = source.conversations.map(parseConversation)
-  const terminals = listedTerminals.map(parseTerminal)
-  if (
-    repositories.includes(null) ||
-    workspaces.includes(null) ||
-    conversations.includes(null) ||
-    terminals.includes(null)
-  )
-    return null
+  // A malformed terminal is dropped alone, so a newer daemon's records never
+  // blank an older client's catalog.
+  const terminals = listedTerminals.map(parseTerminal).filter((terminal) => terminal !== null)
+  if (repositories.includes(null) || workspaces.includes(null) || conversations.includes(null)) return null
   return {
     repositories: repositories as CatalogRepository[],
     workspaces: workspaces as Workspace[],
     conversations: conversations as Conversation[],
-    terminals: terminals as Terminal[],
+    terminals,
   }
 }
 

@@ -788,7 +788,6 @@ export type ContractDefinition =
   | TerminalDescendant
   | TerminalDetachedFrame
   | TerminalErrorFrame
-  | TerminalKind
   | TerminalMetrics
   | TerminalMetricsFrame
   | TerminalOperation
@@ -802,7 +801,6 @@ export type ContractDefinition =
   | TerminalRestartRequest
   | TerminalRetireRequest
   | TerminalSnapshotFrame
-  | TerminalStatus
   | TerminalStopRequest
   | TerminalViewportFrame
   | TerminalWarningFrame
@@ -1042,15 +1040,6 @@ export type CarryBlocker =
  * How a path differs from `HEAD` in the source tree.
  */
 export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | 'untracked') | 'unmerged'
-/**
- * What a terminal runs. A `shell` is the workspace's primary shell or one
- * added by `terminal.create`; the others run a managed program.
- */
-export type TerminalKind = 'shell' | 'service' | 'script' | 'conversation'
-/**
- * Whether a terminal's process runs.
- */
-export type TerminalStatus = 'running' | 'not_started' | 'exited' | 'stopped'
 export type CheckState = 'passed' | 'failed' | 'skipped'
 /**
  * The preset field a conflict concerns.
@@ -4405,14 +4394,21 @@ export interface TerminalRecord {
    */
   foreground: string | null
   id: string
-  kind: TerminalKind
+  /**
+   * A `TerminalKind`. The contract keeps it an open string so a client
+   * built before a new kind still reads the catalog.
+   */
+  kind: string
   /**
    * The workspace's first shell. Closing it gives the workspace a new one.
    */
   primary: boolean
   script_run_id: string | null
   service_id: string | null
-  status: TerminalStatus
+  /**
+   * A `TerminalStatus`, an open string for the same reason as `kind`.
+   */
+  status: string
   /**
    * The title given at creation, else the title the program set, else
    * its command or the service or script name.
