@@ -22,7 +22,8 @@ function devHelpers(): Plugin {
     apply: 'serve',
     transformIndexHtml(html) {
       const scripts = helpers.map((path) => `<script type="module" src="${path}"></script>`).join('\n    ')
-      return html.replace('<script type="module" src="./src/bootstrap.ts">', `${scripts}\n    $&`)
+      // Vite appends ?t=… to the entry once it changes during a session, so match that too.
+      return html.replace(/<script type="module" src="\.\/src\/bootstrap\.ts[^"]*">/, `${scripts}\n    $&`)
     },
   }
 }
