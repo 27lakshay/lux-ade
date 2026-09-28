@@ -55,3 +55,29 @@ test("dragging a pane by its grip onto another pane's centre merges their tabs",
   await expect.poll(() => panes(layout().root).length).toBe(1)
   expect(titles(0)).toEqual(['Left', 'Right'])
 })
+
+test('dragging a sidebar by its grip onto the other swaps their sides', async () => {
+  await renderWorkspace()
+  const left = (label: string) => document.querySelector(`section[aria-label="${label}"]`)!.getBoundingClientRect().left
+  expect(left('Navigator')).toBeLessThan(left('Inspector'))
+  const grip = document.querySelector('[aria-label="Move navigator"]')!.parentElement!
+  await dragTo(grip, document.querySelector('section[aria-label="Inspector"]')!)
+  await expect.poll(() => layout().sidebars).toEqual(['inspector', 'navigator'])
+  await expect.poll(() => left('Navigator') > left('Inspector')).toBe(true)
+})
+
+test('a sidebar cannot be dropped onto a pane, nor a pane onto a sidebar', async () => {
+  const screen = await renderWorkspace()
+  openTab({ kind: 'terminal', title: 'One' })
+  await expect.element(screen.getByRole('tab', { name: /One/ })).toBeVisible()
+  const before = JSON.stringify(layout())
+  await dragTo(
+    document.querySelector('[aria-label="Move navigator"]')!.parentElement!,
+    document.querySelector('[data-pane-drop]')!,
+  )
+  await dragTo(
+    document.querySelector('[aria-label="Move pane"]')!.parentElement!,
+    document.querySelector('section[aria-label="Inspector"]')!,
+  )
+  expect(JSON.stringify(layout())).toBe(before)
+})

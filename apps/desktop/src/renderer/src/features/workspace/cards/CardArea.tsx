@@ -1,12 +1,14 @@
+import { combine } from '@atlaskit/pragmatic-drag-and-drop/combine'
+import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { LayoutGroup } from 'motion/react'
 import * as m from 'motion/react-m'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Group, Panel, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
 import { transitions } from '../../../app/motion'
 import { SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
 import { structureKey } from '../model/layout.logic'
 import { dispatch, layoutStore, useLayout } from '../model/layout-store'
-import { useDropMonitor } from '../panes/drag'
+import { isDragData, useDropMonitor, type DragData, type TargetData } from '../panes/drag'
 import { PaneGrid } from '../panes/PaneGrid'
 import { Inspector } from '../sidebars/Inspector'
 import { Navigator } from '../sidebars/Navigator'
@@ -27,6 +29,30 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
   const width = useLayout((layout) => layout.widths[id])
   const collapsed = useLayout((layout) => layout.collapsed[id])
   const { label, Content } = SIDEBAR[id]
+  const card = useRef<HTMLElement>(null)
+  const grip = useRef<HTMLDivElement>(null)
+  const [over, setOver] = useState(false)
+
+  // Drag a sidebar by its grip onto the other sidebar to swap sides.
+  useEffect(() => {
+    if (!card.current || !grip.current) return
+    return combine(
+      draggable({
+        element: card.current,
+        dragHandle: grip.current,
+        getInitialData: (): DragData => ({ kind: 'sidebar', sidebar: id }),
+      }),
+      dropTargetForElements({
+        element: card.current,
+        canDrop: ({ source }) =>
+          isDragData(source.data) && source.data.kind === 'sidebar' && source.data.sidebar !== id,
+        getData: (): TargetData => ({ kind: 'sidebar-target', sidebar: id }),
+        onDragEnter: () => setOver(true),
+        onDragLeave: () => setOver(false),
+        onDrop: () => setOver(false),
+      }),
+    )
+  }, [id])
   return (
     <Panel
       id={id}
@@ -40,10 +66,22 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
     >
       {/* The sidebar itself never animates its size: it fades as it returns, while the centre
           card animates into the space it leaves or takes. */}
-      <m.div className="h-full" initial={false} animate={{ opacity: collapsed ? 0 : 1 }} transition={transitions.fade}>
-        <Card surface="panel" label={label} grip={<Grip label={`Move ${label.toLowerCase()}`} />}>
+      <m.div
+        className="relative h-full"
+        initial={false}
+        animate={{ opacity: collapsed ? 0 : 1 }}
+        transition={transitions.fade}
+      >
+        <Card ref={card} surface="panel" label={label} grip={<Grip ref={grip} label={`Move ${label.toLowerCase()}`} />}>
           <Content />
         </Card>
+        {over && (
+          <div
+            aria-hidden
+            data-drop-zone="swap"
+            className="pointer-events-none absolute inset-1.5 rounded-md bg-accent opacity-60"
+          />
+        )}
       </m.div>
     </Panel>
   )
