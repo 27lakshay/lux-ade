@@ -111,10 +111,12 @@ the shown browser tab of each pane has a view attached; hidden tabs detach, like
 09b and 09c start once 09a's contract is fixed (one coordinator step, as ticket 01 fixed
 `TabTarget`), and run in parallel with the rest of 09a.
 
-## Decisions for the user before it starts
+## Decisions
 
 1. ~~Tabs owned by a workspace or by the profile.~~ **Decided by the user 2026-09-29: a browser tab
    is owned by a workspace**; removing the workspace closes its tabs.
-2. **Opening with no desktop** creates a `not_loaded` record (recommended) or is refused.
+2. ~~Opening with no desktop: create a record or refuse.~~ **Decided by the user 2026-09-29: it
+   creates a `not_loaded` record**, loaded when an owner attaches; operations that need a live page
+   keep refusing with the owner-unavailable error.
 
 ## Comments
