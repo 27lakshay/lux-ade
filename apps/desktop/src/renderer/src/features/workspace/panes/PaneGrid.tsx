@@ -18,13 +18,17 @@ import { Pane } from './Pane'
 const CLIPPED = { overflow: 'hidden' } as const
 
 function Child({ node, split, index }: { node: LayoutNode; split: SplitNode; index: number }) {
-  const tabs = useLayout((layout) => layout.tabs)
-  const min = minSize(node, tabs)
+  // A number, not the tab list: only a change to this node's minimum renders it.
+  const row = split.direction === 'row'
+  const min = useLayout((layout) => {
+    const size = minSize(node, layout.tabs)
+    return row ? size.width : size.height
+  })
   return (
     <Panel
       id={node.id}
       defaultSize={`${split.sizes[index]}%`}
-      minSize={`${split.direction === 'row' ? min.width : min.height}px`}
+      minSize={`${min}px`}
       // Never a scrollbar at this level: content too big for a small pane is clipped by its card.
       style={CLIPPED}
     >

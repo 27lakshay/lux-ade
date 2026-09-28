@@ -3,6 +3,7 @@ import { defaultLayout } from './layout'
 import {
   DEFAULT_WORKSPACE,
   dispatch,
+  flushLayouts,
   layoutStore,
   setActiveWorkspace,
   setKeepMounted,
@@ -10,14 +11,16 @@ import {
 } from './layout-store'
 
 beforeEach(() => {
-  localStorage.removeItem(STORAGE_KEY)
-  localStorage.removeItem('ade.layouts')
   layoutStore.setState({
     active: DEFAULT_WORKSPACE,
     layouts: { [DEFAULT_WORKSPACE]: defaultLayout('p1') },
     recent: [DEFAULT_WORKSPACE],
     keepMounted: 3,
   })
+  // Write the reset out before clearing, so no batched save is left waiting.
+  flushLayouts()
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem('ade.layouts')
 })
 
 test('each workspace keeps its own layout', () => {
@@ -68,6 +71,9 @@ test('each window saves under its own name; the main window takes over layouts s
   await layoutStore.persist.rehydrate()
   expect(layoutStore.getState().layouts[DEFAULT_WORKSPACE]?.sidebars).toEqual(['inspector', 'navigator'])
   dispatch({ type: 'swapSidebars' })
+  // Saves are batched; closing the window writes what is waiting.
+  expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+  flushLayouts()
   expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).state.layouts[DEFAULT_WORKSPACE].sidebars).toEqual([
     'navigator',
     'inspector',

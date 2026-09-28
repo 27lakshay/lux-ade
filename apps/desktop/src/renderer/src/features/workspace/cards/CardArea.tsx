@@ -140,7 +140,7 @@ function SidebarPanel({
 export function CardArea() {
   const sidebars = useLayout((layout) => layout.sidebars)
   const root = useLayout((layout) => layout.root)
-  const tabs = useLayout((layout) => layout.tabs)
+  const centreMin = useLayout((layout) => minSize(layout.root, layout.tabs).width)
   const maximized = useLayout((layout) => (layout.maximized ? findPane(layout.root, layout.maximized) : undefined))
   const centre = useRef<HTMLDivElement>(null)
   const refs = { navigator: usePanelRef(), inspector: usePanelRef() }
@@ -180,7 +180,7 @@ export function CardArea() {
           hidden={!shown[left]}
           onDoubleClick={() => resetWidth(left)}
         />
-        <Panel id="centre" elementRef={centre} style={MOVING_CARD} minSize={`${minSize(root, tabs).width}px`}>
+        <Panel id="centre" elementRef={centre} style={MOVING_CARD} minSize={`${centreMin}px`}>
           {/* Moves with a sidebar swap when the sidebars differ in width. */}
           <m.div
             layout="position"

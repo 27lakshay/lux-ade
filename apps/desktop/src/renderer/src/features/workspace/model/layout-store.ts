@@ -34,6 +34,20 @@ export const DEFAULT_WORKSPACE = 'default'
 
 const newPaneId = (): string => `pane-${nanoid(8)}`
 
+const SAVE_DELAY_MS = 200
+let pending: { name: string; value: string } | null = null
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+/** Writes any layout change still waiting to be saved. Runs as the window closes or reloads. */
+export function flushLayouts(): void {
+  clearTimeout(saveTimer)
+  if (!pending) return
+  localStorage.setItem(pending.name, pending.value)
+  pending = null
+}
+window.addEventListener('pagehide', flushLayouts)
+window.addEventListener('beforeunload', flushLayouts)
+
 export const layoutStore = createStore<LayoutState>()(
   persist(
     (): LayoutState => ({
@@ -47,9 +61,19 @@ export const layoutStore = createStore<LayoutState>()(
       version: 1,
       storage: createJSONStorage(() => ({
         getItem: (name) =>
-          localStorage.getItem(name) ?? (WINDOW_NAME === 'main' ? localStorage.getItem(LEGACY_KEY) : null),
-        setItem: (name, value) => localStorage.setItem(name, value),
-        removeItem: (name) => localStorage.removeItem(name),
+          (pending?.name === name ? pending.value : null) ??
+          localStorage.getItem(name) ??
+          (WINDOW_NAME === 'main' ? localStorage.getItem(LEGACY_KEY) : null),
+        setItem: (name, value) => {
+          // Batched: a burst of changes (a drag, a run of keys) is one write.
+          pending = { name, value }
+          clearTimeout(saveTimer)
+          saveTimer = setTimeout(flushLayouts, SAVE_DELAY_MS)
+        },
+        removeItem: (name) => {
+          if (pending?.name === name) pending = null
+          localStorage.removeItem(name)
+        },
       })),
       partialize: (state) => ({ layouts: state.layouts, keepMounted: state.keepMounted }),
       // Keep only layouts that still parse; anything else starts from the default.

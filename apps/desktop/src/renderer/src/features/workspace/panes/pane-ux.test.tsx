@@ -223,3 +223,28 @@ test('selecting a tab moves no tab: each is as wide as when selected', async () 
     expect(boxes()).toEqual(before)
   }
 })
+
+test('only the focused pane fills its active tab, and a change of focus re-renders no tab content', async () => {
+  const renders: Record<string, number> = {}
+  await renderWorkspace((tab) => {
+    renders[tab.title] = (renders[tab.title] ?? 0) + 1
+    return null
+  })
+  openTab({ kind: 'terminal', title: 'Left' })
+  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
+  openTab({ kind: 'terminal', title: 'Right' }, 'p2')
+  await expect.poll(() => document.querySelectorAll('[role=tab][data-tab-id]').length).toBe(2)
+  const fill = (title: string) => getComputedStyle(tabEl(title)).backgroundColor
+  const clear = (colour: string) => colour.endsWith('/ 0)') || colour.endsWith(', 0)')
+  // Fills fade in and out over 100ms.
+  await expect.poll(() => clear(fill('Right'))).toBe(false)
+  await expect.poll(() => clear(fill('Left'))).toBe(true)
+  const before = { ...renders }
+  dispatch({ type: 'focusPane', paneId: 'p1' })
+  await expect.poll(() => clear(fill('Left'))).toBe(false)
+  await expect.poll(() => clear(fill('Right'))).toBe(true)
+  // Opening a tab renders only its own content.
+  openTab({ kind: 'terminal', title: 'Third' }, 'p1')
+  await expect.poll(() => renders.Third).toBeGreaterThan(0)
+  expect({ Left: renders.Left, Right: renders.Right }).toEqual({ Left: before.Left, Right: before.Right })
+})

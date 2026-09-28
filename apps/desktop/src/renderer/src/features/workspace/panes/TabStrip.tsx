@@ -3,6 +3,7 @@ import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element
 import { autoScrollForElements } from '@atlaskit/pragmatic-drag-and-drop-auto-scroll/element'
 import * as m from 'motion/react-m'
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SPRING_LOAD_MS, transitions } from '../../../app/motion'
 import type { PaneNode } from '../model/layout'
@@ -65,18 +66,17 @@ export function hitTab(tabs: Measured[], x: number): { index: number; over: stri
 
 export function TabStrip({
   pane,
-  focused,
   bar,
   children,
 }: {
   pane: PaneNode
-  focused: boolean
   /** The bar the strip sits in: the drop target. */
   bar: RefObject<HTMLDivElement | null>
   /** Controls after the strip (new tab, toolbar). */
   children: ReactNode
 }) {
-  const tabs = useLayout((layout) => layout.tabs)
+  // This pane's tabs only, compared one by one: a change to another pane's tab renders nothing here.
+  const records = useLayout(useShallow((layout) => pane.tabs.map((id) => layout.tabs[id])))
   const strip = useRef<HTMLDivElement>(null)
   const [slot, setSlot] = useState<Slot | null>(null)
   const [springing, setSpringing] = useState<string | null>(null)
@@ -170,7 +170,7 @@ export function TabStrip({
 
   const layoutKey = `${pane.tabs.join(',')}|${slot?.index ?? ''}`
   const items = pane.tabs.flatMap((id, index) => {
-    const tab = tabs[id]
+    const tab = records[index]
     const element = tab ? (
       <Tab
         key={id}
@@ -178,7 +178,6 @@ export function TabStrip({
         paneId={pane.id}
         layoutKey={layoutKey}
         active={pane.active === id}
-        focused={focused}
         springing={springing === id}
       />
     ) : null

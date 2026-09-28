@@ -141,7 +141,7 @@ export function Pane({ pane }: { pane: PaneNode }) {
         onFocusCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
       >
         <div ref={bar} data-tab-bar className="@container flex h-10 shrink-0 items-center gap-0.5 px-1.5">
-          <TabStrip pane={pane} focused={focused} bar={bar}>
+          <TabStrip pane={pane} bar={bar}>
             <IconButton
               icon="new"
               label="New tab"

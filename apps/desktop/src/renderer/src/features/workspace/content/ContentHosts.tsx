@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { memo, useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import { useStore } from 'zustand'
@@ -21,7 +21,9 @@ const empty: RenderContent = () => null
 const tabExists = (tabId: string): boolean =>
   Object.values(layoutStore.getState().layouts).some((layout) => tabId in layout.tabs)
 
-function TabHost({ tab, render }: { tab: Tab; render: RenderContent }) {
+// Memoised: the list of kept tabs changes whenever a tab opens or closes, and each host whose tab
+// did not change then skips rendering.
+const TabHost = memo(function TabHost({ tab, render }: { tab: Tab; render: RenderContent }) {
   useEffect(
     () => () => {
       if (!tabExists(tab.id)) releaseHost(tab.id)
@@ -37,7 +39,7 @@ function TabHost({ tab, render }: { tab: Tab; render: RenderContent }) {
     hostFor(tab.id),
     tab.id,
   )
-}
+})
 
 const keptTabs = (state: ReturnType<typeof layoutStore.getState>): Tab[] =>
   state.recent.flatMap((workspace) => Object.values(state.layouts[workspace]?.tabs ?? {}))

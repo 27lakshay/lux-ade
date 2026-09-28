@@ -21,8 +21,8 @@ export const TAB_ICON: Record<TabKind, IconName> = {
   diff: 'diff',
 }
 
-// One tab in a pane's strip. The active tab of the focused pane is filled; in other panes it keeps
-// its text colour but no fill. Close shows on the active tab and on hover. A tab drags to another
+// One tab in a pane's strip. The active tab of the focused pane is filled (by CSS, from the pane's
+// data-pane-focused); in other panes it keeps its text colour but no fill. Close shows on the active tab and on hover. A tab drags to another
 // place in any strip (TabStrip decides where), onto a pane to join or split it, or onto the
 // centre's edges to dock.
 export function Tab({
@@ -30,7 +30,6 @@ export function Tab({
   paneId,
   layoutKey,
   active,
-  focused,
   springing,
 }: {
   tab: TabData
@@ -38,7 +37,6 @@ export function Tab({
   /** The strip's tab order and drop slot: tabs slide only when these change. */
   layoutKey: string
   active: boolean
-  focused: boolean
   /** A drag is hovering this tab; it opens when the fill completes. */
   springing: boolean
 }) {
@@ -75,12 +73,15 @@ export function Tab({
       data-tab-id={tab.id}
       tabIndex={active ? 0 : -1}
       aria-selected={active}
-      data-selected={(active && focused) || undefined}
+      // Filled only in the focused pane, by CSS from the pane's own attribute: a change of focus
+      // re-renders no tab.
+      data-active={active || undefined}
       onClick={activate}
       onAuxClick={(event) => event.button === 1 && dispatch({ type: 'closeTab', tabId: tab.id })}
       onKeyDown={(event) => (event.key === 'Enter' || event.key === ' ') && activate()}
       className={cn(
         interactive,
+        'in-data-[pane-focused]:data-[active]:bg-accent',
         'group/tab relative flex h-7 max-w-48 min-w-0 shrink-0 items-center gap-2 overflow-hidden rounded-sm ps-2 pe-0.5',
         active ? 'text-foreground' : 'text-muted-foreground',
         dragging && 'opacity-50',
