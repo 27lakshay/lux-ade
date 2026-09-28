@@ -46,18 +46,34 @@ claiming a UI change works.
   - `model/`: the layout is data (`layout.ts`), changed only by the reducer (`layout.logic.ts`),
     stored per workspace and saved (`layout-store.ts`, checked on load by `layout-schema.ts`).
     Native-menu and palette commands live in `layout-commands.ts`.
-  - `panes/`: the pane tree (`PaneGrid`), panes, tabs and dragging (`drag.ts`). Tabs reorder,
-    move between panes, join a pane dropped on its centre and split it when dropped on its edge;
-    hovering a dragged tab over another tab opens it after `SPRING_LOAD_MS`, and a long strip
-    scrolls. A pane moves by its grip: onto another pane's edge it moves beside it, onto its
-    centre the two swap places. Merging is done with tabs only. While a tab or pane is dragged,
-    strips on the centre's outer edges (`DockEdges`) dock it as a full-height column or full-width
-    row. Every drag shows a small chip (`DragChip`) and dims what is dragged. Each drag has a
-    keyboard or palette equivalent in `layout-commands.ts` (`$mod+Alt+Arrow` focuses the pane that
-    way, adding Shift swaps with it). Sidebars only swap sides, by grip or the Swap sidebars
-    command; they never hold panes. The pane tree's queries and edits are in
-    `model/layout-tree.ts`; `layout.property.test.ts` runs random action sequences against the
-    reducer's invariants.
+  - `panes/`: the pane tree (`PaneGrid`), panes, tabs and dragging (`drag.ts`).
+    - Tabs reorder, move between panes, join a pane dropped on its centre and split it when
+      dropped on its edge. `TabStrip` is one drop target per tab bar: it measures the tabs when a
+      drag enters and opens a slot where the tab will land (`hitTab`: a tab's outer quarters
+      reorder, its middle half opens it after `SPRING_LOAD_MS`, with a fill). Long strips scroll.
+    - A pane moves by its grip: onto another pane's edge it moves beside it, onto its centre the
+      two swap. Merging is done with tabs only. During a tab or pane drag, `DockEdges` shows
+      markers and strips on the centre's outer edges (in the gutters, drawn outside the panels,
+      which scroll whatever overflows them) that dock it as a full-height column or full-width row.
+    - Every drag shows a small chip (`DragChip`) and dims what is dragged. A drop is announced to
+      screen readers and an outline settles onto the pane it made (`drop-feedback.ts`,
+      `DropSettle`). Sidebars only swap sides, by grip or the Swap sidebars command.
+    - Each pane has a minimum size from its tabs' kinds (`PANE_MIN`, `minSize` in
+      `model/layout-tree.ts`); dragged below it, a pane collapses (in a row to a strip of tab icons,
+      `CollapsedPane`; in a column to its tab bar) and a click opens it. Panes that cannot all fit
+      at their minimum collapse the same way. Under 320px a pane's actions fold into a More menu
+      (`PaneToolbar`, a container query).
+    - A pane maximizes (double-click its grip, its toolbar, `$mod+Shift+Enter`); rearranging panes
+      or focusing another restores the grid. Double-clicking a gutter evens out that split, or
+      resets a sidebar's width. Gutters highlight after a short hover; arrow keys resize a focused
+      gutter and Enter collapses. While a gutter is dragged, a tab's content can show its size
+      (`content/size-label.ts`; a terminal will report columns × rows).
+    - Splits and sidebars follow the model's sizes when they change from outside (Reset layout,
+      Equalize panes). `Panel` sizes in `react-resizable-panels` are pixels when given a number:
+      pass percentages as strings with `%`.
+    - Keyboard and palette: `layout-commands.ts` (`$mod+Alt+Arrow` focuses the pane that way,
+      adding Shift swaps; Reset layout, Equalize panes, Maximize or restore pane).
+    - `layout.property.test.ts` runs random action sequences against the reducer's invariants.
   - `content/`: every tab's content renders once into its own element (`hosts.ts`,
     `ContentHosts.tsx`); panes attach the element, so moving a tab never remounts it. Content of
     the recently used workspaces stays mounted; how many is `keepMounted` in the layout store (3).

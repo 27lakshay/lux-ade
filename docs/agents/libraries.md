@@ -42,7 +42,7 @@ When you first import a package listed here, remove it from `ignoreDependencies`
 | Tables (sessions, services, usage, worktrees) | `@tanstack/react-table` | hand-written sorting and column state |
 | Forms | the kit's form fields with `zod` | ad hoc input state |
 | Resizable splits | `react-resizable-panels` | pointer-drag math |
-| Drag and drop (tabs, panes, files) | `@atlaskit/pragmatic-drag-and-drop` (+ `-hitbox`, `-auto-scroll`) | HTML5 drag events by hand |
+| Drag and drop (tabs, panes, files) | `@atlaskit/pragmatic-drag-and-drop` (+ `-hitbox`, `-auto-scroll`, `-live-region` for screen-reader announcements) | HTML5 drag events by hand |
 | Charts | `recharts` | SVG by hand |
 | Colour maths (OKLCH, contrast, mixing) | `culori` | hand-written conversions |
 

@@ -1,19 +1,18 @@
 import { combine } from '@atlaskit/pragmatic-drag-and-drop/combine'
 import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
-import { autoScrollForElements } from '@atlaskit/pragmatic-drag-and-drop-auto-scroll/element'
 import * as m from 'motion/react-m'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { IconButton } from '@/components/IconButton'
 import { Caption } from '@/components/Typography'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { transitions } from '../../../app/motion'
 import { Card } from '../cards/Card'
 import { Grip } from '../cards/Grip'
 import { attachHost } from '../content/hosts'
 import type { DropZone, PaneNode } from '../model/layout'
-import { dispatch, openTab, splitPane, useLayout } from '../model/layout-store'
+import { dispatch, openTab, useLayout } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
+import { CollapsedPane } from './CollapsedPane'
 import {
   activeLayout,
   canDropOnZone,
@@ -25,11 +24,16 @@ import {
 } from './drag'
 import { DragChip } from './DragChip'
 import { PaneEmptyState } from './PaneEmptyState'
-import { Tab } from './Tab'
+import { usePaneCollapse } from './pane-collapse'
+import { PaneToolbar } from './PaneToolbar'
+import { SizeReadout } from './SizeReadout'
+import { TabStrip } from './TabStrip'
 
-// A pane: its tab strip (tabs, new tab, split and close), its body, and the grip that moves it.
-// The body shows the active tab's content by attaching its host element (content/hosts.ts). While
-// a tab or pane is dragged over the body, the zone it would land in lights up.
+// A pane: its tab bar (TabStrip, new tab, PaneToolbar), its body, and the grip that moves it. The
+// body shows the active tab's content by attaching its host element (content/hosts.ts). While a tab
+// or pane is dragged over the body, the zone it would land in lights up. Double-clicking the grip
+// maximizes the pane. Collapsed in a row, the pane shows only its tabs' icons (CollapsedPane);
+// collapsed in a column, only its tab bar; a click anywhere on it opens it again.
 
 const ZONE: Record<DropZone, string> = {
   left: 'inset-y-1.5 start-1.5 end-1/2',
@@ -49,21 +53,19 @@ const tabCountLabel = (paneId: string): string => {
   return count === 1 ? 'Pane · 1 tab' : `Pane · ${count} tabs`
 }
 
-function usePaneDrag(paneId: string) {
+/** `narrow`: the body is not shown, so there is nothing to drop on. */
+function usePaneDrag(paneId: string, narrow: boolean) {
   const card = useRef<HTMLElement>(null)
   const grip = useRef<HTMLDivElement>(null)
-  const bar = useRef<HTMLDivElement>(null)
-  const strip = useRef<HTMLDivElement>(null)
   const body = useRef<HTMLDivElement>(null)
   const [over, setOver] = useState<{ zone: DropZone; source: DragData } | null>(null)
   const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
-    if (!card.current || !grip.current || !bar.current || !strip.current || !body.current) return
+    if (!card.current || !grip.current) return
     const bodyElement = body.current
-    const viewport = strip.current.closest<HTMLElement>('[data-slot=scroll-area-viewport]')
     const zoneFor = (source: Record<string | symbol, unknown>, x: number, y: number): DropZone | null => {
-      if (!isDragData(source)) return null
+      if (!isDragData(source) || !bodyElement) return null
       const next = zoneAt(bodyElement.getBoundingClientRect(), x, y)
       return canDropOnZone(source, paneId, next) ? next : null
     }
@@ -77,57 +79,47 @@ function usePaneDrag(paneId: string) {
         onDragStart: () => setDragging(true),
         onDrop: () => setDragging(false),
       }),
-      // A long strip scrolls while a tab is dragged near its ends.
-      viewport
-        ? autoScrollForElements({
-            element: viewport,
-            canScroll: ({ source }) => isDragData(source.data) && source.data.kind === 'tab',
+      bodyElement
+        ? dropTargetForElements({
+            element: bodyElement,
+            canDrop: ({ source }) => isDragData(source.data),
+            getData: ({ input, source }): TargetData => ({
+              kind: 'body-target',
+              paneId,
+              zone: zoneFor(source.data, input.clientX, input.clientY) ?? 'centre',
+            }),
+            onDrag: ({ location, source }) => {
+              const zone = zoneFor(source.data, location.current.input.clientX, location.current.input.clientY)
+              setOver((previous) =>
+                zone === previous?.zone
+                  ? previous
+                  : zone && isDragData(source.data)
+                    ? { zone, source: source.data }
+                    : null,
+              )
+            },
+            onDragLeave: () => setOver(null),
+            onDrop: () => setOver(null),
           })
         : () => {},
-      dropTargetForElements({
-        // The whole bar: a tab dropped on its empty space goes after the last tab.
-        element: bar.current,
-        canDrop: ({ source }) => isDragData(source.data) && source.data.kind === 'tab',
-        getData: (): TargetData => ({ kind: 'strip-target', paneId }),
-      }),
-      dropTargetForElements({
-        element: bodyElement,
-        canDrop: ({ source }) => isDragData(source.data),
-        getData: ({ input, source }): TargetData => ({
-          kind: 'body-target',
-          paneId,
-          zone: zoneFor(source.data, input.clientX, input.clientY) ?? 'centre',
-        }),
-        onDrag: ({ location, source }) => {
-          const zone = zoneFor(source.data, location.current.input.clientX, location.current.input.clientY)
-          setOver((previous) =>
-            zone === previous?.zone ? previous : zone && isDragData(source.data) ? { zone, source: source.data } : null,
-          )
-        },
-        onDragLeave: () => setOver(null),
-        onDrop: () => setOver(null),
-      }),
     )
-  }, [paneId])
+  }, [paneId, narrow])
 
-  return { card, grip, bar, strip, body, over, dragging }
+  return { card, grip, body, over, dragging }
 }
 
 export function Pane({ pane }: { pane: PaneNode }) {
   const focused = useLayout((layout) => layout.focusedPane === pane.id)
-  const tabs = useLayout((layout) => layout.tabs)
-  const { card, grip, bar, strip, body, over, dragging } = usePaneDrag(pane.id)
+  const { collapsed, expand } = usePaneCollapse()
+  const narrow = collapsed === 'row'
+  const { card, grip, body, over, dragging } = usePaneDrag(pane.id, narrow)
+  const bar = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   // Show the active tab's content: attach its host element, never re-render it.
   useLayoutEffect(
     () => (host.current && pane.active ? attachHost(host.current, pane.active) : undefined),
-    [pane.active],
+    [pane.active, narrow],
   )
-  const order = pane.tabs.join(',')
-  // Keep the active tab in view when it changes, and let a vertical wheel scroll the strip.
-  useEffect(() => {
-    strip.current?.querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [pane.active, strip])
   const zone = over?.zone
   const label = over ? zoneLabel(over.source, over.zone) : null
 
@@ -136,80 +128,62 @@ export function Pane({ pane }: { pane: PaneNode }) {
       ref={card}
       surface="pane"
       label="Pane"
+      paneId={pane.id}
       className={cn(dragging && 'opacity-50')}
-      grip={<Grip ref={grip} label="Move pane" />}
+      grip={
+        <Grip
+          ref={grip}
+          label="Move pane"
+          onDoubleClick={() => dispatch({ type: 'toggleMaximize', paneId: pane.id })}
+        />
+      }
     >
       <div
         className="flex min-h-0 flex-1 flex-col"
         onPointerDownCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
+        onClickCapture={collapsed ? expand : undefined}
       >
-        <div ref={bar} data-tab-bar className="flex h-10 shrink-0 items-center gap-0.5 px-1.5">
-          <ScrollArea
-            className="min-w-0 shrink"
-            onWheel={(event) => {
-              const viewport = event.currentTarget.querySelector('[data-slot=scroll-area-viewport]')
-              if (viewport && event.deltaX === 0) viewport.scrollLeft += event.deltaY
-            }}
-          >
-            <div ref={strip} role="tablist" aria-label="Tabs" className="flex w-max items-center gap-0.5">
-              {pane.tabs.map(
-                (id, index) =>
-                  tabs[id] && (
-                    <Tab
-                      key={id}
-                      tab={tabs[id]}
-                      paneId={pane.id}
-                      index={index}
-                      order={order}
-                      active={pane.active === id}
-                      focused={focused}
-                    />
-                  ),
+        {narrow ? (
+          <CollapsedPane pane={pane} expand={expand} />
+        ) : (
+          <>
+            <div ref={bar} data-tab-bar className="@container flex h-10 shrink-0 items-center gap-0.5 px-1.5">
+              <TabStrip pane={pane} focused={focused} bar={bar}>
+                <IconButton
+                  icon="new"
+                  label="New tab"
+                  shortcut={{ appCommand: 'new-tab' }}
+                  onClick={() => openTab({ kind: 'conversation', title: 'New conversation' }, pane.id)}
+                />
+                <div className="flex-1" />
+                <PaneToolbar paneId={pane.id} />
+              </TabStrip>
+            </div>
+            <div ref={body} data-pane-drop={pane.id} className="relative flex min-h-0 flex-1 flex-col">
+              {pane.tabs.length === 0 ? (
+                <PaneEmptyState paneId={pane.id} />
+              ) : (
+                <div ref={host} data-pane-body={pane.id} className="min-h-0 flex-1 px-1.5" />
+              )}
+              <SizeReadout tabId={pane.active} />
+              {zone && (
+                <m.div
+                  aria-hidden
+                  data-drop-zone={zone}
+                  layout
+                  layoutDependency={zone}
+                  transition={transitions.layout}
+                  className={cn(
+                    'pointer-events-none absolute flex items-center justify-center rounded-md bg-accent/60',
+                    ZONE[zone],
+                  )}
+                >
+                  {label && <Caption weight="medium">{label}</Caption>}
+                </m.div>
               )}
             </div>
-          </ScrollArea>
-          <IconButton
-            icon="new"
-            label="New tab"
-            shortcut={{ appCommand: 'new-tab' }}
-            onClick={() => openTab({ kind: 'conversation', title: 'New conversation' }, pane.id)}
-          />
-          <div className="flex-1" />
-          <IconButton
-            icon="splitRight"
-            label="Split right"
-            shortcut={{ appCommand: 'split-right' }}
-            onClick={() => splitPane(pane.id, 'row')}
-          />
-          <IconButton icon="splitDown" label="Split down" onClick={() => splitPane(pane.id, 'column')} />
-          <IconButton
-            icon="close"
-            label="Close pane"
-            onClick={() => dispatch({ type: 'closePane', paneId: pane.id })}
-          />
-        </div>
-        <div ref={body} data-pane-drop={pane.id} className="relative flex min-h-0 flex-1 flex-col">
-          {pane.tabs.length === 0 ? (
-            <PaneEmptyState paneId={pane.id} />
-          ) : (
-            <div ref={host} data-pane-body={pane.id} className="min-h-0 flex-1 px-1.5" />
-          )}
-          {zone && (
-            <m.div
-              aria-hidden
-              data-drop-zone={zone}
-              layout
-              layoutDependency={zone}
-              transition={transitions.layout}
-              className={cn(
-                'pointer-events-none absolute flex items-center justify-center rounded-md bg-accent/60',
-                ZONE[zone],
-              )}
-            >
-              {label && <Caption weight="medium">{label}</Caption>}
-            </m.div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </Card>
   )

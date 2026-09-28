@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { defaultLayout, SIDEBAR_WIDTH, type Layout, type LayoutNode, type Tab } from './layout'
-import { findPane, neighbourPane, panes, structureKey } from './layout-tree'
+import { defaultLayout, GUTTER, PANE_MIN, SIDEBAR_WIDTH, type Layout, type LayoutNode, type Tab } from './layout'
+import { parseLayout } from './layout-schema'
+import { findPane, minSize, neighbourPane, panes, structureKey } from './layout-tree'
 import { layoutReducer, type LayoutAction } from './layout.logic'
 
 const tab = (id: string): Tab => ({ id, kind: 'conversation', title: id })
@@ -191,6 +192,82 @@ describe('splits and drops', () => {
     })
     expect(run(split, { type: 'setSplitSizes', splitId: id, sizes: [100] })).toEqual(split)
   })
+})
+
+describe('maximize, equalize and reset', () => {
+  const two = () => run(withTabs('a'), { type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
+
+  test('a pane maximizes among others, and restores on a second toggle', () => {
+    expect(run(withTabs('a'), { type: 'toggleMaximize', paneId: 'p1' }).maximized).toBeNull()
+    const maximized = run(two(), { type: 'toggleMaximize', paneId: 'p1' })
+    expect(maximized).toMatchObject({ maximized: 'p1', focusedPane: 'p1' })
+    expect(run(maximized, { type: 'toggleMaximize', paneId: 'p1' }).maximized).toBeNull()
+  })
+
+  test('rearranging panes or focusing another restores the grid; tab changes do not', () => {
+    const maximized = run(two(), { type: 'toggleMaximize', paneId: 'p1' })
+    expect(run(maximized, { type: 'openTab', tab: tab('b') }).maximized).toBe('p1')
+    expect(run(maximized, { type: 'focusPane', paneId: 'p2' }).maximized).toBeNull()
+    expect(
+      run(maximized, { type: 'splitPane', paneId: 'p1', direction: 'column', newPaneId: 'p3' }).maximized,
+    ).toBeNull()
+    expect(run(maximized, { type: 'closePane', paneId: 'p2' }).maximized).toBeNull()
+    // Moving the other pane's only tab in removes that pane.
+    const other = run(maximized, { type: 'openTab', tab: tab('b'), paneId: 'p2' }, { type: 'focusPane', paneId: 'p1' })
+    const again = run(
+      other,
+      { type: 'toggleMaximize', paneId: 'p1' },
+      { type: 'moveTab', tabId: 'b', paneId: 'p1', index: 0 },
+    )
+    expect(again.maximized).toBeNull()
+  })
+
+  test('equalizing evens one split or all of them', () => {
+    const nested = run(
+      two(),
+      { type: 'splitPane', paneId: 'p2', direction: 'column', newPaneId: 'p3' },
+      { type: 'setSplitSizes', splitId: two().root.id, sizes: [20, 80] },
+    )
+    const inner = (layout: Layout) => (layout.root.type === 'split' ? layout.root.children[1]! : layout.root)
+    const skewed = run(nested, { type: 'setSplitSizes', splitId: inner(nested).id, sizes: [10, 90] })
+    const one = run(skewed, { type: 'equalizeSplits', splitId: inner(skewed).id })
+    expect(sizes(one.root)).toEqual({ row: [20, 80], of: ['p1', { column: [50, 50], of: ['p2', 'p3'] }] })
+    expect(sizes(run(skewed, { type: 'equalizeSplits' }).root)).toEqual({
+      row: [50, 50],
+      of: ['p1', { column: [50, 50], of: ['p2', 'p3'] }],
+    })
+  })
+
+  test('reset puts the sidebars back and evens the splits, keeping panes and tabs', () => {
+    const messy = run(
+      two(),
+      { type: 'swapSidebars' },
+      { type: 'toggleSide', side: 'left' },
+      { type: 'setWidth', sidebar: 'navigator', width: 420 },
+      { type: 'setSplitSizes', splitId: two().root.id, sizes: [30, 70] },
+    )
+    const reset = run(messy, { type: 'resetLayout' })
+    expect(reset).toMatchObject({
+      sidebars: ['navigator', 'inspector'],
+      collapsed: { navigator: false, inspector: false },
+    })
+    expect(reset.widths).toEqual({ navigator: SIDEBAR_WIDTH.navigator, inspector: SIDEBAR_WIDTH.inspector })
+    expect(sizes(reset.root)).toEqual({ row: [50, 50], of: ['p1', 'p2'] })
+    expect(reset.tabs).toEqual(messy.tabs)
+  })
+
+  test('a pane needs room for its widest kind of tab; splits add their children and gutters', () => {
+    const layout = run(two(), { type: 'openTab', tab: { id: 'c', kind: 'terminal', title: 'c' }, paneId: 'p2' })
+    expect(minSize(layout.root, layout.tabs)).toEqual({
+      width: PANE_MIN.width.terminal + PANE_MIN.width.conversation + GUTTER,
+      height: PANE_MIN.height,
+    })
+  })
+})
+
+test('a layout saved before maximizing existed loads with no pane maximized', () => {
+  const { maximized: _removed, ...old } = start()
+  expect(parseLayout(old)?.maximized).toBeNull()
 })
 
 test('the structure key ignores sizes, so resizing never triggers a layout animation', () => {

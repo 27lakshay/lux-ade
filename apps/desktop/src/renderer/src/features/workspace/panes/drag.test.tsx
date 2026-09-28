@@ -3,7 +3,7 @@ import { structureKey, panes } from '../model/layout-tree'
 import { dispatch, layoutStore, openTab } from '../model/layout-store'
 import { dragTo, renderWorkspace, resetLayout, startDrag } from '../testing'
 import { zoneAt } from './drag'
-import { SPRING_LOAD_MS } from './Tab'
+import { SPRING_LOAD_MS } from '../../../app/motion'
 
 beforeEach(resetLayout)
 

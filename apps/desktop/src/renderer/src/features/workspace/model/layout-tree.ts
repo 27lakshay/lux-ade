@@ -1,4 +1,14 @@
-import type { DropZone, Edge, LayoutNode, PaneNode, SplitDirection, SplitNode } from './layout'
+import {
+  GUTTER,
+  PANE_MIN,
+  type DropZone,
+  type Edge,
+  type LayoutNode,
+  type PaneNode,
+  type SplitDirection,
+  type SplitNode,
+  type Tab,
+} from './layout'
 
 // The pane tree: queries and pure edits. Each edit returns a new tree, flattened so a split has at
 // least two children and never nests a split of its own direction.
@@ -171,4 +181,19 @@ export function dock(root: LayoutNode, node: LayoutNode, edge: Edge): LayoutNode
     children: after ? [root, node] : [node, root],
     sizes: [50, 50],
   }
+}
+
+/** The smallest a node can be without clipping what its panes show, gutters included. */
+export function minSize(node: LayoutNode, tabs: Record<string, Tab>): { width: number; height: number } {
+  if (node.type === 'pane') {
+    const widths = node.tabs.map((id) => PANE_MIN.width[tabs[id]?.kind ?? 'conversation'])
+    return { width: Math.max(...widths, PANE_MIN.width.empty), height: PANE_MIN.height }
+  }
+  const children = node.children.map((child) => minSize(child, tabs))
+  const gutters = GUTTER * (children.length - 1)
+  const sum = (key: 'width' | 'height') => children.reduce((total, child) => total + child[key], 0) + gutters
+  const max = (key: 'width' | 'height') => Math.max(...children.map((child) => child[key]))
+  return node.direction === 'row'
+    ? { width: sum('width'), height: max('height') }
+    : { width: max('width'), height: sum('height') }
 }

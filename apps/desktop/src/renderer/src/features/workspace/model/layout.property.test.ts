@@ -21,6 +21,10 @@ function checkInvariants(layout: Layout): void {
     if (pane.tabs.length > 0) expect(pane.active, 'a pane with tabs has one active').not.toBeNull()
   }
   expect(ids, 'the focused pane exists').toContain(layout.focusedPane)
+  if (layout.maximized !== null) {
+    expect(layout.maximized, 'the maximized pane is the focused one').toBe(layout.focusedPane)
+    expect(all.length, 'a maximized pane has others to hide').toBeGreaterThan(1)
+  }
   const walk = (node: LayoutNode, parentDirection?: string): void => {
     if (node.type === 'pane') return
     expect(node.children.length, 'a split has at least two children').toBeGreaterThanOrEqual(2)
@@ -49,6 +53,13 @@ const paneAt = (layout: Layout, index: number) => pick(panes(layout.root), index
 const tabAt = (layout: Layout, index: number) => pick(Object.keys(layout.tabs), index)
 
 const step: fc.Arbitrary<Step> = fc.oneof(
+  fc.nat().map(
+    (p): Step =>
+      (l) =>
+        paneAt(l, p) ? { type: 'toggleMaximize', paneId: paneAt(l, p)! } : null,
+  ),
+  fc.constant((): LayoutAction => ({ type: 'equalizeSplits' })),
+  fc.constant((): LayoutAction => ({ type: 'resetLayout' })),
   fc.nat().map((i): Step => (l, fresh) => ({
     type: 'openTab',
     tab: { id: fresh(), kind: 'terminal', title: 't' },

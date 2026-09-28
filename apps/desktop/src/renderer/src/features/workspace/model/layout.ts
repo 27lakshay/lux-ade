@@ -52,6 +52,8 @@ export interface Layout {
   tabs: Record<string, Tab>
   root: LayoutNode
   focusedPane: string
+  /** A pane shown alone across the whole centre, or null. Always the focused pane. */
+  maximized: string | null
 }
 
 export const SIDEBAR_WIDTH = { navigator: 260, inspector: 340, min: 200, max: 480 } as const
@@ -65,5 +67,21 @@ export function defaultLayout(paneId: string): Layout {
     tabs: {},
     root: { type: 'pane', id: paneId, tabs: [], active: null },
     focusedPane: paneId,
+    maximized: null,
   }
 }
+
+/**
+ * The smallest a pane may be, by what its tabs show: a conversation needs room for its text, a
+ * terminal about 40 columns. A pane takes the largest of its tabs' minimums; smaller, it collapses.
+ */
+export const PANE_MIN = {
+  width: { conversation: 360, terminal: 320, browser: 320, file: 320, diff: 360, empty: 240 },
+  height: 160,
+} as const
+
+/** A pane collapsed in a row shows a strip of tab icons this wide; in a column, its tab bar. */
+export const PANE_COLLAPSED = { width: 40, height: 52 } as const
+
+/** The gutter between cards and between panes, in pixels. */
+export const GUTTER = 8

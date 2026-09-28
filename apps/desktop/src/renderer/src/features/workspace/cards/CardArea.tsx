@@ -7,7 +7,11 @@ import { DURATION, transitions } from '../../../app/motion'
 import { SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
 import { dispatch, layoutStore, useLayout } from '../model/layout-store'
 import { cn } from '@/lib/utils'
+import { noteResizing } from '../content/size-label'
+import { findPane, minSize } from '../model/layout-tree'
 import { DockEdges } from '../panes/DockEdges'
+import { DropSettle } from '../panes/DropSettle'
+import { Pane } from '../panes/Pane'
 import { isDragData, showDragPreview, useDropMonitor, type DragData, type TargetData } from '../panes/drag'
 import { DragChip } from '../panes/DragChip'
 import { PaneGrid } from '../panes/PaneGrid'
@@ -42,6 +46,10 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
   const grip = useRef<HTMLDivElement>(null)
   const [over, setOver] = useState(false)
   const [dragging, setDragging] = useState(false)
+  // Fixed at mount: a sidebar saved collapsed starts collapsed, so the centre never lays out narrow
+  // for a frame (which would collapse panes that do not fit). The resize library also reacts to a
+  // changed default size, so it must not follow later changes.
+  const [mountSize] = useState(() => (collapsed ? '0px' : `${width}px`))
 
   // Drag a sidebar by its grip onto the other sidebar to swap sides.
   useEffect(() => {
@@ -71,7 +79,7 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
     <Panel
       id={id}
       panelRef={panelRef}
-      defaultSize={`${width}px`}
+      defaultSize={mountSize}
       minSize={`${SIDEBAR_WIDTH.min}px`}
       maxSize={`${SIDEBAR_WIDTH.max}px`}
       collapsible
@@ -112,7 +120,16 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
 export function CardArea() {
   const sidebars = useLayout((layout) => layout.sidebars)
   const collapsed = useLayout((layout) => layout.collapsed)
+  const widths = useLayout((layout) => layout.widths)
+  // The width each sidebar panel was last given, by a drag or by this sync. The panels' own
+  // getSize() reads stale for a frame after a change, so it cannot be compared with the model.
+  const applied = useRef({
+    navigator: collapsed.navigator ? Number.NaN : widths.navigator,
+    inspector: collapsed.inspector ? Number.NaN : widths.inspector,
+  })
   const root = useLayout((layout) => layout.root)
+  const tabs = useLayout((layout) => layout.tabs)
+  const maximized = useLayout((layout) => (layout.maximized ? findPane(layout.root, layout.maximized) : undefined))
   const centre = useRef<HTMLDivElement>(null)
   const refs = { navigator: usePanelRef(), inspector: usePanelRef() }
   const syncing = useRef(false)
@@ -126,32 +143,69 @@ export function CardArea() {
       const isCollapsed = panel.isCollapsed()
       if (isCollapsed !== layoutStore.getState().layouts[layoutStore.getState().active]?.collapsed[id])
         dispatch({ type: 'setCollapsed', sidebar: id, collapsed: isCollapsed })
-      if (!isCollapsed) dispatch({ type: 'setWidth', sidebar: id, width: panel.getSize().inPixels })
+      if (!isCollapsed) {
+        dispatch({ type: 'setWidth', sidebar: id, width: panel.getSize().inPixels })
+        applied.current[id] = layoutStore.getState().layouts[layoutStore.getState().active]!.widths[id]
+      }
     }
   }
 
-  // The model decides what is collapsed; the panels follow it.
+  // The model decides what is collapsed and how wide an open sidebar is; the panels follow it
+  // (Reset layout, a double-clicked gutter). Not while a handle is held: the pointer wins. Right
+  // after the sidebars swap, wait a frame: the resize library re-reads the panels' order first, and
+  // a resize in the same update is lost.
+  const order = sidebars.join(',')
+  const syncedOrder = useRef(order)
   useEffect(() => {
-    for (const id of ['navigator', 'inspector'] as const) {
-      const panel = refs[id].current
-      if (!panel || panel.isCollapsed() === collapsed[id]) continue
-      syncing.current = true
-      if (collapsed[id]) panel.collapse()
-      else panel.expand()
-      syncing.current = false
+    const sync = (): void => {
+      if (document.querySelector('[data-separator=active]')) return
+      const layout = layoutStore.getState().layouts[layoutStore.getState().active]
+      if (!layout) return
+      for (const id of ['navigator', 'inspector'] as const) {
+        const panel = refs[id].current
+        if (!panel) continue
+        syncing.current = true
+        // Expanding restores the saved width itself; the size reads stale until the next render.
+        if (panel.isCollapsed() !== layout.collapsed[id]) {
+          if (layout.collapsed[id]) panel.collapse()
+          // A sidebar that mounted collapsed has no width to return to: open it at the saved one.
+          else if (Number.isNaN(applied.current[id])) {
+            const width = layout.widths[id]
+            panel.resize(`${width}px`)
+            applied.current[id] = width
+            // The library turns pixels into a share of the group as it is now, while the gutter
+            // beside the sidebar is still growing in: correct the width once that settles.
+            setTimeout(
+              () => {
+                if (!panel.isCollapsed() && Math.abs(panel.getSize().inPixels - width) > 0.5) panel.resize(`${width}px`)
+              },
+              DURATION.base * 1000 + 100,
+            )
+          } else panel.expand()
+        } else if (!layout.collapsed[id] && applied.current[id] !== layout.widths[id]) {
+          panel.resize(`${layout.widths[id]}px`)
+          applied.current[id] = layout.widths[id]
+        }
+        syncing.current = false
+      }
     }
+    if (syncedOrder.current === order) return sync()
+    syncedOrder.current = order
+    const next = requestAnimationFrame(sync)
+    return () => cancelAnimationFrame(next)
   })
 
   // Animate panel sizes while a collapse or expand settles, then stop, so a drag never lags.
   const sizesKey = `${collapsed.navigator ? 1 : 0}${collapsed.inspector ? 1 : 0}`
   const group = useRef<HTMLDivElement>(null)
-  const first = useRef(true)
+  // Compared with the last collapsed state, not a first-run flag: React runs effects twice in
+  // development, and the window must open at its saved sizes without animating.
+  const shownKey = useRef<string | null>(null)
   useLayoutEffect(() => {
     const element = group.current
-    if (!element || first.current) {
-      first.current = false
-      return
-    }
+    const previous = shownKey.current
+    shownKey.current = sizesKey
+    if (!element || previous === null || previous === sizesKey) return
     element.dataset.layoutAnimating = ''
     const done = setTimeout(() => delete element.dataset.layoutAnimating, DURATION.base * 1000 + 50)
     return () => clearTimeout(done)
@@ -172,6 +226,8 @@ export function CardArea() {
     }
   }, [])
   const [left, right] = sidebars
+  // Double-clicking a sidebar's gutter puts it back to its default width.
+  const resetWidth = (id: SidebarId): void => dispatch({ type: 'setWidth', sidebar: id, width: SIDEBAR_WIDTH[id] })
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
       <Group
@@ -179,13 +235,19 @@ export function CardArea() {
         elementRef={group}
         orientation="horizontal"
         className="min-h-0 flex-1 p-2"
+        onLayoutChange={noteResizing}
         onLayoutChanged={(_layout, meta) => {
           if (meta.isUserInteraction && !syncing.current) requestAnimationFrame(commitSizes)
         }}
       >
         <SidebarPanel key={left} id={left} panelRef={refs[left]} />
-        <ResizeHandle key={`gutter-${left}`} orientation="horizontal" hidden={collapsed[left]} />
-        <Panel id="centre" elementRef={centre} minSize="320px">
+        <ResizeHandle
+          key={`gutter-${left}`}
+          orientation="horizontal"
+          hidden={collapsed[left]}
+          onDoubleClick={() => resetWidth(left)}
+        />
+        <Panel id="centre" elementRef={centre} minSize={`${minSize(root, tabs).width}px`}>
           {/* Moves with a sidebar swap when the sidebars differ in width. */}
           <m.div
             layout="position"
@@ -193,14 +255,21 @@ export function CardArea() {
             transition={transitions.layout}
             className="h-full"
           >
-            <PaneGrid node={root} />
+            {/* A maximized pane fills the centre; the others unmount, their content kept in its hosts. */}
+            {maximized ? <Pane pane={maximized} /> : <PaneGrid node={root} />}
           </m.div>
         </Panel>
-        <ResizeHandle key={`gutter-${right}`} orientation="horizontal" hidden={collapsed[right]} />
+        <ResizeHandle
+          key={`gutter-${right}`}
+          orientation="horizontal"
+          hidden={collapsed[right]}
+          onDoubleClick={() => resetWidth(right)}
+        />
         <SidebarPanel key={right} id={right} panelRef={refs[right]} />
       </Group>
       {/* Outside the panels, which scroll whatever overflows them: the strips reach into the gutters. */}
       <DockEdges centre={centre} />
+      <DropSettle />
     </div>
   )
 }

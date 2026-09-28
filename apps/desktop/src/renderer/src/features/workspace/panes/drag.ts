@@ -1,18 +1,19 @@
 import { monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { pointerOutsideOfPreview } from '@atlaskit/pragmatic-drag-and-drop/element/pointer-outside-of-preview'
 import { setCustomNativeDragPreview } from '@atlaskit/pragmatic-drag-and-drop/element/set-custom-native-drag-preview'
-import { extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge/extract-closest-edge'
 import { useEffect, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import type { DropZone, Edge, SidebarId } from '../model/layout'
 import { dispatch, dockTab, dropTab, layoutStore } from '../model/layout-store'
 import { findPane, panes } from '../model/layout-tree'
+import { afterDrop, describePane, describeTab } from './drop-feedback'
 
-// Dragging: tabs (reorder within a strip, move to another strip, or drop on a pane's edge to split
-// it), whole panes (by their grip, onto another pane's edge or centre), and sidebars (by their grip,
-// onto the other sidebar, to swap sides). Drag
-// sources and targets attach plain data; one monitor turns a drop into one reducer action.
+// Dragging: tabs (reorder within a strip, move to another strip, join or split a pane, dock on the
+// centre's edges), whole panes (by their grip: beside another pane, swapped with it, or docked), and
+// sidebars (by their grip, onto the other sidebar, to swap sides). Drag sources and targets attach
+// plain data; one monitor turns a drop into one reducer action, then announces it
+// (drop-feedback.ts).
 
 export type DragData =
   | { kind: 'tab'; tabId: string; paneId: string }
@@ -20,8 +21,8 @@ export type DragData =
   | { kind: 'sidebar'; sidebar: SidebarId }
 
 export type TargetData =
-  | { kind: 'tab-target'; paneId: string; index: number }
-  | { kind: 'strip-target'; paneId: string }
+  /** A pane's tab bar; index is where the tab lands, or -1 when it would stay where it is. */
+  | { kind: 'strip-target'; paneId: string; index: number }
   | { kind: 'body-target'; paneId: string; zone: DropZone }
   | { kind: 'sidebar-target'; sidebar: SidebarId }
   | { kind: 'dock-target'; edge: Edge }
@@ -88,28 +89,49 @@ function onDrop(source: DragData, target: Record<string | symbol, unknown>): voi
   const data = target as unknown as TargetData
   if (data.kind === 'dock-target') {
     if (!canDock(source)) return
-    if (source.kind === 'tab') dockTab(source.tabId, data.edge)
-    else if (source.kind === 'pane') dispatch({ type: 'dockPane', paneId: source.paneId, edge: data.edge })
+    if (source.kind === 'tab')
+      afterDrop(
+        () => dockTab(source.tabId, data.edge),
+        (layout) => `${describeTab(layout, source.tabId, 'Docked')}, along the ${data.edge} edge`,
+      )
+    else if (source.kind === 'pane')
+      afterDrop(
+        () => dispatch({ type: 'dockPane', paneId: source.paneId, edge: data.edge }),
+        (layout) => `${describePane(layout, source.paneId, 'Docked')} along the ${data.edge} edge`,
+      )
     return
   }
   // Sidebars only ever trade places with each other.
   if (source.kind === 'sidebar') {
-    if (data.kind === 'sidebar-target' && data.sidebar !== source.sidebar) dispatch({ type: 'swapSidebars' })
+    if (data.kind === 'sidebar-target' && data.sidebar !== source.sidebar)
+      afterDrop(
+        () => dispatch({ type: 'swapSidebars' }),
+        () => 'Swapped sidebars',
+        false,
+      )
     return
   }
   if (source.kind === 'tab') {
-    if (data.kind === 'tab-target') {
-      const after = extractClosestEdge(target) === 'right'
-      dispatch({ type: 'moveTab', tabId: source.tabId, paneId: data.paneId, index: data.index + (after ? 1 : 0) })
-    } else if (data.kind === 'strip-target') {
-      dispatch({ type: 'moveTab', tabId: source.tabId, paneId: data.paneId, index: Number.MAX_SAFE_INTEGER })
+    if (data.kind === 'strip-target' && data.index >= 0) {
+      afterDrop(
+        () => dispatch({ type: 'moveTab', tabId: source.tabId, paneId: data.paneId, index: data.index }),
+        (layout) => describeTab(layout, source.tabId),
+        false,
+      )
     } else if (data.kind === 'body-target' && canDropOnZone(source, data.paneId, data.zone)) {
-      dropTab(source.tabId, data.paneId, data.zone)
+      afterDrop(
+        () => dropTab(source.tabId, data.paneId, data.zone),
+        (layout) =>
+          data.zone === 'centre' ? describeTab(layout, source.tabId) : describeTab(layout, source.tabId, 'Split off'),
+      )
     }
     return
   }
   if (data.kind === 'body-target' && canDropOnZone(source, data.paneId, data.zone))
-    dispatch({ type: 'movePane', paneId: source.paneId, targetId: data.paneId, zone: data.zone })
+    afterDrop(
+      () => dispatch({ type: 'movePane', paneId: source.paneId, targetId: data.paneId, zone: data.zone }),
+      (layout) => describePane(layout, source.paneId, data.zone === 'centre' ? 'Swapped, now' : 'Moved, now'),
+    )
 }
 
 /** Watches every drag in the window and applies drops. Mount once. */

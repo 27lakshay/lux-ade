@@ -10,8 +10,11 @@ export function Card({
   grip,
   children,
   className,
+  paneId,
   ref,
 }: {
+  /** Set on panes, so a drop can find where the pane it made landed. */
+  paneId?: string
   ref?: Ref<HTMLElement>
   surface: 'panel' | 'pane'
   label: string
@@ -24,6 +27,7 @@ export function Card({
     <section
       ref={ref}
       aria-label={label}
+      data-pane-id={paneId}
       className={cn(
         'flex h-full min-w-0 flex-col overflow-hidden rounded-xl',
         surface === 'panel' ? 'bg-panel' : 'bg-background',

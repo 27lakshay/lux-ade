@@ -37,6 +37,8 @@ const layout = z.object({
   tabs: z.record(z.string(), tab),
   root: node,
   focusedPane: z.string(),
+  // Added after the first saved layouts: those load with no pane maximised.
+  maximized: z.string().nullable().default(null),
 })
 
 export const parseLayout = (value: unknown): Layout | null => {

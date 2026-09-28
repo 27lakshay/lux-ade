@@ -16,6 +16,7 @@ const STRIP: Record<Edge, string> = {
   top: 'inset-x-0 -top-2 h-3',
   bottom: 'inset-x-0 -bottom-2 h-3',
 }
+const MARKER: Record<Edge, string> = { left: 'h-10 w-1', right: 'h-10 w-1', top: 'h-1 w-10', bottom: 'h-1 w-10' }
 const REGION: Record<Edge, string> = {
   left: 'inset-y-0 start-0 w-1/3',
   right: 'inset-y-0 end-0 w-1/3',
@@ -39,10 +40,15 @@ function DockStrip({ edge }: { edge: Edge }) {
   }, [edge])
   return (
     <>
+      {/* A faint marker on each edge from the start of a drag, so docking can be found. */}
+      <div aria-hidden className={cn('pointer-events-none absolute flex items-center justify-center', STRIP[edge])}>
+        <div className={cn('rounded-full', over ? 'bg-ring' : 'bg-muted', MARKER[edge])} />
+      </div>
       {over && (
         <div
           aria-hidden
-          className={cn('pointer-events-none absolute z-10 rounded-xl bg-accent opacity-60', REGION[edge])}
+          data-dock-region
+          className={cn('pointer-events-none absolute rounded-xl bg-accent opacity-60', REGION[edge])}
         />
       )}
       <div ref={ref} data-dock-edge={edge} className={cn('pointer-events-auto absolute', STRIP[edge])} />

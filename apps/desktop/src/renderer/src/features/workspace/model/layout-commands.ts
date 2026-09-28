@@ -57,6 +57,13 @@ export function registerLayoutCommands(): void {
     const { pane } = focused()
     if (pane) splitPane(pane.id, 'column')
   })
+  add('layout.resetLayout', 'Reset layout', () => dispatch({ type: 'resetLayout' }))
+  add('layout.equalizePanes', 'Equalize panes', () => dispatch({ type: 'equalizeSplits' }))
+  add('layout.toggleMaximize', 'Maximize or restore pane', () => {
+    const { pane } = focused()
+    if (pane) dispatch({ type: 'toggleMaximize', paneId: pane.id })
+  })
+  commandService.registerKeybinding({ key: '$mod+Shift+Enter', command: 'layout.toggleMaximize' })
   add('layout.closePane', 'Close pane', () => {
     const { pane } = focused()
     if (pane) dispatch({ type: 'closePane', paneId: pane.id })
