@@ -11,8 +11,11 @@ export function Card({
   children,
   className,
   paneId,
+  focused,
   ref,
 }: {
+  /** Panes: the focused one, for what returns focus to it (cards/handle-focus.ts). */
+  focused?: boolean
   /** Set on panes, so a drop can find where the pane it made landed. */
   paneId?: string
   ref?: Ref<HTMLElement>
@@ -28,6 +31,7 @@ export function Card({
       ref={ref}
       aria-label={label}
       data-pane-id={paneId}
+      data-pane-focused={focused || undefined}
       className={cn(
         'flex h-full min-w-0 flex-col overflow-hidden rounded-xl',
         surface === 'panel' ? 'bg-panel' : 'bg-background',

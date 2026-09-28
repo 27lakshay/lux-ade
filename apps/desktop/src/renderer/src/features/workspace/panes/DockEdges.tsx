@@ -42,7 +42,7 @@ function DockStrip({ edge }: { edge: Edge }) {
     <>
       {/* A faint marker on each edge from the start of a drag, so docking can be found. */}
       <div aria-hidden className={cn('pointer-events-none absolute flex items-center justify-center', STRIP[edge])}>
-        <div className={cn('rounded-full', over ? 'bg-ring' : 'bg-muted', MARKER[edge])} />
+        <div className={cn('rounded-full', over ? 'bg-ring' : 'bg-muted-foreground/50', MARKER[edge])} />
       </div>
       {over && (
         <div

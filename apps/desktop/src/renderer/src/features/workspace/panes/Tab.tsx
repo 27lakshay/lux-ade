@@ -70,6 +70,8 @@ export function Tab({
       layoutDependency={layoutKey}
       transition={transitions.layout}
       role="tab"
+      id={tab.id}
+      aria-controls={`panel-${paneId}`}
       data-tab-id={tab.id}
       tabIndex={active ? 0 : -1}
       aria-selected={active}
@@ -89,8 +91,9 @@ export function Tab({
           aria-hidden
           data-spring-fill
           className="pointer-events-none absolute inset-0 origin-left bg-accent"
-          initial={{ scaleX: 0 }}
-          animate={{ scaleX: 1 }}
+          // With reduced motion the growth is off; the fade still shows the wait.
+          initial={{ scaleX: 0, opacity: 0 }}
+          animate={{ scaleX: 1, opacity: 1 }}
           transition={transitions.springLoad}
         />
       )}

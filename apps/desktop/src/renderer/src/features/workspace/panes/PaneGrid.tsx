@@ -74,6 +74,7 @@ function Split({ node }: { node: SplitNode }) {
           {index > 0 && (
             <ResizeHandle
               orientation={orientation}
+              label={node.direction === 'row' ? 'Resize panes side by side' : 'Resize stacked panes'}
               onDoubleClick={() => dispatch({ type: 'equalizeSplits', splitId: node.id })}
             />
           )}

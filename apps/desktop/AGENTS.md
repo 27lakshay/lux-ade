@@ -81,7 +81,11 @@ claiming a UI change works.
       Equalize panes). `Panel` sizes in `react-resizable-panels` are pixels when given a number:
       pass percentages as strings with `%`.
     - Keyboard and palette: `layout-commands.ts` (`$mod+Alt+Arrow` focuses the pane that way,
-      adding Shift swaps; Reset layout, Equalize panes, Maximize or restore pane).
+      adding Shift swaps; `$mod+Control+Arrow` grows the focused pane that way, adding Shift for a
+      tenth of its split (`panes/grow.ts`); Reset layout, Equalize panes, Maximize or restore pane).
+      Tab strips are tab lists: one Tab stop, arrows, Home and End move and select. Keyboard focus
+      entering a pane makes it the focused pane. Gutters are named ("Resize navigator"), and
+      Escape on one returns to the focused pane.
     - `layout.property.test.ts` runs random action sequences against the reducer's invariants.
   - `content/`: every tab's content renders once into its own element (`hosts.ts`,
     `ContentHosts.tsx`); panes attach the element, so moving a tab never remounts it. Content of

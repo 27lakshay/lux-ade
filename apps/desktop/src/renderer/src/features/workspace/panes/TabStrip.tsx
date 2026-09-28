@@ -30,6 +30,23 @@ interface Slot {
   width: number
 }
 
+/** The tab an arrow, Home or End key moves to, as in any tab list; null for other keys. */
+export function tabAfterKey(pane: PaneNode, key: string): string | null {
+  const index = pane.active ? pane.tabs.indexOf(pane.active) : -1
+  const last = pane.tabs.length - 1
+  const target =
+    key === 'ArrowRight'
+      ? Math.min(last, index + 1)
+      : key === 'ArrowLeft'
+        ? Math.max(0, index - 1)
+        : key === 'Home'
+          ? 0
+          : key === 'End'
+            ? last
+            : null
+  return target === null || target === index ? null : (pane.tabs[target] ?? null)
+}
+
 /**
  * What content x is over. A tab's outer quarters reorder: the tab lands before or after it. Its
  * middle half is for opening it (`over`); a drop there lands just after it. Between and beyond tabs,
@@ -186,7 +203,20 @@ export function TabStrip({
           if (viewport && event.deltaX === 0) viewport.scrollLeft += event.deltaY
         }}
       >
-        <div ref={strip} role="tablist" aria-label="Tabs" className="flex w-max items-center gap-0.5">
+        <div
+          ref={strip}
+          role="tablist"
+          aria-label="Tabs"
+          className="flex w-max items-center gap-0.5"
+          onKeyDown={(event) => {
+            const next = tabAfterKey(pane, event.key)
+            if (!next) return
+            event.preventDefault()
+            dispatch({ type: 'activateTab', tabId: next })
+            // The tab is focusable once it is the active one, after this render.
+            requestAnimationFrame(() => strip.current?.querySelector<HTMLElement>(`[data-tab-id="${next}"]`)?.focus())
+          }}
+        >
           {items}
         </div>
       </ScrollArea>

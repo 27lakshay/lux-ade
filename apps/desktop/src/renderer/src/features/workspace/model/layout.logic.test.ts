@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { defaultLayout, GUTTER, PANE_MIN, SIDEBAR_WIDTH, type Layout, type LayoutNode, type Tab } from './layout'
 import { parseLayout } from './layout-schema'
-import { findPane, minSize, neighbourPane, panes, structureKey } from './layout-tree'
+import { boundaryToward, findPane, minSize, neighbourPane, panes, structureKey } from './layout-tree'
 import { layoutReducer, type LayoutAction } from './layout.logic'
 
 const tab = (id: string): Tab => ({ id, kind: 'conversation', title: id })
@@ -171,6 +171,24 @@ describe('splits and drops', () => {
     expect(neighbourPane(root, 'p3', 'bottom')?.id).toBe('p4')
     expect(neighbourPane(root, 'p1', 'left')).toBeUndefined()
     expect(neighbourPane(root, 'p2', 'top')).toBeUndefined()
+  })
+
+  test('a pane grows across the nearest boundary on that side', () => {
+    const layout = run(three(), { type: 'splitPane', paneId: 'p3', direction: 'column', newPaneId: 'p4' })
+    // row(p1, p2, column(p3, p4))
+    expect(boundaryToward(layout.root, 'p1', 'right')).toMatchObject({ index: 0, beyond: 1 })
+    expect(boundaryToward(layout.root, 'p4', 'left')).toMatchObject({
+      split: { direction: 'row' },
+      index: 2,
+      beyond: 1,
+    })
+    expect(boundaryToward(layout.root, 'p4', 'top')).toMatchObject({
+      split: { direction: 'column' },
+      index: 1,
+      beyond: 0,
+    })
+    expect(boundaryToward(layout.root, 'p1', 'left')).toBeUndefined()
+    expect(boundaryToward(layout.root, 'p2', 'bottom')).toBeUndefined()
   })
 
   test('closing the focused pane focuses another; the last pane only empties', () => {

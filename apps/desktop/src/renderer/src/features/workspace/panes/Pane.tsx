@@ -124,6 +124,7 @@ export function Pane({ pane }: { pane: PaneNode }) {
       surface="pane"
       label="Pane"
       paneId={pane.id}
+      focused={focused}
       className={cn(dragging && 'opacity-50')}
       grip={
         <Grip
@@ -135,7 +136,9 @@ export function Pane({ pane }: { pane: PaneNode }) {
     >
       <div
         className="flex min-h-0 flex-1 flex-col"
+        // A click or the keyboard arriving anywhere in the pane makes it the focused one.
         onPointerDownCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
+        onFocusCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
       >
         <div ref={bar} data-tab-bar className="@container flex h-10 shrink-0 items-center gap-0.5 px-1.5">
           <TabStrip pane={pane} focused={focused} bar={bar}>
@@ -153,7 +156,14 @@ export function Pane({ pane }: { pane: PaneNode }) {
           {pane.tabs.length === 0 ? (
             <PaneEmptyState paneId={pane.id} />
           ) : (
-            <div ref={host} data-pane-body={pane.id} className="min-h-0 flex-1 px-1.5" />
+            <div
+              ref={host}
+              id={`panel-${pane.id}`}
+              role="tabpanel"
+              aria-labelledby={pane.active ?? undefined}
+              data-pane-body={pane.id}
+              className="min-h-0 flex-1 px-1.5"
+            />
           )}
           <SizeReadout tabId={pane.active} />
           {zone && (

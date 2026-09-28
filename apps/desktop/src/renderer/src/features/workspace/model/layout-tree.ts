@@ -197,3 +197,24 @@ export function minSize(node: LayoutNode, tabs: Record<string, Tab>): { width: n
     ? { width: sum('width'), height: max('height') }
     : { width: max('width'), height: sum('height') }
 }
+
+/**
+ * The boundary a pane grows across toward `edge`: the nearest split along that axis where the pane
+ * is not already at that edge, the index of the child holding the pane, and of the child beyond.
+ */
+export function boundaryToward(
+  root: LayoutNode,
+  paneId: string,
+  edge: Edge,
+): { split: SplitNode; index: number; beyond: number } | undefined {
+  const direction = zoneDirection(edge)
+  const step = zoneAfter(edge) ? 1 : -1
+  let id = paneId
+  for (let parent = parentOf(root, id); parent; id = parent.id, parent = parentOf(root, id)) {
+    if (parent.direction !== direction) continue
+    const index = parent.children.findIndex((child) => child.id === id)
+    const beyond = index + step
+    if (beyond >= 0 && beyond < parent.children.length) return { split: parent, index, beyond }
+  }
+  return undefined
+}

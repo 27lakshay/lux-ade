@@ -4,6 +4,7 @@ import type { Edge } from './layout'
 import type { LayoutAction } from './layout.logic'
 import { findPane, neighbourPane } from './layout-tree'
 import { toggleSidebar } from '../cards/fit'
+import { growFocusedPane } from '../panes/grow'
 import { hasRoomFor, noRoom, trySplit } from '../panes/room'
 import { dispatch, layoutStore, openTab } from './layout-store'
 
@@ -102,6 +103,12 @@ function registerPaneDirectionCommands(): void {
       const found = neighbour(edge)
       if (found?.target) whenRoom({ type: 'swapPanes', paneId: found.pane.id, targetId: found.target.id })
     })
+    add(`layout.grow${name}`, `Grow pane ${name.toLowerCase()}`, `$mod+Control+${arrow}`, () =>
+      growFocusedPane(edge, false),
+    )
+    add(`layout.growMore${name}`, `Grow pane ${name.toLowerCase()} a lot`, `$mod+Control+Shift+${arrow}`, () =>
+      growFocusedPane(edge, true),
+    )
     add(`layout.moveTab${name}`, `Move tab to pane ${name.toLowerCase()}`, null, () => {
       const found = neighbour(edge)
       if (found?.target && found.pane.active)

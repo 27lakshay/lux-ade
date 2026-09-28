@@ -176,6 +176,7 @@ export function CardArea() {
         <ResizeHandle
           key={`gutter-${left}`}
           orientation="horizontal"
+          label={`Resize ${left}`}
           hidden={!shown[left]}
           onDoubleClick={() => resetWidth(left)}
         />
@@ -194,6 +195,7 @@ export function CardArea() {
         <ResizeHandle
           key={`gutter-${right}`}
           orientation="horizontal"
+          label={`Resize ${right}`}
           hidden={!shown[right]}
           onDoubleClick={() => resetWidth(right)}
         />

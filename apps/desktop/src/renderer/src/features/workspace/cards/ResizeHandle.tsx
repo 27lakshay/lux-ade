@@ -8,10 +8,13 @@ import { cn } from '@/lib/utils'
 // focus. Double-click does what `onDoubleClick` says: even out a split, or reset a sidebar's width.
 export function ResizeHandle({
   orientation,
+  label,
   hidden,
   onDoubleClick,
 }: {
   orientation: 'horizontal' | 'vertical'
+  /** What the handle resizes, for screen readers ("Resize navigator"). */
+  label: string
   hidden?: boolean
   onDoubleClick: () => void
 }) {
@@ -22,7 +25,13 @@ export function ResizeHandle({
     hidden && (across ? 'w-0' : 'h-0'),
   )
   return (
-    <Panels.Separator disabled={hidden} disableDoubleClick onDoubleClick={onDoubleClick} className={gutter}>
+    <Panels.Separator
+      aria-label={label}
+      disabled={hidden}
+      disableDoubleClick
+      onDoubleClick={onDoubleClick}
+      className={gutter}
+    >
       <span
         className={cn(
           'flex items-center justify-center rounded-full transition-colors duration-100 group-data-[separator=hover]:bg-input group-data-[separator=hover]:delay-150 group-data-[separator=active]:bg-ring group-focus-visible:bg-ring',
