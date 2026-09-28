@@ -97,6 +97,8 @@ const typeScale = classRule('Text is rendered through the typography components.
 // The fill steps, darkest to lightest, plus the colours that mark status and diffs.
 const SURFACES = new Set([
   'sidebar',
+  'base',
+  'panel',
   'background',
   'card',
   'popover',
@@ -117,6 +119,11 @@ const SURFACES = new Set([
   'diff-add-muted',
   'diff-remove',
   'diff-remove-muted',
+  // Small marks on a surface (resize tracks and grips, dots), not surfaces themselves.
+  'input',
+  'ring',
+  'foreground',
+  'muted-foreground',
 ])
 const BORDER = /^(border|divide)(-|$)/
 const BORDER_OFF = new Set(['border-0', 'border-none', 'border-transparent', 'border-hidden'])
@@ -126,7 +133,7 @@ const surfaceSteps = classRule('Surfaces separate by fill steps, not borders or 
     return `"${name}": ADE separates surfaces by fill, not borders. Put the element on the next fill step (bg-card inside a pane, bg-popover for floating) instead.`
   const fill = /^bg-(.+)$/.exec(base)?.[1]
   if (fill && !SURFACES.has(fill))
-    return `"${name}" is not a fill step. Use bg-sidebar, bg-background, bg-card, bg-popover, bg-muted or bg-accent (darkest to lightest), or a status colour.`
+    return `"${name}" is not a fill step. Use bg-sidebar (chrome), bg-base (gutters), bg-panel (sidebars), bg-background (panes), bg-card, bg-popover, bg-muted or bg-accent, or a status colour.`
   return null
 })
 

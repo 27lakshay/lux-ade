@@ -1,6 +1,8 @@
 /* The shadcn/ui theme (Base UI, Nova) with ADE's Graphite colours: neutral, faintly cool greys whose
    fills step up from sidebar to background, card, popover, muted and accent, so surfaces separate
-   without borders (decided 2026-09-28; the Pen design uses Base "Graphite"). The kit's components
+   without borders (decided 2026-09-28; the Pen design uses Base "Graphite"). The full ladder,
+   darkest first in dark mode: sidebar (chrome: title bar, rail, bottom bar), base (gutters),
+   panel (floating sidebars), background (panes), card (blocks in a pane), popover, muted, accent. The kit's components
    stay stock; only these values changed. The app imports it through app.css. */
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -56,19 +58,19 @@
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.179 0.004 286);
-  --card: oklch(0.976 0.001 286.4);
+  --card: oklch(0.973 0.001 286.4);
   --card-foreground: oklch(0.179 0.004 286);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.179 0.004 286);
   --primary: oklch(0.179 0.004 286);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.956 0.003 286.3);
+  --secondary: oklch(0.953 0.003 286.3);
   --secondary-foreground: oklch(0.179 0.004 286);
-  --muted: oklch(0.956 0.003 286.3);
+  --muted: oklch(0.953 0.003 286.3);
   --muted-foreground: oklch(0.489 0.014 285.9);
-  --accent: oklch(0.929 0.004 286.3);
+  --accent: oklch(0.926 0.004 286.3);
   --accent-foreground: oklch(0.179 0.004 286);
-  --destructive: oklch(0.596 0.197 24);
+  --destructive: oklch(0.53 0.191 24.8);
   --border: oklch(0 0 0 / 6%);
   --input: oklch(0 0 0 / 10%);
   --ring: oklch(0.241 0.008 285.8);
@@ -77,53 +79,55 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.967 0.001 286.4);
+  --sidebar: oklch(0.92 0.004 286.3);
   --sidebar-foreground: oklch(0.179 0.004 286);
   --sidebar-primary: oklch(0.179 0.004 286);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.929 0.004 286.3);
+  --sidebar-accent: oklch(0.926 0.004 286.3);
   --sidebar-accent-foreground: oklch(0.179 0.004 286);
   --sidebar-border: oklch(0 0 0 / 6%);
   --sidebar-ring: oklch(0.241 0.008 285.8);
 }
 
 .dark {
-  --background: oklch(0.188 0.004 286);
+  --background: oklch(0.219 0.006 285.9);
   --foreground: oklch(0.947 0.003 286.3);
-  --card: oklch(0.219 0.006 285.9);
+  --card: oklch(0.278 0.007 285.9);
   --card-foreground: oklch(0.947 0.003 286.3);
-  --popover: oklch(0.241 0.006 286);
+  --popover: oklch(0.294 0.005 286.1);
   --popover-foreground: oklch(0.947 0.003 286.3);
   --primary: oklch(0.947 0.003 286.3);
-  --primary-foreground: oklch(0.188 0.004 286);
-  --secondary: oklch(0.262 0.006 286);
+  --primary-foreground: oklch(0.219 0.006 285.9);
+  --secondary: oklch(0.323 0.007 286);
   --secondary-foreground: oklch(0.947 0.003 286.3);
-  --muted: oklch(0.262 0.006 286);
-  --muted-foreground: oklch(0.689 0.012 286.1);
-  --accent: oklch(0.291 0.007 285.9);
+  --muted: oklch(0.323 0.007 286);
+  --muted-foreground: oklch(0.75 0.011 286.1);
+  --accent: oklch(0.369 0.007 286.1);
   --accent-foreground: oklch(0.947 0.003 286.3);
-  --destructive: oklch(0.626 0.193 23);
+  --destructive: oklch(0.803 0.112 21.8);
   --border: oklch(1 0 0 / 7%);
   --input: oklch(1 0 0 / 10%);
-  --ring: oklch(0.823 0.011 286.2);
+  --ring: oklch(0.887 0.010 279.7);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.155 0.002 286.2);
+  --sidebar: oklch(0.135 0.005 285.8);
   --sidebar-foreground: oklch(0.947 0.003 286.3);
   --sidebar-primary: oklch(0.947 0.003 286.3);
-  --sidebar-primary-foreground: oklch(0.155 0.002 286.2);
-  --sidebar-accent: oklch(0.228 0.006 285.9);
+  --sidebar-primary-foreground: oklch(0.135 0.005 285.8);
+  --sidebar-accent: oklch(0.219 0.006 285.9);
   --sidebar-accent-foreground: oklch(0.947 0.003 286.3);
   --sidebar-border: oklch(1 0 0 / 7%);
-  --sidebar-ring: oklch(0.823 0.011 286.2);
+  --sidebar-ring: oklch(0.887 0.010 279.7);
 }
 
 /* ADE's own colours, beside the kit's. Status colours belong to the Status component: amber
    (attention) means "needs you" and nothing else. */
 @theme inline {
+  --color-base: var(--base);
+  --color-panel: var(--panel);
   --color-attention: var(--attention);
   --color-attention-muted: var(--attention-muted);
   --color-running: var(--running);
@@ -144,22 +148,26 @@
   --destructive-muted: oklch(0.947 0.022 17.5);
   --diff-add: oklch(0.47 0.11 154.2);
   --diff-add-muted: oklch(0.954 0.024 159.1);
-  --diff-remove: oklch(0.541 0.191 24.8);
+  --diff-remove: oklch(0.53 0.191 24.8);
   --diff-remove-muted: oklch(0.947 0.022 17.5);
   --terminal: oklch(0.985 0 0);
+  --base: oklch(0.95 0.003 286.3);
+  --panel: oklch(0.976 0.001 286.4);
 }
 
 .dark {
   --attention: oklch(0.776 0.146 70.8);
-  --attention-muted: oklch(0.776 0.146 70.8 / 7%);
+  --attention-muted: oklch(0.776 0.146 70.8 / 12%);
   --running: oklch(0.717 0.137 257.1);
   --success: oklch(0.756 0.135 156.5);
-  --destructive-muted: oklch(0.626 0.193 23 / 12%);
+  --destructive-muted: oklch(0.803 0.112 21.8 / 20%);
   --diff-add: oklch(0.756 0.135 156.5);
   --diff-add-muted: oklch(0.756 0.135 156.5 / 10%);
-  --diff-remove: oklch(0.715 0.145 19.3);
-  --diff-remove-muted: oklch(0.626 0.193 23 / 12%);
+  --diff-remove: oklch(0.803 0.112 21.8);
+  --diff-remove-muted: oklch(0.803 0.112 21.8 / 15%);
   --terminal: oklch(0.165 0.004 285.9);
+  --base: oklch(0.165 0.004 285.9);
+  --panel: oklch(0.193 0.006 285.8);
 }
 
 /* Type. Fonts are Inter and JetBrains Mono, as in the Pen designs, bundled with the app.

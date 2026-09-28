@@ -6,7 +6,7 @@ import './app.css'
 // focus rings (WCAG AA and 2.2's focus appearance), in light and dark.
 
 const rgb = converter('rgb')
-const FILLS = ['sidebar', 'background', 'card', 'popover', 'muted', 'accent'] as const
+const FILLS = ['sidebar', 'base', 'panel', 'background', 'card', 'popover', 'muted', 'accent'] as const
 
 function token(name: string): Rgb {
   const probe = document.createElement('span')
@@ -51,6 +51,16 @@ describe.each(['light', 'dark'])('%s', (mode) => {
     // ADE's ring is drawn at full strength; the kit draws it at 50%.
     expect(wcagContrast(ring, token(fill)), `ring on ${fill}`).toBeGreaterThanOrEqual(3)
     expect(wcagContrast(over(ring, token(fill), 0.5), token(fill)), `kit ring on ${fill}`).toBeGreaterThanOrEqual(3)
+  })
+
+  test("destructive text is readable on its own tint (the kit's destructive button)", () => {
+    setMode()
+    // The kit draws destructive buttons as bg-destructive/10 (light) or /20 (dark) with red text.
+    const red = token('destructive')
+    for (const fill of ['popover', 'background', 'card'] as const) {
+      const tint = over(red, token(fill), mode === 'dark' ? 0.2 : 0.1)
+      expect(wcagContrast(red, tint), `destructive on its tint over ${fill}`).toBeGreaterThanOrEqual(4.5)
+    }
   })
 
   test('buttons are readable', () => {

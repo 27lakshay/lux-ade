@@ -8,12 +8,15 @@ export const TITLEBAR_HEIGHT = 40
 /** Native macOS traffic lights (14pt buttons), centred vertically in the title-bar row. */
 export const TRAFFIC_LIGHTS = { x: 16, y: TITLEBAR_HEIGHT / 2 - 7 }
 
+/** Where title-bar controls may start: past the three 12px lights (8px apart) and a 12px gap. */
+export const TRAFFIC_LIGHTS_INSET = TRAFFIC_LIGHTS.x + 3 * 12 + 2 * 8 + 12
+
 /**
  * The window's background before the page paints, per appearance. They equal the shadcn theme's
  * `--background` (src/renderer/src/shadcn.css; a renderer test keeps them in step), so the window
  * never flashes another colour while loading.
  */
-export const WINDOW_BACKGROUND = { light: '#ffffff', dark: '#131315' } as const
+export const WINDOW_BACKGROUND = { light: '#ffffff', dark: '#1a1a1d' } as const
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 
