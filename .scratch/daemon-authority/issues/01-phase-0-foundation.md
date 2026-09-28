@@ -1,9 +1,9 @@
 # 01 — Foundation: decisions, contract scaffolds, trees
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator
 Blocked by: none
 
 Serial work by the coordinator before any lane starts. Everything here touches files that only
@@ -42,6 +42,8 @@ the coordinator edits; after it, the lanes never need to.
 
 - `pnpm check:static` passes on `main` with the scaffolds.
 - The generated `@ade/contracts` exports `TabTarget`.
-- Four trees exist, each on a branch named `lane/<letter>-<slug>`.
+- Each backend lane runs in its own Claude-created worktree (the same `wt-setup` as `wt new`).
 
 ## Comments
+
+- 2026-09-29 — Resolved at `d8d1308`: D18 recorded; architecture proposal §1 and §3 and CONTEXT.md updated; `layout` and `settings` domains registered; `TabTarget` generated through `SHARED_TYPES`. Migration numbers are assigned at merge (see step 5). The lint hook now accepts a commit whose only scripts are generated contracts.

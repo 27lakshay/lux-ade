@@ -74,6 +74,11 @@ removing the owner decides what happens to the record. **Links** are references 
 - A tab's title is derived from its target (the conversation's title, the terminal's title),
   so renaming anything renames its tabs everywhere.
 
+### Decisions from the tickets
+
+- 01: migration numbers are assigned by the coordinator at merge; lanes write named migration
+  functions under a provisional `if version < 18`.
+
 ## Who owns what
 
 | Layer | Owns | Must not own |
