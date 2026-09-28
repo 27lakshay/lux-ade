@@ -2,7 +2,10 @@
 
 Electron app, in four parts:
 
-- `src/main`: Node; owns windows, menus, requests to the daemon, the send journal and quit guards.
+- `src/main`: Node; owns native windows, menus and quit guards, and forwards requests to the
+  daemon. It holds no durable state or business rules of its own: those belong to the daemon
+  ([daemon authority map](../../.scratch/daemon-authority/README.md)), and the journals of
+  requests the daemon has not admitted yet live in the SDK (`@ade/client/journals`).
 - `src/stream-bridge`: a utility process that carries the daemon's conversation feed and terminal
   streams straight to each window over a MessagePort, batched once per frame. Main starts and
   restarts it (`src/main/stream-bridge.ts`); the preload holds the port (`src/preload/stream.ts`).
