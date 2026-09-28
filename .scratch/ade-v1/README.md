@@ -9,7 +9,9 @@ E2E test interfaces backed by real ADE processes. No implementation is authorize
 merely by publication, and no feature is marked complete by this specification.
 
 Delivery-process planning for a faster parallel build lives in the
-[parallel build map](../parallel-build/README.md); it is not a v1 feature.
+[parallel build map](../parallel-build/README.md); it is not a v1 feature. Moving every
+durable record and rule into the daemon, so the desktop only presents, is planned in the
+[daemon authority map](../daemon-authority/README.md).
 
 ## Start here
 
