@@ -27,8 +27,9 @@ in UI copy.
 - A surface without one is built from the stock shadcn kit, with stock compositions and blocks and
   no custom styling, under `src/renderer/src/provisional/`. It moves out when its Pen design is
   approved and built.
-- The kit keeps the stock shadcn theme (Nova preset, Stone base colour, which matches the warm
-  baseline). Do not restyle kit components.
+- The kit uses the Nova preset with ADE's Graphite colours in `shadcn.css` (Pen: Base "Graphite";
+  replaced stock Stone on 2026-09-28). Surfaces separate by fill, not borders. Change colours in
+  the theme, never by restyling kit components.
 
 ## Tests
 

@@ -13,7 +13,7 @@ export const TRAFFIC_LIGHTS = { x: 16, y: TITLEBAR_HEIGHT / 2 - 7 }
  * `--background` (src/renderer/src/shadcn.css; a renderer test keeps them in step), so the window
  * never flashes another colour while loading.
  */
-export const WINDOW_BACKGROUND = { light: '#ffffff', dark: '#0c0a09' } as const
+export const WINDOW_BACKGROUND = { light: '#ffffff', dark: '#131315' } as const
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 

@@ -75,8 +75,8 @@ claiming a UI change works.
 - `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI (Nova preset, all
   components), with `hooks/use-mobile.ts`, `lib/utils.ts` and its theme in `shadcn.css`. Keep the
   kit files unmodified so `shadcn add` can update them; build product components from them
-  elsewhere. The kit keeps its stock theme (decided 2026-09-28): ADE's tokens are not mapped onto
-  it. Surfaces with no Pen design are built from the stock kit under
+  elsewhere. Its theme holds ADE's Graphite colours; ADE's status colours (`attention`,
+  `running`, `success`, diff colours, `terminal`) live in `app/app.css`. Surfaces with no Pen design are built from the stock kit under
   `src/renderer/src/provisional/` (root `AGENTS.md`, Design workflow).
   Use the `shadcn` skill and the `shadcn` MCP server (`.mcp.json`); config is `components.json`.
 - Terminal output stays outside React state. Terminals render with Ghostty compiled to
