@@ -43,8 +43,10 @@ claiming a UI change works.
 - `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI (Nova preset, all
   components), with `hooks/use-mobile.ts`, `lib/utils.ts` and its theme in `shadcn.css`. Keep the
   kit files unmodified so `shadcn add` can update them; build product components from them
-  elsewhere. `shadcn.css` is not imported by the prototype shell yet: its variable names overlap the
-  prototype's tokens, and ADE's tokens get mapped onto it once the design system is settled in Pen.
+  elsewhere. The kit keeps its stock theme (decided 2026-09-28): ADE's tokens are not mapped onto
+  it. `shadcn.css` is not imported by the prototype shell yet, because its variable names overlap
+  the prototype's tokens. Surfaces with no Pen design are built from the stock kit under
+  `src/renderer/src/provisional/` (root `AGENTS.md`, Design workflow).
   Use the `shadcn` skill and the `shadcn` MCP server (`.mcp.json`); config is `components.json`.
 - Terminal output stays outside React state. Terminals render with Ghostty compiled to
   WebAssembly (`packages/terminal`), built from the daemon's own Ghostty so its snapshots restore

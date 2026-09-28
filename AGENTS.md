@@ -18,10 +18,16 @@ proven headlessly; the work now is the Electron desktop app in `apps/desktop`. R
 
 ## Design workflow
 
-Visual design happens in Pen (`~/Documents/ade.pen`) first. A new surface or visual change is built
-in code only after the user approves it there; code is where motion, interaction mechanics,
-performance and accessibility behaviour are worked out. Do not style new UI directly in code. Use
-the terms in [CONTEXT.md](CONTEXT.md) in UI copy.
+Visual design happens in Pen (`~/Documents/ade.pen`). Code is where motion, interaction mechanics,
+performance and accessibility behaviour are worked out. Use the terms in [CONTEXT.md](CONTEXT.md)
+in UI copy.
+
+- A surface with an approved Pen design (the shell and the conversation, from the baseline frames)
+  is built to that design.
+- A surface without one is built from the stock shadcn kit, with stock compositions and blocks and
+  no custom styling, under `src/renderer/src/provisional/`. It moves out when its Pen design is
+  approved and built.
+- The kit keeps the stock shadcn theme (Nova, neutral). Do not restyle kit components.
 
 ## Tests
 

@@ -1,6 +1,6 @@
-/* The stock shadcn/ui theme (Base UI, Nova), kept apart from the prototype shell's styles.css: its
-   variable names (--border, --muted, …) overlap the prototype's tokens. Not imported by the app yet;
-   ADE's tokens will be mapped onto these variables once the design system is settled in Pen. */
+/* The stock shadcn/ui theme (Base UI, Nova, neutral), kept as the kit's theme: ADE's tokens are not
+   mapped onto it (decided 2026-09-28). Kept apart from the prototype shell's styles.css, whose
+   variable names (--border, --muted, …) overlap these; not imported by the app yet. */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
