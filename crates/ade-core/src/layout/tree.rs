@@ -174,6 +174,7 @@ pub fn insert_beside(
     let slot = node_at_mut(root, &path);
     let target = std::mem::replace(slot, placeholder());
     *slot = LayoutNode::Split(SplitNode {
+        tag: Default::default(),
         id,
         direction,
         children: if after {
@@ -187,6 +188,7 @@ pub fn insert_beside(
 
 fn placeholder() -> LayoutNode {
     LayoutNode::Pane(PaneNode {
+        tag: Default::default(),
         id: String::new(),
         tabs: Vec::new(),
         active: None,
@@ -274,6 +276,7 @@ pub fn dock(root: LayoutNode, node: LayoutNode, edge: Edge) -> LayoutNode {
             LayoutNode::Split(split)
         }
         root => LayoutNode::Split(SplitNode {
+            tag: Default::default(),
             id: split_id(&root, node.id()),
             direction,
             children: if after {

@@ -1,4 +1,4 @@
-//! Conversation, draft, send-intent, queue, window, attachment, prompt and
+//! Conversation, draft, send-intent, queue, attachment, prompt and
 //! answer contracts.
 use super::{FrameSpec, OperationSpec, Tier};
 use crate::model::{Attachment, Conversation, Draft, Message, PendingRequest, QueuedPrompt};
@@ -47,8 +47,6 @@ pub fn operations() -> Vec<OperationSpec> {
         OperationSpec::new::<QueueEnqueueRequest, Ack>("queue.enqueue", Tier::EffectCommand),
         OperationSpec::new::<QueueCancelRequest, Ack>("queue.cancel", Tier::IdempotentCommand),
         OperationSpec::new::<QueuePauseRequest, Ack>("queue.pause", Tier::EffectCommand),
-        OperationSpec::new::<WindowSaveRequest, Ack>("window.save", Tier::IdempotentCommand),
-        OperationSpec::new::<WindowCloseRequest, Ack>("window.close", Tier::IdempotentCommand),
         OperationSpec::new::<AttachmentPutRequest, AttachmentReply>(
             "attachment.put",
             Tier::IdempotentCommand,
@@ -386,20 +384,6 @@ pub struct QueuePauseRequest {
     pub operation_id: String,
     pub conversation_id: String,
     pub paused: bool,
-}
-
-/// `window.save`: store one window's layout record.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct WindowSaveRequest {
-    /// The window record, in the shape `catalog.get` lists it.
-    #[schemars(with = "Value")]
-    pub window: Value,
-}
-
-/// `window.close`: forget a window's record, unless it is the last one.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct WindowCloseRequest {
-    pub window_id: String,
 }
 
 /// `attachment.put`: upload attachment bytes. `request_id` becomes the attachment ID.
@@ -846,7 +830,7 @@ pub struct ConversationSnooze {
 /// `conversation.delete`: delete a Conversation that is not running a turn.
 /// An idle Agent is stopped first. The daemon removes its messages, pending
 /// requests, drafts, draft history and stashes, queue, send intents and
-/// snooze, detaches its windows, and leaves a tombstone: every later read,
+/// snooze, closes its tabs in every layout, and leaves a tombstone: every later read,
 /// write, page or search that names the Conversation is refused as deleted.
 /// Attachment payloads stay until retention reclaims them.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -871,8 +855,8 @@ pub struct ConversationDeletion {
     pub queued_prompts: u64,
     pub send_intents: u64,
     pub snoozes: u64,
-    /// Windows that showed the Conversation and now show none.
-    pub windows_detached: u64,
+    /// Layouts that showed the Conversation in a tab and no longer do.
+    pub layouts_changed: u64,
 }
 
 /// The `conversation.delete` reply.
@@ -956,7 +940,7 @@ pub struct ConversationSnoozeList {
 
 #[cfg(test)]
 mod tests {
-    //! Schema round trips for this domain's draft, queue, window and attachment types.
+    //! Schema round trips for this domain's draft, queue and attachment types.
     use super::*;
     use crate::contract::bundle;
     use serde::de::DeserializeOwned;
@@ -1066,8 +1050,6 @@ mod tests {
             ("queue.enqueue", "effect_command"),
             ("queue.cancel", "idempotent_command"),
             ("queue.pause", "effect_command"),
-            ("window.save", "idempotent_command"),
-            ("window.close", "idempotent_command"),
             ("attachment.put", "idempotent_command"),
             ("attachment.import", "idempotent_command"),
             ("attachment.inspect", "query"),
@@ -1435,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_and_windows_round_trip() {
+    fn queue_round_trips() {
         request::<QueueEnqueueRequest>(
             "queue.enqueue",
             json!({"op": "queue.enqueue", "conversation_id": "c", "request_id": "q",
@@ -1449,23 +1431,7 @@ mod tests {
             "queue.pause",
             json!({"op": "queue.pause", "operation_id": "o", "conversation_id": "c", "paused": true}),
         );
-        request::<WindowSaveRequest>(
-            "window.save",
-            json!({"op": "window.save", "window": {"id": "w", "workspace_id": "ws",
-                "conversation_id": null, "browser_url": "", "x": 0.0, "y": 0.0,
-                "width": 800.0, "height": 600.0}}),
-        );
-        request::<WindowCloseRequest>(
-            "window.close",
-            json!({"op": "window.close", "window_id": "w"}),
-        );
-        for op in [
-            "queue.enqueue",
-            "queue.cancel",
-            "queue.pause",
-            "window.save",
-            "window.close",
-        ] {
+        for op in ["queue.enqueue", "queue.cancel", "queue.pause"] {
             response(op, &Ack::default(), json!({"type": "ack"}));
         }
     }

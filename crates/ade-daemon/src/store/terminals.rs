@@ -3,7 +3,16 @@ use super::*;
 use crate::receipts;
 use ade_core::contract::terminals::{TerminalKind, TerminalRecord};
 
+use ade_core::contract::layout::{LayoutRecord, Tab, TabTarget};
+use ade_core::contract::terminals::TerminalPlace;
+
 const TERMINAL_CREATE: &str = "terminal.create";
+
+/// A terminal `terminal.create` made, and the layout its tab opened in.
+pub struct PlacedTerminal {
+    pub terminal_id: String,
+    pub layout: Option<LayoutRecord>,
+}
 const CREATION_CONFLICT: &str = "Terminal request ID conflicts with another workspace";
 
 fn valid_creation_id(operation_id: &str) -> Result<()> {
@@ -39,24 +48,6 @@ fn legacy_creation(
         )
         .optional()
         .map_err(Into::into)
-}
-
-pub(crate) fn forget_terminal_views(tx: &Connection, terminal: &str) -> Result<()> {
-    for mut window in all::<WindowRecord>(tx, "SELECT data FROM windows")? {
-        window.tabs.terminals.retain(|tab| tab.id != terminal);
-        window
-            .tabs
-            .closed_terminals
-            .retain(|tab| tab.id != terminal);
-        if window.tabs.active_terminal.as_deref() == Some(terminal) {
-            window.tabs.active_terminal = None;
-        }
-        tx.execute(
-            "UPDATE windows SET data=?2 WHERE id=?1",
-            params![window.id, encode(&window)?],
-        )?;
-    }
-    Ok(())
 }
 
 impl Store {
@@ -135,7 +126,7 @@ impl Store {
             workspace.extra_terminals.iter().any(|id| id == run_id),
             "Script run is unavailable"
         );
-        self.retire_terminal(workspace_id, run_id)
+        self.retire_terminal(workspace_id, run_id).map(drop)
     }
     /// The workspace and terminal a settled `terminal.create` receipt produced.
     pub fn terminal_creation(&self, operation_id: &str) -> Result<Option<(String, String)>> {
@@ -167,6 +158,20 @@ impl Store {
         operation_id: Option<&str>,
         title: Option<&str>,
     ) -> Result<String> {
+        Ok(self
+            .create_placed_terminal(id, operation_id, title, None)?
+            .terminal_id)
+    }
+    /// [`Self::create_terminal`], opening the new terminal's tab in `place`
+    /// in the same transaction. `place` joins the receipt's payload, and a
+    /// retry returns the terminal without placing it again.
+    pub fn create_placed_terminal(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+        title: Option<&str>,
+        place: Option<&TerminalPlace>,
+    ) -> Result<PlacedTerminal> {
         // Immediate: a deferred read that later writes fails at once with
         // "database is locked" when another connection to this database
         // committed in between; taking the write lock first waits instead.
@@ -176,7 +181,10 @@ impl Store {
             valid_creation_id(operation_id)?;
             if let Some((workspace_id, terminal_id)) = legacy_creation(&tx, operation_id)? {
                 ensure!(workspace_id == id, CREATION_CONFLICT);
-                return Ok(terminal_id);
+                return Ok(PlacedTerminal {
+                    terminal_id,
+                    layout: None,
+                });
             }
             // Receipts from before titles keep their payload: the title
             // joins it only when given.
@@ -184,13 +192,19 @@ impl Store {
             if let Some(title) = title {
                 payload["title"] = json!(title);
             }
+            if let Some(place) = place {
+                payload["place"] = json!(place);
+            }
             match receipts::begin(&tx, operation_id, TERMINAL_CREATE, &payload, None, now)? {
                 receipts::Admission::New => {}
                 receipts::Admission::Replay(receipt) => {
                     let result = receipt
                         .result
                         .context("Terminal creation has no recorded result")?;
-                    return Ok(creation(&result)?.1);
+                    return Ok(PlacedTerminal {
+                        terminal_id: creation(&result)?.1,
+                        layout: None,
+                    });
                 }
                 receipts::Admission::Conflict => anyhow::bail!(CREATION_CONFLICT),
                 receipts::Admission::Expired => {
@@ -211,8 +225,23 @@ impl Store {
                 ..Stored::new(&terminal, id, TerminalKind::Shell)
             },
         )?;
-        // TODO(lane A): with `terminal.create`'s `place`, open a tab for this
-        // terminal in the named window's layout here, in this transaction.
+        let layout = place
+            .map(|place| {
+                super::layouts::place_tab(
+                    &tx,
+                    &place.window_id,
+                    id,
+                    place.pane_id.as_deref(),
+                    Tab {
+                        id: format!("tab-{terminal}"),
+                        target: TabTarget::Terminal {
+                            id: terminal.clone(),
+                        },
+                    },
+                )
+            })
+            .transpose()?
+            .flatten();
         if let Some(operation_id) = operation_id {
             receipts::settle(
                 &tx,
@@ -223,16 +252,20 @@ impl Store {
             )?;
         }
         tx.commit()?;
-        Ok(terminal)
+        Ok(PlacedTerminal {
+            terminal_id: terminal,
+            layout,
+        })
     }
-    /// Removes a terminal from its workspace. A removed primary shell is
-    /// replaced by a new one. Removing an absent terminal changes nothing.
-    pub fn retire_terminal(&self, id: &str, terminal: &str) -> Result<()> {
+    /// Removes a terminal from its workspace and its tabs from every layout.
+    /// A removed primary shell is replaced by a new one. Removing an absent
+    /// terminal changes nothing. Returns the layouts that lost a tab.
+    pub fn retire_terminal(&self, id: &str, terminal: &str) -> Result<Vec<LayoutRecord>> {
         let tx = self.transaction()?;
         let _: WorkspaceRecord = one(&tx, "workspaces", id)?;
-        records::remove(&tx, id, terminal)?;
+        let layouts = records::remove(&tx, id, terminal)?.unwrap_or_default();
         tx.commit()?;
-        Ok(())
+        Ok(layouts)
     }
     /// One terminal's record, or `None` when no terminal has this ID.
     pub fn terminal(&self, id: &str) -> Result<Option<TerminalRecord>> {

@@ -39,6 +39,7 @@ import { pluginUsage, runPluginCommand } from './commands/plugins.js'
 import { pluginDevUsage, runPluginDevCommand } from './commands/plugin-dev.js'
 import { hookUsage, runHookCommand } from './commands/hooks.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
+import { layoutUsage, runLayoutCommand } from './commands/layouts.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
 import { runWorktreeLifecycleCommand, worktreeLifecycleUsage } from './commands/worktrees.js'
 import { listOperations, requestUsage, runRequestCommand } from './commands/request.js'
@@ -126,6 +127,7 @@ const usage = [
   usageHeader,
   workspaceUsage,
   worktreeLifecycleUsage,
+  layoutUsage,
   fileUsage,
   conversationUsage,
   conversationControlUsage,
@@ -337,6 +339,7 @@ function journalOwner(profileId: string | undefined, endpoint: string, home: str
 const commandAreas = [
   runWorkspaceCommand,
   runWorktreeLifecycleCommand,
+  runLayoutCommand,
   runConversationCommand,
   runConversationControlCommand,
   runContextCommand,

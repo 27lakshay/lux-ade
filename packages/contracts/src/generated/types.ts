@@ -332,6 +332,8 @@ export type ContractDefinition =
   | DraftStashRestoreRequest
   | DraftStashSaveOutcome
   | DraftStashSaveRequest
+  | DropZone
+  | Edge
   | Excluded
   | Exclusion
   | ExecutableIdentity
@@ -408,6 +410,17 @@ export type ContractDefinition =
   | Inspection
   | InstallOutcome
   | Installation
+  | Layout
+  | LayoutAction
+  | LayoutApplied
+  | LayoutApplyRequest
+  | LayoutChanged
+  | LayoutGetRequest
+  | LayoutNode
+  | LayoutRecord
+  | LayoutRemoved
+  | LayoutReplaceRequest
+  | LayoutReply
   | ListenerFamily
   | ListenerInventory
   | ListenerListRequest
@@ -446,6 +459,7 @@ export type ContractDefinition =
   | OutputCoverageStatus
   | PackageRegistry
   | PairingState
+  | PaneNode
   | ParentMessageQueued
   | ParentSendRequest
   | PartForm
@@ -749,6 +763,10 @@ export type ContractDefinition =
   | SessionSubscribeRequest
   | SettingValue
   | SetupState
+  | Side
+  | SidebarFlags
+  | SidebarId
+  | SidebarWidths
   | SkillAdoptRequest
   | SkillDiscoverRequest
   | SkillDiscovery
@@ -776,9 +794,12 @@ export type ContractDefinition =
   | SkillScope
   | SkillSourceKind
   | SkillSummary
+  | SplitDirection
+  | SplitNode
   | StartOutcome
   | Support
   | SwitchContinuity
+  | Tab
   | TabTarget
   | TerminalChanged
   | TerminalCloseRequest
@@ -823,8 +844,20 @@ export type ContractDefinition =
   | UsageTurns
   | UsageTurnsRequest
   | WaitState
+  | Window
+  | WindowAck
+  | WindowBounds
+  | WindowChanged
   | WindowCloseRequest
-  | WindowSaveRequest
+  | WindowCreateRequest
+  | WindowList
+  | WindowListRequest
+  | WindowReopenRequest
+  | WindowSetBoundsRequest
+  | WindowSetViewStateRequest
+  | WindowShowWorkspaceRequest
+  | WindowState
+  | WindowView
   | WorkspaceAck
   | WorkspaceChoice
   | WorkspaceMode
@@ -1040,6 +1073,11 @@ export type CarryBlocker =
  * How a path differs from `HEAD` in the source tree.
  */
 export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | 'untracked') | 'unmerged'
+/**
+ * Whether a window is on screen. A closed window keeps its record, its
+ * bounds and its layouts, and comes back as it was on `window.reopen`.
+ */
+export type WindowState = 'open' | 'closed'
 export type CheckState = 'passed' | 'failed' | 'skipped'
 /**
  * The preset field a conflict concerns.
@@ -1448,6 +1486,14 @@ export type DraftRestoreOutcome = 'restored' | 'already_restored' | 'conflict'
  */
 export type DraftStashSaveOutcome = ('created' | 'replaced') | 'unchanged'
 /**
+ * Where a dragged tab or pane lands on a pane: one of its edges (a split) or its centre.
+ */
+export type DropZone = 'left' | 'right' | 'top' | 'bottom' | 'centre'
+/**
+ * An outer edge of the whole centre area.
+ */
+export type Edge = 'left' | 'right' | 'top' | 'bottom'
+/**
  * Why an entry does not reach a provider.
  */
 export type Exclusion = ('disabled' | 'outside_scope' | 'provider_not_selected') | 'unsupported'
@@ -1604,6 +1650,176 @@ export type Installation =
       source: 'remote'
     }
 export type PackageRegistry = 'npm' | 'pypi' | 'oci'
+/**
+ * A pane or a split, told apart by `type`. Each variant's struct carries its
+ * own tag, so clients get one flat type per node.
+ */
+export type LayoutNode = PaneNode | SplitNode
+/**
+ * `row`: side by side; `column`: stacked.
+ */
+export type SplitDirection = 'row' | 'column'
+/**
+ * The two sidebars. They only ever swap sides with each other and never hold panes.
+ */
+export type SidebarId = 'navigator' | 'inspector'
+/**
+ * What a tab shows. Records are named by ID; a file or diff by its path
+ * inside the layout's workspace.
+ */
+export type TabTarget =
+  | {
+      id: string
+      kind: 'conversation'
+      [k: string]: unknown
+    }
+  | {
+      id: string
+      kind: 'terminal'
+      [k: string]: unknown
+    }
+  | {
+      id: string
+      kind: 'browser'
+      [k: string]: unknown
+    }
+  | {
+      kind: 'file'
+      path: string
+      [k: string]: unknown
+    }
+  | {
+      kind: 'diff'
+      path: string
+      staged: boolean
+      [k: string]: unknown
+    }
+  | {
+      kind: 'new_conversation'
+      [k: string]: unknown
+    }
+/**
+ * Every change to a layout. New pane and tab IDs come in with the action,
+ * so applying it is deterministic and a retry finds what the first made.
+ * Actions naming a pane, split or tab that is not there change nothing.
+ */
+export type LayoutAction =
+  | {
+      type: 'swap_sidebars'
+      [k: string]: unknown
+    }
+  | {
+      side: Side
+      type: 'toggle_side'
+      [k: string]: unknown
+    }
+  | {
+      collapsed: boolean
+      sidebar: SidebarId
+      type: 'set_collapsed'
+      [k: string]: unknown
+    }
+  | {
+      sidebar: SidebarId
+      type: 'set_width'
+      width: number
+      [k: string]: unknown
+    }
+  | {
+      pane_id?: string | null
+      tab: Tab
+      type: 'open_tab'
+      [k: string]: unknown
+    }
+  | {
+      tab_id: string
+      type: 'activate_tab'
+      [k: string]: unknown
+    }
+  | {
+      tab_id: string
+      type: 'close_tab'
+      [k: string]: unknown
+    }
+  | {
+      index: number
+      pane_id: string
+      tab_id: string
+      type: 'move_tab'
+      [k: string]: unknown
+    }
+  | {
+      new_pane_id: string
+      pane_id: string
+      tab_id: string
+      type: 'drop_tab'
+      zone: DropZone
+      [k: string]: unknown
+    }
+  | {
+      direction: SplitDirection
+      new_pane_id: string
+      pane_id: string
+      type: 'split_pane'
+      [k: string]: unknown
+    }
+  | {
+      pane_id: string
+      target_id: string
+      type: 'move_pane'
+      zone: DropZone
+      [k: string]: unknown
+    }
+  | {
+      pane_id: string
+      target_id: string
+      type: 'swap_panes'
+      [k: string]: unknown
+    }
+  | {
+      edge: Edge
+      new_pane_id: string
+      tab_id: string
+      type: 'dock_tab'
+      [k: string]: unknown
+    }
+  | {
+      edge: Edge
+      pane_id: string
+      type: 'dock_pane'
+      [k: string]: unknown
+    }
+  | {
+      pane_id: string
+      type: 'close_pane'
+      [k: string]: unknown
+    }
+  | {
+      pane_id: string
+      type: 'focus_pane'
+      [k: string]: unknown
+    }
+  | {
+      sizes: number[]
+      split_id: string
+      type: 'set_split_sizes'
+      [k: string]: unknown
+    }
+  | {
+      pane_id: string
+      type: 'toggle_maximize'
+      [k: string]: unknown
+    }
+  | {
+      split_id?: string | null
+      type: 'equalize_splits'
+      [k: string]: unknown
+    }
+  | {
+      type: 'reset_layout'
+      [k: string]: unknown
+    }
+export type Side = 'left' | 'right'
 export type ListenerFamily = 'ipv4' | 'ipv6'
 export type PortObservation = 'verified_managed' | 'contested' | 'observed_other' | 'unobserved'
 export type ListenerOwnership = 'managed_service' | 'unknown'
@@ -1945,41 +2161,6 @@ export type SkillSourceKind = 'local_directory' | 'adopted'
  * What a placement did at its provider path.
  */
 export type SkillPlaceOutcome = 'created' | 'replaced' | 'up_to_date' | 'external_identical'
-/**
- * What a tab shows. Records are named by ID; a file or diff by its path
- * inside the layout's workspace.
- */
-export type TabTarget =
-  | {
-      id: string
-      kind: 'conversation'
-      [k: string]: unknown
-    }
-  | {
-      id: string
-      kind: 'terminal'
-      [k: string]: unknown
-    }
-  | {
-      id: string
-      kind: 'browser'
-      [k: string]: unknown
-    }
-  | {
-      kind: 'file'
-      path: string
-      [k: string]: unknown
-    }
-  | {
-      kind: 'diff'
-      path: string
-      staged: boolean
-      [k: string]: unknown
-    }
-  | {
-      kind: 'new_conversation'
-      [k: string]: unknown
-    }
 /**
  * How a snapshot restores the screen, by snapshot format.
  */
@@ -4317,7 +4498,10 @@ export interface Catalogue {
    * The listed workspaces' terminals, in creation order.
    */
   terminals: TerminalRecord[]
-  windows: unknown[]
+  /**
+   * Every window, open and closed, as `window.list` gives them.
+   */
+  windows: Window[]
   workspaces: WorkspaceRecord[]
   [k: string]: unknown
 }
@@ -4415,6 +4599,51 @@ export interface TerminalRecord {
    */
   title: string
   workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * A window: which workspace it shows, where it is and its view state. Its
+ * panes and tabs are in one [`LayoutRecord`] per workspace it has shown.
+ */
+export interface Window {
+  /**
+   * Null until a UI sets them.
+   */
+  bounds: WindowBounds | null
+  id: string
+  state: WindowState
+  view: WindowView
+  /**
+   * The workspace the window shows.
+   */
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * A window's position and size, in screen points. The daemon checks only
+ * that they are finite and positive; a UI applies its own minimum size.
+ */
+export interface WindowBounds {
+  height: number
+  width: number
+  x: number
+  y: number
+  [k: string]: unknown
+}
+/**
+ * Per-window view state a second UI on the same window shares. Focus,
+ * scroll, hover and drag state stay local to each UI.
+ */
+export interface WindowView {
+  /**
+   * Project IDs whose rows the navigator shows collapsed.
+   */
+  collapsed_projects: string[]
+  /**
+   * Workspaces this window showed, most recent first; the first is the
+   * one it shows now.
+   */
+  recent_workspaces: string[]
   [k: string]: unknown
 }
 export interface WorkspaceRecord {
@@ -5588,7 +5817,7 @@ export interface ConversationCreated {
  * `conversation.delete`: delete a Conversation that is not running a turn.
  * An idle Agent is stopped first. The daemon removes its messages, pending
  * requests, drafts, draft history and stashes, queue, send intents and
- * snooze, detaches its windows, and leaves a tombstone: every later read,
+ * snooze, closes its tabs in every layout, and leaves a tombstone: every later read,
  * write, page or search that names the Conversation is refused as deleted.
  * Attachment payloads stay until retention reclaims them.
  */
@@ -5631,15 +5860,15 @@ export interface ConversationDeletion {
   draft_history: number
   draft_stashes: number
   drafts: number
+  /**
+   * Layouts that showed the Conversation in a tab and no longer do.
+   */
+  layouts_changed: number
   messages: number
   queued_prompts: number
   requests: number
   send_intents: number
   snoozes: number
-  /**
-   * Windows that showed the Conversation and now show none.
-   */
-  windows_detached: number
   [k: string]: unknown
 }
 /**
@@ -8185,6 +8414,195 @@ export interface RegistryStatus {
    */
   scope: 'host' | 'profile'
   state: RegistryState
+  [k: string]: unknown
+}
+/**
+ * One window's arrangement of one workspace: the sidebars and the tree of
+ * panes in the centre with their tabs.
+ */
+export interface Layout {
+  collapsed: SidebarFlags
+  focused_pane: string
+  /**
+   * A pane shown alone across the whole centre, or null. Always the focused pane.
+   */
+  maximized: string | null
+  root: LayoutNode
+  /**
+   * `[left, right]`.
+   *
+   * @minItems 2
+   * @maxItems 2
+   */
+  sidebars: [SidebarId, SidebarId]
+  /**
+   * Every tab placed in a pane, by ID.
+   */
+  tabs: {
+    [k: string]: Tab
+  }
+  widths: SidebarWidths
+  [k: string]: unknown
+}
+export interface SidebarFlags {
+  inspector: boolean
+  navigator: boolean
+  [k: string]: unknown
+}
+/**
+ * A leaf of the pane tree: a strip of tabs.
+ */
+export interface PaneNode {
+  active: string | null
+  id: string
+  /**
+   * Tab IDs, in strip order.
+   */
+  tabs: string[]
+  /**
+   * The `pane` type tag.
+   */
+  type: 'pane'
+  [k: string]: unknown
+}
+/**
+ * Two or more nodes side by side (`row`) or stacked (`column`).
+ */
+export interface SplitNode {
+  children: LayoutNode[]
+  direction: SplitDirection
+  id: string
+  /**
+   * Percentages of the split, one per child, summing to 100.
+   */
+  sizes: number[]
+  /**
+   * The `split` type tag.
+   */
+  type: 'split'
+  [k: string]: unknown
+}
+/**
+ * One tab: a stable ID in its layout and what it shows.
+ */
+export interface Tab {
+  id: string
+  target: TabTarget
+  [k: string]: unknown
+}
+/**
+ * Sidebar widths in pixels, from 200 to 480.
+ */
+export interface SidebarWidths {
+  inspector: number
+  navigator: number
+  [k: string]: unknown
+}
+/**
+ * The `layout.apply` and `layout.replace` reply. `changed` is false when
+ * the layout was already so; its revision then stays.
+ */
+export interface LayoutApplied {
+  changed: boolean
+  layout: LayoutRecord
+  /**
+   * The `layout` type tag.
+   */
+  type: 'layout'
+  [k: string]: unknown
+}
+/**
+ * A stored layout: one per window and workspace, with a revision that
+ * grows by one with each change.
+ */
+export interface LayoutRecord {
+  layout: Layout
+  /**
+   * 0 for a layout never changed: the default the daemon gives a window
+   * the first time it shows a workspace.
+   */
+  revision: number
+  window_id: string
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * `layout.apply`: apply one action to a window's layout for a workspace.
+ */
+export interface LayoutApplyRequest {
+  action: LayoutAction
+  /**
+   * The revision the caller last saw. A stale one is refused with
+   * `layout_conflict`, except for the repeat of the last applied action
+   * from that revision, which returns its result.
+   */
+  expected_revision?: number | null
+  op: 'layout.apply'
+  window_id: string
+  /**
+   * The workspace; the one the window shows when omitted.
+   */
+  workspace_id?: string | null
+}
+/**
+ * The `layout_changed` feed frame. `layout.revision` is the layout's own
+ * revision; a client keeps the higher of it and what `layout.get` gave.
+ */
+export interface LayoutChanged {
+  boot_id: string
+  layout: LayoutRecord
+  revision: number
+  /**
+   * The `layout_changed` type tag.
+   */
+  type: 'layout_changed'
+  [k: string]: unknown
+}
+/**
+ * `layout.get`: one window's layout for one workspace.
+ */
+export interface LayoutGetRequest {
+  op: 'layout.get'
+  window_id: string
+  /**
+   * The workspace; the one the window shows when omitted.
+   */
+  workspace_id?: string | null
+}
+/**
+ * The `layout_removed` feed frame: a removed workspace took its layouts.
+ */
+export interface LayoutRemoved {
+  boot_id: string
+  revision: number
+  /**
+   * The `layout_removed` type tag.
+   */
+  type: 'layout_removed'
+  window_id: string
+  workspace_id: string
+  [k: string]: unknown
+}
+/**
+ * `layout.replace`: store a whole layout, such as one imported from an
+ * older client. It must be well formed and its tab targets must exist.
+ */
+export interface LayoutReplaceRequest {
+  expected_revision?: number | null
+  layout: Layout
+  op: 'layout.replace'
+  window_id: string
+  workspace_id?: string | null
+}
+/**
+ * The `layout.get` reply.
+ */
+export interface LayoutReply {
+  layout: LayoutRecord
+  /**
+   * The `layout` type tag.
+   */
+  type: 'layout'
   [k: string]: unknown
 }
 /**
@@ -12722,8 +13140,9 @@ export interface TerminalCreateRequest {
    */
   operation_id?: string
   /**
-   * Open a tab for the new terminal in a window's layout. Refused as
-   * `unsupported` until daemon layouts exist.
+   * Open a tab `tab-<terminal_id>` for the new terminal in the window's
+   * layout for this workspace, in the same transaction. An unknown window
+   * is `window_not_found` and creates no terminal.
    */
   place?: TerminalPlace | null
   /**
@@ -13245,21 +13664,98 @@ export interface UsageTurnsRequest {
   workspace_id?: string | null
 }
 /**
- * `window.close`: forget a window's record, unless it is the last one.
+ * The reply of every window command: the window as it now stands.
+ */
+export interface WindowAck {
+  /**
+   * The `window` type tag.
+   */
+  type: 'window'
+  window: Window
+  [k: string]: unknown
+}
+/**
+ * The `window_changed` feed frame: a window was created or changed.
+ */
+export interface WindowChanged {
+  boot_id: string
+  revision: number
+  /**
+   * The `window_changed` type tag.
+   */
+  type: 'window_changed'
+  window: Window
+  [k: string]: unknown
+}
+/**
+ * `window.close`: hide the window. Its record and layouts stay.
  */
 export interface WindowCloseRequest {
   op: 'window.close'
   window_id: string
 }
 /**
- * `window.save`: store one window's layout record.
+ * `window.create`: a window on a workspace, open, with a default layout.
+ * Creating an existing window ID on the same workspace returns it
+ * unchanged; on another workspace it is refused.
  */
-export interface WindowSaveRequest {
-  op: 'window.save'
+export interface WindowCreateRequest {
+  bounds?: WindowBounds | null
+  op: 'window.create'
   /**
-   * The window record, in the shape `catalog.get` lists it.
+   * The caller's ID for the new window.
    */
-  window: unknown
+  window_id: string
+  workspace_id: string
+}
+/**
+ * The `window.list` reply, in creation order.
+ */
+export interface WindowList {
+  /**
+   * The `windows` type tag.
+   */
+  type: 'windows'
+  windows: Window[]
+  [k: string]: unknown
+}
+/**
+ * `window.list`: every window of the profile, open and closed.
+ */
+export interface WindowListRequest {
+  op: 'window.list'
+}
+/**
+ * `window.reopen`: show a closed window again, as it was.
+ */
+export interface WindowReopenRequest {
+  op: 'window.reopen'
+  window_id: string
+}
+/**
+ * `window.set_bounds`: record the window's position and size.
+ */
+export interface WindowSetBoundsRequest {
+  bounds: WindowBounds
+  op: 'window.set_bounds'
+  window_id: string
+}
+/**
+ * `window.set_view_state`: the project rows the navigator shows collapsed.
+ */
+export interface WindowSetViewStateRequest {
+  collapsed_projects: string[]
+  op: 'window.set_view_state'
+  window_id: string
+}
+/**
+ * `window.show_workspace`: which workspace the window shows. It moves to
+ * the front of `recent_workspaces`; its layout is kept per workspace.
+ */
+export interface WindowShowWorkspaceRequest {
+  op: 'window.show_workspace'
+  window_id: string
+  workspace_id: string
 }
 /**
  * The `workspace.open`, `workspace.rename` and `workspace.rebind` reply.
@@ -13993,7 +14489,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "layout.replace"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -14019,8 +14515,6 @@ export interface RequestByOperation {
   "queue.enqueue": QueueEnqueueRequest
   "queue.cancel": QueueCancelRequest
   "queue.pause": QueuePauseRequest
-  "window.save": WindowSaveRequest
-  "window.close": WindowCloseRequest
   "attachment.put": AttachmentPutRequest
   "attachment.import": AttachmentImportRequest
   "attachment.inspect": AttachmentInspectRequest
@@ -14277,6 +14771,16 @@ export interface RequestByOperation {
   "context.capture": ContextCaptureRequest
   "context.get": ContextGetRequest
   "context.plan": ContextPlanRequest
+  "window.list": WindowListRequest
+  "window.create": WindowCreateRequest
+  "window.close": WindowCloseRequest
+  "window.reopen": WindowReopenRequest
+  "window.set_bounds": WindowSetBoundsRequest
+  "window.show_workspace": WindowShowWorkspaceRequest
+  "window.set_view_state": WindowSetViewStateRequest
+  "layout.get": LayoutGetRequest
+  "layout.apply": LayoutApplyRequest
+  "layout.replace": LayoutReplaceRequest
 }
 
 export interface ResponseByOperation {
@@ -14303,8 +14807,6 @@ export interface ResponseByOperation {
   "queue.enqueue": Ack
   "queue.cancel": Ack
   "queue.pause": Ack
-  "window.save": Ack
-  "window.close": Ack
   "attachment.put": AttachmentReply
   "attachment.import": AttachmentReply
   "attachment.inspect": AttachmentInspection
@@ -14561,8 +15063,18 @@ export interface ResponseByOperation {
   "context.capture": ContextNodeReply
   "context.get": ContextNodeReply
   "context.plan": ContextPlan
+  "window.list": WindowList
+  "window.create": WindowAck
+  "window.close": WindowAck
+  "window.reopen": WindowAck
+  "window.set_bounds": WindowAck
+  "window.show_workspace": WindowAck
+  "window.set_view_state": WindowAck
+  "layout.get": LayoutReply
+  "layout.apply": LayoutApplied
+  "layout.replace": LayoutApplied
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged
+export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged | WindowChanged | LayoutChanged | LayoutRemoved
 
 export type TerminalStreamFrame = TerminalSnapshotFrame | TerminalOutputFrame | TerminalResizeFrame | TerminalViewportFrame | TerminalMetricsFrame | TerminalDetachedFrame | TerminalWarningFrame | TerminalErrorFrame | TerminalConversationFrame | Ack

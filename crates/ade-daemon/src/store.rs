@@ -1,4 +1,4 @@
-//! The daemon is the sole writer; windows persist references, never process handles.
+//! The daemon is the sole writer; layouts persist references, never process handles.
 use crate::model::*;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -29,6 +29,7 @@ mod bindings;
 pub mod context_nodes;
 mod conversations;
 mod drafts;
+pub mod layouts;
 mod migrations;
 pub mod runtime_recovery;
 mod send_intents;
@@ -38,7 +39,6 @@ pub(crate) mod terminal_records;
 mod terminals;
 #[cfg(test)]
 mod tests;
-mod windows;
 
 pub use account_switches::SwitchCommit;
 pub use attachments::*;
@@ -50,7 +50,6 @@ pub use conversations::{QUEUE_DISPATCH_STATUSES, QueueEntry};
 pub use drafts::{DraftContent, Restored};
 pub use send_intents::*;
 pub use send_outbox::*;
-pub(crate) use terminals::forget_terminal_views;
 
 fn decode<T: DeserializeOwned>(value: String) -> Result<T> {
     Ok(serde_json::from_str(&value)?)

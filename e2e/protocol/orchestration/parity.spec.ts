@@ -41,6 +41,12 @@ const samples: Record<string, Sample> = {
     cli: (c) => ['conversation', 'cancel', c.conversation],
   },
   accounts: { op: 'account.list', request: () => ({}), cli: () => ['account', 'list'] },
+  // No window has this ID, so both surfaces refuse it with the same rule.
+  layout: {
+    op: 'layout.get',
+    request: () => ({ window_id: 'e2e-missing' }),
+    cli: () => ['layout', 'get', '--window', 'e2e-missing'],
+  },
   terminals: {
     op: 'terminal.operation',
     request: (c) => ({ workspace_id: c.workspace, operation_id: 'e2e-missing' }),

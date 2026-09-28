@@ -192,80 +192,6 @@ impl PendingRequest {
         }
     }
 }
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(default)]
-pub struct PaneLayout {
-    pub sidebar_visible: bool,
-    pub terminal_visible: bool,
-    pub browser_visible: bool,
-    pub sidebar_width: f32,
-    pub browser_width: f32,
-    pub terminal_height: f32,
-}
-impl Default for PaneLayout {
-    fn default() -> Self {
-        Self {
-            sidebar_visible: true,
-            terminal_visible: true,
-            browser_visible: false,
-            sidebar_width: 256.,
-            browser_width: 300.,
-            terminal_height: 200.,
-        }
-    }
-}
-impl PaneLayout {
-    pub fn valid(&self) -> bool {
-        (180.0..=360.0).contains(&self.sidebar_width)
-            && (240.0..=600.0).contains(&self.browser_width)
-            && (120.0..=600.0).contains(&self.terminal_height)
-    }
-}
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct TerminalTab {
-    pub id: String,
-    pub workspace_id: String,
-    pub title: String,
-}
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct BrowserTab {
-    pub id: String,
-    pub url: String,
-    pub title: String,
-}
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-#[serde(default)]
-pub struct Tabs {
-    pub initialized: bool,
-    pub terminals: Vec<TerminalTab>,
-    pub browsers: Vec<BrowserTab>,
-    pub active_terminal: Option<String>,
-    pub active_browser: Option<String>,
-    pub closed_terminals: Vec<TerminalTab>,
-    pub closed_browsers: Vec<BrowserTab>,
-}
-fn default_focused_pane() -> u32 {
-    5
-}
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct WindowRecord {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dock_layout: Option<Value>,
-    #[serde(default = "default_focused_pane")]
-    pub focused_pane: u32,
-    #[serde(default)]
-    pub tabs: Tabs,
-    #[serde(default)]
-    pub panes: PaneLayout,
-    pub id: String,
-    pub workspace_id: String,
-    pub conversation_id: Option<String>,
-    pub browser_url: String,
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
 /// A Git repository as the catalog lists it, so a client can group the
 /// workspaces that share it into one project. Plain folders have none: their
 /// workspace's `repository_id` is null.
@@ -285,8 +211,8 @@ pub struct Catalogue {
     pub repositories: Vec<CatalogRepository>,
     pub workspaces: Vec<WorkspaceRecord>,
     pub conversations: Vec<Conversation>,
-    #[schemars(with = "Vec<Value>")]
-    pub windows: Vec<WindowRecord>,
+    /// Every window, open and closed, as `window.list` gives them.
+    pub windows: Vec<crate::contract::layout::Window>,
     /// The listed workspaces' terminals, in creation order.
     #[serde(default)]
     pub terminals: Vec<crate::contract::terminals::TerminalRecord>,

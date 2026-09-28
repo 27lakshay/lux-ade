@@ -4722,7 +4722,10 @@
           "type": "array"
         },
         "windows": {
-          "items": true,
+          "description": "Every window, open and closed, as `window.list` gives them.",
+          "items": {
+            "$ref": "#/$defs/Window"
+          },
           "type": "array"
         },
         "workspaces": {
@@ -7758,7 +7761,7 @@
     },
     "ConversationDeleteRequest": {
       "additionalProperties": false,
-      "description": "`conversation.delete`: delete a Conversation that is not running a turn.\nAn idle Agent is stopped first. The daemon removes its messages, pending\nrequests, drafts, draft history and stashes, queue, send intents and\nsnooze, detaches its windows, and leaves a tombstone: every later read,\nwrite, page or search that names the Conversation is refused as deleted.\nAttachment payloads stay until retention reclaims them.",
+      "description": "`conversation.delete`: delete a Conversation that is not running a turn.\nAn idle Agent is stopped first. The daemon removes its messages, pending\nrequests, drafts, draft history and stashes, queue, send intents and\nsnooze, closes its tabs in every layout, and leaves a tombstone: every later read,\nwrite, page or search that names the Conversation is refused as deleted.\nAttachment payloads stay until retention reclaims them.",
       "properties": {
         "conversation_id": {
           "type": "string"
@@ -7882,6 +7885,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "layouts_changed": {
+          "description": "Layouts that showed the Conversation in a tab and no longer do.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "messages": {
           "maximum": 9007199254740991,
           "minimum": 0,
@@ -7906,12 +7915,6 @@
           "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
-        },
-        "windows_detached": {
-          "description": "Windows that showed the Conversation and now show none.",
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "required": [
@@ -7923,7 +7926,7 @@
         "queued_prompts",
         "send_intents",
         "snoozes",
-        "windows_detached"
+        "layouts_changed"
       ],
       "type": "object"
     },
@@ -11576,6 +11579,27 @@
       ],
       "type": "object"
     },
+    "DropZone": {
+      "description": "Where a dragged tab or pane lands on a pane: one of its edges (a split) or its centre.",
+      "enum": [
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "centre"
+      ],
+      "type": "string"
+    },
+    "Edge": {
+      "description": "An outer edge of the whole centre area.",
+      "enum": [
+        "left",
+        "right",
+        "top",
+        "bottom"
+      ],
+      "type": "string"
+    },
     "Excluded": {
       "properties": {
         "detail": {
@@ -13955,6 +13979,711 @@
         }
       ]
     },
+    "Layout": {
+      "description": "One window's arrangement of one workspace: the sidebars and the tree of\npanes in the centre with their tabs.",
+      "properties": {
+        "collapsed": {
+          "$ref": "#/$defs/SidebarFlags"
+        },
+        "focused_pane": {
+          "type": "string"
+        },
+        "maximized": {
+          "description": "A pane shown alone across the whole centre, or null. Always the focused pane.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "$ref": "#/$defs/LayoutNode"
+        },
+        "sidebars": {
+          "description": "`[left, right]`.",
+          "items": {
+            "$ref": "#/$defs/SidebarId"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "tabs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Tab"
+          },
+          "description": "Every tab placed in a pane, by ID.",
+          "type": "object"
+        },
+        "widths": {
+          "$ref": "#/$defs/SidebarWidths"
+        }
+      },
+      "required": [
+        "sidebars",
+        "collapsed",
+        "widths",
+        "tabs",
+        "root",
+        "focused_pane",
+        "maximized"
+      ],
+      "type": "object"
+    },
+    "LayoutAction": {
+      "description": "Every change to a layout. New pane and tab IDs come in with the action,\nso applying it is deterministic and a retry finds what the first made.\nActions naming a pane, split or tab that is not there change nothing.",
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "swap_sidebars",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Collapses or expands whichever sidebar is on that side.",
+          "properties": {
+            "side": {
+              "$ref": "#/$defs/Side"
+            },
+            "type": {
+              "const": "toggle_side",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "side"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "collapsed": {
+              "type": "boolean"
+            },
+            "sidebar": {
+              "$ref": "#/$defs/SidebarId"
+            },
+            "type": {
+              "const": "set_collapsed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sidebar",
+            "collapsed"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Clamped to 200–480 and rounded to whole pixels.",
+          "properties": {
+            "sidebar": {
+              "$ref": "#/$defs/SidebarId"
+            },
+            "type": {
+              "const": "set_width",
+              "type": "string"
+            },
+            "width": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "sidebar",
+            "width"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Opens after the active tab of `pane_id` (the focused pane when\nomitted) and activates it. The target must exist\n(`tab_target_missing`). Opening a tab ID already in the layout with\nthe same target activates it.",
+          "properties": {
+            "pane_id": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab": {
+              "$ref": "#/$defs/Tab"
+            },
+            "type": {
+              "const": "open_tab",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tab"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "tab_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "activate_tab",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tab_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Takes the tab out of its layout. A pane it empties goes, unless it is\nthe last one.",
+          "properties": {
+            "tab_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "close_tab",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tab_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Moves a tab into a pane's strip at `index` (clamped to the strip).",
+          "properties": {
+            "index": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "move_tab",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tab_id",
+            "pane_id",
+            "index"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Drops a tab on a pane: its centre joins the pane, an edge splits it\ninto a new pane `new_pane_id`.",
+          "properties": {
+            "new_pane_id": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "drop_tab",
+              "type": "string"
+            },
+            "zone": {
+              "$ref": "#/$defs/DropZone"
+            }
+          },
+          "required": [
+            "type",
+            "tab_id",
+            "pane_id",
+            "zone",
+            "new_pane_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/SplitDirection"
+            },
+            "new_pane_id": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "split_pane",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id",
+            "direction",
+            "new_pane_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A pane dropped on another's centre trades places with it; on an edge\nit moves beside it.",
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "target_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "move_pane",
+              "type": "string"
+            },
+            "zone": {
+              "$ref": "#/$defs/DropZone"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id",
+            "target_id",
+            "zone"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "target_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "swap_panes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id",
+            "target_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Gives a tab a new pane along an outer edge of the centre.",
+          "properties": {
+            "edge": {
+              "$ref": "#/$defs/Edge"
+            },
+            "new_pane_id": {
+              "type": "string"
+            },
+            "tab_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "dock_tab",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tab_id",
+            "edge",
+            "new_pane_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "edge": {
+              "$ref": "#/$defs/Edge"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "dock_pane",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id",
+            "edge"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Closes the pane and its tabs. The last pane only empties.",
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "close_pane",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "focus_pane",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Sizes are percentages, one per child, each positive, summing to 100.",
+          "properties": {
+            "sizes": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "split_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "set_split_sizes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "split_id",
+            "sizes"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "toggle_maximize",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One split, or every split when `split_id` is omitted.",
+          "properties": {
+            "split_id": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "equalize_splits",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Sidebars back to their default sides, widths and open; splits even.\nPanes and tabs stay.",
+          "properties": {
+            "type": {
+              "const": "reset_layout",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LayoutApplied": {
+      "description": "The `layout.apply` and `layout.replace` reply. `changed` is false when\nthe layout was already so; its revision then stays.",
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "layout": {
+          "$ref": "#/$defs/LayoutRecord"
+        },
+        "type": {
+          "description": "The `layout` type tag.",
+          "enum": [
+            "layout"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "layout",
+        "changed"
+      ],
+      "type": "object"
+    },
+    "LayoutApplyRequest": {
+      "additionalProperties": false,
+      "description": "`layout.apply`: apply one action to a window's layout for a workspace.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/LayoutAction"
+        },
+        "expected_revision": {
+          "default": null,
+          "description": "The revision the caller last saw. A stale one is refused with\n`layout_conflict`, except for the repeat of the last applied action\nfrom that revision, which returns its result.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "layout.apply"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": null,
+          "description": "The workspace; the one the window shows when omitted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "window_id",
+        "action"
+      ],
+      "type": "object"
+    },
+    "LayoutChanged": {
+      "description": "The `layout_changed` feed frame. `layout.revision` is the layout's own\nrevision; a client keeps the higher of it and what `layout.get` gave.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "layout": {
+          "$ref": "#/$defs/LayoutRecord"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `layout_changed` type tag.",
+          "enum": [
+            "layout_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "layout",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "LayoutGetRequest": {
+      "additionalProperties": false,
+      "description": "`layout.get`: one window's layout for one workspace.",
+      "properties": {
+        "op": {
+          "const": "layout.get"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": null,
+          "description": "The workspace; the one the window shows when omitted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "LayoutNode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PaneNode"
+        },
+        {
+          "$ref": "#/$defs/SplitNode"
+        }
+      ],
+      "description": "A pane or a split, told apart by `type`. Each variant's struct carries its\nown tag, so clients get one flat type per node."
+    },
+    "LayoutRecord": {
+      "description": "A stored layout: one per window and workspace, with a revision that\ngrows by one with each change.",
+      "properties": {
+        "layout": {
+          "$ref": "#/$defs/Layout"
+        },
+        "revision": {
+          "description": "0 for a layout never changed: the default the daemon gives a window\nthe first time it shows a workspace.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "window_id",
+        "workspace_id",
+        "revision",
+        "layout"
+      ],
+      "type": "object"
+    },
+    "LayoutRemoved": {
+      "description": "The `layout_removed` feed frame: a removed workspace took its layouts.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `layout_removed` type tag.",
+          "enum": [
+            "layout_removed"
+          ],
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "window_id",
+        "workspace_id",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "LayoutReplaceRequest": {
+      "additionalProperties": false,
+      "description": "`layout.replace`: store a whole layout, such as one imported from an\nolder client. It must be well formed and its tab targets must exist.",
+      "properties": {
+        "expected_revision": {
+          "default": null,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "layout": {
+          "$ref": "#/$defs/Layout"
+        },
+        "op": {
+          "const": "layout.replace"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "window_id",
+        "layout"
+      ],
+      "type": "object"
+    },
+    "LayoutReply": {
+      "description": "The `layout.get` reply.",
+      "properties": {
+        "layout": {
+          "$ref": "#/$defs/LayoutRecord"
+        },
+        "type": {
+          "description": "The `layout` type tag.",
+          "enum": [
+            "layout"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "layout"
+      ],
+      "type": "object"
+    },
     "ListenerFamily": {
       "enum": [
         "ipv4",
@@ -15189,6 +15918,41 @@
         "revoked"
       ],
       "type": "string"
+    },
+    "PaneNode": {
+      "description": "A leaf of the pane tree: a strip of tabs.",
+      "properties": {
+        "active": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "tabs": {
+          "description": "Tab IDs, in strip order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `pane` type tag.",
+          "enum": [
+            "pane"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "tabs",
+        "active"
+      ],
+      "type": "object"
     },
     "ParentMessageQueued": {
       "description": "The `orchestration.parent.send` reply: the message is durably queued for\nthe parent.",
@@ -24823,6 +25587,56 @@
       ],
       "type": "string"
     },
+    "Side": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
+    "SidebarFlags": {
+      "properties": {
+        "inspector": {
+          "type": "boolean"
+        },
+        "navigator": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "navigator",
+        "inspector"
+      ],
+      "type": "object"
+    },
+    "SidebarId": {
+      "description": "The two sidebars. They only ever swap sides with each other and never hold panes.",
+      "enum": [
+        "navigator",
+        "inspector"
+      ],
+      "type": "string"
+    },
+    "SidebarWidths": {
+      "description": "Sidebar widths in pixels, from 200 to 480.",
+      "properties": {
+        "inspector": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "navigator": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "navigator",
+        "inspector"
+      ],
+      "type": "object"
+    },
     "SkillAdoptRequest": {
       "additionalProperties": false,
       "description": "`skill.adopt`: take ownership of a skill directory a provider already reads.\nThe directory is copied into the catalog unchanged and its provider path is\nrecorded as catalog-owned. Only adoption lets a later placement replace it.",
@@ -25668,6 +26482,53 @@
       ],
       "type": "object"
     },
+    "SplitDirection": {
+      "description": "`row`: side by side; `column`: stacked.",
+      "enum": [
+        "row",
+        "column"
+      ],
+      "type": "string"
+    },
+    "SplitNode": {
+      "description": "Two or more nodes side by side (`row`) or stacked (`column`).",
+      "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/$defs/LayoutNode"
+          },
+          "type": "array"
+        },
+        "direction": {
+          "$ref": "#/$defs/SplitDirection"
+        },
+        "id": {
+          "type": "string"
+        },
+        "sizes": {
+          "description": "Percentages of the split, one per child, summing to 100.",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The `split` type tag.",
+          "enum": [
+            "split"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "direction",
+        "children",
+        "sizes"
+      ],
+      "type": "object"
+    },
     "StartOutcome": {
       "oneOf": [
         {
@@ -25726,6 +26587,22 @@
           "type": "string"
         }
       ]
+    },
+    "Tab": {
+      "description": "One tab: a stable ID in its layout and what it shows.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TabTarget"
+        }
+      },
+      "required": [
+        "id",
+        "target"
+      ],
+      "type": "object"
     },
     "TabTarget": {
       "description": "What a tab shows. Records are named by ID; a file or diff by its path\ninside the layout's workspace.",
@@ -25932,7 +26809,7 @@
               "type": "null"
             }
           ],
-          "description": "Open a tab for the new terminal in a window's layout. Refused as\n`unsupported` until daemon layouts exist."
+          "description": "Open a tab `tab-<terminal_id>` for the new terminal in the window's\nlayout for this workspace, in the same transaction. An unknown window\nis `window_not_found` and creates no terminal."
         },
         "title": {
           "description": "The terminal's title, 1 to 100 characters with no control characters.\nWithout one the title follows the program.",
@@ -27623,9 +28500,120 @@
         }
       ]
     },
+    "Window": {
+      "description": "A window: which workspace it shows, where it is and its view state. Its\npanes and tabs are in one [`LayoutRecord`] per workspace it has shown.",
+      "properties": {
+        "bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WindowBounds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null until a UI sets them."
+        },
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/WindowState"
+        },
+        "view": {
+          "$ref": "#/$defs/WindowView"
+        },
+        "workspace_id": {
+          "description": "The workspace the window shows.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "workspace_id",
+        "state",
+        "bounds",
+        "view"
+      ],
+      "type": "object"
+    },
+    "WindowAck": {
+      "description": "The reply of every window command: the window as it now stands.",
+      "properties": {
+        "type": {
+          "description": "The `window` type tag.",
+          "enum": [
+            "window"
+          ],
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/$defs/Window"
+        }
+      },
+      "required": [
+        "type",
+        "window"
+      ],
+      "type": "object"
+    },
+    "WindowBounds": {
+      "description": "A window's position and size, in screen points. The daemon checks only\nthat they are finite and positive; a UI applies its own minimum size.",
+      "properties": {
+        "height": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "WindowChanged": {
+      "description": "The `window_changed` feed frame: a window was created or changed.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `window_changed` type tag.",
+          "enum": [
+            "window_changed"
+          ],
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/$defs/Window"
+        }
+      },
+      "required": [
+        "type",
+        "window",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
     "WindowCloseRequest": {
       "additionalProperties": false,
-      "description": "`window.close`: forget a window's record, unless it is the last one.",
+      "description": "`window.close`: hide the window. Its record and layouts stay.",
       "properties": {
         "op": {
           "const": "window.close"
@@ -27640,20 +28628,187 @@
       ],
       "type": "object"
     },
-    "WindowSaveRequest": {
+    "WindowCreateRequest": {
       "additionalProperties": false,
-      "description": "`window.save`: store one window's layout record.",
+      "description": "`window.create`: a window on a workspace, open, with a default layout.\nCreating an existing window ID on the same workspace returns it\nunchanged; on another workspace it is refused.",
       "properties": {
-        "op": {
-          "const": "window.save"
+        "bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WindowBounds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
-        "window": {
-          "description": "The window record, in the shape `catalog.get` lists it."
+        "op": {
+          "const": "window.create"
+        },
+        "window_id": {
+          "description": "The caller's ID for the new window.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
         }
       },
       "required": [
         "op",
-        "window"
+        "window_id",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "WindowList": {
+      "description": "The `window.list` reply, in creation order.",
+      "properties": {
+        "type": {
+          "description": "The `windows` type tag.",
+          "enum": [
+            "windows"
+          ],
+          "type": "string"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/Window"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "windows"
+      ],
+      "type": "object"
+    },
+    "WindowListRequest": {
+      "additionalProperties": false,
+      "description": "`window.list`: every window of the profile, open and closed.",
+      "properties": {
+        "op": {
+          "const": "window.list"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "WindowReopenRequest": {
+      "additionalProperties": false,
+      "description": "`window.reopen`: show a closed window again, as it was.",
+      "properties": {
+        "op": {
+          "const": "window.reopen"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "WindowSetBoundsRequest": {
+      "additionalProperties": false,
+      "description": "`window.set_bounds`: record the window's position and size.",
+      "properties": {
+        "bounds": {
+          "$ref": "#/$defs/WindowBounds"
+        },
+        "op": {
+          "const": "window.set_bounds"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "window_id",
+        "bounds"
+      ],
+      "type": "object"
+    },
+    "WindowSetViewStateRequest": {
+      "additionalProperties": false,
+      "description": "`window.set_view_state`: the project rows the navigator shows collapsed.",
+      "properties": {
+        "collapsed_projects": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "op": {
+          "const": "window.set_view_state"
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "window_id",
+        "collapsed_projects"
+      ],
+      "type": "object"
+    },
+    "WindowShowWorkspaceRequest": {
+      "additionalProperties": false,
+      "description": "`window.show_workspace`: which workspace the window shows. It moves to\nthe front of `recent_workspaces`; its layout is kept per workspace.",
+      "properties": {
+        "op": {
+          "const": "window.show_workspace"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "window_id",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "WindowState": {
+      "description": "Whether a window is on screen. A closed window keeps its record, its\nbounds and its layouts, and comes back as it was on `window.reopen`.",
+      "enum": [
+        "open",
+        "closed"
+      ],
+      "type": "string"
+    },
+    "WindowView": {
+      "description": "Per-window view state a second UI on the same window shares. Focus,\nscroll, hover and drag state stay local to each UI.",
+      "properties": {
+        "collapsed_projects": {
+          "description": "Project IDs whose rows the navigator shows collapsed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recent_workspaces": {
+          "description": "Workspaces this window showed, most recent first; the first is the\none it shows now.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "collapsed_projects",
+        "recent_workspaces"
       ],
       "type": "object"
     },
@@ -29491,6 +30646,21 @@
       "domain": "activity",
       "frame": "ActivityChanged",
       "type": "activity_changed"
+    },
+    {
+      "domain": "layout",
+      "frame": "WindowChanged",
+      "type": "window_changed"
+    },
+    {
+      "domain": "layout",
+      "frame": "LayoutChanged",
+      "type": "layout_changed"
+    },
+    {
+      "domain": "layout",
+      "frame": "LayoutRemoved",
+      "type": "layout_removed"
     }
   ],
   "operations": [
@@ -29654,20 +30824,6 @@
       "request": "QueuePauseRequest",
       "response": "Ack",
       "tier": "effect_command"
-    },
-    {
-      "domain": "conversations",
-      "name": "window.save",
-      "request": "WindowSaveRequest",
-      "response": "Ack",
-      "tier": "idempotent_command"
-    },
-    {
-      "domain": "conversations",
-      "name": "window.close",
-      "request": "WindowCloseRequest",
-      "response": "Ack",
-      "tier": "idempotent_command"
     },
     {
       "domain": "conversations",
@@ -31460,6 +32616,76 @@
       "request": "ContextPlanRequest",
       "response": "ContextPlan",
       "tier": "query"
+    },
+    {
+      "domain": "layout",
+      "name": "window.list",
+      "request": "WindowListRequest",
+      "response": "WindowList",
+      "tier": "query"
+    },
+    {
+      "domain": "layout",
+      "name": "window.create",
+      "request": "WindowCreateRequest",
+      "response": "WindowAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "window.close",
+      "request": "WindowCloseRequest",
+      "response": "WindowAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "window.reopen",
+      "request": "WindowReopenRequest",
+      "response": "WindowAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "window.set_bounds",
+      "request": "WindowSetBoundsRequest",
+      "response": "WindowAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "window.show_workspace",
+      "request": "WindowShowWorkspaceRequest",
+      "response": "WindowAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "window.set_view_state",
+      "request": "WindowSetViewStateRequest",
+      "response": "WindowAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "layout.get",
+      "request": "LayoutGetRequest",
+      "response": "LayoutReply",
+      "tier": "query"
+    },
+    {
+      "domain": "layout",
+      "name": "layout.apply",
+      "request": "LayoutApplyRequest",
+      "response": "LayoutApplied",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "layout.replace",
+      "request": "LayoutReplaceRequest",
+      "response": "LayoutApplied",
+      "tier": "idempotent_command"
     }
   ],
   "streams": {

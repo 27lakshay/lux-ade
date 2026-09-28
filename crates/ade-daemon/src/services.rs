@@ -683,11 +683,19 @@ mod tests {
         edited.args.clear();
         assert!(store.configure_service(&w.id, "web", 1, edited).is_err());
         assert!(store.remove_service(&w.id, "web", 1).is_err());
-        let window: crate::model::WindowRecord = serde_json::from_value(serde_json::json!({
-            "id":"service-window","workspace_id":w.id,"conversation_id":null,"browser_url":"","x":0,"y":0,"width":1200,"height":800,
-            "tabs":{"initialized":true,"terminals":[{"id":owner.terminal_id,"workspace_id":w.id,"title":"web"}],"active_terminal":owner.terminal_id}
-        })).unwrap();
-        store.save_window(&window).unwrap();
+        store.create_window("service-window", &w.id, None).unwrap();
+        let open = ade_core::contract::layout::LayoutAction::OpenTab {
+            tab: ade_core::contract::layout::Tab {
+                id: "web-tab".into(),
+                target: ade_core::contract::layout::TabTarget::Terminal {
+                    id: owner.terminal_id.clone(),
+                },
+            },
+            pane_id: None,
+        };
+        store
+            .apply_layout("service-window", None, &open, None)
+            .unwrap();
         store.release_service(&w.id, "web", owner).unwrap();
         assert!(
             store.terminal_reserved(&owner.terminal_id).unwrap(),
@@ -701,8 +709,9 @@ mod tests {
                 .extra_terminals
                 .contains(&owner.terminal_id)
         );
-        assert!(catalog.windows[0].tabs.terminals.is_empty());
-        assert!(catalog.windows[0].tabs.active_terminal.is_none());
+        let layout = store.layout("service-window", None).unwrap();
+        assert!(layout.layout.tabs.is_empty());
+        assert_eq!(layout.revision, 2);
     }
     #[test]
     #[ignore = "obsolete: fakes schema 6 on a schema-16 database and expects version 7"]

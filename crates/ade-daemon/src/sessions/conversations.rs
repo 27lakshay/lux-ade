@@ -13,7 +13,6 @@ use ade_core::contract::conversations::{
     DraftSendAcknowledgeRequest, DraftSendCompleteRequest, DraftSendGetRequest,
     DraftSendListRequest, DraftSendPrepareRequest, PendingSendList, QueueCancelRequest,
     QueueEnqueueRequest, QueuePauseRequest, SendAcknowledged, SendIntentPrepared, SendIntentState,
-    WindowCloseRequest, WindowSaveRequest,
 };
 
 /// Why `agent.disconnect` must refuse a Conversation, if it must.
@@ -691,20 +690,6 @@ impl Sessions {
                     non_empty("decision", &answer.decision)?,
                     answer.answers.as_ref(),
                 )?;
-                reply(&Ack::default())
-            }
-            "window.save" => {
-                let save: WindowSaveRequest = decode(request)?;
-                let window: WindowRecord = serde_json::from_value(save.window)?;
-                let d = self.data.lock().unwrap();
-                persistence_result(d.store.save_window(&window))?;
-                // Layout acknowledgements do not refresh all other windows.
-                reply(&Ack::default())
-            }
-            "window.close" => {
-                let close: WindowCloseRequest = decode(request)?;
-                let window = non_empty("window_id", &close.window_id)?;
-                self.data.lock().unwrap().store.close_window(window)?;
                 reply(&Ack::default())
             }
             _ => bail!("Unknown session operation"),

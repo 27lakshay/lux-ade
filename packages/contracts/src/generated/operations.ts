@@ -25,8 +25,6 @@ export const operations = {
   "queue.enqueue": { tier: "effect_command", domain: "conversations", request: "QueueEnqueueRequest", response: "Ack" },
   "queue.cancel": { tier: "idempotent_command", domain: "conversations", request: "QueueCancelRequest", response: "Ack" },
   "queue.pause": { tier: "effect_command", domain: "conversations", request: "QueuePauseRequest", response: "Ack" },
-  "window.save": { tier: "idempotent_command", domain: "conversations", request: "WindowSaveRequest", response: "Ack" },
-  "window.close": { tier: "idempotent_command", domain: "conversations", request: "WindowCloseRequest", response: "Ack" },
   "attachment.put": { tier: "idempotent_command", domain: "conversations", request: "AttachmentPutRequest", response: "AttachmentReply" },
   "attachment.import": { tier: "idempotent_command", domain: "conversations", request: "AttachmentImportRequest", response: "AttachmentReply" },
   "attachment.inspect": { tier: "query", domain: "conversations", request: "AttachmentInspectRequest", response: "AttachmentInspection" },
@@ -283,6 +281,16 @@ export const operations = {
   "context.capture": { tier: "idempotent_command", domain: "context", request: "ContextCaptureRequest", response: "ContextNodeReply" },
   "context.get": { tier: "query", domain: "context", request: "ContextGetRequest", response: "ContextNodeReply" },
   "context.plan": { tier: "query", domain: "context", request: "ContextPlanRequest", response: "ContextPlan" },
+  "window.list": { tier: "query", domain: "layout", request: "WindowListRequest", response: "WindowList" },
+  "window.create": { tier: "idempotent_command", domain: "layout", request: "WindowCreateRequest", response: "WindowAck" },
+  "window.close": { tier: "idempotent_command", domain: "layout", request: "WindowCloseRequest", response: "WindowAck" },
+  "window.reopen": { tier: "idempotent_command", domain: "layout", request: "WindowReopenRequest", response: "WindowAck" },
+  "window.set_bounds": { tier: "idempotent_command", domain: "layout", request: "WindowSetBoundsRequest", response: "WindowAck" },
+  "window.show_workspace": { tier: "idempotent_command", domain: "layout", request: "WindowShowWorkspaceRequest", response: "WindowAck" },
+  "window.set_view_state": { tier: "idempotent_command", domain: "layout", request: "WindowSetViewStateRequest", response: "WindowAck" },
+  "layout.get": { tier: "query", domain: "layout", request: "LayoutGetRequest", response: "LayoutReply" },
+  "layout.apply": { tier: "idempotent_command", domain: "layout", request: "LayoutApplyRequest", response: "LayoutApplied" },
+  "layout.replace": { tier: "idempotent_command", domain: "layout", request: "LayoutReplaceRequest", response: "LayoutApplied" },
 } as const
 
 /**
@@ -379,6 +387,9 @@ export const frames = {
   "terminal_changed": { domain: "terminals", frame: "TerminalChanged" },
   "service_changed": { domain: "services", frame: "ServiceChanged" },
   "activity_changed": { domain: "activity", frame: "ActivityChanged" },
+  "window_changed": { domain: "layout", frame: "WindowChanged" },
+  "layout_changed": { domain: "layout", frame: "LayoutChanged" },
+  "layout_removed": { domain: "layout", frame: "LayoutRemoved" },
 } as const
 
 /** Each terminal attachment frame's `type` tag and the validator name for it. */

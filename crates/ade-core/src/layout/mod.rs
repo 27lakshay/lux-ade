@@ -45,6 +45,7 @@ pub fn default_layout(pane_id: &str) -> Layout {
         widths: default_widths(),
         tabs: BTreeMap::new(),
         root: LayoutNode::Pane(PaneNode {
+            tag: Default::default(),
             id: pane_id.into(),
             tabs: Vec::new(),
             active: None,
@@ -219,6 +220,7 @@ fn new_pane(draft: &Layout, id: &str) -> Result<bool, LayoutError> {
 
 fn pane_node(id: &str, tab: Option<&str>) -> LayoutNode {
     LayoutNode::Pane(PaneNode {
+        tag: Default::default(),
         id: id.into(),
         tabs: tab.map(|tab| vec![tab.to_owned()]).unwrap_or_default(),
         active: tab.map(str::to_owned),

@@ -270,9 +270,12 @@ impl Sessions {
             }])
             .into());
         }
-        let removed = d.store.remove_workspace(id, operation_id)?;
+        let removal = d.store.remove_workspace(id, operation_id)?;
+        if let Some(removal) = &removal {
+            self.workspace_layouts_removed(&mut d, removal);
+        }
         self.catalog_changed(&mut d)?;
-        Ok(removed)
+        Ok(removal.is_some())
     }
     /// The Conversations of `workspace` with a connected Agent.
     fn workspace_agents(&self, d: &Data, workspace: &str) -> Result<Vec<String>> {

@@ -568,8 +568,9 @@ impl Store {
     }
     pub fn catalog(&self) -> Result<Catalogue> {
         let tx = self.connection.unchecked_transaction()?;
-        // A removed workspace leaves the catalog with its Conversations and
-        // windows; they return when its folder is opened again.
+        // A removed workspace leaves the catalog with its Conversations; they
+        // return when its folder is opened again. Windows are all listed: a
+        // removal moves the windows that showed it.
         let repositories: Vec<Repository> = all(&tx, VISIBLE_REPOSITORIES)?;
         let result = Catalogue {
             repositories: repositories
@@ -595,14 +596,7 @@ impl Store {
                     visible!("c.workspace_id")
                 ),
             )?,
-            windows: all(
-                &tx,
-                concat!(
-                    "SELECT data FROM windows WHERE ",
-                    visible!("workspace_id"),
-                    " ORDER BY rowid"
-                ),
-            )?,
+            windows: super::layouts::windows(&tx)?,
             terminals: super::terminal_records::visible(&tx)?
                 .iter()
                 .map(|terminal| self.terminal_record(terminal))
@@ -848,11 +842,17 @@ impl Store {
         }
         Ok(blockers)
     }
-    /// Records the removal. Returns false when the workspace was already removed.
-    pub fn remove_workspace(&self, id: &str, operation_id: &str) -> Result<bool> {
+    /// Records the removal, deletes the workspace's layouts and moves the
+    /// windows showing it (`layouts::workspace_removed`). Returns None when
+    /// the workspace was already removed.
+    pub fn remove_workspace(
+        &self,
+        id: &str,
+        operation_id: &str,
+    ) -> Result<Option<super::layouts::WorkspaceRemoval>> {
         let tx = self.transaction()?;
         if self.workspace_removed(id)? {
-            return Ok(false);
+            return Ok(None);
         }
         let blockers = self.workspace_remove_blockers(id)?;
         if !blockers.is_empty() {
@@ -862,8 +862,9 @@ impl Store {
             "INSERT INTO workspace_tombstones(workspace_id,operation_id,removed_at) VALUES(?1,?2,?3)",
             params![id, operation_id, now_ms()],
         )?;
+        let removal = super::layouts::workspace_removed(&tx, id)?;
         tx.commit()?;
-        Ok(true)
+        Ok(Some(removal))
     }
     /// Retires a removed workspace's terminals from its record, once per
     /// removal: its primary terminal gets a fresh ID and every extra terminal

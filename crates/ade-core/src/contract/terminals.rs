@@ -379,8 +379,9 @@ pub struct TerminalCreateRequest {
     /// Without one the title follows the program.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Open a tab for the new terminal in a window's layout. Refused as
-    /// `unsupported` until daemon layouts exist.
+    /// Open a tab `tab-<terminal_id>` for the new terminal in the window's
+    /// layout for this workspace, in the same transaction. An unknown window
+    /// is `window_not_found` and creates no terminal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub place: Option<TerminalPlace>,
 }

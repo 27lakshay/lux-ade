@@ -1,7 +1,7 @@
 // conversation.delete: an effect command with an operation ID and a receipt
 // that commits with the deletion. It refuses while a turn runs, stops an idle
-// Agent, removes the history, drafts, queue, send intents, snooze and window
-// reference, and leaves a tombstone so every later read, write, page and
+// Agent, removes the history, drafts, queue, send intents, snooze and its
+// tabs in every layout, and leaves a tombstone so every later read, write, page and
 // search refuses the Conversation as deleted (architecture section 6). Its
 // attachment payloads stay until the existing reclaim rules free them. R011
 // (delete half) is in restarts/stale-rewind.spec.ts; F043's search half is in
@@ -52,7 +52,7 @@ async function codexPids(profile: ScratchProfile): Promise<number[]> {
   return [...new Set(calls.map((call) => call.pid).filter((pid): pid is number => typeof pid === 'number'))]
 }
 
-test('deletes an idle conversation once: history, drafts, queue, snooze and window go, a tombstone refuses every later use, and a retry replays the receipt', async ({
+test('deletes an idle conversation once: history, drafts, queue, snooze and tabs go, a tombstone refuses every later use, and a retry replays the receipt', async ({
   profile,
 }) => {
   test.setTimeout(90_000)
@@ -89,18 +89,17 @@ test('deletes an idle conversation once: history, drafts, queue, snooze and wind
     text: 'queued later',
   })
   await profile.call('conversation.snooze', { conversation_id: conversationId, until: Date.now() + 3_600_000 })
-  const window = {
-    id: 'window-delete',
-    workspace_id: workspaceId,
-    conversation_id: conversationId,
-    browser_url: '',
-    x: 0,
-    y: 0,
-    width: 1200,
-    height: 800,
+  await profile.call('window.create', { window_id: 'window-delete', workspace_id: workspaceId })
+  for (const [tab, id] of [
+    ['tab-deleted', conversationId],
+    ['tab-other', other.conversationId],
+  ] as const) {
+    await profile.call('layout.apply', {
+      window_id: 'window-delete',
+      action: { type: 'open_tab', tab: { id: tab, target: { kind: 'conversation', id } } },
+    })
   }
-  await profile.call('window.save', { window })
-  expect(await attachedTo(profile, 'window-delete')).toBe(conversationId)
+  expect(await shownConversations(profile, 'window-delete')).toEqual([conversationId, other.conversationId])
   await expect.poll(() => hits(profile, 'pangolinquill'), { timeout: 20_000 }).toBe(1)
   const agents = await codexPids(profile)
   expect(agents.length).toBeGreaterThan(0)
@@ -122,7 +121,7 @@ test('deletes an idle conversation once: history, drafts, queue, snooze and wind
       queued_prompts: 1,
       send_intents: 1,
       snoozes: 1,
-      windows_detached: 1,
+      layouts_changed: 1,
     },
   })
   // The idle Agent was stopped before the deletion.
@@ -163,7 +162,6 @@ test('deletes an idle conversation once: history, drafts, queue, snooze and wind
       }),
       profile.call('conversation.snooze', { conversation_id: conversationId, until: Date.now() + 60_000 }),
       profile.call('history.search', { query: 'pangolinquill', conversation_id: conversationId }),
-      profile.call('window.save', { window }),
     ].map(refusal),
   )
   for (const refused of refusals) {
@@ -173,11 +171,20 @@ test('deletes an idle conversation once: history, drafts, queue, snooze and wind
     })
   }
 
-  // Listings leave it out; the window shows no Conversation.
+  // A tab can no longer show it.
+  const reopened = await refusal(
+    profile.call('layout.apply', {
+      window_id: 'window-delete',
+      action: { type: 'open_tab', tab: { id: 'tab-late', target: { kind: 'conversation', id: conversationId } } },
+    }),
+  )
+  expect(reopened.code).toBe('tab_target_missing')
+
+  // Listings leave it out; the window's layout lost its tab and kept the other.
   const catalog = await profile.call('catalog.get', {})
   expect(catalog.catalog.conversations.map((conversation) => conversation.id)).not.toContain(conversationId)
   expect(catalog.catalog.conversations.map((conversation) => conversation.id)).toContain(other.conversationId)
-  expect(await attachedTo(profile, 'window-delete')).toBeNull()
+  expect(await shownConversations(profile, 'window-delete')).toEqual([other.conversationId])
   const listed = await profile.call('history.list', { workspace_id: workspaceId })
   expect(listed.conversations.map((entry) => entry.provenance.conversation_id)).not.toContain(conversationId)
   expect(await hits(profile, 'pangolinquill')).toBe(0)
@@ -214,12 +221,10 @@ test('deletes an idle conversation once: history, drafts, queue, snooze and wind
   ).toMatchObject({ text: 'still here', attachments: [kept] })
 })
 
-async function attachedTo(profile: ScratchProfile, windowId: string): Promise<string | null> {
-  const catalog = await profile.call('catalog.get', {})
-  const window = catalog.catalog.windows.find((entry) => (entry as { id: string }).id === windowId) as
-    | { conversation_id: string | null }
-    | undefined
-  return window?.conversation_id ?? null
+/** The Conversations the window's tabs show, in tab ID order. */
+async function shownConversations(profile: ScratchProfile, windowId: string): Promise<string[]> {
+  const { layout } = await profile.call('layout.get', { window_id: windowId })
+  return Object.values(layout.layout.tabs).flatMap((tab) => (tab.target.kind === 'conversation' ? [tab.target.id] : []))
 }
 
 test('refuses a delete while a turn runs and records nothing, then deletes under the same operation ID once the turn is cancelled', async ({

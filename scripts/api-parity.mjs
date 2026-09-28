@@ -17,8 +17,6 @@ export const cliExemptions = {
   'browser.owner.unregister': 'Only the Electron main process unregisters itself as the browser owner',
   'notification.delivery.claim': 'Called by a notification-showing client (the desktop) for its own delivery channel',
   'notification.delivery.report': 'Called by a notification-showing client (the desktop) for its own delivery channel',
-  'window.save': 'Desktop window state',
-  'window.close': 'Desktop window state',
   'draft.send.get': 'Desktop window send-intent recovery; `git feedback-send` completes its own intent in one command',
   'draft.send.abort': 'Desktop window send-intent recovery',
   'draft.send.list': 'Desktop window send-intent recovery',

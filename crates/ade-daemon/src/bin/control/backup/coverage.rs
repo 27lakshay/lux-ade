@@ -80,7 +80,7 @@ pub const STORES: &[Store] = &[
     Store {
         path: "sessions.sqlite",
         kind: Kind::Sqlite,
-        schema: 18,
+        schema: 19,
         since: 2,
     },
     Store {

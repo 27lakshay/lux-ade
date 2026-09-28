@@ -203,7 +203,9 @@ test('a close racing restarts never leaves a shell running without its record', 
   stream.close()
 })
 
-test('terminal create takes a title, refuses a bad one, and refuses place as unsupported', async ({ profile }) => {
+test('terminal create takes a title, refuses a bad one, and refuses a place in an unknown window', async ({
+  profile,
+}) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const created = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'titled', '--title', ' Logs ')
   expect(created.code, created.stderr).toBe(0)
@@ -217,7 +219,7 @@ test('terminal create takes a title, refuses a bad one, and refuses place as uns
   const placed = await refusal(
     profile.call('terminal.create', { workspace_id: workspace.id, place: { window_id: 'window_1' } }),
   )
-  expect(placed.code).toBe('unsupported')
+  expect(placed.code).toBe('window_not_found')
   const count = (await catalog(profile)).terminals.filter((terminal) => terminal.workspace_id === workspace.id).length
   expect(count).toBe(2)
 })

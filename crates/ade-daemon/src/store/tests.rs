@@ -1,4 +1,5 @@
 use super::*;
+use ade_core::contract::layout::{LayoutAction, Tab, TabTarget, WindowState};
 #[test]
 fn terminal_reservation_is_atomic_durable_and_fences_prompt_admission() {
     let db = Database::new();
@@ -479,111 +480,182 @@ fn assistant(conversation: &Conversation, id: &str, provider: &str) -> Message {
         sequence: 0,
     }
 }
-fn window(workspace: &WorkspaceRecord, conversation: &Conversation, id: &str) -> WindowRecord {
-    WindowRecord {
-        dock_layout: None,
-        panes: Default::default(),
-        tabs: Default::default(),
-        focused_pane: 5,
-        id: id.into(),
-        workspace_id: workspace.id.clone(),
-        conversation_id: Some(conversation.id.clone()),
-        browser_url: String::new(),
-        x: 10.0,
-        y: 20.0,
-        width: 1200.0,
-        height: 800.0,
+fn open_tab(id: &str, target: TabTarget) -> LayoutAction {
+    LayoutAction::OpenTab {
+        tab: Tab {
+            id: id.into(),
+            target,
+        },
+        pane_id: None,
     }
 }
 #[test]
-fn pane_layout_restores_and_rejects_invalid_sizes() {
+fn layouts_persist_with_their_revision_and_refuse_a_stale_one() {
     let db = Database::new();
     let store = db.open();
     let (workspace, conversation) = fixture(&store);
-    let mut record = window(&workspace, &conversation, "layout-window");
-    record.panes.sidebar_visible = false;
-    record.panes.browser_width = 420.;
-    record.dock_layout = Some(serde_json::json!({"active_panel":"pane-test","closed":[]}));
-    store.save_window(&record).unwrap();
+    store.create_window("w", &workspace.id, None).unwrap();
+    let fresh = store.layout("w", None).unwrap();
+    assert_eq!(fresh.revision, 0);
+    let target = TabTarget::Conversation {
+        id: conversation.id.clone(),
+    };
+    let opened = store
+        .apply_layout("w", None, &open_tab("t1", target), Some(0))
+        .unwrap();
+    assert!(opened.changed);
+    assert_eq!(opened.layout.revision, 1);
+    let toggle = LayoutAction::ToggleSide {
+        side: ade_core::contract::layout::Side::Left,
+    };
+    let toggled = store.apply_layout("w", None, &toggle, Some(1)).unwrap();
+    assert_eq!(toggled.layout.revision, 2);
+    // The retry of the last action from its revision returns its result.
+    let retried = store.apply_layout("w", None, &toggle, Some(1)).unwrap();
+    assert_eq!(retried.layout, toggled.layout);
+    // Any other stale revision is a conflict.
+    let stale = store
+        .apply_layout("w", None, &LayoutAction::SwapSidebars, Some(1))
+        .unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(stale)["code"],
+        "layout_conflict"
+    );
+    let missing = store
+        .apply_layout(
+            "w",
+            None,
+            &open_tab(
+                "t2",
+                TabTarget::Terminal {
+                    id: "terminal_missing".into(),
+                },
+            ),
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(missing)["code"],
+        "tab_target_missing"
+    );
     drop(store);
     let store = db.open();
-    let restored = store.catalog().unwrap().windows.remove(0);
-    assert!(!restored.panes.sidebar_visible);
-    assert_eq!(restored.panes.browser_width, 420.);
-    assert_eq!(restored.dock_layout, record.dock_layout);
-    for invalid in [f32::NAN, f32::INFINITY, 0., 601.] {
-        record.panes.browser_width = invalid;
-        assert!(store.save_window(&record).is_err());
-    }
-    let mut legacy = serde_json::to_value(&restored).unwrap();
-    legacy.as_object_mut().unwrap().remove("panes");
-    let legacy: WindowRecord = serde_json::from_value(legacy).unwrap();
-    assert!(
-        legacy.panes.sidebar_visible
-            && legacy.panes.terminal_visible
-            && !legacy.panes.browser_visible
+    assert_eq!(store.layout("w", None).unwrap(), toggled.layout);
+    let unknown = store.layout("nowhere", None).unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(unknown)["code"],
+        "window_not_found"
     );
-    assert!(legacy.panes.valid());
 }
 #[test]
-#[ignore = "stale fixture: needs recorded path bindings since fail-closed rebind checks"]
-fn tabs_validate_ownership_and_restore_closed_views() {
+fn deleting_a_conversation_closes_its_tabs_in_every_layout() {
     let db = Database::new();
     let store = db.open();
     let (workspace, conversation) = fixture(&store);
-    let extra = store.create_terminal(&workspace.id, None, None).unwrap();
-    let mut record = window(&workspace, &conversation, "tabs-window");
-    record.tabs.initialized = true;
-    let tab = TerminalTab {
-        id: extra.clone(),
-        workspace_id: workspace.id.clone(),
-        title: "Second shell".into(),
+    let target = TabTarget::Conversation {
+        id: conversation.id.clone(),
     };
-    record.tabs.terminals.push(tab.clone());
-    record.tabs.active_terminal = Some(extra.clone());
-    store.save_window(&record).unwrap();
-    record.tabs.closed_terminals.push(tab.clone());
-    assert!(
-        store.save_window(&record).is_err(),
-        "open/closed duplicates must be rejected"
+    for window in ["a", "b"] {
+        store.create_window(window, &workspace.id, None).unwrap();
+        store
+            .apply_layout(window, None, &open_tab("t", target.clone()), None)
+            .unwrap();
+    }
+    let tx = store.connection.unchecked_transaction().unwrap();
+    let deleted = delete_conversation(&tx, &conversation.id, "op", 1).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(deleted.removed.layouts_changed, 2);
+    assert_eq!(deleted.layouts.len(), 2);
+    for window in ["a", "b"] {
+        let layout = store.layout(window, None).unwrap();
+        assert!(layout.layout.tabs.is_empty());
+        assert_eq!(layout.revision, 2);
+    }
+}
+#[test]
+fn removing_a_workspace_deletes_its_layouts_and_moves_its_windows() {
+    let db = Database::new();
+    let store = db.open();
+    let removed = store
+        .workspace_open(&test_root(&new_id("zulu")), None)
+        .unwrap();
+    let beta = store
+        .workspace_open(&test_root(&new_id("beta")), None)
+        .unwrap();
+    let alpha = store
+        .workspace_open(&test_root(&new_id("alpha")), None)
+        .unwrap();
+    store.create_window("w", &removed.id, None).unwrap();
+    store.show_workspace("w", &beta.id).unwrap();
+    store.show_workspace("w", &removed.id).unwrap();
+    store
+        .apply_layout("w", None, &LayoutAction::SwapSidebars, None)
+        .unwrap();
+    let removal = store.remove_workspace(&removed.id, "op").unwrap().unwrap();
+    assert_eq!(removal.layouts, vec![("w".to_owned(), removed.id.clone())]);
+    // The first remaining workspace by project and name: alpha.
+    let window = &store.windows().unwrap()[0];
+    assert_eq!(window.workspace_id, alpha.id);
+    assert_eq!(
+        window.view.recent_workspaces,
+        vec![alpha.id.clone(), beta.id.clone()]
     );
-    record.tabs.terminals.clear();
-    assert!(
-        store.save_window(&record).is_err(),
-        "active terminal must be an open view"
+    assert_eq!(removal.windows, vec![window.clone()]);
+    let gone = store.layout("w", Some(&removed.id)).unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(gone)["code"],
+        "workspace_removed"
     );
-    record.tabs.active_terminal = None;
-    store.save_window(&record).unwrap();
-    record.tabs.closed_terminals[0].id = "unknown-shell".into();
-    assert!(store.save_window(&record).is_err());
-    let other = store.workspace_open(&test_root("other"), None).unwrap();
-    record.tabs.closed_terminals[0] = TerminalTab {
-        workspace_id: other.id,
-        ..tab
-    };
-    assert!(
-        store.save_window(&record).is_err(),
-        "terminal identity cannot move between workspaces"
+    // Reopening the folder starts that workspace's layout afresh.
+    store.workspace_open(&removed.root, None).unwrap();
+    assert_eq!(store.layout("w", Some(&removed.id)).unwrap().revision, 0);
+}
+#[test]
+fn a_window_whose_last_workspace_is_removed_closes() {
+    let db = Database::new();
+    let store = db.open();
+    let only = store
+        .workspace_open(&test_root(&new_id("only")), None)
+        .unwrap();
+    store.create_window("w", &only.id, None).unwrap();
+    store.remove_workspace(&only.id, "op").unwrap().unwrap();
+    let window = &store.windows().unwrap()[0];
+    assert_eq!(window.state, WindowState::Closed);
+    assert_eq!(window.workspace_id, only.id);
+    let refused = store.set_window_state("w", WindowState::Open).unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(refused)["code"],
+        "workspace_removed"
     );
+}
+#[test]
+fn the_migration_replaces_the_prototype_window_table() {
+    let db = Database::new();
+    let store = db.open();
+    let (workspace, _) = fixture(&store);
+    store.create_window("w", &workspace.id, None).unwrap();
+    // A profile one schema behind, whose last migration is the layouts one:
+    // the prototype's window table, holding a row.
+    let current: i64 = store
+        .connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    store
+        .connection
+        .execute_batch(&format!(
+            "DROP TABLE layouts; DROP TABLE windows;
+            CREATE TABLE windows(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),conversation_id TEXT REFERENCES conversations(id),data TEXT NOT NULL);
+            INSERT INTO windows VALUES('old','{}',NULL,'{{}}');
+            DELETE FROM schema_migrations WHERE version={current}; PRAGMA user_version={};",
+            workspace.id,
+            current - 1
+        ))
+        .unwrap();
     drop(store);
-    let reopened = db.open();
-    assert!(
-        reopened
-            .workspace(&workspace.id)
-            .unwrap()
-            .extra_terminals
-            .contains(&extra)
-    );
-    let restored = reopened.catalog().unwrap().windows.remove(0);
-    assert_eq!(restored.tabs.closed_terminals[0].id, extra);
-    let mut legacy = serde_json::to_value(&restored).unwrap();
-    legacy.as_object_mut().unwrap().remove("tabs");
-    assert!(
-        !serde_json::from_value::<WindowRecord>(legacy)
-            .unwrap()
-            .tabs
-            .initialized
-    );
+    let store = db.open();
+    assert!(store.windows().unwrap().is_empty());
+    store.create_window("w", &workspace.id, None).unwrap();
+    assert_eq!(store.layout("w", None).unwrap().revision, 0);
 }
 #[test]
 fn reopen_retains_identity_history_resume_and_windows() {
@@ -603,13 +675,14 @@ fn reopen_retains_identity_history_resume_and_windows() {
         )
         .unwrap();
     store
-        .save_window(&window(&workspace, &conversation, "window-1"))
+        .create_window("window-1", &workspace.id, None)
         .unwrap();
     store
-        .save_window(&window(&workspace, &conversation, "window-2"))
+        .create_window("window-2", &workspace.id, None)
         .unwrap();
-    store.close_window("window-2").unwrap();
-    store.close_window("window-1").unwrap();
+    store
+        .set_window_state("window-2", WindowState::Closed)
+        .unwrap();
     drop(store);
     let store = db.open();
     let reopened = store
@@ -629,7 +702,9 @@ fn reopen_retains_identity_history_resume_and_windows() {
     let messages = store.messages(&conversation.id, None, 200).unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].id, original.message.id);
-    assert_eq!(store.catalog().unwrap().windows[0].id, "window-1");
+    let windows = store.catalog().unwrap().windows;
+    assert_eq!(windows[0].id, "window-1");
+    assert_eq!(windows[1].state, WindowState::Closed);
 }
 #[test]
 fn recovery_invalidates_requests_but_keeps_resume_and_submission() {
@@ -788,27 +863,10 @@ fn provider_replay_retains_message_identity_and_sequence_with_bounded_pages() {
 }
 #[test]
 #[ignore = "stale fixture: needs recorded path bindings since fail-closed rebind checks"]
-fn invalid_windows_and_future_database_fail_without_clobbering() {
+fn a_future_database_fails_without_clobbering() {
     let db = Database::new();
     let store = db.open();
-    let (workspace, conversation) = fixture(&store);
-    let mut value = window(&workspace, &conversation, "w");
-    value.width = f32::NAN;
-    assert!(store.save_window(&value).is_err());
-    value.width = 999.0;
-    assert!(store.save_window(&value).is_err());
-    value.width = 1200.0;
-    value.browser_url = "file:///etc/passwd".into();
-    assert!(store.save_window(&value).is_err());
-    value.browser_url = "https://example.com/path".into();
-    store.save_window(&value).unwrap();
-    let other = store.workspace_open(&test_root("other"), None).unwrap();
-    value.workspace_id = other.id;
-    assert!(store.save_window(&value).is_err());
-    assert_eq!(
-        store.catalog().unwrap().windows[0].workspace_id,
-        workspace.id
-    );
+    fixture(&store);
     store
         .connection
         .pragma_update(None, "user_version", 99)
@@ -1125,8 +1183,18 @@ fn a_removed_workspace_leaves_the_catalog_and_returns_with_its_conversations() {
     busy.status = "idle".into();
     store.commit_conversation(&busy, &[], &[]).unwrap();
     store.enqueue(&busy.id, "queued", "Later").unwrap();
-    assert!(store.remove_workspace(&workspace.id, "op-1").unwrap());
-    assert!(!store.remove_workspace(&workspace.id, "op-2").unwrap());
+    assert!(
+        store
+            .remove_workspace(&workspace.id, "op-1")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .remove_workspace(&workspace.id, "op-2")
+            .unwrap()
+            .is_none()
+    );
     let catalog = store.catalog().unwrap();
     assert!(catalog.workspaces.iter().all(|w| w.id != workspace.id));
     assert!(catalog.conversations.iter().all(|c| c.id != busy.id));
@@ -1176,7 +1244,12 @@ fn a_removed_workspace_whose_folder_is_gone_does_not_fence_the_profile() {
     let workspace = store
         .workspace_open(&root, Some(&format!("{root}/.git")))
         .unwrap();
-    assert!(store.remove_workspace(&workspace.id, "op").unwrap());
+    assert!(
+        store
+            .remove_workspace(&workspace.id, "op")
+            .unwrap()
+            .is_some()
+    );
     std::fs::remove_dir_all(&root).unwrap();
     assert!(!store.has_pending_rebind().unwrap());
     assert!(store.rebind_workspaces().unwrap().is_empty());

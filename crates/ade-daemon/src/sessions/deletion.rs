@@ -83,6 +83,7 @@ impl Sessions {
             json!({"type": "conversation_deleted", "conversation_id": id,
                 "workspace_id": reply.workspace_id, "deleted_at": now}),
         );
+        self.layouts_changed(&mut d, &deleted.layouts);
         self.catalog_changed(&mut d)?;
         Ok(value)
     }

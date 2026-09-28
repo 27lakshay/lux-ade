@@ -28,26 +28,19 @@ impl Sessions {
                     }
                 }
                 let create: TerminalCreateRequest = decode(request)?;
-                // TODO(lane A): open the new terminal's tab in `place` once
-                // daemon layouts merge (see `Store::create_terminal`).
-                if create.place.is_some() {
-                    return Err(ade_core::error::Unsupported(
-                        "terminal.create cannot place a tab yet: this daemon has no window layouts"
-                            .into(),
-                    )
-                    .into());
-                }
                 let title = create.title.as_deref().map(terminal_title).transpose()?;
                 let mut d = self.data.lock().unwrap();
-                let terminal = d.store.create_terminal(
+                let created = d.store.create_placed_terminal(
                     &create.workspace_id,
                     create.operation_id.as_deref(),
                     title,
+                    create.place.as_ref(),
                 )?;
                 self.catalog_changed(&mut d)?;
+                self.layouts_changed(&mut d, created.layout.as_slice());
                 reply(&TerminalCreated {
                     tag: AckTag::Tag,
-                    terminal_id: terminal,
+                    terminal_id: created.terminal_id,
                 })
             }
             "terminal.operation" => {
@@ -125,7 +118,8 @@ impl Sessions {
             !d.store.terminal_reserved(terminal)?,
             "Remove its service, or return the Conversation to the GUI before retiring this terminal"
         );
-        d.store.retire_terminal(workspace, terminal)?;
+        let layouts = d.store.retire_terminal(workspace, terminal)?;
+        self.layouts_changed(&mut d, &layouts);
         self.catalog_changed(&mut d)
     }
     pub(super) fn clear_view_terminal(&self, id: &str) -> Result<()> {
@@ -190,8 +184,10 @@ impl Sessions {
             current.error = None;
         }
         d.store.commit_conversation(&current, &[], &[])?;
-        d.store
+        let layouts = d
+            .store
             .retire_terminal(&c.workspace_id, &owner.terminal_id)?;
+        self.layouts_changed(&mut d, &layouts);
         self.catalog_changed(&mut d)?;
         self.changed(&mut d, &current, &[])?;
         Ok(())

@@ -44,6 +44,7 @@ mod drafts;
 mod hooks;
 mod imports;
 mod inspection;
+mod layouts;
 mod leases;
 mod mcp;
 mod orchestration;
@@ -844,9 +845,8 @@ impl Sessions {
             | "agent.disconnect"
             | "agent.resume"
             | "agent.cancel"
-            | "agent.answer"
-            | "window.save"
-            | "window.close" => self.conversation_command(request),
+            | "agent.answer" => self.conversation_command(request),
+            op if layouts::handles(op) => self.layout_command(request),
             op if op.starts_with("orchestration.") => self.orchestration_command(request),
             op if op.starts_with("retention.") => self.retention_command(request),
             op if op.starts_with("provider.") || op.starts_with("preset.") => {

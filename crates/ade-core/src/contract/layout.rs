@@ -6,21 +6,12 @@
 //! A tab names what it shows with a [`TabTarget`]; its title comes from the
 //! target's own record. [`crate::layout::apply`] is the one implementation of
 //! every [`LayoutAction`]; the daemon runs it and stores the result.
-use super::{FrameSpec, OperationSpec};
+use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub fn operations() -> Vec<OperationSpec> {
-    Vec::new()
-}
-
-pub fn frames() -> Vec<FrameSpec> {
-    Vec::new()
-}
-
-#[cfg(any())]
-pub fn staged() -> Vec<OperationSpec> {
     vec![
         OperationSpec::new::<WindowListRequest, WindowList>("window.list", Tier::Query),
         // The caller names the window, so a retry finds the window it made.
@@ -65,13 +56,31 @@ pub fn staged() -> Vec<OperationSpec> {
     ]
 }
 
-#[cfg(any())]
-pub fn staged_frames() -> Vec<FrameSpec> {
+pub fn frames() -> Vec<FrameSpec> {
     vec![
         FrameSpec::new::<WindowChanged>("window_changed"),
         FrameSpec::new::<LayoutChanged>("layout_changed"),
         FrameSpec::new::<LayoutRemoved>("layout_removed"),
     ]
+}
+
+/// The schema of a field that is a value or null and always present. A
+/// plain `Option` field is optional in the request contract and required in
+/// the reply contract, and [`Layout`] travels both ways.
+struct Nullable<T>(std::marker::PhantomData<T>);
+
+impl<T: JsonSchema> JsonSchema for Nullable<T> {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        <Option<T>>::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <Option<T>>::json_schema(generator)
+    }
 }
 
 /// What a tab shows. Records are named by ID; a file or diff by its path
@@ -110,11 +119,17 @@ pub enum WindowState {
 
 /// A window's position and size, in screen points. The daemon checks only
 /// that they are finite and positive; a UI applies its own minimum size.
+// Floats in this module are plain JSON numbers in the schema: the bundle does
+// not strip schemars' `double` format.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
 pub struct WindowBounds {
+    #[schemars(with = "serde_json::Number")]
     pub x: f64,
+    #[schemars(with = "serde_json::Number")]
     pub y: f64,
+    #[schemars(with = "serde_json::Number")]
     pub width: f64,
+    #[schemars(with = "serde_json::Number")]
     pub height: f64,
 }
 
@@ -193,27 +208,38 @@ pub struct Tab {
     pub target: TabTarget,
 }
 
+wire_tag!(PaneTag, "pane");
+wire_tag!(SplitTag, "split");
+
 /// A leaf of the pane tree: a strip of tabs.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct PaneNode {
+    #[serde(rename = "type")]
+    pub tag: PaneTag,
     pub id: String,
     /// Tab IDs, in strip order.
     pub tabs: Vec<String>,
+    #[schemars(with = "Nullable<String>")]
     pub active: Option<String>,
 }
 
 /// Two or more nodes side by side (`row`) or stacked (`column`).
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct SplitNode {
+    #[serde(rename = "type")]
+    pub tag: SplitTag,
     pub id: String,
     pub direction: SplitDirection,
     pub children: Vec<LayoutNode>,
     /// Percentages of the split, one per child, summing to 100.
+    #[schemars(with = "Vec<serde_json::Number>")]
     pub sizes: Vec<f64>,
 }
 
+/// A pane or a split, told apart by `type`. Each variant's struct carries its
+/// own tag, so clients get one flat type per node.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(untagged)]
 pub enum LayoutNode {
     Pane(PaneNode),
     Split(SplitNode),
@@ -254,6 +280,7 @@ pub struct Layout {
     pub root: LayoutNode,
     pub focused_pane: String,
     /// A pane shown alone across the whole centre, or null. Always the focused pane.
+    #[schemars(with = "Nullable<String>")]
     pub maximized: Option<String>,
 }
 
@@ -287,6 +314,7 @@ pub enum LayoutAction {
     /// Clamped to 200–480 and rounded to whole pixels.
     SetWidth {
         sidebar: SidebarId,
+        #[schemars(with = "serde_json::Number")]
         width: f64,
     },
     /// Opens after the active tab of `pane_id` (the focused pane when
@@ -356,6 +384,7 @@ pub enum LayoutAction {
     /// Sizes are percentages, one per child, each positive, summing to 100.
     SetSplitSizes {
         split_id: String,
+        #[schemars(with = "Vec<serde_json::Number>")]
         sizes: Vec<f64>,
     },
     ToggleMaximize {
@@ -528,4 +557,187 @@ pub struct LayoutRemoved {
     pub workspace_id: String,
     pub boot_id: String,
     pub revision: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    //! Each operation's request and reply against the generated schema, in
+    //! the shape a client sends and the daemon replies.
+    use super::super::bundle;
+    use super::*;
+    use serde::de::DeserializeOwned;
+    use serde_json::{Value, json};
+
+    fn errors(name: &str, value: &Value) -> Vec<String> {
+        let bundle = bundle();
+        let schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": bundle["$defs"],
+            "$ref": format!("#/$defs/{name}"),
+        });
+        let validator = jsonschema::validator_for(&schema).expect("generated schema compiles");
+        validator
+            .iter_errors(value)
+            .map(|e| e.to_string())
+            .collect()
+    }
+
+    fn spec(op: &str) -> Value {
+        bundle()["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|spec| spec["name"] == op)
+            .unwrap_or_else(|| panic!("{op} is registered"))
+            .clone()
+    }
+
+    /// Validates `value` as `op`'s request and decodes it as `T`.
+    fn request<T: DeserializeOwned>(op: &str, value: Value) -> T {
+        let name = spec(op)["request"].as_str().unwrap().to_owned();
+        let found = errors(&name, &value);
+        assert!(found.is_empty(), "{op} rejected {value}: {found:?}");
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn reply<T: Serialize>(op: &str, value: &T) {
+        let name = spec(op)["response"].as_str().unwrap().to_owned();
+        let value = serde_json::to_value(value).unwrap();
+        let found = errors(&name, &value);
+        assert!(found.is_empty(), "{op} reply {value}: {found:?}");
+    }
+
+    fn record() -> LayoutRecord {
+        LayoutRecord {
+            window_id: "w".into(),
+            workspace_id: "ws".into(),
+            revision: 3,
+            layout: crate::layout::default_layout("p1"),
+        }
+    }
+
+    fn window() -> Window {
+        Window {
+            id: "w".into(),
+            workspace_id: "ws".into(),
+            state: WindowState::Open,
+            bounds: None,
+            view: WindowView::default(),
+        }
+    }
+
+    #[test]
+    fn operations_declare_their_tiers() {
+        for (op, tier) in [
+            ("window.list", "query"),
+            ("window.create", "idempotent_command"),
+            ("window.close", "idempotent_command"),
+            ("window.reopen", "idempotent_command"),
+            ("window.set_bounds", "idempotent_command"),
+            ("window.show_workspace", "idempotent_command"),
+            ("window.set_view_state", "idempotent_command"),
+            ("layout.get", "query"),
+            ("layout.apply", "idempotent_command"),
+            ("layout.replace", "idempotent_command"),
+        ] {
+            assert_eq!(spec(op)["tier"], tier, "{op}");
+            assert_eq!(spec(op)["domain"], "layout", "{op}");
+        }
+    }
+
+    #[test]
+    fn requests_and_replies_round_trip() {
+        let _: WindowListRequest = request("window.list", json!({"op": "window.list"}));
+        let create: WindowCreateRequest = request(
+            "window.create",
+            json!({"op": "window.create", "window_id": "w", "workspace_id": "ws",
+                "bounds": {"x": 0, "y": 0, "width": 1200.5, "height": 800}}),
+        );
+        assert_eq!(create.bounds.unwrap().width, 1200.5);
+        let _: WindowSetViewStateRequest = request(
+            "window.set_view_state",
+            json!({"op": "window.set_view_state", "window_id": "w", "collapsed_projects": ["p"]}),
+        );
+        let get: LayoutGetRequest =
+            request("layout.get", json!({"op": "layout.get", "window_id": "w"}));
+        assert_eq!(get.workspace_id, None);
+        let apply: LayoutApplyRequest = request(
+            "layout.apply",
+            json!({"op": "layout.apply", "window_id": "w", "expected_revision": 3,
+                "action": {"type": "open_tab", "tab": {"id": "t", "target": {"kind": "new_conversation"}}}}),
+        );
+        assert!(matches!(
+            apply.action,
+            LayoutAction::OpenTab { pane_id: None, .. }
+        ));
+        let layout = serde_json::to_value(crate::layout::default_layout("p1")).unwrap();
+        let replace: LayoutReplaceRequest = request(
+            "layout.replace",
+            json!({"op": "layout.replace", "window_id": "w", "layout": layout}),
+        );
+        assert_eq!(replace.layout.maximized, None);
+        reply(
+            "window.create",
+            &WindowAck {
+                tag: WindowTag::Tag,
+                window: window(),
+            },
+        );
+        reply(
+            "window.list",
+            &WindowList {
+                tag: WindowListTag::Tag,
+                windows: vec![window()],
+            },
+        );
+        reply(
+            "layout.apply",
+            &LayoutApplied {
+                tag: LayoutTag::Tag,
+                layout: record(),
+                changed: true,
+            },
+        );
+        reply(
+            "layout.get",
+            &LayoutReply {
+                tag: LayoutTag::Tag,
+                layout: record(),
+            },
+        );
+    }
+
+    #[test]
+    fn a_layout_names_its_null_fields_and_unknown_actions_are_refused() {
+        let mut layout = serde_json::to_value(crate::layout::default_layout("p1")).unwrap();
+        layout.as_object_mut().unwrap().remove("maximized");
+        assert!(!errors("Layout", &layout).is_empty());
+        let unknown =
+            json!({"op": "layout.apply", "window_id": "w", "action": {"type": "explode"}});
+        let name = spec("layout.apply")["request"].as_str().unwrap().to_owned();
+        assert!(!errors(&name, &unknown).is_empty());
+    }
+
+    #[test]
+    fn frames_carry_the_record_and_the_feed_position() {
+        let kinds: Vec<String> = bundle()["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|frame| frame["domain"] == "layout")
+            .map(|frame| frame["type"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            kinds,
+            ["window_changed", "layout_changed", "layout_removed"]
+        );
+        let frame = serde_json::to_value(LayoutChanged {
+            tag: LayoutChangedTag::Tag,
+            layout: record(),
+            boot_id: "b".into(),
+            revision: 9,
+        })
+        .unwrap();
+        assert!(errors("LayoutChanged", &frame).is_empty());
+    }
 }

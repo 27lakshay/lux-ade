@@ -400,23 +400,30 @@ pub(crate) fn insert(tx: &Connection, stored: &Stored) -> Result<()> {
     derive(tx, &stored.workspace_id)
 }
 
-/// Removes a terminal from its workspace, with its tabs in saved windows. A
+/// Removes a terminal from its workspace and its tabs from every layout. A
 /// removed primary shell is replaced by a new one that has not started.
-/// Returns false when the workspace has no such terminal.
-pub(crate) fn remove(tx: &Connection, workspace_id: &str, terminal_id: &str) -> Result<bool> {
+/// Returns the layouts that lost a tab, for the caller to publish, or None
+/// when the workspace has no such terminal.
+pub(crate) fn remove(
+    tx: &Connection,
+    workspace_id: &str,
+    terminal_id: &str,
+) -> Result<Option<Vec<ade_core::contract::layout::LayoutRecord>>> {
     let Some(stored) = load(tx, terminal_id)?.filter(|s| s.workspace_id == workspace_id) else {
-        return Ok(false);
+        return Ok(None);
     };
     tx.execute("DELETE FROM terminals WHERE id=?1", [terminal_id])?;
     if stored.primary {
         write(tx, &Stored::primary(&new_id("terminal"), workspace_id))?;
     }
-    super::forget_terminal_views(tx, terminal_id)?;
-    // TODO(lane A): once daemon layouts merge, remove this terminal's tabs
-    // from every layout in this same transaction:
-    // `layouts::remove_target(tx, &TabTarget::Terminal { id: terminal_id })`.
+    let layouts = super::layouts::remove_target(
+        tx,
+        &ade_core::contract::layout::TabTarget::Terminal {
+            id: terminal_id.to_owned(),
+        },
+    )?;
     derive(tx, workspace_id)?;
-    Ok(true)
+    Ok(Some(layouts))
 }
 
 /// Rewrites a workspace's `terminal_id` and `extra_terminals` from its

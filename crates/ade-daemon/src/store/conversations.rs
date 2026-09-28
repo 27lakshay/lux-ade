@@ -55,6 +55,8 @@ pub struct Deleted {
     pub conversation: Conversation,
     pub removed: ade_core::contract::conversations::ConversationDeletion,
     pub attachments_left: u64,
+    /// Layouts that lost the Conversation's tabs, for the caller to publish.
+    pub layouts: Vec<ade_core::contract::layout::LayoutRecord>,
 }
 
 /// Deletes rows of `table` that belong to the Conversation; a table no
@@ -79,7 +81,7 @@ fn delete_rows(db: &Connection, table: &str, id: &str) -> Result<u64> {
 /// messages go, and the history index drops them through its delete
 /// journal; so do the pending requests, drafts, draft history and stashes,
 /// context captures, queue, send intents, snooze and account-switch records.
-/// Windows that showed it show none. Attachment payloads stay: nothing
+/// Its tabs leave every layout. Attachment payloads stay: nothing
 /// references them now, so retention's attachment rule reclaims them after
 /// its grace period, and never one that something still references.
 pub fn delete_conversation(
@@ -97,6 +99,10 @@ pub fn delete_conversation(
         conversation.terminal_owner.is_none(),
         "Return this Conversation from its terminal before deleting it"
     );
+    let layouts = super::layouts::remove_target(
+        db,
+        &ade_core::contract::layout::TabTarget::Conversation { id: id.to_owned() },
+    )?;
     let removed = ade_core::contract::conversations::ConversationDeletion {
         messages: delete_rows(db, "messages", id)?,
         requests: delete_rows(db, "requests", id)?,
@@ -106,10 +112,7 @@ pub fn delete_conversation(
         queued_prompts: delete_rows(db, "queued_prompts", id)?,
         send_intents: delete_rows(db, "send_intents", id)?,
         snoozes: delete_rows(db, "conversation_snoozes", id)?,
-        windows_detached: db.execute(
-            "UPDATE windows SET conversation_id=NULL,data=json_set(data,'$.conversation_id',NULL) WHERE conversation_id=?1",
-            [id],
-        )? as u64,
+        layouts_changed: layouts.len() as u64,
     };
     delete_rows(db, "context_nodes", id)?;
     delete_rows(db, "account_switches", id)?;
@@ -126,6 +129,7 @@ pub fn delete_conversation(
         conversation,
         removed,
         attachments_left: attachments_left.max(0) as u64,
+        layouts,
     })
 }
 

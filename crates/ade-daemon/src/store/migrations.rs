@@ -23,7 +23,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=18).contains(&version),
+            (0..=19).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -277,6 +277,18 @@ impl Store {
             tx.execute_batch("PRAGMA user_version=18;")?;
             tx.execute(
                 "INSERT OR IGNORE INTO schema_migrations VALUES(18,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        // Provisional number (lane A, windows and layouts): the coordinator
+        // assigns the final schema version at merge.
+        if version < 19 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            super::layouts::migrate(&tx)?;
+            tx.execute_batch("PRAGMA user_version=19;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(19,?1)",
                 [now_ms()],
             )?;
             tx.commit()?;
