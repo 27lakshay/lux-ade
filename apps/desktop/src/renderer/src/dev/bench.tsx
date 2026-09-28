@@ -6,7 +6,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Streamdown } from 'streamdown'
 import { Caption } from '@/components/Typography'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { commandService } from '../app/commands'
 import type { RenderContent } from '../features/workspace/content/ContentHosts'
+import { layoutStore, setActiveWorkspace } from '../features/workspace/model/layout-store'
 
 // Benchmark content, development only (open the app with ?bench): real terminals fed by a fake
 // connection with a long scrollback and streaming output, and long conversations rendered the way
@@ -21,12 +23,36 @@ const MESSAGES = number('messages', 800)
 
 const bridge = benchTerminalBridge({ scrollback: SCROLLBACK, linesPerSecond: LINES_PER_SECOND })
 
+// Workspaces: a benchmark layout may hold several (w1, w2, …). Until the navigator lists them,
+// Ctrl+1 to Ctrl+9 switch between them, and the first opens first.
+const benchWorkspaces = Object.keys(layoutStore.getState().layouts)
+  .filter((id) => /^w\d$/.test(id))
+  .sort()
+benchWorkspaces.forEach((id, index) => {
+  commandService.registerCommand({
+    id: `bench.${id}`,
+    title: `Bench: open workspace ${index + 1}`,
+    category: 'Bench',
+    run: () => setActiveWorkspace(id),
+  })
+  commandService.registerKeybinding({ key: `Control+${index + 1}`, command: `bench.${id}` })
+})
+if (benchWorkspaces[0]) setActiveWorkspace(benchWorkspaces[0])
+
+/** How much benchmark content is mounted now, for the measuring script. */
+const mounted = { terminals: 0, conversations: 0 }
+;(window as unknown as { __bench: typeof mounted }).__bench = mounted
+
 function BenchTerminal({ id }: { id: string }) {
   const container = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!container.current) return
     const view = mountTerminal(container.current, bridge, 'bench', id, { onStatus: (message) => console.warn(message) })
-    return () => view.dispose()
+    mounted.terminals++
+    return () => {
+      mounted.terminals--
+      view.dispose()
+    }
   }, [id])
   return <div ref={container} className="h-full bg-terminal" />
 }
@@ -62,6 +88,12 @@ function BenchConversation({ id }: { id: string }) {
       setTail(words.slice(0, n).join(' '))
     }, 50)
     return () => clearInterval(timer)
+  }, [])
+  useEffect(() => {
+    mounted.conversations++
+    return () => {
+      mounted.conversations--
+    }
   }, [])
   const rows = [...messages, tail]
   // eslint-disable-next-line react/incompatible-library -- TanStack Virtual's virtualizer is mutable; the compiler leaves this component unmemoised, which is what it needs.
