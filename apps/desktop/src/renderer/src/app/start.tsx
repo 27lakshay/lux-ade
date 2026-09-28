@@ -24,6 +24,11 @@ import { startTheme } from './theme'
 
 // Starts the app in this window: theme, commands, routing, then the first render. Called once by
 // src/bootstrap.ts.
+async function loadBench() {
+  const { benchContent } = await import('../dev/bench')
+  return benchContent
+}
+
 export async function start(): Promise<void> {
   startTheme()
   startMotionPreference()
@@ -36,7 +41,10 @@ export async function start(): Promise<void> {
   commandService.listen(window)
   if (window.adeHost) clearOnProfileSwitch(window.adeHost.profiles)
 
-  const router = createAppRouter({ Workspace })
+  // Development only: ?bench fills the panes with real terminals and long conversations to measure.
+  const bench =
+    import.meta.env.DEV && new URLSearchParams(window.location.search).has('bench') ? await loadBench() : undefined
+  const router = createAppRouter({ Workspace: bench ? () => <Workspace renderContent={bench} /> : Workspace })
   const daemon = window.adeHost ? createDaemonStore(window.adeHost) : null
   // Menu commands that change the screen. Any other command acts on the workspace, so it first
   // returns there from a full-screen view.
