@@ -15,6 +15,7 @@
 use super::*;
 use ade_core::contract::terminals::{TerminalKind, TerminalRecord, TerminalStatus, runtime};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 /// A stored terminal. [`Stored::record`] is what the catalog lists.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -81,7 +82,10 @@ impl Stored {
         }
     }
     pub fn record(&self) -> TerminalRecord {
-        let live = &self.live;
+        self.record_with(&self.live)
+    }
+    /// The record with `live` in place of the saved live state.
+    pub fn record_with(&self, live: &Live) -> TerminalRecord {
         let title = self
             .name
             .clone()
@@ -167,6 +171,61 @@ pub(crate) fn observe(previous: &Live, entry: Option<&runtime::Terminal>) -> Liv
         live.exit_code = exit_code(&entry.metrics["exit_status"]);
     }
     live
+}
+
+/// How often a terminal whose only change is its title reaches the feed. A
+/// program animating its title (a spinner, a progress count) would otherwise
+/// send a frame every tick.
+pub(crate) const TITLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Which `terminal_changed` frames are due. Every change waits here until
+/// [`Feed::due`] releases it: a change to status, busy or the foreground
+/// command at once (the daemon's 250 ms tick bounds it to four a second),
+/// a change to the title alone at most once per [`TITLE_INTERVAL`]. The
+/// latest record always goes out, so the last title is never lost.
+#[derive(Default, Debug)]
+pub(crate) struct Feed {
+    published: HashMap<String, (TerminalRecord, std::time::Instant)>,
+    pending: HashMap<String, TerminalRecord>,
+}
+
+impl Feed {
+    pub fn changed(&mut self, record: TerminalRecord) {
+        self.pending.insert(record.id.clone(), record);
+    }
+    /// Forgets terminals that are gone.
+    pub fn retain(&mut self, listed: impl Fn(&str) -> bool) {
+        self.published.retain(|id, _| listed(id));
+        self.pending.retain(|id, _| listed(id));
+    }
+    /// The records to publish now, in no particular order.
+    pub fn due(&mut self, now: std::time::Instant) -> Vec<TerminalRecord> {
+        let ready: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(id, next)| match self.published.get(*id) {
+                None => true,
+                Some((last, at)) => {
+                    let title_only = TerminalRecord {
+                        title: next.title.clone(),
+                        ..last.clone()
+                    } == **next;
+                    last != *next && (!title_only || now.duration_since(*at) >= TITLE_INTERVAL)
+                }
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut due = Vec::new();
+        for id in ready {
+            let record = self.pending.remove(&id).expect("pending record");
+            self.published.insert(id, (record.clone(), now));
+            due.push(record);
+        }
+        // A pending record equal to the published one needs no frame.
+        self.pending
+            .retain(|id, next| self.published.get(id).is_none_or(|(last, _)| last != next));
+        due
+    }
 }
 
 pub(crate) fn ensure_table(tx: &Connection) -> Result<()> {
@@ -280,21 +339,53 @@ fn write(tx: &Connection, stored: &Stored) -> Result<()> {
     Ok(())
 }
 
-/// Saves a terminal's live state. Returns the new record when it changed.
-pub(crate) fn save_live(tx: &Connection, id: &str, live: Live) -> Result<Option<TerminalRecord>> {
-    let Some(mut stored) = load(tx, id)? else {
+/// The part of a terminal's live state that is written to the database:
+/// its status, exit code and program, and the title only once the program
+/// has stopped running. Busy, the foreground command and the title of a
+/// running program live in memory only.
+pub(crate) fn durable(live: &Live) -> Live {
+    let settled = live.status != TerminalStatus::Running;
+    Live {
+        status: live.status,
+        exit_code: live.exit_code,
+        busy: false,
+        foreground: None,
+        title: live.title.clone().filter(|_| settled),
+        program: live.program.clone(),
+    }
+}
+
+/// Keeps a terminal's live state in `memory` and writes its durable part
+/// ([`durable`]) only when that changed. Returns the new record when what
+/// the catalog lists changed.
+pub(crate) fn save_live(
+    db: &Connection,
+    memory: &mut HashMap<String, Live>,
+    id: &str,
+    live: Live,
+) -> Result<Option<TerminalRecord>> {
+    let Some(mut stored) = load(db, id)? else {
+        memory.remove(id);
         return Ok(None);
     };
-    if stored.live == live {
+    let previous = memory
+        .get(id)
+        .cloned()
+        .unwrap_or_else(|| stored.live.clone());
+    if previous == live {
         return Ok(None);
     }
-    let before = stored.record();
-    stored.live = live;
-    tx.execute(
-        "UPDATE terminals SET data=?2 WHERE id=?1",
-        params![id, encode(&stored)?],
-    )?;
-    let after = stored.record();
+    let before = stored.record_with(&previous);
+    let after = stored.record_with(&live);
+    let saved = durable(&live);
+    memory.insert(id.to_owned(), live);
+    if saved != stored.live {
+        stored.live = saved;
+        db.execute(
+            "UPDATE terminals SET data=?2 WHERE id=?1",
+            params![id, encode(&stored)?],
+        )?;
+    }
     Ok((after != before).then_some(after))
 }
 
@@ -567,6 +658,92 @@ mod tests {
                 .status,
             TerminalStatus::Running
         );
+    }
+
+    /// The saved row's live state, bypassing the in-memory state.
+    fn saved(store: &Store, id: &str) -> Live {
+        load(&store.connection, id).unwrap().unwrap().live
+    }
+
+    #[test]
+    fn busy_and_a_running_title_stay_in_memory_and_only_durable_state_is_written() {
+        let scratch = Scratch::new();
+        let store = scratch.open();
+        let workspace = store.workspace_open(&scratch.root(), None).unwrap();
+        let id = &workspace.terminal_id;
+        let running = Live {
+            status: TerminalStatus::Running,
+            program: Some("zsh".into()),
+            ..Default::default()
+        };
+        store.save_terminal_state(id, running.clone()).unwrap();
+        assert_eq!(saved(&store, id), running);
+        let busy = Live {
+            busy: true,
+            foreground: Some("sleep".into()),
+            title: Some("step-1".into()),
+            ..running.clone()
+        };
+        let record = store
+            .save_terminal_state(id, busy.clone())
+            .unwrap()
+            .unwrap();
+        assert!(record.busy && record.title == "step-1");
+        assert_eq!(store.terminal(id).unwrap().unwrap(), record);
+        assert_eq!(store.catalog().unwrap().terminals[0], record);
+        // Nothing but the durable part reached the database.
+        assert_eq!(saved(&store, id), running);
+        // An exit settles the title and writes it.
+        let exited = Live {
+            status: TerminalStatus::Exited,
+            exit_code: Some(0),
+            title: Some("step-9".into()),
+            program: Some("zsh".into()),
+            ..Default::default()
+        };
+        store.save_terminal_state(id, exited.clone()).unwrap();
+        assert_eq!(saved(&store, id), exited);
+        drop(store);
+        let store = scratch.open();
+        assert_eq!(store.terminal(id).unwrap().unwrap().title, "step-9");
+    }
+
+    fn shell(title: &str, busy: bool) -> TerminalRecord {
+        TerminalRecord {
+            title: title.into(),
+            busy,
+            status: TerminalStatus::Running,
+            ..Stored::new("t", "w", TerminalKind::Shell).record()
+        }
+    }
+
+    #[test]
+    fn the_feed_sends_busy_at_once_and_a_title_alone_at_most_once_a_second() {
+        let start = std::time::Instant::now();
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        let mut feed = Feed::default();
+        feed.changed(shell("a", false));
+        assert_eq!(feed.due(at(0)), vec![shell("a", false)]);
+        feed.changed(shell("b", false));
+        assert!(feed.due(at(250)).is_empty());
+        feed.changed(shell("c", false));
+        assert!(feed.due(at(500)).is_empty());
+        // Busy goes out at once, with the latest title.
+        feed.changed(shell("c", true));
+        assert_eq!(feed.due(at(750)), vec![shell("c", true)]);
+        feed.changed(shell("d", true));
+        assert!(feed.due(at(1000)).is_empty());
+        // The held title is sent once its second has passed, with no new change.
+        assert_eq!(feed.due(at(1750)), vec![shell("d", true)]);
+        assert!(feed.due(at(3000)).is_empty());
+        // A change back to what was published sends nothing.
+        feed.changed(shell("e", true));
+        feed.changed(shell("d", true));
+        assert!(feed.due(at(3000)).is_empty());
+        assert!(feed.due(at(5000)).is_empty());
+        feed.changed(shell("f", true));
+        feed.retain(|_| false);
+        assert!(feed.due(at(9000)).is_empty());
     }
 
     #[test]

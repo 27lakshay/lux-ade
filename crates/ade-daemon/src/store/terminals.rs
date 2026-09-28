@@ -236,23 +236,42 @@ impl Store {
     }
     /// One terminal's record, or `None` when no terminal has this ID.
     pub fn terminal(&self, id: &str) -> Result<Option<TerminalRecord>> {
-        Ok(records::load(&self.connection, id)?.map(|stored| stored.record()))
+        Ok(records::load(&self.connection, id)?.map(|stored| self.terminal_record(&stored)))
+    }
+    /// A stored terminal's record with its in-memory live state.
+    pub(crate) fn terminal_record(&self, stored: &Stored) -> TerminalRecord {
+        match self.live_terminals.lock().unwrap().get(&stored.id) {
+            Some(live) => stored.record_with(live),
+            None => stored.record(),
+        }
     }
     /// The last known live state of every listed terminal, keyed by
-    /// `(workspace_id, terminal_id)`.
+    /// `(workspace_id, terminal_id)`. Forgets the live state of terminals
+    /// that are gone.
     pub(crate) fn terminal_states(&self) -> Result<Vec<(String, String, records::Live)>> {
-        Ok(records::visible(&self.connection)?
+        let listed = records::visible(&self.connection)?;
+        let mut memory = self.live_terminals.lock().unwrap();
+        memory.retain(|id, _| listed.iter().any(|stored| &stored.id == id));
+        Ok(listed
             .into_iter()
-            .map(|stored| (stored.workspace_id, stored.id, stored.live))
+            .map(|stored| {
+                let live = memory.get(&stored.id).cloned().unwrap_or(stored.live);
+                (stored.workspace_id, stored.id, live)
+            })
             .collect())
     }
-    /// Saves what the runtime shows of a terminal. Returns its record when
-    /// that changed what the catalog lists.
+    /// Keeps what the runtime shows of a terminal, writing only its durable
+    /// part. Returns its record when that changed what the catalog lists.
     pub(crate) fn save_terminal_state(
         &self,
         id: &str,
         live: records::Live,
     ) -> Result<Option<TerminalRecord>> {
-        records::save_live(&self.connection, id, live)
+        records::save_live(
+            &self.connection,
+            &mut self.live_terminals.lock().unwrap(),
+            id,
+            live,
+        )
     }
 }

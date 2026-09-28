@@ -605,7 +605,7 @@ impl Store {
             )?,
             terminals: super::terminal_records::visible(&tx)?
                 .iter()
-                .map(|terminal| terminal.record())
+                .map(|terminal| self.terminal_record(terminal))
                 .collect(),
         };
         tx.commit()?;

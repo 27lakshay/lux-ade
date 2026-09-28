@@ -15,6 +15,10 @@ const BUSY: &[&str] = &["starting", "running", "waiting", "cancelling"];
 pub struct Store {
     pub(crate) connection: Connection,
     data_directory: PathBuf,
+    /// What runs in each terminal now, kept in memory: busy, the foreground
+    /// command and a title a running program sets change too often to write
+    /// with `synchronous=FULL` (`terminal_records::save_live`).
+    live_terminals: std::sync::Mutex<std::collections::HashMap<String, terminal_records::Live>>,
 }
 
 mod account_switches;

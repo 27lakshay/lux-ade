@@ -302,6 +302,7 @@ impl Store {
         Ok(Self {
             connection,
             data_directory,
+            live_terminals: Default::default(),
         })
     }
 }

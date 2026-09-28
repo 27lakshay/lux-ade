@@ -101,6 +101,8 @@ fn reply<T: serde::Serialize>(value: &T) -> Result<Value> {
 }
 
 struct Data {
+    /// `terminal_changed` frames waiting to be due.
+    terminal_feed: crate::store::terminal_records::Feed,
     draining: bool,
     store: Store,
     agents: HashMap<String, Agent>,
@@ -210,6 +212,7 @@ impl Sessions {
                 revision: 0,
                 activity_published: None,
                 recovery: Default::default(),
+                terminal_feed: Default::default(),
             }),
             subscribers: Arc::new(AtomicUsize::new(0)),
             boot_id: new_id("boot"),

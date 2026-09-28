@@ -88,7 +88,10 @@ impl Sessions {
         let listed: runtime::Terminals =
             serde_json::from_value(catalogue.clone()).context("Invalid terminal catalogue")?;
         let mut d = self.data.lock().unwrap();
-        for (workspace_id, terminal_id, previous) in d.store.terminal_states()? {
+        let states = d.store.terminal_states()?;
+        d.terminal_feed
+            .retain(|id| states.iter().any(|(_, terminal_id, _)| terminal_id == id));
+        for (workspace_id, terminal_id, previous) in states {
             let entry = listed.terminals.iter().find(|entry| {
                 entry.workspace.id == workspace_id && entry.workspace.terminal_id == terminal_id
             });
@@ -97,16 +100,19 @@ impl Sessions {
                 continue;
             }
             if let Some(terminal) = d.store.save_terminal_state(&terminal_id, live)? {
-                self.publish(
-                    &mut d,
-                    serde_json::to_value(TerminalChanged {
-                        tag: TerminalChangedTag::Tag,
-                        terminal,
-                        boot_id: String::new(),
-                        revision: 0,
-                    })?,
-                );
+                d.terminal_feed.changed(terminal);
             }
+        }
+        for terminal in d.terminal_feed.due(std::time::Instant::now()) {
+            self.publish(
+                &mut d,
+                serde_json::to_value(TerminalChanged {
+                    tag: TerminalChangedTag::Tag,
+                    terminal,
+                    boot_id: String::new(),
+                    revision: 0,
+                })?,
+            );
         }
         Ok(())
     }
