@@ -41,9 +41,12 @@ export async function start(): Promise<void> {
   commandService.listen(window)
   if (window.adeHost) clearOnProfileSwitch(window.adeHost.profiles)
 
-  // Development only: ?bench fills the panes with real terminals and long conversations to measure.
+  // Development (or a build made with VITE_ADE_BENCH=1) only: ?bench fills the panes with real terminals and long conversations to measure.
   const bench =
-    import.meta.env.DEV && new URLSearchParams(window.location.search).has('bench') ? await loadBench() : undefined
+    (import.meta.env.DEV || import.meta.env.VITE_ADE_BENCH === '1') &&
+    new URLSearchParams(window.location.search).has('bench')
+      ? await loadBench()
+      : undefined
   const router = createAppRouter({ Workspace: bench ? () => <Workspace renderContent={bench} /> : Workspace })
   const daemon = window.adeHost ? createDaemonStore(window.adeHost) : null
   // Menu commands that change the screen. Any other command acts on the workspace, so it first
