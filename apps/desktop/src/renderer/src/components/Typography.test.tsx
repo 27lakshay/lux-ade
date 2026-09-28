@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest'
 import { render } from 'vitest-browser-react'
 import '../app/app.css'
-import { Body, Caption, Code, Meta, Text, Title } from './Typography'
+import { Button } from '@/components/ui/button'
+import { Body, Caption, Code, Heading, Meta, Text, Title } from './Typography'
 
 const style = (element: Element) => {
   const computed = getComputedStyle(element)
@@ -62,4 +63,69 @@ test('tone, weight and truncation', async () => {
   const long = screen.getByText('a-very-long-branch-name').element()
   expect(long.scrollWidth).toBeGreaterThan(long.clientWidth)
   expect(getComputedStyle(long).textOverflow).toBe('ellipsis')
+})
+
+test('headings for full-screen views are 20 and 28px', async () => {
+  const screen = await render(
+    <>
+      <Heading>Settings</Heading>
+      <Heading level="display">Welcome to ADE</Heading>
+    </>,
+  )
+  expect(getComputedStyle(screen.getByRole('heading', { name: 'Settings' }).element()).fontSize).toBe('20px')
+  expect(getComputedStyle(screen.getByRole('heading', { name: 'Welcome to ADE' }).element()).fontSize).toBe('28px')
+})
+
+test('text is set in Inter and code in JetBrains Mono, both bundled', async () => {
+  const screen = await render(
+    <>
+      <Text>Inter</Text>
+      <Code>mono</Code>
+    </>,
+  )
+  expect(getComputedStyle(screen.getByText('Inter').element()).fontFamily).toMatch(/^"?Inter Variable/)
+  expect(getComputedStyle(screen.getByText('mono').element()).fontFamily).toMatch(/^"?JetBrains Mono Variable/)
+  await document.fonts.ready
+  expect(document.fonts.check('13px "Inter Variable"')).toBe(true)
+  expect(document.fonts.check('12px "JetBrains Mono Variable"')).toBe(true)
+})
+
+test("the kit's text sits on the same scale as ADE's rows", async () => {
+  // Kit buttons and menus use text-sm; the theme moves it to 13px, the size of <Text>.
+  const screen = await render(<Button>Commit</Button>)
+  expect(getComputedStyle(screen.getByRole('button', { name: 'Commit' }).element()).fontSize).toBe('13px')
+})
+
+test('chrome text cannot be selected, content can', async () => {
+  const screen = await render(
+    <>
+      <Text>Row</Text>
+      <Body>Message</Body>
+      <Code>path</Code>
+      <Text selectable>Copyable</Text>
+    </>,
+  )
+  const select = (text: string) => getComputedStyle(screen.getByText(text).element()).userSelect
+  expect([select('Row'), select('Message'), select('path'), select('Copyable')]).toEqual([
+    'none',
+    'text',
+    'text',
+    'text',
+  ])
+})
+
+test('numbers, line clamps and inline code', async () => {
+  const screen = await render(
+    <div style={{ width: 120 }}>
+      <Meta numeric>+12 −3</Meta>
+      <Body lines={2}>A message long enough to need more than two lines at this narrow width, so it is cut.</Body>
+      <Body>
+        Run <Code size="inline">pnpm dev</Code> first.
+      </Body>
+    </div>,
+  )
+  expect(getComputedStyle(screen.getByText('+12 −3').element()).fontVariantNumeric).toBe('tabular-nums')
+  const clamped = screen.getByText(/A message long enough/).element()
+  expect(clamped.getBoundingClientRect().height).toBe(44)
+  expect(parseFloat(getComputedStyle(screen.getByText('pnpm dev').element()).fontSize)).toBeCloseTo(14 * 0.92, 1)
 })

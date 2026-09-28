@@ -5,6 +5,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -160,25 +162,38 @@
   --terminal: oklch(0.165 0.004 285.9);
 }
 
-/* The type scale, the same five sizes as the Pen components. Only components/Typography.tsx
-   uses these classes (lint: ade/type-scale); everything else renders text through its components.
-   The kit keeps its own sizes.
-     meta     11px  <Meta>     status bar, times, counts
-     caption  12px  <Caption>  tabs, section labels; <Code> is the same size in mono
-     ui       13px  <Text>     rows, buttons, menus: the default for controls
-     body     14px  <Body>     messages and text people read or type
-     title    15px  <Title>    dialog and pane titles */
+/* Type. Fonts are Inter and JetBrains Mono, as in the Pen designs, bundled with the app.
+   The scale is the Pen components' sizes, in rem so one root size scales all text. Only
+   components/Typography.tsx uses these classes (lint: ade/type-scale); everything else renders
+   text through its components.
+     meta     11px  <Meta>                  status bar, times, counts
+     caption  12px  <Caption>, <Code>       tabs, section labels, code
+     ui       13px  <Text>                  rows, buttons, menus: the default for controls
+     body     14px  <Body>                  messages and text people read or type
+     title    15px  <Title>                 dialog and pane titles
+     page     20px  <Heading level="page">  full-screen view titles
+     display  28px  <Heading level="display">  onboarding
+   The kit's own text-sm is moved from 14 to 13px, so kit menus, buttons and inputs sit on the same
+   scale as ADE's rows; text-xs is already 12px. */
 @theme {
-  --text-meta: 11px;
-  --text-meta--line-height: 16px;
-  --text-caption: 12px;
-  --text-caption--line-height: 16px;
-  --text-ui: 13px;
-  --text-ui--line-height: 20px;
-  --text-body: 14px;
-  --text-body--line-height: 22px;
-  --text-title: 15px;
-  --text-title--line-height: 22px;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', monospace;
+  --text-meta: 0.6875rem;
+  --text-meta--line-height: 1rem;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.25rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.375rem;
+  --text-title: 0.9375rem;
+  --text-title--line-height: 1.375rem;
+  --text-page: 1.25rem;
+  --text-page--line-height: 1.75rem;
+  --text-display: 1.75rem;
+  --text-display--line-height: 2.25rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
 }
 
 @layer base {

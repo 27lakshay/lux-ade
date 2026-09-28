@@ -245,3 +245,8 @@ invalid(
   /not a fill step/,
   'fixture.tsx',
 )
+
+valid('text-elements', 'allows the typography components', '<Body>Hello</Body>', 'fixture.tsx')
+valid('text-elements', 'allows other elements', '<section><span /></section>', 'fixture.tsx')
+invalid('text-elements', 'reports a paragraph', '<p>Hello</p>', /<Body>/, 'fixture.tsx')
+invalid('text-elements', 'reports a heading', '<h1>Settings</h1>', /<Heading>/, 'fixture.tsx')

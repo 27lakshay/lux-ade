@@ -88,13 +88,26 @@ claiming a UI change works.
   `ade/surface-steps` refuses `border`, `divide` and fills off these steps (status colours
   excepted).
 - Text: render it with the typography components in `components/Typography.tsx`, never with size
-  or weight classes. `<Title>` 15px semibold (dialog and pane titles), `<Body>` 14 (messages, text
-  people read or type), `<Text>` 13 (rows, buttons, menus), `<Caption>` 12 (tabs, section labels),
-  `<Meta>` 11 muted (status bar, times, counts), `<Code>` 12 mono. Props: `tone` (`default`,
-  `muted`, `inherit`), `weight`, `truncate`, `as`; `className` is for placement only.
-  `ade/type-scale` refuses size, weight, line-height and `font-mono` classes outside that file.
-  The kit keeps its own sizes. shadcn's "typography" entries are prose examples, not components;
-  long-form markdown gets its own styles when it is built.
+  or weight classes or raw `<p>`/`<h1>`–`<h6>`. Fonts are Inter and JetBrains Mono (bundled).
+
+  | Component | Size | For |
+  |---|---|---|
+  | `<Heading level="display">` | 28 semibold | Onboarding |
+  | `<Heading>` | 20 semibold | Full-screen view titles |
+  | `<Title>` | 15 semibold | Dialog and pane titles |
+  | `<Body>` | 14 | Messages, text people read or type |
+  | `<Text>` | 13 | Rows, buttons, menus |
+  | `<Caption>` | 12 | Tabs, section labels |
+  | `<Meta>` | 11 muted | Status bar, times, counts |
+  | `<Code>` | 12 mono | Code, paths, commands; `size="inline"` inside other text |
+
+  Props: `tone` (`default`, `muted`, `inherit`), `weight`, `truncate`, `lines` (2–4), `numeric`
+  (tabular figures), `selectable` (off for chrome text, on for `Body` and `Code`), `as`;
+  `className` is for placement only. The theme moves the kit's `text-sm` to 13px, so kit menus and
+  buttons match `<Text>`. Lint: `ade/type-scale` (no size, weight, line-height or `font-mono`
+  classes) and `ade/text-elements` (no raw paragraphs or headings) outside that file. In Pen the
+  same steps are the `type-*` variables and the "Type / …" text components. Agent markdown gets
+  a `<Prose>` component built from these when the conversation is built.
 - Status: `<Status state="needsYou" />` (`idle`, `running`, `needsYou`, `error`, `done`) is the only
   status mark. Amber means "needs you" and nothing else.
 - Shortcuts: `<Shortcut appCommand="command-palette" />` for native-menu commands (keys from

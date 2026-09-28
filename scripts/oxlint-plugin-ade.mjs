@@ -275,6 +275,34 @@ const typeScale = {
   },
 }
 
+const TEXT_ELEMENTS = {
+  p: '<Body>',
+  h1: '<Heading>',
+  h2: '<Title>',
+  h3: '<Title as="h3">',
+  h4: '<Title as="h4">',
+  h5: '<Caption as="h4">',
+  h6: '<Caption as="h4">',
+}
+
+const textElements = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'Paragraphs and headings are rendered through the typography components.' },
+  },
+  create(context) {
+    return {
+      JSXOpeningElement(node) {
+        if (node.name.type !== 'JSXIdentifier' || !Object.hasOwn(TEXT_ELEMENTS, node.name.name)) return
+        context.report({
+          node,
+          message: `Use ${TEXT_ELEMENTS[node.name.name]} from components/Typography.tsx instead of <${node.name.name}>: it sets the size, weight and line height.`,
+        })
+      },
+    }
+  },
+}
+
 // The fill steps, darkest to lightest, plus the colours that mark status and diffs.
 const SURFACES = new Set([
   'sidebar',
@@ -345,6 +373,7 @@ export default {
     'icon-size-class': iconSizeClass,
     'icon-button-label': iconButtonLabel,
     'type-scale': typeScale,
+    'text-elements': textElements,
     'surface-steps': surfaceSteps,
   },
 }

@@ -35,8 +35,6 @@
     "streamdown",
     "zod",
     "motion",
-    "@fontsource-variable/inter",
-    "@fontsource-variable/jetbrains-mono",
     "@codemirror/state",
     "@codemirror/view",
     "@pierre/trees",
