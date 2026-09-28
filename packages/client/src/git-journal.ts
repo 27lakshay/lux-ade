@@ -23,13 +23,14 @@ const maxRecords = 256
 
 /**
  * A caller-chosen request ID: the desktop sends UUIDs, the CLI takes any
- * `--request-id` of 1 to 256 characters. Control characters are refused.
+ * `--request-id` of 1 to 256 UTF-8 bytes, the contract's limit. Control
+ * characters are refused.
  */
 function requestId(value: unknown): boolean {
   return (
     typeof value === 'string' &&
     value.length > 0 &&
-    value.length <= 256 &&
+    Buffer.byteLength(value) <= 256 &&
     [...value].every((character) => character.charCodeAt(0) >= 0x20 && character.charCodeAt(0) !== 0x7f)
   )
 }

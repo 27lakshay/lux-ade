@@ -54,9 +54,10 @@ export function usedOperationId(): string | undefined {
 
 /** The profile this invocation acts for, as its client journals name it, and where they live. */
 type JournalOwner = { profileId: string; directory: string }
-let journalOwner: JournalOwner | undefined
+let journalOwner: (() => JournalOwner) | undefined
 
-export function selectJournalOwner(owner: JournalOwner): void {
+/** Names where this invocation's journals live; resolved only when a command uses them. */
+export function selectJournalOwner(owner: () => JournalOwner): void {
   journalOwner = owner
 }
 
@@ -68,7 +69,7 @@ export function selectJournalOwner(owner: JournalOwner): void {
  */
 export async function withJournals<T>(work: (journals: ClientJournals, profileId: string) => Promise<T>): Promise<T> {
   if (!journalOwner) throw new CliError('protocol', 'Client journals are unavailable for this command.')
-  const { profileId, directory } = journalOwner
+  const { profileId, directory } = journalOwner()
   let release: () => Promise<void>
   let journals: ClientJournals
   try {
@@ -170,10 +171,10 @@ export function positionals(parsed: ParsedWords, count: number, usage: string): 
 /** A caller-owned request ID, retained by the caller and reused only to retry the same request. */
 export function requestIdOption(parsed: ParsedWords, command: string): string {
   const id = parsed.options['--request-id']
-  if (!id || id.length > 256) {
+  if (!id || Buffer.byteLength(id) > 256) {
     throw new CliError(
       'usage',
-      `${command} requires --request-id ID (1 to 256 characters); reuse it only to retry the same request.`,
+      `${command} requires --request-id ID (1 to 256 bytes); reuse it only to retry the same request.`,
     )
   }
   return id

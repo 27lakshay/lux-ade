@@ -2,6 +2,8 @@
 // journal (the profile's client directory) before its first attempt. A prompt the
 // daemon never answered, because it was stopped, is delivered once the daemon is
 // back, under its original request ID, and never twice.
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   expect,
   prompts,
@@ -73,4 +75,43 @@ test('a prompt the daemon refuses leaves the CLI journal at once', async ({ prof
   expect(JSON.stringify(refused.json)).toContain('different prompt')
   expect((await profile.cli('conversation', 'pending')).json).toEqual({ type: 'held_sends', sends: [] })
   expect(await turnStarts(profile)).toEqual(['cli-first'])
+})
+
+test('a relative ADE_CLIENT_DIR holds the CLI journal under the working directory and breaks no other command', async ({
+  profile,
+}) => {
+  const env = { ADE_CLIENT_DIR: 'client-journals' }
+  expect((await profile.cliWith({ env }, 'status')).code).toBe(0)
+  const { conversationId } = await startConversation(profile, 'codex')
+  await profile.killDaemon()
+  const held = await profile.cliWith({ env }, 'conversation', 'send', conversationId, prompts.turn)
+  expect(held.code, held.stderr).toBe(3)
+  const journal = JSON.parse(
+    await readFile(join(profile.defaultWorkspaceRoot, 'client-journals', 'pending-sends-v1.json'), 'utf8'),
+  ) as { records: { conversationId: string }[] }
+  expect(journal.records.map((record) => record.conversationId)).toEqual([conversationId])
+  // The default journal never saw it.
+  expect((await profile.cli('conversation', 'pending')).json).toEqual({ type: 'held_sends', sends: [] })
+})
+
+test('a Git request ID is limited to 256 UTF-8 bytes, and a stage refused unsent blocks nothing', async ({
+  ade,
+  profile,
+}) => {
+  const repo = await ade.repo({ initialFiles: { 'a.txt': 'a\n' } })
+  await repo.write('a.txt', 'changed\n')
+  const workspaceId = (await profile.call('workspace.open', { path: repo.path })).workspace.id
+  const { revision } = await profile.call('review.status', { workspace_id: workspaceId, force: true })
+  // 129 two-byte characters: under 256 characters, over 256 bytes.
+  const tooLong = await profile.cli('git', 'stage', workspaceId, 'a.txt', revision, '--request-id', 'é'.repeat(129))
+  expect(tooLong.json).toMatchObject({ code: 'usage' })
+  // A stage the daemon never received leaves no record, so the next one goes through.
+  await profile.killDaemon()
+  const unsent = await profile.cli('git', 'stage', workspaceId, 'a.txt', revision, '--request-id', 'stage-unsent')
+  expect(unsent.json).toMatchObject({ code: 'unavailable' })
+  await profile.restartDaemon()
+  expect((await profile.cli('git', 'recovery', workspaceId)).json).toMatchObject({ pending: null })
+  const fresh = await profile.call('review.status', { workspace_id: workspaceId, force: true })
+  const staged = await profile.cli('git', 'stage', workspaceId, 'a.txt', fresh.revision, '--request-id', 'stage-next')
+  expect(staged.code, staged.stderr).toBe(0)
 })

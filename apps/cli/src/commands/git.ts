@@ -223,7 +223,7 @@ function gitMutationArgs(
     positionals.length !== (action === 'discard' ? 4 : 3) ||
     rest[flag] !== '--request-id' ||
     !rest[flag + 1] ||
-    rest[flag + 1].length > 256
+    Buffer.byteLength(rest[flag + 1]) > 256
   ) {
     throw new CliError(
       'usage',

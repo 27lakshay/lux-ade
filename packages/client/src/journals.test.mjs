@@ -3,7 +3,6 @@
 // `e2e/protocol/conversations/cli-journal.spec.ts`.
 // Run after `pnpm build:sdk`: node --test packages/client/src/journals.test.mjs
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,8 +10,9 @@ import { test } from 'node:test'
 import {
   deliverHeldSends,
   heldDirectSends,
-  lockJournalDirectory,
   openClientJournals,
+  sendGitMutation,
+  GitOperationBlocked,
   SendHeld,
   sendJournaled,
   socketProfileId,
@@ -129,19 +129,24 @@ test('a socket reached without a managed profile gets a stable profile ID', () =
   assert.notEqual(socketProfileId('/tmp/a/d.sock'), socketProfileId('/tmp/b/d.sock'))
 })
 
-test('the journal directory lock admits one process and takes over from an exited owner', async (t) => {
+test('a Git request ID is limited in UTF-8 bytes, as the contract limits it', async (t) => {
+  const { git } = await openClientJournals(await scratch(t))
+  // 128 two-byte characters are 256 bytes; one more is 258 bytes in 129 characters.
+  await git.prepare({ ...gitIntent, request_id: 'é'.repeat(128) })
+  await git.release('profile-a', 'workspace-a', 'é'.repeat(128))
+  await assert.rejects(git.prepare({ ...gitIntent, request_id: 'é'.repeat(129) }), /Invalid Git recovery intent/)
+})
+
+test('a Git mutation that never reached the daemon leaves the journal, so it blocks nothing', async (t) => {
   const directory = await scratch(t)
-  const release = await lockJournalDirectory(directory)
-  await assert.rejects(lockJournalDirectory(directory, 100), /in use by another process/)
-  await release()
-  const again = await lockJournalDirectory(directory, 100)
-  await again()
-  // A lock left by a process that has exited is taken over at once.
-  const exited = spawn(process.execPath, ['-e', ''])
-  const pid = exited.pid
-  await new Promise((done) => exited.on('exit', done))
-  await writeFile(join(directory, 'journals.lock'), String(pid))
-  const takenOver = await lockJournalDirectory(directory, 100)
-  assert.equal(await readFile(join(directory, 'journals.lock'), 'utf8'), String(process.pid))
-  await takenOver()
+  const { git } = await openClientJournals(directory)
+  const endpoint = join(directory, 'no-daemon.sock')
+  await assert.rejects(sendGitMutation(git, endpoint, gitIntent, { oneAtATime: false }), { delivery: 'not_sent' })
+  assert.equal(await git.pending('profile-a', 'workspace-a'), null)
+  // Another mutation in the workspace is not blocked by the unsent one.
+  await assert.rejects(
+    sendGitMutation(git, endpoint, { ...gitIntent, request_id: 'another' }, { oneAtATime: false }),
+    (error) => !(error instanceof GitOperationBlocked),
+  )
+  assert.equal(await git.pending('profile-a', 'workspace-a'), null)
 })

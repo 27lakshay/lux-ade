@@ -82,6 +82,12 @@ async function releaseRefusedGitRecord(
   error: unknown,
 ): Promise<void> {
   const send = requestFailure(error)
+  // Nothing reached the daemon (a request its contract refuses, or a socket that
+  // never connected), so it can hold nothing: the record goes without asking.
+  if (send?.delivery === 'not_sent') {
+    await journal.release(intent.profile_id, intent.workspace_id, intent.request_id)
+    return
+  }
   if (!definiteRefusal(send)) return
   let lookup: RequestFailure | null = null
   let settled = false

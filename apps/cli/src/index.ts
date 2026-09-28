@@ -317,16 +317,20 @@ async function profileSocket(profileId: string): Promise<{ socket: string; home:
 /**
  * Where this invocation's client journals live. A managed profile keeps them in
  * its client directory, beside its runtime home. A daemon reached by socket alone
- * keeps them under `ADE_CLIENT_DIR`, or the user's `~/.ade/client`, named for the socket.
+ * keeps them under `ADE_CLIENT_DIR` (relative to the working directory), or the
+ * user's `~/.ade/client`, named for the socket. Only commands that use the
+ * journals ask, so a bad `ADE_CLIENT_DIR` never breaks any other command.
  */
 function journalOwner(profileId: string | undefined, endpoint: string, home: string | undefined) {
-  if (profileId && home) return { profileId, directory: join(dirname(home), 'client') }
-  const id = socketProfileId(endpoint)
-  const override = process.env.ADE_CLIENT_DIR
-  if (override !== undefined && !isAbsolute(override)) {
-    throw new CliError('usage', 'ADE_CLIENT_DIR must be an absolute directory path.')
+  return () => {
+    if (profileId && home) return { profileId, directory: join(dirname(home), 'client') }
+    const id = socketProfileId(endpoint)
+    const override = process.env.ADE_CLIENT_DIR
+    if (override !== undefined && (!override || override.includes('\0'))) {
+      throw new CliError('usage', 'ADE_CLIENT_DIR must name a directory.')
+    }
+    return { profileId: id, directory: override ? resolve(override) : join(homedir(), '.ade', 'client', id) }
   }
-  return { profileId: id, directory: override ?? join(homedir(), '.ade', 'client', id) }
 }
 
 // Each command area in the order `run` consults it; an area returns undefined when it does not match.
