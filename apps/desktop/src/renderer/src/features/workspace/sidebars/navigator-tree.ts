@@ -15,6 +15,8 @@ export interface NavigatorProject {
   /** The repository id, or the workspace id for a plain folder. */
   id: string
   name: string
+  /** A Git repository, which can have worktrees; a plain folder cannot. */
+  repository: boolean
   workspaces: NavigatorWorkspace[]
 }
 
@@ -22,8 +24,8 @@ const byName = <T extends { name: string }>(a: T, b: T): number =>
   a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
 
 /**
- * Groups workspaces into projects. `projectNames` names repositories; without one, a repository
- * project takes the name of its first workspace.
+ * Groups workspaces into projects. `projectNames` names repositories (the catalog's
+ * `repositories`); a repository missing from it takes the name of its first workspace.
  */
 export function navigatorTree(
   workspaces: Workspace[],
@@ -39,7 +41,12 @@ export function navigatorTree(
   const projects = new Map<string, NavigatorProject>()
   for (const workspace of workspaces) {
     const projectId = workspace.repository_id ?? workspace.id
-    const project = projects.get(projectId) ?? { id: projectId, name: '', workspaces: [] }
+    const project = projects.get(projectId) ?? {
+      id: projectId,
+      name: '',
+      repository: workspace.repository_id !== null,
+      workspaces: [],
+    }
     project.workspaces.push({
       id: workspace.id,
       name: workspace.name,

@@ -38,6 +38,7 @@ import { registerReviewIpc, setGitJournal } from './review'
 import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
 import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge } from './stream-bridge'
+import { registerWorkspaceActionIpc } from './workspace-actions'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
 import { installAppMenu } from './app-menu'
 import { registerAppScheme, serveAppScheme, windowUrl } from './app-protocol'
@@ -85,6 +86,7 @@ listen('ade:window-minimum-size', (event, width: unknown, height: unknown) => {
 registerProfileIpc()
 registerConversationIpc()
 registerWorkspaceIpc()
+registerWorkspaceActionIpc()
 registerServiceIpc()
 registerReviewIpc()
 registerFileIpc()

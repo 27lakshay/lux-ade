@@ -15,6 +15,7 @@ import { MotionProvider } from './MotionProvider'
 import { startMotionPreference } from './motion-preference'
 import { CommandPalette, openCommandPalette } from '../provisional/CommandPalette'
 import { ConfirmHost } from '../provisional/ConfirmDialog'
+import { NameHost } from '../provisional/NameDialog'
 import { ErrorReport } from '../provisional/ErrorReport'
 import './app.css'
 import { commandService, registerAppCommands } from './commands'
@@ -78,6 +79,7 @@ export async function start(): Promise<void> {
                     <RouterProvider router={router} />
                     <CommandPalette service={commandService} />
                     <ConfirmHost />
+                    <NameHost />
                   </Toaster>
                 </TooltipProvider>
               </IconProvider>

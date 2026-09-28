@@ -10,6 +10,8 @@ import { createDaemonStore } from '../../state/daemon-store'
 import { clientState, createFakeHost } from '../../state/fake-host'
 import { DaemonStoreContext } from '../../state/hooks'
 import { MotionProvider } from '../../app/MotionProvider'
+import { ConfirmHost } from '../../provisional/ConfirmDialog'
+import { NameHost } from '../../provisional/NameDialog'
 import '../../app/app.css'
 import type { RenderContent } from './content/ContentHosts'
 import { defaultLayout } from './model/layout'
@@ -57,6 +59,8 @@ export function renderWorkspace(renderContent?: RenderContent) {
               <TooltipProvider delay={0}>
                 <Toaster>
                   <RouterProvider router={router} />
+                  <ConfirmHost />
+                  <NameHost />
                 </Toaster>
               </TooltipProvider>
             </MotionProvider>

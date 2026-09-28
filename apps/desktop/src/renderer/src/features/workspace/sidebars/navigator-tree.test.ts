@@ -37,6 +37,7 @@ test('workspaces group into projects by repository; plain folders are projects o
   ])
   expect(tree[1]!.workspaces[1]!.conversations.map((c) => c.id)).toEqual(['c1', 'c2'])
   expect(tree[2]!.id).toBe('w3')
+  expect(tree.map((project) => project.repository)).toEqual([true, true, false])
 })
 
 test('names sort naturally and without regard to case', () => {

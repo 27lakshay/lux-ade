@@ -7,7 +7,7 @@ import { Text } from './Typography'
 // menu that is one line and can be clicked is a Row, so rows line up and behave the same.
 
 /** Indent per tree level, on the 4px grid. */
-const INDENT = 16
+export const INDENT = 16
 
 type RowProps = Omit<ComponentProps<'button'>, 'children'> & {
   children: ReactNode

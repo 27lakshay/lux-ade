@@ -16,6 +16,8 @@ export interface DaemonState {
   workspaces: Record<string, Workspace>
   conversationIds: string[]
   conversations: Record<string, Conversation>
+  /** Each Git repository's name (its checkout folder), by the `repository_id` workspaces carry. */
+  repositoryNames: Record<string, string>
 }
 
 export type DaemonStore = StoreApi<DaemonState>
@@ -29,6 +31,7 @@ const initialState: DaemonState = {
   workspaces: {},
   conversationIds: [],
   conversations: {},
+  repositoryNames: {},
 }
 
 function sameRecord(previous: unknown, next: unknown): boolean {
@@ -54,6 +57,9 @@ function normalize<T extends { id: string }>(
 function reduceClientState(state: DaemonState, client: ClientState): DaemonState {
   const workspaces = normalize(client.catalog?.workspaces ?? [], state.workspaceIds, state.workspaces)
   const conversations = normalize(client.catalog?.conversations ?? [], state.conversationIds, state.conversations)
+  const repositoryNames = Object.fromEntries(
+    (client.catalog?.repositories ?? []).map((repository) => [repository.id, repository.name]),
+  )
   return {
     status: client.status,
     detail: client.detail,
@@ -63,6 +69,7 @@ function reduceClientState(state: DaemonState, client: ClientState): DaemonState
     workspaces: workspaces.byId,
     conversationIds: conversations.ids,
     conversations: conversations.byId,
+    repositoryNames: sameRecord(state.repositoryNames, repositoryNames) ? state.repositoryNames : repositoryNames,
   }
 }
 
