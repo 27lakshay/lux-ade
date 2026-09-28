@@ -6,7 +6,7 @@
   "tailwind": {
     "config": "",
     "css": "src/renderer/src/shadcn.css",
-    "baseColor": "neutral",
+    "baseColor": "stone",
     "cssVariables": true,
     "prefix": ""
   },

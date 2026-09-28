@@ -27,7 +27,8 @@ in UI copy.
 - A surface without one is built from the stock shadcn kit, with stock compositions and blocks and
   no custom styling, under `src/renderer/src/provisional/`. It moves out when its Pen design is
   approved and built.
-- The kit keeps the stock shadcn theme (Nova, neutral). Do not restyle kit components.
+- The kit keeps the stock shadcn theme (Nova preset, Stone base colour, which matches the warm
+  baseline). Do not restyle kit components.
 
 ## Tests
 
