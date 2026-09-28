@@ -16,6 +16,23 @@ Branch `claude/agent-a757510279c0b8dab`, rebased on `main` at `69bdf5c`.
 One renderer test (`command-service.test.ts`, "Frame was detached") failed once in the
 first gate run and passed on rerun; it does not touch this lane's code.
 
+## Review fixes (2026-09-29)
+
+| Finding | Fix | Evidence |
+|---|---|---|
+| 1. `terminal.close` could orphan a live shell restarted between its stop and its retirement | Each round holds `leases` across reading the runtime and stopping or retiring, as `terminal.retire` does. A shell found running again is stopped again, until a 10-second deadline | E2E "a close racing restarts never leaves a shell running without its record" |
+| 2. Title and busy changes were written with `synchronous=FULL` under the sessions lock | `Store` keeps live state in memory. Only status, exit code, program and a settled title are written. The feed sends status and busy at once, and a title-only change at most once a second, always ending on the latest title | Unit tests `busy_and_a_running_title_stay_in_memory...`, `the_feed_sends_busy_at_once...`; E2E "an animated title reaches the feed about once a second..." |
+| 3. The SDK rejected the whole catalog for an unknown terminal kind or status | The contract gives `kind` and `status` as open strings. The SDK keeps unknown values and drops only a malformed terminal | `catalog.test.mjs`; contract test |
+| 4. Without `force`, a command started after the busy check was killed | The runtime's `terminal.stop` gains `if_idle`. The terminal host checks the foreground group under its state lock just before signalling. A command can still start between `tcgetpgrp` and the signal, a window of microseconds | E2E busy refusal now comes from the runtime's check |
+
+Results after the fixes:
+
+- `terminals3`, `terminals`, `terminals2`, `workspaces`, `reliability-core/envelope`, `services/scripts`, `services/recovery` and `restarts`: 131 passed, 1 skipped.
+- Every `check:static` step passes: 834 Rust tests passed, 5 skipped.
+- The renderer motion test (`motion.test.tsx`, a frame-count assertion) failed twice inside the full gate while the machine load average was about 15. It passed on its own both times. It does not touch this lane's code.
+- The race E2E was not run against the code before the fix, so it is unproven that it would have caught the original bug.
+- The coordinator accepted decisions 1 to 5. The desktop treats closing a service, script or Conversation terminal's tab as leaving the layout only.
+
 ## What was built
 
 - **Records.** Table `terminals(id, workspace_id, data)`, filled from every workspace by
