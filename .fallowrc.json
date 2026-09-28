@@ -5,7 +5,9 @@
     "apps/desktop/src/preload/index.ts",
     "apps/desktop/src/stream-bridge/index.ts",
     "apps/desktop/src/renderer/src/bootstrap.ts",
-    "apps/desktop/src/renderer/src/dev/*.ts"
+    "apps/desktop/src/renderer/src/dev/*.ts",
+    // Node's own test runner runs these (the root check:static script); nothing imports them.
+    "apps/desktop/src/**/*.test.mjs"
   ],
   // The stock shadcn/ui kit: installed whole, used piece by piece, so unused parts are expected.
   "ignoreFindings": [

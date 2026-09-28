@@ -5,6 +5,7 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 import { contentSecurityPolicy } from './src/shared/content-security-policy'
+import { injectBeforeEntry } from './src/shared/dev-helpers'
 
 // Development-only renderer helpers, injected ahead of the app's entry by the dev server and never
 // built into the app. See docs/agents/desktop-debugging.md.
@@ -20,11 +21,7 @@ function devHelpers(): Plugin {
   return {
     name: 'ade-dev-helpers',
     apply: 'serve',
-    transformIndexHtml(html) {
-      const scripts = helpers.map((path) => `<script type="module" src="${path}"></script>`).join('\n    ')
-      // Vite appends ?t=… to the entry once it changes during a session, so match that too.
-      return html.replace(/<script type="module" src="\.\/src\/bootstrap\.ts[^"]*">/, `${scripts}\n    $&`)
-    },
+    transformIndexHtml: (html) => injectBeforeEntry(html, helpers),
   }
 }
 
