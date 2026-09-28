@@ -18,8 +18,10 @@ export function ErrorReport({ error, onRetry }: { error: unknown; onRetry: () =>
       </EmptyHeader>
       <EmptyContent>
         <div className="flex gap-2">
-          <Button onClick={onRetry}>Try again</Button>
-          <Button variant="outline" onClick={copy}>
+          <Button size="sm" onClick={onRetry}>
+            Try again
+          </Button>
+          <Button size="sm" variant="secondary" onClick={copy}>
             {copied ? 'Copied' : 'Copy error report'}
           </Button>
         </div>

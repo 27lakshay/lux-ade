@@ -91,8 +91,8 @@ test('text is set in Inter and code in JetBrains Mono, both bundled', async () =
 })
 
 test("the kit's text sits on the same scale as ADE's rows", async () => {
-  // Kit buttons and menus use text-sm; the theme moves it to 13px, the size of <Text>.
-  const screen = await render(<Button>Commit</Button>)
+  // Kit controls and menus use text-sm; the theme moves it to 13px, the size of <Text>.
+  const screen = await render(<Button size="default">Commit</Button>)
   expect(getComputedStyle(screen.getByRole('button', { name: 'Commit' }).element()).fontSize).toBe('13px')
 })
 

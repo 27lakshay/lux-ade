@@ -143,6 +143,12 @@
         "ade/type-scale": "error",
         "ade/text-elements": "error",
         "ade/surface-steps": "error",
+        "ade/spacing-grid": "error",
+        "ade/fixed-heights": "error",
+        "ade/radius-steps": "error",
+        "ade/scroll-area": "error",
+        "ade/kit-button-size": "error",
+        "ade/button-copy": "error",
         "max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }]
       }
     },
@@ -186,6 +192,12 @@
         "ade/type-scale": "off",
         "ade/text-elements": "off",
         "ade/surface-steps": "off",
+        "ade/spacing-grid": "off",
+        "ade/fixed-heights": "off",
+        "ade/radius-steps": "off",
+        "ade/scroll-area": "off",
+        "ade/kit-button-size": "off",
+        "ade/button-copy": "off",
         "max-lines": "off"
       }
     },

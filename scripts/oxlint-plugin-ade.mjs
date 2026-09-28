@@ -1,3 +1,5 @@
+import { classRules } from './oxlint-rules-classes.mjs'
+
 // ADE's own Oxlint rules. Each rule has cases in oxlint-plugin-ade.test.mjs.
 
 // Settings every window and view must state, and the value each must have.
@@ -237,44 +239,6 @@ const iconButtonLabel = {
   },
 }
 
-// Class names in any className, however it is built.
-const classesIn = (node) =>
-  stringsIn(node)
-    .flatMap((value) => value.split(/\s+/))
-    .filter(Boolean)
-// 'hover:bg-muted/50' → 'bg-muted'
-const utility = (name) =>
-  name
-    .replace(/^!/, '')
-    .split(':')
-    .at(-1)
-    .replace(/^!/, '')
-    .replace(/\/[\w.[\]]+$/, '')
-
-// Size, weight, line height and the mono face belong to components/Typography.tsx.
-const TYPE_CLASS =
-  /^(text-(xs|sm|base|lg|xl|[2-9]xl|meta|caption|ui|body|title|\[[^\]]*\])|font-(thin|extralight|light|normal|medium|semibold|bold|extrabold|black|mono)|leading-.+)$/
-
-const typeScale = {
-  meta: {
-    type: 'problem',
-    docs: { description: 'Text is rendered through the typography components.' },
-  },
-  create(context) {
-    return {
-      JSXAttribute(node) {
-        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'className') return
-        const bad = classesIn(node.value).find((name) => TYPE_CLASS.test(utility(name)))
-        if (!bad) return
-        context.report({
-          node,
-          message: `"${bad}": render text with <Title>, <Body>, <Text>, <Caption>, <Meta> or <Code> from components/Typography.tsx, which set size, weight and line height. Use their tone, weight and truncate props.`,
-        })
-      },
-    }
-  },
-}
-
 const TEXT_ELEMENTS = {
   p: '<Body>',
   h1: '<Heading>',
@@ -303,59 +267,57 @@ const textElements = {
   },
 }
 
-// The fill steps, darkest to lightest, plus the colours that mark status and diffs.
-const SURFACES = new Set([
-  'sidebar',
-  'background',
-  'card',
-  'popover',
-  'muted',
-  'accent',
-  'secondary',
-  'primary',
-  'destructive',
-  'transparent',
-  'current',
-  'terminal',
-  'attention',
-  'attention-muted',
-  'running',
-  'success',
-  'destructive-muted',
-  'diff-add',
-  'diff-add-muted',
-  'diff-remove',
-  'diff-remove-muted',
-])
-const BORDER = /^(border|divide)(-|$)/
-const BORDER_OFF = new Set(['border-0', 'border-none', 'border-transparent', 'border-hidden'])
-
-const surfaceSteps = {
-  meta: {
-    type: 'problem',
-    docs: { description: 'Surfaces separate by fill steps, not borders or ad hoc colours.' },
-  },
+// The kit's Button defaults to 32px; ADE's default control is 28px, so every Button states its size.
+const kitButtonSize = {
+  meta: { type: 'problem', docs: { description: 'Every kit Button states its size.' } },
   create(context) {
     return {
-      JSXAttribute(node) {
-        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'className') return
-        for (const name of classesIn(node.value)) {
-          const base = utility(name)
-          if (BORDER.test(base) && !BORDER_OFF.has(base)) {
-            context.report({
-              node,
-              message: `"${name}": ADE separates surfaces by fill, not borders. Put the element on the next fill step (bg-card inside a pane, bg-popover for floating) instead.`,
-            })
-            return
-          }
-          const fill = /^bg-(.+)$/.exec(base)?.[1]
-          if (fill && !SURFACES.has(fill)) {
-            context.report({
-              node,
-              message: `"${name}" is not a fill step. Use bg-sidebar, bg-background, bg-card, bg-popover, bg-muted or bg-accent (darkest to lightest), or a status colour.`,
-            })
-            return
-          }
+      JSXOpeningElement(node) {
+        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'Button') return
+        if (node.attributes.some((attr) => attr.type === 'JSXSpreadAttribute') || attribute(node, 'size')) return
+        context.report({
+          node,
+          message:
+            'Give <Button> a size: "sm" is ADE\'s default 28px control, "xs" 24px, "icon-sm" a 28px icon button (prefer <IconButton>).',
+        })
+      },
+    }
+  },
+}
+
+// Button copy: sentence case, and say what happens.
+const VAGUE = new Set(['ok', 'okay', 'yes', 'no', 'submit', 'done'])
+const TITLE_CASE = /^[A-Z][a-z]+( [A-Z][a-z]+)+…?$/
+
+function copyProblem(text) {
+  const words = text.trim()
+  if (!words) return null
+  if (VAGUE.has(words.toLowerCase()))
+    return `"${words}" does not say what happens. Name the action: "Delete branch", "Close tab".`
+  if (TITLE_CASE.test(words))
+    return `"${words}": use sentence case ("${words[0]}${words.slice(1).toLowerCase()}"). See docs/agents/ui-copy.md.`
+  return null
+}
+
+const buttonCopy = {
+  meta: { type: 'problem', docs: { description: 'Button labels are sentence case and name the action.' } },
+  create(context) {
+    return {
+      JSXElement(node) {
+        const name = node.openingElement.name
+        if (name.type !== 'JSXIdentifier') return
+        if (name.name === 'Button' || name.name === 'AlertDialogAction' || name.name === 'AlertDialogCancel') {
+          const text = node.children
+            .filter((child) => child.type === 'JSXText')
+            .map((child) => child.value)
+            .join(' ')
+          const problem = copyProblem(text.replace(/\s+/g, ' '))
+          if (problem) context.report({ node, message: problem })
+        }
+        if (name.name === 'IconButton') {
+          const label = attribute(node.openingElement, 'label')?.value
+          const problem = label?.type === 'Literal' && typeof label.value === 'string' ? copyProblem(label.value) : null
+          if (problem) context.report({ node, message: problem })
         }
       },
     }
@@ -372,8 +334,9 @@ export default {
     'icons-from-table': iconsFromTable,
     'icon-size-class': iconSizeClass,
     'icon-button-label': iconButtonLabel,
-    'type-scale': typeScale,
+    ...classRules,
+    'kit-button-size': kitButtonSize,
+    'button-copy': buttonCopy,
     'text-elements': textElements,
-    'surface-steps': surfaceSteps,
   },
 }

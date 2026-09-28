@@ -12,7 +12,9 @@ export function NotFound() {
           <EmptyDescription>This screen does not exist.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button render={<Link to="/" />}>Back to workspace</Button>
+          <Button size="sm" render={<Link to="/" />}>
+            Back to workspace
+          </Button>
         </EmptyContent>
       </Empty>
     </div>

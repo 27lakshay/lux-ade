@@ -250,3 +250,99 @@ valid('text-elements', 'allows the typography components', '<Body>Hello</Body>',
 valid('text-elements', 'allows other elements', '<section><span /></section>', 'fixture.tsx')
 invalid('text-elements', 'reports a paragraph', '<p>Hello</p>', /<Body>/, 'fixture.tsx')
 invalid('text-elements', 'reports a heading', '<h1>Settings</h1>', /<Heading>/, 'fixture.tsx')
+
+invalid(
+  'type-scale',
+  'reads classes in a cn() call outside JSX',
+  "const row = cn('text-sm', active && 'bg-accent')",
+  /Typography/,
+  'fixture.tsx',
+)
+invalid(
+  'surface-steps',
+  'reads cva variant tables',
+  "const variants = cva('p-2', { variants: { tone: { loud: 'border-2' } } })",
+  /not borders/,
+  'fixture.tsx',
+)
+valid(
+  'type-scale',
+  'reads a className cn() call once',
+  '<p className={cn("mt-1", "text-muted-foreground")} />',
+  'fixture.tsx',
+)
+
+valid(
+  'spacing-grid',
+  'allows grid steps, px and variables',
+  '<div className="p-2 px-3 gap-1.5 -mt-1 md:py-6 m-auto p-(--inset)" />',
+  'fixture.tsx',
+)
+invalid('spacing-grid', 'reports an off-grid step', '<div className="px-2.5" />', /off the spacing grid/, 'fixture.tsx')
+invalid(
+  'spacing-grid',
+  'reports an arbitrary gap',
+  '<div className="gap-[13px]" />',
+  /off the spacing grid/,
+  'fixture.tsx',
+)
+invalid(
+  'spacing-grid',
+  'reports an off-grid margin',
+  '<div className="hover:mt-5" />',
+  /off the spacing grid/,
+  'fixture.tsx',
+)
+
+valid(
+  'fixed-heights',
+  'allows control sizes and variables',
+  '<div className="h-7 min-h-0 h-(--titlebar-height) size-4" />',
+  'fixture.tsx',
+)
+invalid('fixed-heights', 'reports a pixel height', '<div className="h-[52px]" />', /control size/, 'fixture.tsx')
+
+valid(
+  'radius-steps',
+  'allows the steps and sides',
+  '<div className="rounded-md rounded-t-xl rounded-full" />',
+  'fixture.tsx',
+)
+invalid('radius-steps', 'reports bare rounded', '<div className="rounded" />', /rounded-sm/, 'fixture.tsx')
+invalid('radius-steps', 'reports off-step radius', '<div className="rounded-2xl" />', /rounded-sm/, 'fixture.tsx')
+invalid('radius-steps', 'reports arbitrary radius', '<div className="rounded-[7px]" />', /rounded-sm/, 'fixture.tsx')
+
+valid('scroll-area', 'allows hidden and clip', '<div className="overflow-hidden overflow-x-clip" />', 'fixture.tsx')
+invalid('scroll-area', 'reports auto scrolling', '<div className="overflow-y-auto" />', /ScrollArea/, 'fixture.tsx')
+
+valid('kit-button-size', 'allows a sized Button', '<Button size="sm">Commit</Button>', 'fixture.tsx')
+invalid(
+  'kit-button-size',
+  'reports a Button without size',
+  '<Button>Commit</Button>',
+  /Give <Button> a size/,
+  'fixture.tsx',
+)
+
+valid('button-copy', 'allows sentence case', '<Button size="sm">Delete branch</Button>', 'fixture.tsx')
+invalid(
+  'button-copy',
+  'reports title case',
+  '<Button size="sm">Review Changes</Button>',
+  /sentence case/,
+  'fixture.tsx',
+)
+invalid(
+  'button-copy',
+  'reports OK',
+  '<AlertDialogAction>OK</AlertDialogAction>',
+  /does not say what happens/,
+  'fixture.tsx',
+)
+invalid(
+  'button-copy',
+  'reports a title-case IconButton label',
+  '<IconButton icon="close" label="Close Tab" />',
+  /sentence case/,
+  'fixture.tsx',
+)

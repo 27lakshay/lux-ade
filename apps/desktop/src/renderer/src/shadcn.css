@@ -65,13 +65,13 @@
   --secondary: oklch(0.956 0.003 286.3);
   --secondary-foreground: oklch(0.179 0.004 286);
   --muted: oklch(0.956 0.003 286.3);
-  --muted-foreground: oklch(0.531 0.014 285.9);
+  --muted-foreground: oklch(0.489 0.014 285.9);
   --accent: oklch(0.929 0.004 286.3);
   --accent-foreground: oklch(0.179 0.004 286);
   --destructive: oklch(0.596 0.197 24);
   --border: oklch(0 0 0 / 6%);
   --input: oklch(0 0 0 / 10%);
-  --ring: oklch(0.712 0.013 286.1);
+  --ring: oklch(0.241 0.008 285.8);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -84,7 +84,7 @@
   --sidebar-accent: oklch(0.929 0.004 286.3);
   --sidebar-accent-foreground: oklch(0.179 0.004 286);
   --sidebar-border: oklch(0 0 0 / 6%);
-  --sidebar-ring: oklch(0.712 0.013 286.1);
+  --sidebar-ring: oklch(0.241 0.008 285.8);
 }
 
 .dark {
@@ -105,7 +105,7 @@
   --destructive: oklch(0.626 0.193 23);
   --border: oklch(1 0 0 / 7%);
   --input: oklch(1 0 0 / 10%);
-  --ring: oklch(0.541 0.014 285.9);
+  --ring: oklch(0.823 0.011 286.2);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -118,7 +118,7 @@
   --sidebar-accent: oklch(0.228 0.006 285.9);
   --sidebar-accent-foreground: oklch(0.947 0.003 286.3);
   --sidebar-border: oklch(1 0 0 / 7%);
-  --sidebar-ring: oklch(0.541 0.014 285.9);
+  --sidebar-ring: oklch(0.823 0.011 286.2);
 }
 
 /* ADE's own colours, beside the kit's. Status colours belong to the Status component: amber
@@ -142,7 +142,7 @@
   --running: oklch(0.561 0.178 260.3);
   --success: oklch(0.575 0.135 153.8);
   --destructive-muted: oklch(0.947 0.022 17.5);
-  --diff-add: oklch(0.575 0.135 153.8);
+  --diff-add: oklch(0.47 0.11 154.2);
   --diff-add-muted: oklch(0.954 0.024 159.1);
   --diff-remove: oklch(0.541 0.191 24.8);
   --diff-remove-muted: oklch(0.947 0.022 17.5);

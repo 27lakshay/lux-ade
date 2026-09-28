@@ -7,7 +7,11 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/
 import '@/shadcn.css'
 
 test('a kit button renders with merged classes', async () => {
-  const screen = await render(<Button className="w-40">Save</Button>)
+  const screen = await render(
+    <Button size="sm" className="w-40">
+      Save
+    </Button>,
+  )
   const button = screen.getByRole('button', { name: 'Save' })
   await expect.element(button).toHaveClass('w-40')
 })
@@ -15,7 +19,7 @@ test('a kit button renders with merged classes', async () => {
 test('a kit dialog opens from its trigger', async () => {
   const screen = await render(
     <Dialog>
-      <DialogTrigger render={<Button />}>Open</DialogTrigger>
+      <DialogTrigger render={<Button size="sm" />}>Open</DialogTrigger>
       <DialogContent>
         <DialogTitle>Settings</DialogTitle>
       </DialogContent>

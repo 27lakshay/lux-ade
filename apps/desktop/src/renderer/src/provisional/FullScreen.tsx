@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { Heading, Text } from '@/components/Typography'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 // The frame every full-screen view shares: the whole window, a draggable title strip that clears the
 // macOS window buttons, and a way back to the workspace. The views themselves are not designed yet;
@@ -13,10 +14,12 @@ export function FullScreen({ title, children }: { title: string; children?: Reac
           <Text tone="inherit">Back to workspace</Text>
         </Link>
       </header>
-      <section className="flex-1 overflow-auto px-10 py-6">
-        <Heading>{title}</Heading>
-        {children}
-      </section>
+      <ScrollArea className="min-h-0 flex-1">
+        <section className="px-10 py-6">
+          <Heading>{title}</Heading>
+          {children}
+        </section>
+      </ScrollArea>
     </main>
   )
 }
