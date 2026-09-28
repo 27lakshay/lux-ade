@@ -459,6 +459,7 @@ export type ContractDefinition =
   | OutputCoverageStatus
   | PackageRegistry
   | PairingState
+  | PaneCloseRequest
   | PaneNode
   | ParentMessageQueued
   | ParentSendRequest
@@ -800,6 +801,7 @@ export type ContractDefinition =
   | Support
   | SwitchContinuity
   | Tab
+  | TabCloseRequest
   | TabTarget
   | TerminalChanged
   | TerminalCloseRequest
@@ -1700,17 +1702,22 @@ export type TabTarget =
     }
 /**
  * Every change to a layout. New pane and tab IDs come in with the action,
- * so applying it is deterministic and a retry finds what the first made.
+ * and state changes name the state they set, so applying an action twice
+ * gives what applying it once gave. Only `move_pane`, `swap_panes` and
+ * `dock_pane` move a pane relative to where it is now; `layout.apply`
+ * requires `expected_revision` for them, so a retry is recognised.
  * Actions naming a pane, split or tab that is not there change nothing.
  */
 export type LayoutAction =
   | {
-      type: 'swap_sidebars'
+      left: SidebarId
+      type: 'set_sidebar_sides'
       [k: string]: unknown
     }
   | {
+      collapsed: boolean
       side: Side
-      type: 'toggle_side'
+      type: 'set_side_collapsed'
       [k: string]: unknown
     }
   | {
@@ -1806,8 +1813,8 @@ export type LayoutAction =
       [k: string]: unknown
     }
   | {
-      pane_id: string
-      type: 'toggle_maximize'
+      pane_id?: string | null
+      type: 'set_maximized'
       [k: string]: unknown
     }
   | {
@@ -4611,6 +4618,15 @@ export interface Window {
    */
   bounds: WindowBounds | null
   id: string
+  /**
+   * The revision of each layout the window has stored, by workspace ID.
+   * After missing feed frames (a reconnect), a client compares these with
+   * the revisions it holds and reads each layout that differs with
+   * `layout.get`; a workspace absent here has the default layout.
+   */
+  layouts: {
+    [k: string]: number
+  }
   state: WindowState
   view: WindowView
   /**
@@ -8529,12 +8545,10 @@ export interface LayoutRecord {
 /**
  * `layout.apply`: apply one action to a window's layout for a workspace.
  *
- * Closing a tab follows its target (daemon-authority decision 5): when the
- * change removes the last tab of a shell terminal from this layout, that
- * terminal closes first, as `terminal.close` would, and its tabs leave every
- * layout. A busy one refuses the change with `terminal_busy`, listing each
- * busy terminal in `terminals`, unless `force` is true. Service, script and
- * Conversation terminal tabs, and every other target, only leave the layout.
+ * It never ends a process. A change that would remove the last tab, counted
+ * across every window's layouts, of a running shell terminal is refused with
+ * `tab_close_required`, listing those tabs in `tabs`; `tab.close` and
+ * `pane.close` close such tabs and their shells.
  */
 export interface LayoutApplyRequest {
   action: LayoutAction
@@ -8544,11 +8558,6 @@ export interface LayoutApplyRequest {
    * from that revision, which returns its result.
    */
   expected_revision?: number | null
-  /**
-   * Close busy shell terminals whose tabs this change removes. Without
-   * it a busy one refuses the whole change with `terminal_busy`.
-   */
-  force?: boolean | null
   op: 'layout.apply'
   window_id: string
   /**
@@ -8559,6 +8568,9 @@ export interface LayoutApplyRequest {
 /**
  * The `layout_changed` feed frame. `layout.revision` is the layout's own
  * revision; a client keeps the higher of it and what `layout.get` gave.
+ * After a reconnect, a client reads `window.list` (or the catalog's
+ * windows) and re-reads every layout whose revision in `Window.layouts`
+ * differs from its own.
  */
 export interface LayoutChanged {
   boot_id: string
@@ -8601,11 +8613,6 @@ export interface LayoutRemoved {
  */
 export interface LayoutReplaceRequest {
   expected_revision?: number | null
-  /**
-   * Close busy shell terminals whose tabs this change removes. Without
-   * it a busy one refuses the whole change with `terminal_busy`.
-   */
-  force?: boolean | null
   layout: Layout
   op: 'layout.replace'
   window_id: string
@@ -9127,6 +9134,21 @@ export interface OutputCoverage {
   returned_start_offset: number | null
   status: OutputCoverageStatus
   [k: string]: unknown
+}
+/**
+ * `pane.close`: close a pane and its tabs, closing each shell terminal whose
+ * last tab it holds, as `tab.close` does.
+ */
+export interface PaneCloseRequest {
+  force?: boolean | null
+  op: 'pane.close'
+  /**
+   * The caller's operation ID, as for `tab.close`.
+   */
+  operation_id: string
+  pane_id: string
+  window_id: string
+  workspace_id?: string | null
 }
 /**
  * The `orchestration.parent.send` reply: the message is durably queued for
@@ -13094,6 +13116,28 @@ export interface SkillRemoved {
   [k: string]: unknown
 }
 /**
+ * `tab.close`: close a tab, following its target (daemon-authority decision
+ * 5). When the tab is the last one, across every window's layouts, of a
+ * shell terminal, the terminal closes as `terminal.close` would: every busy
+ * shell is found before any closes, and a busy one refuses with
+ * `terminal_busy`, listing each in `terminals`, unless `force` is true.
+ * Service, script and Conversation terminal tabs and every other target only
+ * leave the layout. A closed shell's tabs leave every layout.
+ */
+export interface TabCloseRequest {
+  force?: boolean | null
+  op: 'tab.close'
+  /**
+   * The caller's operation ID. A retry with the same ID and payload
+   * returns the recorded outcome; the same ID with another payload is a
+   * conflict.
+   */
+  operation_id: string
+  tab_id: string
+  window_id: string
+  workspace_id?: string | null
+}
+/**
  * The `terminal_changed` feed frame: a terminal's status, busy state or
  * title changed. At most four per second per terminal. A terminal added or
  * removed arrives as a `catalog` frame instead.
@@ -14506,7 +14550,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "layout.replace"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "layout.replace" | "tab.close" | "pane.close"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -14798,6 +14842,8 @@ export interface RequestByOperation {
   "layout.get": LayoutGetRequest
   "layout.apply": LayoutApplyRequest
   "layout.replace": LayoutReplaceRequest
+  "tab.close": TabCloseRequest
+  "pane.close": PaneCloseRequest
 }
 
 export interface ResponseByOperation {
@@ -15090,6 +15136,8 @@ export interface ResponseByOperation {
   "layout.get": LayoutReply
   "layout.apply": LayoutApplied
   "layout.replace": LayoutApplied
+  "tab.close": LayoutApplied
+  "pane.close": LayoutApplied
 }
 
 export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged | WindowChanged | LayoutChanged | LayoutRemoved

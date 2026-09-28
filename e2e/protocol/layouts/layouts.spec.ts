@@ -3,11 +3,12 @@
 // every layout action with the same core the shared vectors check against the
 // desktop reducer, keeps a revision per layout, refuses a stale one, keeps tab
 // targets pointing at records that exist, and follows workspace removal.
-import { mkdir, realpath } from 'node:fs/promises'
+import { mkdir, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CallRequest, DailyUseResponse } from '../../../packages/client/dist/index.js'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
+import { configureService, nodeService, writeServicePrograms } from '../fixtures/services'
 import { TerminalStream } from '../fixtures/terminals'
 
 type LayoutAction = CallRequest<'layout.apply'>['action']
@@ -79,8 +80,11 @@ test('every layout action applies through the SDK, and layout.get reads back eac
   const terminal = { kind: 'terminal', id: terminalId } as const
   const fresh1 = { kind: 'new_conversation' } as const
 
-  expect((await apply({ type: 'swap_sidebars' })).sidebars).toEqual(['inspector', 'navigator'])
-  expect((await apply({ type: 'toggle_side', side: 'left' })).collapsed).toEqual({ navigator: false, inspector: true })
+  expect((await apply({ type: 'set_sidebar_sides', left: 'inspector' })).sidebars).toEqual(['inspector', 'navigator'])
+  expect((await apply({ type: 'set_side_collapsed', side: 'left', collapsed: true })).collapsed).toEqual({
+    navigator: false,
+    inspector: true,
+  })
   expect((await apply({ type: 'set_collapsed', sidebar: 'inspector', collapsed: false })).collapsed.inspector).toBe(
     false,
   )
@@ -115,7 +119,7 @@ test('every layout action applies through the SDK, and layout.get reads back eac
   expect((layout.root as { sizes: number[] }).sizes.reduce((sum, size) => sum + size, 0)).toBeCloseTo(100)
   layout = await apply({ type: 'focus_pane', pane_id: 'p2' })
   expect(layout.focused_pane).toBe('p2')
-  layout = await apply({ type: 'toggle_maximize', pane_id: 'p2' })
+  layout = await apply({ type: 'set_maximized', pane_id: 'p2' })
   expect(layout.maximized).toBe('p2')
   layout = await apply({ type: 'close_tab', tab_id: 'd' })
   // Closing p3's only tab removed p3; a tab change keeps p2 maximized.
@@ -153,22 +157,27 @@ test('the CLI drives windows, tabs and panes, and reads the layout back', async 
   const read = await ok('layout', 'get')
   expect(Object.keys(read.layout.layout.tabs).sort()).toEqual(['draft', 'review', 'shell'])
   expect(read.layout.layout.tabs.review?.target).toEqual({ kind: 'diff', path: 'README.md', staged: true })
+  // The shell's only tab: tab close ends the shell too, as terminal.close would.
   const closed = await ok('tab', 'close', 'shell')
   expect(closed.layout.layout.tabs.shell).toBeUndefined()
+  expect((await profile.call('catalog.get', {})).catalog.terminals.map((t) => t.id)).not.toContain(first.terminal_id)
+  const paneClosed = await ok('pane', 'close', 'right')
+  // The shell's pane emptied and went; closing the last pane empties it.
+  expect((await ok('layout', 'get')).layout.layout.tabs).toEqual({})
   const applied = await ok(
     'layout',
     'apply',
     '--action',
-    JSON.stringify({ type: 'toggle_side', side: 'right' }),
+    JSON.stringify({ type: 'set_side_collapsed', side: 'right', collapsed: true }),
     '--expected-revision',
-    String(closed.layout.revision),
+    String(paneClosed.layout.revision),
   )
   expect(applied.layout.layout.collapsed.inspector).toBe(true)
   const stale = await profile.cli(
     'layout',
     'apply',
     '--action',
-    JSON.stringify({ type: 'swap_sidebars' }),
+    JSON.stringify({ type: 'set_sidebar_sides', left: 'inspector' }),
     '--expected-revision',
     '1',
   )
@@ -235,14 +244,29 @@ test('a replayed layout.apply keeps its revision, and a stale expected_revision 
   const splitOnce = await profile.call('layout.apply', split)
   expect((await profile.call('layout.apply', split)).layout.revision).toBe(splitOnce.layout.revision)
 
-  // A toggle retried from the same expected_revision returns the first result, not a second toggle.
+  // A state change names the state it sets: a replay without a revision changes nothing.
+  const collapse = { window_id: 'w', action: { type: 'set_side_collapsed', side: 'left', collapsed: true } } as const
+  const collapsed = await profile.call('layout.apply', collapse)
+  expect(collapsed.layout.layout.collapsed.navigator).toBe(true)
+  const replayed = await profile.call('layout.apply', collapse)
+  expect(replayed).toMatchObject({ changed: false, layout: collapsed.layout })
+
+  // Swapping panes is relative to where they are, so it needs a revision...
+  const unrevised = await refusal(
+    profile.call('layout.apply', {
+      window_id: 'w',
+      action: { type: 'swap_panes', pane_id: 'pane-main', target_id: 'p2' },
+    }),
+  )
+  expect(unrevised.code).toBe('invalid_layout')
+  // ...and a retry from the same revision returns the first result, not a second swap.
   const toggle = {
     window_id: 'w',
-    action: { type: 'toggle_side', side: 'left' },
-    expected_revision: splitOnce.layout.revision,
+    action: { type: 'swap_panes', pane_id: 'pane-main', target_id: 'p2' },
+    expected_revision: collapsed.layout.revision,
   } as const
   const toggled = await profile.call('layout.apply', toggle)
-  expect(toggled.layout.layout.collapsed.navigator).toBe(true)
+  expect(shape(toggled.layout.layout.root)).toBe('row(p2,pane-main)')
   const retried = await profile.call('layout.apply', toggle)
   expect(retried.layout).toEqual(toggled.layout)
   expect(retried.changed).toBe(true)
@@ -251,8 +275,8 @@ test('a replayed layout.apply keeps its revision, and a stale expected_revision 
   const stale = await refusal(
     profile.call('layout.apply', {
       window_id: 'w',
-      action: { type: 'swap_sidebars' },
-      expected_revision: splitOnce.layout.revision,
+      action: { type: 'set_sidebar_sides', left: 'inspector' },
+      expected_revision: collapsed.layout.revision,
     }),
   )
   expect(stale.code).toBe('layout_conflict')
@@ -292,6 +316,7 @@ test('windows and layouts survive a daemon restart', async ({ profile }) => {
       state: 'closed',
       bounds: { x: 1, y: 2, width: 900, height: 700 },
       view: { collapsed_projects: [], recent_workspaces: [workspaceId] },
+      layouts: { [workspaceId]: 2 },
     },
   ])
   expect((await profile.call('layout.get', { window_id: 'kept' })).layout).toEqual(before.layout)
@@ -316,8 +341,18 @@ test('removing a workspace deletes its layouts and moves its windows, and the fe
     (frame) => frame.type === 'layout_removed' && frame.window_id === 'moving' && frame.workspace_id === removed.id,
   )
   const moved = await feed.waitFor((frame) => frame.type === 'window_changed' && frame.window.id === 'moving')
-  expect(moved).toMatchObject({ window: { workspace_id: next.id, state: 'open' } })
+  expect(moved).toMatchObject({ window: { workspace_id: next.id, state: 'open', layouts: {} } })
+  // The layout the window now shows arrives too, so a client need not ask.
+  const shown = await feed.waitFor(
+    (frame) =>
+      frame.type === 'layout_changed' && frame.layout.window_id === 'moving' && frame.layout.workspace_id === next.id,
+  )
+  expect(shown).toMatchObject({ layout: { revision: 0 } })
   feed.stop()
+  // A retry of the window's creation, whose workspace is gone, returns the window.
+  expect((await profile.call('window.create', { window_id: 'moving', workspace_id: removed.id })).window).toMatchObject(
+    { id: 'moving', workspace_id: next.id },
+  )
   const { windows } = await profile.call('window.list', {})
   expect(windows[0]).toMatchObject({ workspace_id: next.id, view: { recent_workspaces: [next.id] } })
   expect((await refusal(profile.call('layout.get', { window_id: 'moving', workspace_id: removed.id }))).code).toBe(
@@ -336,7 +371,10 @@ test('a layout change reaches a feed subscriber with its revision', async ({ pro
   await feed.connected()
   await profile.call('window.create', { window_id: 'watched', workspace_id: workspaceId })
   await feed.waitFor((frame) => frame.type === 'window_changed' && frame.window.id === 'watched')
-  await profile.call('layout.apply', { window_id: 'watched', action: { type: 'swap_sidebars' } })
+  await profile.call('layout.apply', {
+    window_id: 'watched',
+    action: { type: 'set_sidebar_sides', left: 'inspector' },
+  })
   const changed = await feed.waitFor((frame) => frame.type === 'layout_changed' && frame.layout.window_id === 'watched')
   expect(changed).toMatchObject({ layout: { revision: 1, layout: { sidebars: ['inspector', 'navigator'] } } })
   // A change that changes nothing publishes nothing and keeps the revision.
@@ -458,7 +496,7 @@ async function terminalIds(profile: ScratchProfile, workspaceId: string): Promis
     .map((terminal) => terminal.id)
 }
 
-test('closing tabs closes their shell terminals, a busy one refuses the change until forced, and other tabs only leave', async ({
+test('tab.close and pane.close end the shells whose last tab they remove; a busy one refuses until forced', async ({
   profile,
 }) => {
   const { id: workspaceId } = await workspace(profile, 'decision-5')
@@ -470,21 +508,30 @@ test('closing tabs closes their shell terminals, a busy one refuses the change u
     window_id: 'w',
     action: { type: 'open_tab', tab: { id: 'notes', target: { kind: 'file', path: 'notes.md' } } },
   })
-  const stream = TerminalStream.open(profile, workspaceId, busy)
-  const runId = (await stream.snapshot()).run_id as string
-  stream.send({ op: 'input', run_id: runId, data: 'sleep 30\n' })
+  const streams = [idle, busy].map((id) => TerminalStream.open(profile, workspaceId, id))
+  const runId = (await streams[1]!.snapshot()).run_id as string
+  await streams[0]!.snapshot()
+  streams[1]!.send({ op: 'input', run_id: runId, data: 'sleep 30\n' })
   await expect
     .poll(async () => (await profile.call('catalog.get', {})).catalog.terminals.find((t) => t.id === busy)?.busy)
     .toBe(true)
   const before = (await profile.call('layout.get', { window_id: 'w' })).layout
 
-  // Closing the pane would close both shells; the busy one refuses the whole change.
+  // layout.apply never ends a process: removing a running shell's last tab needs tab.close.
+  const required = (await profile
+    .call('layout.apply', { window_id: 'w', action: { type: 'close_pane', pane_id: 'pane-main' } })
+    .then(
+      () => {
+        throw new Error('The close was expected to be refused')
+      },
+      (failure: unknown) => failure,
+    )) as { code: string; details: { tabs?: string[] } }
+  expect(required.code).toBe('tab_close_required')
+  expect(required.details.tabs?.sort()).toEqual([`tab-${busy}`, `tab-${idle}`].sort())
+
+  // Closing the pane would end both shells; the busy one refuses and nothing closes.
   const refused = (await profile
-    .call('layout.apply', {
-      window_id: 'w',
-      action: { type: 'close_pane', pane_id: 'pane-main' },
-      expected_revision: before.revision,
-    })
+    .call('pane.close', { operation_id: 'close-pane-1', window_id: 'w', pane_id: 'pane-main' })
     .then(
       () => {
         throw new Error('The close was expected to be refused')
@@ -496,23 +543,95 @@ test('closing tabs closes their shell terminals, a busy one refuses the change u
   expect(await terminalIds(profile, workspaceId)).toEqual(expect.arrayContaining([idle, busy]))
   expect((await profile.call('layout.get', { window_id: 'w' })).layout).toEqual(before)
 
-  // Closing the idle shell's tab closes the shell.
-  const closedIdle = await profile.call('layout.apply', {
-    window_id: 'w',
-    action: { type: 'close_tab', tab_id: `tab-${idle}` },
-    expected_revision: before.revision,
-  })
-  expect(closedIdle.changed).toBe(true)
+  // Closing the idle shell's tab ends the shell; a retry returns the recorded outcome.
+  const close = { operation_id: 'close-idle', window_id: 'w', tab_id: `tab-${idle}` }
+  const closedIdle = await profile.call('tab.close', close)
   expect(Object.keys(closedIdle.layout.layout.tabs).sort()).toEqual(['notes', `tab-${busy}`])
   expect(await terminalIds(profile, workspaceId)).not.toContain(idle)
+  expect(await profile.call('tab.close', close)).toEqual(closedIdle)
 
   // Forced, closing the pane stops the busy shell too; the file tab just leaves.
-  const forced = await profile.call('layout.apply', {
+  const forced = await profile.call('pane.close', {
+    operation_id: 'close-pane-2',
     window_id: 'w',
-    action: { type: 'close_pane', pane_id: 'pane-main' },
+    pane_id: 'pane-main',
     force: true,
   })
   expect(forced.layout.layout.tabs).toEqual({})
   expect(await terminalIds(profile, workspaceId)).not.toContain(busy)
-  stream.close()
+  for (const stream of streams) stream.close()
+})
+
+test('a shell shown in two windows closes only with its last tab', async ({ profile }) => {
+  const { id: workspaceId } = await workspace(profile, 'two-windows')
+  for (const window of ['a', 'b']) await profile.call('window.create', { window_id: window, workspace_id: workspaceId })
+  const { terminal_id: shell } = await profile.call('terminal.create', {
+    workspace_id: workspaceId,
+    place: { window_id: 'a' },
+  })
+  await profile.call('layout.apply', {
+    window_id: 'b',
+    action: { type: 'open_tab', tab: { id: 'mirror', target: { kind: 'terminal', id: shell } } },
+  })
+  await profile.call('tab.close', { operation_id: 'close-a', window_id: 'a', tab_id: `tab-${shell}` })
+  expect(await terminalIds(profile, workspaceId)).toContain(shell)
+  expect(Object.keys((await profile.call('layout.get', { window_id: 'b' })).layout.layout.tabs)).toEqual(['mirror'])
+  await profile.call('tab.close', { operation_id: 'close-b', window_id: 'b', tab_id: 'mirror' })
+  expect(await terminalIds(profile, workspaceId)).not.toContain(shell)
+})
+
+test('tab.close ends a shell in a workspace that needs rebind', async ({ profile }) => {
+  const path = join(profile.root, 'folders', 'moved')
+  await mkdir(path, { recursive: true })
+  const { workspace: moved } = await profile.call('workspace.open', { path: await realpath(path) })
+  await profile.call('window.create', { window_id: 'w', workspace_id: moved.id })
+  const { terminal_id: shell } = await profile.call('terminal.create', {
+    workspace_id: moved.id,
+    place: { window_id: 'w' },
+  })
+  // The saved folder is replaced by another directory at the same path.
+  await rm(path, { recursive: true })
+  await mkdir(path)
+  expect((await refusal(profile.call('file.list', { workspace_id: moved.id }))).code).toBe('needs_rebind')
+  const closed = await profile.call('tab.close', {
+    operation_id: 'close-moved',
+    window_id: 'w',
+    tab_id: `tab-${shell}`,
+  })
+  expect(closed.layout.layout.tabs).toEqual({})
+  expect(await terminalIds(profile, moved.id)).not.toContain(shell)
+})
+
+test('removing a service, or the workspace of a shown terminal, publishes the layouts that lost its tabs', async ({
+  profile,
+  repo,
+}) => {
+  const { workspace: home } = await profile.call('workspace.open', { path: repo.path })
+  const files = await writeServicePrograms(repo.path)
+  await configureService(profile, home.id, 'web', nodeService(files.server))
+  const started = await profile.call('service.start', { workspace_id: home.id, name: 'web' })
+  await profile.call('service.stop', { workspace_id: home.id, name: 'web' })
+  const other = await workspace(profile, 'elsewhere')
+  await profile.call('window.create', { window_id: 'w', workspace_id: home.id })
+  await profile.call('layout.apply', {
+    window_id: 'w',
+    action: { type: 'open_tab', tab: { id: 'logs', target: { kind: 'terminal', id: started.terminal_id! } } },
+  })
+  // A window on another workspace shows the home workspace's shell.
+  await profile.call('window.create', { window_id: 'v', workspace_id: other.id })
+  await profile.call('layout.apply', {
+    window_id: 'v',
+    action: { type: 'open_tab', tab: { id: 'remote', target: { kind: 'terminal', id: home.terminal_id } } },
+  })
+  const feed = await subscribeFeed(profile)
+  await feed.connected()
+
+  await profile.call('service.remove', { workspace_id: home.id, name: 'web', revision: 1 })
+  const lostLogs = await feed.waitFor((frame) => frame.type === 'layout_changed' && frame.layout.window_id === 'w')
+  expect(lostLogs).toMatchObject({ layout: { layout: { tabs: {} } } })
+
+  await profile.call('workspace.remove', { operation_id: 'remove-home', workspace_id: home.id })
+  const lostShell = await feed.waitFor((frame) => frame.type === 'layout_changed' && frame.layout.window_id === 'v')
+  expect(lostShell).toMatchObject({ layout: { workspace_id: other.id, layout: { tabs: {} } } })
+  feed.stop()
 })

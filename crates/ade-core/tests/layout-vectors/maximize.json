@@ -30,7 +30,7 @@
       "maximized": null
     },
     "action": {
-      "type": "toggle_maximize",
+      "type": "set_maximized",
       "pane_id": "p1"
     },
     "after": {
@@ -107,7 +107,7 @@
       "maximized": null
     },
     "action": {
-      "type": "toggle_maximize",
+      "type": "set_maximized",
       "pane_id": "p1"
     },
     "after": {
@@ -198,8 +198,8 @@
       "maximized": "p1"
     },
     "action": {
-      "type": "toggle_maximize",
-      "pane_id": "p1"
+      "type": "set_maximized",
+      "pane_id": null
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -885,7 +885,7 @@
       "maximized": null
     },
     "action": {
-      "type": "toggle_maximize",
+      "type": "set_maximized",
       "pane_id": "p1"
     },
     "after": {
@@ -1527,7 +1527,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -1617,8 +1618,9 @@
       "maximized": null
     },
     "action": {
-      "type": "toggle_side",
-      "side": "left"
+      "type": "set_side_collapsed",
+      "side": "left",
+      "collapsed": true
     },
     "after": {
       "sidebars": ["inspector", "navigator"],

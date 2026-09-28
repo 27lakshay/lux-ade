@@ -441,7 +441,8 @@ impl Sessions {
                         })?;
                     }
                 }
-                d.store.remove_service(workspace, name, revision)?;
+                let layouts = d.store.remove_service(workspace, name, revision)?;
+                self.layouts_changed(&mut d, &layouts);
                 d.health_samples
                     .remove(&(workspace.to_owned(), name.to_owned()));
                 d.health_attempts

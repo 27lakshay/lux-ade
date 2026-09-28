@@ -505,17 +505,39 @@ fn layouts_persist_with_their_revision_and_refuse_a_stale_one() {
         .unwrap();
     assert!(opened.changed);
     assert_eq!(opened.layout.revision, 1);
-    let toggle = LayoutAction::ToggleSide {
+    let toggle = LayoutAction::SetSideCollapsed {
         side: ade_core::contract::layout::Side::Left,
+        collapsed: true,
     };
     let toggled = store.apply_layout("w", None, &toggle, Some(1)).unwrap();
     assert_eq!(toggled.layout.revision, 2);
     // The retry of the last action from its revision returns its result.
     let retried = store.apply_layout("w", None, &toggle, Some(1)).unwrap();
     assert_eq!(retried.layout, toggled.layout);
+    // Without a revision, setting the same state again changes nothing.
+    let again = store.apply_layout("w", None, &toggle, None).unwrap();
+    assert!(!again.changed);
+    assert_eq!(again.layout, toggled.layout);
+    // Moving a pane needs a revision.
+    let swap = LayoutAction::SwapPanes {
+        pane_id: "pane-main".into(),
+        target_id: "pane-main".into(),
+    };
+    let refused = store.apply_layout("w", None, &swap, None).unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(refused)["code"],
+        "invalid_layout"
+    );
     // Any other stale revision is a conflict.
     let stale = store
-        .apply_layout("w", None, &LayoutAction::SwapSidebars, Some(1))
+        .apply_layout(
+            "w",
+            None,
+            &LayoutAction::SetSidebarSides {
+                left: ade_core::contract::layout::SidebarId::Inspector,
+            },
+            Some(1),
+        )
         .unwrap_err();
     assert_eq!(
         ade_core::error::error_envelope(stale)["code"],
@@ -589,7 +611,14 @@ fn removing_a_workspace_deletes_its_layouts_and_moves_its_windows() {
     store.show_workspace("w", &beta.id).unwrap();
     store.show_workspace("w", &removed.id).unwrap();
     store
-        .apply_layout("w", None, &LayoutAction::SwapSidebars, None)
+        .apply_layout(
+            "w",
+            None,
+            &LayoutAction::SetSidebarSides {
+                left: ade_core::contract::layout::SidebarId::Inspector,
+            },
+            None,
+        )
         .unwrap();
     let removal = store.remove_workspace(&removed.id, "op").unwrap().unwrap();
     assert_eq!(removal.layouts, vec![("w".to_owned(), removed.id.clone())]);

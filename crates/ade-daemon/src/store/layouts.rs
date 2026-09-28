@@ -72,8 +72,27 @@ fn live_workspace(db: &Connection, id: &str) -> Result<WorkspaceRecord> {
     }
 }
 
+/// Fills in the revision of each layout the window has stored.
+fn with_revisions(db: &Connection, mut window: Window) -> Result<Window> {
+    let mut statement =
+        db.prepare_cached("SELECT workspace_id,revision FROM layouts WHERE window_id=?1")?;
+    window.layouts = statement
+        .query_map([&window.id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .map(|row| {
+            let (workspace, revision) = row?;
+            Ok((workspace, u64::try_from(revision)?))
+        })
+        .collect::<Result<_>>()?;
+    Ok(window)
+}
+
 pub fn windows(db: &Connection) -> Result<Vec<Window>> {
-    all(db, "SELECT data FROM windows ORDER BY rowid")
+    all(db, "SELECT data FROM windows ORDER BY rowid")?
+        .into_iter()
+        .map(|window| with_revisions(db, window))
+        .collect()
 }
 
 pub fn window(db: &Connection, id: &str) -> Result<Window> {
@@ -83,7 +102,7 @@ pub fn window(db: &Connection, id: &str) -> Result<Window> {
         })
         .optional()?;
     match data {
-        Some(data) => decode(data),
+        Some(data) => with_revisions(db, decode(data)?),
         None => Err(LayoutError::WindowNotFound(id.to_owned()).into()),
     }
 }
@@ -95,7 +114,16 @@ fn save_window(db: &Connection, window: &Window) -> Result<()> {
     };
     db.execute(
         "INSERT INTO windows(id,workspace_id,state,data) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,state=excluded.state,data=excluded.data",
-        params![window.id, window.workspace_id, state, encode(window)?],
+        params![
+            window.id,
+            window.workspace_id,
+            state,
+            // The revisions are read from the layouts table, never stored here.
+            encode(&Window {
+                layouts: Default::default(),
+                ..window.clone()
+            })?
+        ],
     )?;
     Ok(())
 }
@@ -249,11 +277,16 @@ pub struct WorkspaceRemoval {
     pub windows: Vec<Window>,
     /// The `(window_id, workspace_id)` of each deleted layout.
     pub layouts: Vec<(String, String)>,
+    /// For each window moved to another workspace, the layout it now shows.
+    pub shown: Vec<LayoutRecord>,
 }
 
 /// Follows a workspace's removal inside its transaction: its layouts go, and
 /// a window showing it moves to the first remaining workspace by project and
 /// name. With no workspace left, the window closes and keeps pointing at it.
+///
+/// Call it in the same transaction that records the removal, after the
+/// tombstone insert: the replacement is chosen among workspaces still listed.
 pub fn workspace_removed(tx: &Connection, workspace_id: &str) -> Result<WorkspaceRemoval> {
     let mut removal = WorkspaceRemoval::default();
     {
@@ -285,12 +318,13 @@ pub fn workspace_removed(tx: &Connection, workspace_id: &str) -> Result<Workspac
                 Some(next) => {
                     window.workspace_id = next.clone();
                     remember(&mut window.view, next);
+                    removal.shown.push(layout(tx, &window.id, next)?);
                 }
                 None => window.state = WindowState::Closed,
             }
         }
         save_window(tx, &window)?;
-        removal.windows.push(window);
+        removal.windows.push(with_revisions(tx, window)?);
     }
     Ok(removal)
 }
@@ -345,12 +379,6 @@ fn check_bounds(bounds: &WindowBounds) -> Result<()> {
     Ok(())
 }
 
-/// A change `layout.apply` or `layout.replace` proposes.
-pub enum Proposal<'a> {
-    Apply(&'a LayoutAction),
-    Replace(&'a Layout),
-}
-
 fn terminal_targets(layout: &Layout) -> Vec<&str> {
     layout::targets(layout)
         .into_iter()
@@ -359,6 +387,79 @@ fn terminal_targets(layout: &Layout) -> Vec<&str> {
             _ => None,
         })
         .collect()
+}
+
+/// Whether a layout other than `(window_id, workspace_id)` has a tab
+/// showing the terminal.
+fn shown_elsewhere(
+    db: &Connection,
+    window_id: &str,
+    workspace_id: &str,
+    terminal: &str,
+) -> Result<bool> {
+    let mut statement =
+        db.prepare_cached("SELECT data FROM layouts WHERE NOT (window_id=?1 AND workspace_id=?2)")?;
+    let others = statement
+        .query_map([window_id, workspace_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for data in others {
+        let other: Layout = decode(data)?;
+        if terminal_targets(&other).contains(&terminal) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The shell terminals whose last tab, counted across every window's
+/// layouts, goes when `current` becomes `next`; with `running_only`, only
+/// those whose shell runs. Each comes with its tabs in `current`.
+fn shells_losing_last_tab(
+    db: &Connection,
+    current: &LayoutRecord,
+    next: &Layout,
+    running_only: bool,
+) -> Result<Vec<(String, Vec<String>)>> {
+    use ade_core::contract::terminals::{TerminalKind, TerminalStatus};
+    let kept = terminal_targets(next);
+    let mut shells = Vec::new();
+    for id in terminal_targets(&current.layout) {
+        if kept.contains(&id) || shown_elsewhere(db, &current.window_id, &current.workspace_id, id)?
+        {
+            continue;
+        }
+        let Some(record) = super::terminal_records::load(db, id)?.map(|stored| stored.record())
+        else {
+            continue;
+        };
+        if record.kind != TerminalKind::Shell
+            || (running_only && record.status != TerminalStatus::Running)
+        {
+            continue;
+        }
+        let tabs = current
+            .layout
+            .tabs
+            .values()
+            .filter(|tab| matches!(&tab.target, TabTarget::Terminal { id: shown } if shown == id))
+            .map(|tab| tab.id.clone())
+            .collect();
+        shells.push((id.to_owned(), tabs));
+    }
+    Ok(shells)
+}
+
+/// Refuses a change that would take away a running shell's last tab: only
+/// `tab.close` and `pane.close` end a process (`tab_close_required`).
+fn refuse_closing_shells(db: &Connection, current: &LayoutRecord, next: &Layout) -> Result<()> {
+    let shells = shells_losing_last_tab(db, current, next, true)?;
+    if shells.is_empty() {
+        return Ok(());
+    }
+    Err(
+        LayoutError::TabCloseRequired(shells.into_iter().flat_map(|(_, tabs)| tabs).collect())
+            .into(),
+    )
 }
 
 /// The outcome of a window command: the window, and whether it changed.
@@ -397,18 +498,25 @@ impl Store {
             check_bounds(bounds)?;
         }
         let tx = self.transaction()?;
-        live_workspace(&tx, workspace_id)?;
         match window(&tx, id) {
-            Ok(existing) if existing.workspace_id == workspace_id => {
-                return Ok(WindowChange {
-                    window: existing,
-                    changed: false,
-                });
+            Ok(existing) => {
+                // A retry: the same workspace, or one removed since, which
+                // moved the window elsewhere.
+                let removed = live_workspace(&tx, workspace_id)
+                    .err()
+                    .is_some_and(|error| error.downcast_ref::<WorkspaceRemoved>().is_some());
+                if existing.workspace_id == workspace_id || removed {
+                    return Ok(WindowChange {
+                        window: existing,
+                        changed: false,
+                    });
+                }
+                return Err(LayoutError::WindowExists(id.to_owned()).into());
             }
-            Ok(_) => return Err(LayoutError::WindowExists(id.to_owned()).into()),
             Err(error) if error.downcast_ref::<LayoutError>().is_some() => {}
             Err(error) => return Err(error),
         }
+        live_workspace(&tx, workspace_id)?;
         let count: i64 = tx.query_row("SELECT count(*) FROM windows", [], |row| row.get(0))?;
         if count >= MAX_WINDOWS {
             return Err(LayoutError::Invalid(format!(
@@ -425,6 +533,7 @@ impl Store {
                 collapsed_projects: Vec::new(),
                 recent_workspaces: vec![workspace_id.to_owned()],
             },
+            layouts: Default::default(),
         };
         save_window(&tx, &window)?;
         tx.commit()?;
@@ -515,41 +624,23 @@ impl Store {
         Ok(workspace)
     }
 
-    /// The shell terminals whose last tab in this layout `proposal` removes,
-    /// in tab ID order. A proposal that the layout would refuse (a stale
-    /// revision, malformed input) removes none; applying it reports why.
-    pub fn removed_shells(
+    /// For `tab.close` and `pane.close`: the shell terminals, running or
+    /// not, whose last tab across every window's layouts `action` removes.
+    pub fn closing_shells(
         &self,
         window_id: &str,
         workspace_id: Option<&str>,
-        proposal: Proposal<'_>,
-        expected: Option<u64>,
+        action: &LayoutAction,
     ) -> Result<Vec<String>> {
         let workspace = self.layout_key(&self.connection, window_id, workspace_id)?;
         let current = layout(&self.connection, window_id, &workspace)?;
-        if expected.is_some_and(|expected| expected != current.revision) {
-            return Ok(Vec::new());
-        }
-        let next = match proposal {
-            Proposal::Apply(action) => match layout::apply(&current.layout, action) {
-                Ok(next) => next,
-                Err(_) => return Ok(Vec::new()),
-            },
-            Proposal::Replace(next) => next.clone(),
-        };
-        let kept = terminal_targets(&next);
-        let mut shells = Vec::new();
-        for id in terminal_targets(&current.layout) {
-            if kept.contains(&id) {
-                continue;
-            }
-            if super::terminal_records::load(&self.connection, id)?.is_some_and(|stored| {
-                stored.record().kind == ade_core::contract::terminals::TerminalKind::Shell
-            }) {
-                shells.push(id.to_owned());
-            }
-        }
-        Ok(shells)
+        let next = layout::apply(&current.layout, action)?;
+        Ok(
+            shells_losing_last_tab(&self.connection, &current, &next, false)?
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect(),
+        )
     }
 
     /// `layout.get`.
@@ -567,6 +658,13 @@ impl Store {
         action: &LayoutAction,
         expected: Option<u64>,
     ) -> Result<LayoutChange> {
+        if expected.is_none() && !layout::repeatable(action) {
+            return Err(LayoutError::Invalid(
+                "Moving, swapping or docking a pane needs expected_revision, so a retry is recognised"
+                    .into(),
+            )
+            .into());
+        }
         let tx = self.transaction()?;
         let workspace = self.layout_key(&tx, window_id, workspace_id)?;
         let current = layout(&tx, window_id, &workspace)?;
@@ -604,6 +702,7 @@ impl Store {
                 stored: false,
             });
         }
+        refuse_closing_shells(&tx, &current, &next)?;
         let last = LastAction {
             from: current.revision,
             action: action.clone(),
@@ -648,6 +747,7 @@ impl Store {
         for target in layout::targets(&next) {
             require_target(&tx, target)?;
         }
+        refuse_closing_shells(&tx, &current, &next)?;
         let record = save_layout(&tx, &current, next, None)?;
         tx.commit()?;
         Ok(LayoutChange {

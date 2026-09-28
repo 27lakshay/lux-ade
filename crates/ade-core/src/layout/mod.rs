@@ -106,7 +106,11 @@ pub fn check_target(target: &TabTarget) -> Result<(), LayoutError> {
 fn action_ids(action: &LayoutAction) -> Vec<(&'static str, &str)> {
     use LayoutAction::*;
     match action {
-        SwapSidebars | ToggleSide { .. } | SetCollapsed { .. } | SetWidth { .. } | ResetLayout => {
+        SetSidebarSides { .. }
+        | SetSideCollapsed { .. }
+        | SetCollapsed { .. }
+        | SetWidth { .. }
+        | ResetLayout => {
             vec![]
         }
         OpenTab { tab, pane_id } => {
@@ -138,10 +142,14 @@ fn action_ids(action: &LayoutAction) -> Vec<(&'static str, &str)> {
             new_pane_id,
             ..
         } => vec![("tab", tab_id), ("pane", new_pane_id)],
-        DockPane { pane_id, .. }
-        | ClosePane { pane_id }
-        | FocusPane { pane_id }
-        | ToggleMaximize { pane_id } => vec![("pane", pane_id)],
+        DockPane { pane_id, .. } | ClosePane { pane_id } | FocusPane { pane_id } => {
+            vec![("pane", pane_id)]
+        }
+        SetMaximized { pane_id } => pane_id
+            .as_deref()
+            .map(|id| ("pane", id))
+            .into_iter()
+            .collect(),
         SetSplitSizes { split_id, .. } => vec![("split", split_id)],
         EqualizeSplits { split_id } => split_id
             .as_deref()
@@ -177,6 +185,17 @@ fn rearranges(action: &LayoutAction) -> bool {
             | LayoutAction::ClosePane { .. }
             | LayoutAction::EqualizeSplits { .. }
             | LayoutAction::ResetLayout
+    )
+}
+
+/// Whether applying `action` twice gives what applying it once gave. Moving
+/// or docking an existing pane is relative to where it is now, so it is not.
+pub fn repeatable(action: &LayoutAction) -> bool {
+    !matches!(
+        action,
+        LayoutAction::MovePane { .. }
+            | LayoutAction::SwapPanes { .. }
+            | LayoutAction::DockPane { .. }
     )
 }
 
@@ -277,14 +296,19 @@ fn sidebar_flag(flags: &mut SidebarFlags, sidebar: SidebarId) -> &mut bool {
 fn apply_action(draft: &mut Layout, action: &LayoutAction) -> Result<bool, LayoutError> {
     use LayoutAction::*;
     match action {
-        SwapSidebars => draft.sidebars.swap(0, 1),
-        ToggleSide { side } => {
+        SetSidebarSides { left } => {
+            let right = match left {
+                SidebarId::Navigator => SidebarId::Inspector,
+                SidebarId::Inspector => SidebarId::Navigator,
+            };
+            draft.sidebars = [*left, right];
+        }
+        SetSideCollapsed { side, collapsed } => {
             let sidebar = draft.sidebars[match side {
                 Side::Left => 0,
                 Side::Right => 1,
             }];
-            let flag = sidebar_flag(&mut draft.collapsed, sidebar);
-            *flag = !*flag;
+            *sidebar_flag(&mut draft.collapsed, sidebar) = *collapsed;
         }
         SetCollapsed { sidebar, collapsed } => {
             *sidebar_flag(&mut draft.collapsed, *sidebar) = *collapsed;
@@ -549,12 +573,11 @@ fn apply_action(draft: &mut Layout, action: &LayoutAction) -> Result<bool, Layou
                 split.sizes = sizes.clone();
             }
         }
-        ToggleMaximize { pane_id } => {
+        SetMaximized { pane_id: None } => draft.maximized = None,
+        SetMaximized {
+            pane_id: Some(pane_id),
+        } => {
             if find_pane(&draft.root, pane_id).is_none() {
-                return Ok(true);
-            }
-            if draft.maximized.as_ref() == Some(pane_id) {
-                draft.maximized = None;
                 return Ok(true);
             }
             // Only a pane among others can fill the centre.

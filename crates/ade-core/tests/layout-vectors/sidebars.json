@@ -22,7 +22,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -68,8 +69,9 @@
       "maximized": null
     },
     "action": {
-      "type": "toggle_side",
-      "side": "left"
+      "type": "set_side_collapsed",
+      "side": "left",
+      "collapsed": true
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -115,8 +117,9 @@
       "maximized": null
     },
     "action": {
-      "type": "toggle_side",
-      "side": "left"
+      "type": "set_side_collapsed",
+      "side": "left",
+      "collapsed": false
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -162,8 +165,9 @@
       "maximized": null
     },
     "action": {
-      "type": "toggle_side",
-      "side": "right"
+      "type": "set_side_collapsed",
+      "side": "right",
+      "collapsed": true
     },
     "after": {
       "sidebars": ["navigator", "inspector"],

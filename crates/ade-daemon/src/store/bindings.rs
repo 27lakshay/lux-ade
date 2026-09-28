@@ -862,6 +862,8 @@ impl Store {
             "INSERT INTO workspace_tombstones(workspace_id,operation_id,removed_at) VALUES(?1,?2,?3)",
             params![id, operation_id, now_ms()],
         )?;
+        // Keep this in the tombstone's transaction: the layouts go and the
+        // windows move with the removal, or neither happens.
         let removal = super::layouts::workspace_removed(&tx, id)?;
         tx.commit()?;
         Ok(Some(removal))
@@ -872,6 +874,14 @@ impl Store {
     /// shells. Returns the retired terminal IDs, empty on a repeat. Service
     /// terminals stay with their service.
     pub fn retire_removed_terminals(&self, id: &str) -> Result<Vec<String>> {
+        Ok(self.retire_removed_terminal_tabs(id)?.0)
+    }
+    /// [`Self::retire_removed_terminals`], with the layouts that lost the
+    /// retired terminals' tabs, for the caller to publish.
+    pub fn retire_removed_terminal_tabs(
+        &self,
+        id: &str,
+    ) -> Result<(Vec<String>, Vec<ade_core::contract::layout::LayoutRecord>)> {
         let tx = self.transaction()?;
         let retired: Option<i64> = tx
             .query_row(
@@ -882,7 +892,7 @@ impl Store {
             .optional()?;
         match retired {
             None => anyhow::bail!("Only a removed workspace retires all its terminals"),
-            Some(1) => return Ok(Vec::new()),
+            Some(1) => return Ok((Vec::new(), Vec::new())),
             Some(_) => {}
         }
         let workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
@@ -896,14 +906,15 @@ impl Store {
             .filter(|terminal| !services.contains(terminal))
             .cloned()
             .collect();
+        let mut layouts = Vec::new();
         for terminal in &retired {
-            super::terminal_records::remove(&tx, id, terminal)?;
+            layouts.extend(super::terminal_records::remove(&tx, id, terminal)?.unwrap_or_default());
         }
         tx.execute(
             "UPDATE workspace_tombstones SET terminals_retired=1 WHERE workspace_id=?1",
             [id],
         )?;
         tx.commit()?;
-        Ok(retired)
+        Ok((retired, layouts))
     }
 }

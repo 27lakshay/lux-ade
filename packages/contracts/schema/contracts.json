@@ -14030,34 +14030,43 @@
       "type": "object"
     },
     "LayoutAction": {
-      "description": "Every change to a layout. New pane and tab IDs come in with the action,\nso applying it is deterministic and a retry finds what the first made.\nActions naming a pane, split or tab that is not there change nothing.",
+      "description": "Every change to a layout. New pane and tab IDs come in with the action,\nand state changes name the state they set, so applying an action twice\ngives what applying it once gave. Only `move_pane`, `swap_panes` and\n`dock_pane` move a pane relative to where it is now; `layout.apply`\nrequires `expected_revision` for them, so a retry is recognised.\nActions naming a pane, split or tab that is not there change nothing.",
       "oneOf": [
         {
+          "description": "Puts `left` on the left and the other sidebar on the right.",
           "properties": {
+            "left": {
+              "$ref": "#/$defs/SidebarId"
+            },
             "type": {
-              "const": "swap_sidebars",
+              "const": "set_sidebar_sides",
               "type": "string"
             }
           },
           "required": [
-            "type"
+            "type",
+            "left"
           ],
           "type": "object"
         },
         {
           "description": "Collapses or expands whichever sidebar is on that side.",
           "properties": {
+            "collapsed": {
+              "type": "boolean"
+            },
             "side": {
               "$ref": "#/$defs/Side"
             },
             "type": {
-              "const": "toggle_side",
+              "const": "set_side_collapsed",
               "type": "string"
             }
           },
           "required": [
             "type",
-            "side"
+            "side",
+            "collapsed"
           ],
           "type": "object"
         },
@@ -14387,18 +14396,22 @@
           "type": "object"
         },
         {
+          "description": "Shows `pane_id` alone across the centre and focuses it, or restores\nthe grid when null. A pane alone in the layout does not maximize.",
           "properties": {
             "pane_id": {
-              "type": "string"
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
-              "const": "toggle_maximize",
+              "const": "set_maximized",
               "type": "string"
             }
           },
           "required": [
-            "type",
-            "pane_id"
+            "type"
           ],
           "type": "object"
         },
@@ -14463,7 +14476,7 @@
     },
     "LayoutApplyRequest": {
       "additionalProperties": false,
-      "description": "`layout.apply`: apply one action to a window's layout for a workspace.\n\nClosing a tab follows its target (daemon-authority decision 5): when the\nchange removes the last tab of a shell terminal from this layout, that\nterminal closes first, as `terminal.close` would, and its tabs leave every\nlayout. A busy one refuses the change with `terminal_busy`, listing each\nbusy terminal in `terminals`, unless `force` is true. Service, script and\nConversation terminal tabs, and every other target, only leave the layout.",
+      "description": "`layout.apply`: apply one action to a window's layout for a workspace.\n\nIt never ends a process. A change that would remove the last tab, counted\nacross every window's layouts, of a running shell terminal is refused with\n`tab_close_required`, listing those tabs in `tabs`; `tab.close` and\n`pane.close` close such tabs and their shells.",
       "properties": {
         "action": {
           "$ref": "#/$defs/LayoutAction"
@@ -14475,14 +14488,6 @@
           "minimum": 0,
           "type": [
             "integer",
-            "null"
-          ]
-        },
-        "force": {
-          "default": null,
-          "description": "Close busy shell terminals whose tabs this change removes. Without\nit a busy one refuses the whole change with `terminal_busy`.",
-          "type": [
-            "boolean",
             "null"
           ]
         },
@@ -14509,7 +14514,7 @@
       "type": "object"
     },
     "LayoutChanged": {
-      "description": "The `layout_changed` feed frame. `layout.revision` is the layout's own\nrevision; a client keeps the higher of it and what `layout.get` gave.",
+      "description": "The `layout_changed` feed frame. `layout.revision` is the layout's own\nrevision; a client keeps the higher of it and what `layout.get` gave.\nAfter a reconnect, a client reads `window.list` (or the catalog's\nwindows) and re-reads every layout whose revision in `Window.layouts`\ndiffers from its own.",
       "properties": {
         "boot_id": {
           "type": "string"
@@ -14645,14 +14650,6 @@
           "minimum": 0,
           "type": [
             "integer",
-            "null"
-          ]
-        },
-        "force": {
-          "default": null,
-          "description": "Close busy shell terminals whose tabs this change removes. Without\nit a busy one refuses the whole change with `terminal_busy`.",
-          "type": [
-            "boolean",
             "null"
           ]
         },
@@ -15934,6 +15931,46 @@
         "revoked"
       ],
       "type": "string"
+    },
+    "PaneCloseRequest": {
+      "additionalProperties": false,
+      "description": "`pane.close`: close a pane and its tabs, closing each shell terminal whose\nlast tab it holds, as `tab.close` does.",
+      "properties": {
+        "force": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "pane.close"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID, as for `tab.close`.",
+          "type": "string"
+        },
+        "pane_id": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "window_id",
+        "pane_id"
+      ],
+      "type": "object"
     },
     "PaneNode": {
       "description": "A leaf of the pane tree: a strip of tabs.",
@@ -26620,6 +26657,46 @@
       ],
       "type": "object"
     },
+    "TabCloseRequest": {
+      "additionalProperties": false,
+      "description": "`tab.close`: close a tab, following its target (daemon-authority decision\n5). When the tab is the last one, across every window's layouts, of a\nshell terminal, the terminal closes as `terminal.close` would: every busy\nshell is found before any closes, and a busy one refuses with\n`terminal_busy`, listing each in `terminals`, unless `force` is true.\nService, script and Conversation terminal tabs and every other target only\nleave the layout. A closed shell's tabs leave every layout.",
+      "properties": {
+        "force": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "tab.close"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID. A retry with the same ID and payload\nreturns the recorded outcome; the same ID with another payload is a\nconflict.",
+          "type": "string"
+        },
+        "tab_id": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "window_id",
+        "tab_id"
+      ],
+      "type": "object"
+    },
     "TabTarget": {
       "description": "What a tab shows. Records are named by ID; a file or diff by its path\ninside the layout's workspace.",
       "oneOf": [
@@ -28533,6 +28610,15 @@
         "id": {
           "type": "string"
         },
+        "layouts": {
+          "additionalProperties": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "The revision of each layout the window has stored, by workspace ID.\nAfter missing feed frames (a reconnect), a client compares these with\nthe revisions it holds and reads each layout that differs with\n`layout.get`; a workspace absent here has the default layout.",
+          "type": "object"
+        },
         "state": {
           "$ref": "#/$defs/WindowState"
         },
@@ -28549,7 +28635,8 @@
         "workspace_id",
         "state",
         "bounds",
-        "view"
+        "view",
+        "layouts"
       ],
       "type": "object"
     },
@@ -32702,6 +32789,20 @@
       "request": "LayoutReplaceRequest",
       "response": "LayoutApplied",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "layout",
+      "name": "tab.close",
+      "request": "TabCloseRequest",
+      "response": "LayoutApplied",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "layout",
+      "name": "pane.close",
+      "request": "PaneCloseRequest",
+      "response": "LayoutApplied",
+      "tier": "effect_command"
     }
   ],
   "streams": {

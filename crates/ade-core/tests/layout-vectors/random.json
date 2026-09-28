@@ -269,7 +269,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -570,7 +571,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -998,7 +1000,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -1571,7 +1574,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -2200,7 +2204,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -2885,7 +2890,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -3641,7 +3647,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -4486,7 +4493,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -5387,7 +5395,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -6238,7 +6247,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -6426,7 +6436,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -6614,7 +6625,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -6802,7 +6814,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -6990,7 +7003,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -7178,7 +7192,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -7471,7 +7486,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -7715,7 +7731,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -7903,7 +7920,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -8091,7 +8109,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],
@@ -8279,7 +8298,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "inspector"
     },
     "after": {
       "sidebars": ["inspector", "navigator"],
@@ -8467,7 +8487,8 @@
       "maximized": null
     },
     "action": {
-      "type": "swap_sidebars"
+      "type": "set_sidebar_sides",
+      "left": "navigator"
     },
     "after": {
       "sidebars": ["navigator", "inspector"],

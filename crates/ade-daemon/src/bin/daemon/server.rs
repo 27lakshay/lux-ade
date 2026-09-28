@@ -1687,10 +1687,21 @@ impl Host {
     /// the foreground, in the same step as the stop.
     fn terminal_close(&self, request: &Value) -> anyhow::Result<Value> {
         let close: TerminalCloseRequest = decode_terminal_request(request)?;
+        self.close_shell(&close.terminal_id, close.force == Some(true), true)
+    }
+    /// `terminal.close`'s rule for one terminal. `require_bound` refuses a
+    /// workspace that needs rebind; `tab.close` skips it, since stopping and
+    /// retiring a shell never uses the workspace's path.
+    fn close_shell(
+        &self,
+        terminal_id: &str,
+        force: bool,
+        require_bound: bool,
+    ) -> anyhow::Result<Value> {
         let record = self
             .sessions
-            .terminal_record(&close.terminal_id)?
-            .ok_or_else(|| anyhow::anyhow!("Terminal {} does not exist", close.terminal_id))?;
+            .terminal_record(terminal_id)?
+            .ok_or_else(|| anyhow::anyhow!("Terminal {terminal_id} does not exist"))?;
         anyhow::ensure!(
             record.kind == TerminalKind::Shell,
             match record.kind {
@@ -1700,8 +1711,9 @@ impl Host {
             }
         );
         let workspace = record.workspace_id.clone();
-        let force = close.force == Some(true);
-        self.sessions.ensure_workspace_bound(&workspace)?;
+        if require_bound {
+            self.sessions.ensure_workspace_bound(&workspace)?;
+        }
         let running = |terminals: &[terminal_runtime::Terminal]| {
             terminals.iter().any(|entry| {
                 entry.workspace.id == workspace
@@ -1758,47 +1770,72 @@ impl Host {
         }
         Ok(serde_json::to_value(Ack::default())?)
     }
-    /// `layout.apply` and `layout.replace`. Closing a tab follows its target
-    /// (daemon-authority decision 5): a shell terminal whose last tab in the
-    /// layout the change removes is closed first, by `terminal.close`'s rule,
-    /// which also takes its tabs out of every layout. Busy shells refuse the
-    /// whole change, all listed, unless `force` is set; nothing is closed
-    /// then. The change applies after, to the layout the closes left.
-    fn layout_change(&self, request: &Value) -> anyhow::Result<Value> {
-        let shells = self.sessions.layout_removed_shells(request)?;
-        if shells.is_empty() {
-            return self.sessions.command(request);
-        }
-        let force = request["force"].as_bool() == Some(true);
-        if !force {
-            let mut busy = Vec::new();
-            for id in &shells {
-                if let Some(record) = self.sessions.terminal_record(id)?
-                    && record.busy
-                {
-                    busy.push((record.id, record.foreground));
-                }
-            }
-            if !busy.is_empty() {
+    /// `tab.close` and `pane.close` (daemon-authority decision 5). Every shell
+    /// terminal whose last tab, across every window's layouts, the close
+    /// removes is closed by `terminal.close`'s rule, which also takes its tabs
+    /// out of every layout; then the tab or pane leaves this layout. All busy
+    /// shells are found under the lease lock before any is stopped, so a
+    /// refusal closes nothing. The envelope keeps the receipt.
+    fn layout_close(&self, request: &Value) -> anyhow::Result<Value> {
+        use ade_core::contract::layout::{LayoutAction, PaneCloseRequest, TabCloseRequest};
+        let (window_id, workspace_id, action, force) = if request["op"] == "tab.close" {
+            let close: TabCloseRequest = decode_terminal_request(request)?;
+            let action = LayoutAction::CloseTab {
+                tab_id: close.tab_id,
+            };
+            (close.window_id, close.workspace_id, action, close.force)
+        } else {
+            let close: PaneCloseRequest = decode_terminal_request(request)?;
+            let action = LayoutAction::ClosePane {
+                pane_id: close.pane_id,
+            };
+            (close.window_id, close.workspace_id, action, close.force)
+        };
+        let force = force == Some(true);
+        let shells = self
+            .sessions
+            .closing_shells(&window_id, workspace_id.as_deref(), &action)?;
+        if !shells.is_empty() {
+            let _leases = self.leases.lock().unwrap();
+            let terminals = self.runtime_terminals()?;
+            let running: Vec<&terminal_runtime::Terminal> = terminals
+                .iter()
+                .filter(|entry| {
+                    shells.contains(&entry.workspace.terminal_id) && entry.shell_running()
+                })
+                .collect();
+            let busy: Vec<(String, Option<String>)> = running
+                .iter()
+                .filter(|entry| entry.activity.busy)
+                .map(|entry| {
+                    (
+                        entry.workspace.terminal_id.clone(),
+                        entry.activity.foreground.clone(),
+                    )
+                })
+                .collect();
+            if !force && !busy.is_empty() {
                 return Err(ade_core::error::LayoutError::TerminalsBusy(busy).into());
+            }
+            for entry in running {
+                self.runtime.command(terminal_runtime::Command::Stop {
+                    workspace_id: entry.workspace.id.clone(),
+                    terminal_id: entry.workspace.terminal_id.clone(),
+                    if_idle: !force,
+                })?;
             }
         }
         for id in &shells {
-            self.terminal_close(&json!({
-                "op": "terminal.close",
-                "operation_id": format!("layout-close-{id}"),
-                "terminal_id": id,
-                "force": force,
-            }))?;
+            self.close_shell(id, force, false)?;
         }
-        // The closes moved the layout's revision; the caller's check already
-        // passed against the layout it saw.
-        let mut request = request.clone();
-        if let Some(fields) = request.as_object_mut() {
-            fields.remove("expected_revision");
+        let mut apply = json!({"op": "layout.apply", "window_id": window_id, "action": action});
+        if let Some(workspace_id) = workspace_id {
+            apply["workspace_id"] = json!(workspace_id);
         }
-        let mut reply = self.sessions.command(&request)?;
-        reply["changed"] = json!(true);
+        let mut reply = self.sessions.command(&apply)?;
+        if !shells.is_empty() {
+            reply["changed"] = json!(true);
+        }
         Ok(reply)
     }
     /// Routes one command to its handler.
@@ -1823,8 +1860,8 @@ impl Host {
             self.terminal_restart(request)
         } else if op == "terminal.close" {
             self.terminal_close(request)
-        } else if op == "layout.apply" || op == "layout.replace" {
-            self.layout_change(request)
+        } else if op == "tab.close" || op == "pane.close" {
+            self.layout_close(request)
         } else if op == "workspace.remove" {
             self.workspace_remove(request)
         } else if matches!(
@@ -1880,6 +1917,26 @@ impl Host {
                 record.is_none().then(ack).flatten()
             }
             "workspace.remove" => self.observe_workspace_remove(request),
+            // The close took effect when the tab, or the pane's tabs, are gone.
+            "tab.close" | "pane.close" => {
+                let mut get = json!({"op": "layout.get", "window_id": request["window_id"]});
+                if request["workspace_id"].is_string() {
+                    get["workspace_id"] = request["workspace_id"].clone();
+                }
+                let reply = self.sessions.command(&get).ok()?;
+                let layout = &reply["layout"]["layout"];
+                let gone = if op == "tab.close" {
+                    layout["tabs"].get(request["tab_id"].as_str()?).is_none()
+                } else {
+                    !layout.to_string().contains(&format!(
+                        "\"id\":{}",
+                        serde_json::to_string(request["pane_id"].as_str()?).ok()?
+                    )) || layout["tabs"]
+                        .as_object()
+                        .is_some_and(|tabs| tabs.is_empty())
+                };
+                gone.then(|| json!({"type": "layout", "layout": reply["layout"], "changed": true}))
+            }
             "queue.pause" | "agent.disconnect" => {
                 let snapshot = self
                     .sessions

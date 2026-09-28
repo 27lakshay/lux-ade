@@ -261,11 +261,19 @@ impl Store {
         }
         Ok(service)
     }
-    pub fn remove_service(&self, workspace: &str, name: &str, revision: i64) -> Result<()> {
+    /// Removes a service and its terminal. Returns the layouts that lost the
+    /// terminal's tabs, for the caller to publish.
+    pub fn remove_service(
+        &self,
+        workspace: &str,
+        name: &str,
+        revision: i64,
+    ) -> Result<Vec<ade_core::contract::layout::LayoutRecord>> {
         self.workspace(workspace)?;
         let tx =
             rusqlite::Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
         let mut removed = None;
+        let mut layouts = Vec::new();
         if let Some(service) = load(&tx, workspace, name)? {
             ensure!(
                 service.terminal_owner.is_none(),
@@ -273,7 +281,8 @@ impl Store {
             );
             removed = Some(service.config.secret_refs.clone());
             if let Some(terminal) = &service.terminal_id {
-                crate::store::terminal_records::remove(&tx, workspace, terminal)?;
+                layouts = crate::store::terminal_records::remove(&tx, workspace, terminal)?
+                    .unwrap_or_default();
             }
             ensure!(
                 service.revision == revision,
@@ -288,7 +297,7 @@ impl Store {
         if let Some(references) = removed {
             crate::credentials::delete_owned_quietly(references.values());
         }
-        Ok(())
+        Ok(layouts)
     }
     /// Moves every secret value a service record still holds in plain text
     /// (saved before references existed) into the Keychain, and rewrites

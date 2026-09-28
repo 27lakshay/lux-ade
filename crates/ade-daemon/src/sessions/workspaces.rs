@@ -298,9 +298,11 @@ impl Sessions {
     /// terminal it no longer lists.
     pub fn retire_removed_terminals(&self, id: &str) -> Result<WorkspaceRecord> {
         let mut d = self.data.lock().unwrap();
-        for terminal in d.store.retire_removed_terminals(id)? {
+        let (retired, layouts) = d.store.retire_removed_terminal_tabs(id)?;
+        for terminal in retired {
             d.terminal_leases.remove(&terminal);
         }
+        self.layouts_changed(&mut d, &layouts);
         d.store.workspace(id)
     }
     pub fn has_pending_rebind(&self) -> Result<bool> {

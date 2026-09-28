@@ -138,6 +138,9 @@ pub enum LayoutError {
     /// `(terminal_id, foreground)`.
     #[error("{}", terminals_busy_message(.0))]
     TerminalsBusy(Vec<(String, Option<String>)>),
+    /// The change would end running shells; these tabs need `tab.close`.
+    #[error("Closing these tabs ends their terminals; close them with tab.close or pane.close")]
+    TabCloseRequired(Vec<String>),
 }
 
 fn terminals_busy_message(busy: &[(String, Option<String>)]) -> String {
@@ -146,7 +149,7 @@ fn terminals_busy_message(busy: &[(String, Option<String>)]) -> String {
         .map(|(id, foreground)| foreground.as_deref().unwrap_or(id))
         .collect();
     format!(
-        "A command is running in a terminal this change closes ({}); apply it with force to stop it",
+        "A command is running in a terminal this close ends ({}); close it with force to stop it",
         names.join(", ")
     )
 }
@@ -160,6 +163,7 @@ impl LayoutError {
             Self::TabTargetMissing(_) => "tab_target_missing",
             Self::Invalid(_) => "invalid_layout",
             Self::TerminalsBusy(_) => "terminal_busy",
+            Self::TabCloseRequired(_) => "tab_close_required",
         }
     }
 
@@ -171,6 +175,7 @@ impl LayoutError {
             Self::TabTargetMissing(_) => "reload_catalog",
             Self::Invalid(_) => "fix_request",
             Self::TerminalsBusy(_) => "confirm_close",
+            Self::TabCloseRequired(_) => "use_tab_close",
         }
     }
 }
@@ -554,6 +559,9 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if let Some(layout) = error.downcast_ref::<LayoutError>() {
         let mut envelope = serde_json::json!({"type":"error","message":layout.to_string(),
             "code":layout.code(),"recovery":layout.recovery()});
+        if let LayoutError::TabCloseRequired(tabs) = layout {
+            envelope["tabs"] = serde_json::json!(tabs);
+        }
         if let LayoutError::TerminalsBusy(busy) = layout {
             envelope["terminals"] = busy
                 .iter()

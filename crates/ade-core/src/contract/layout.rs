@@ -53,6 +53,10 @@ pub fn operations() -> Vec<OperationSpec> {
             "layout.replace",
             Tier::IdempotentCommand,
         ),
+        // Closing a shell's last tab ends its process, so these carry an
+        // operation ID and a receipt; a retry returns the recorded outcome.
+        OperationSpec::new::<TabCloseRequest, LayoutApplied>("tab.close", Tier::EffectCommand),
+        OperationSpec::new::<PaneCloseRequest, LayoutApplied>("pane.close", Tier::EffectCommand),
     ]
 }
 
@@ -155,6 +159,11 @@ pub struct Window {
     /// Null until a UI sets them.
     pub bounds: Option<WindowBounds>,
     pub view: WindowView,
+    /// The revision of each layout the window has stored, by workspace ID.
+    /// After missing feed frames (a reconnect), a client compares these with
+    /// the revisions it holds and reads each layout that differs with
+    /// `layout.get`; a workspace absent here has the default layout.
+    pub layouts: BTreeMap<String, u64>,
 }
 
 /// The two sidebars. They only ever swap sides with each other and never hold panes.
@@ -297,15 +306,22 @@ pub struct LayoutRecord {
 }
 
 /// Every change to a layout. New pane and tab IDs come in with the action,
-/// so applying it is deterministic and a retry finds what the first made.
+/// and state changes name the state they set, so applying an action twice
+/// gives what applying it once gave. Only `move_pane`, `swap_panes` and
+/// `dock_pane` move a pane relative to where it is now; `layout.apply`
+/// requires `expected_revision` for them, so a retry is recognised.
 /// Actions naming a pane, split or tab that is not there change nothing.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LayoutAction {
-    SwapSidebars,
+    /// Puts `left` on the left and the other sidebar on the right.
+    SetSidebarSides {
+        left: SidebarId,
+    },
     /// Collapses or expands whichever sidebar is on that side.
-    ToggleSide {
+    SetSideCollapsed {
         side: Side,
+        collapsed: bool,
     },
     SetCollapsed {
         sidebar: SidebarId,
@@ -387,8 +403,11 @@ pub enum LayoutAction {
         #[schemars(with = "Vec<serde_json::Number>")]
         sizes: Vec<f64>,
     },
-    ToggleMaximize {
-        pane_id: String,
+    /// Shows `pane_id` alone across the centre and focuses it, or restores
+    /// the grid when null. A pane alone in the layout does not maximize.
+    SetMaximized {
+        #[serde(default)]
+        pane_id: Option<String>,
     },
     /// One split, or every split when `split_id` is omitted.
     EqualizeSplits {
@@ -492,12 +511,10 @@ pub struct LayoutReply {
 
 /// `layout.apply`: apply one action to a window's layout for a workspace.
 ///
-/// Closing a tab follows its target (daemon-authority decision 5): when the
-/// change removes the last tab of a shell terminal from this layout, that
-/// terminal closes first, as `terminal.close` would, and its tabs leave every
-/// layout. A busy one refuses the change with `terminal_busy`, listing each
-/// busy terminal in `terminals`, unless `force` is true. Service, script and
-/// Conversation terminal tabs, and every other target, only leave the layout.
+/// It never ends a process. A change that would remove the last tab, counted
+/// across every window's layouts, of a running shell terminal is refused with
+/// `tab_close_required`, listing those tabs in `tabs`; `tab.close` and
+/// `pane.close` close such tabs and their shells.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct LayoutApplyRequest {
     pub window_id: String,
@@ -510,8 +527,39 @@ pub struct LayoutApplyRequest {
     /// from that revision, which returns its result.
     #[serde(default)]
     pub expected_revision: Option<u64>,
-    /// Close busy shell terminals whose tabs this change removes. Without
-    /// it a busy one refuses the whole change with `terminal_busy`.
+}
+
+/// `tab.close`: close a tab, following its target (daemon-authority decision
+/// 5). When the tab is the last one, across every window's layouts, of a
+/// shell terminal, the terminal closes as `terminal.close` would: every busy
+/// shell is found before any closes, and a busy one refuses with
+/// `terminal_busy`, listing each in `terminals`, unless `force` is true.
+/// Service, script and Conversation terminal tabs and every other target only
+/// leave the layout. A closed shell's tabs leave every layout.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TabCloseRequest {
+    /// The caller's operation ID. A retry with the same ID and payload
+    /// returns the recorded outcome; the same ID with another payload is a
+    /// conflict.
+    pub operation_id: String,
+    pub window_id: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    pub tab_id: String,
+    #[serde(default)]
+    pub force: Option<bool>,
+}
+
+/// `pane.close`: close a pane and its tabs, closing each shell terminal whose
+/// last tab it holds, as `tab.close` does.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct PaneCloseRequest {
+    /// The caller's operation ID, as for `tab.close`.
+    pub operation_id: String,
+    pub window_id: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    pub pane_id: String,
     #[serde(default)]
     pub force: Option<bool>,
 }
@@ -526,10 +574,6 @@ pub struct LayoutReplaceRequest {
     pub layout: Layout,
     #[serde(default)]
     pub expected_revision: Option<u64>,
-    /// Close busy shell terminals whose tabs this change removes. Without
-    /// it a busy one refuses the whole change with `terminal_busy`.
-    #[serde(default)]
-    pub force: Option<bool>,
 }
 
 /// The `layout.apply` and `layout.replace` reply. `changed` is false when
@@ -554,6 +598,9 @@ pub struct WindowChanged {
 
 /// The `layout_changed` feed frame. `layout.revision` is the layout's own
 /// revision; a client keeps the higher of it and what `layout.get` gave.
+/// After a reconnect, a client reads `window.list` (or the catalog's
+/// windows) and re-reads every layout whose revision in `Window.layouts`
+/// differs from its own.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct LayoutChanged {
     #[serde(rename = "type")]
@@ -638,6 +685,7 @@ mod tests {
             state: WindowState::Open,
             bounds: None,
             view: WindowView::default(),
+            layouts: BTreeMap::from([("ws".to_owned(), 3)]),
         }
     }
 
@@ -653,6 +701,8 @@ mod tests {
             ("window.set_view_state", "idempotent_command"),
             ("layout.get", "query"),
             ("layout.apply", "idempotent_command"),
+            ("tab.close", "effect_command"),
+            ("pane.close", "effect_command"),
             ("layout.replace", "idempotent_command"),
         ] {
             assert_eq!(spec(op)["tier"], tier, "{op}");

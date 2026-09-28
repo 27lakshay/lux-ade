@@ -291,6 +291,8 @@ export const operations = {
   "layout.get": { tier: "query", domain: "layout", request: "LayoutGetRequest", response: "LayoutReply" },
   "layout.apply": { tier: "idempotent_command", domain: "layout", request: "LayoutApplyRequest", response: "LayoutApplied" },
   "layout.replace": { tier: "idempotent_command", domain: "layout", request: "LayoutReplaceRequest", response: "LayoutApplied" },
+  "tab.close": { tier: "effect_command", domain: "layout", request: "TabCloseRequest", response: "LayoutApplied" },
+  "pane.close": { tier: "effect_command", domain: "layout", request: "PaneCloseRequest", response: "LayoutApplied" },
 } as const
 
 /**
@@ -376,6 +378,8 @@ export const operationIdOperations = [
   "device.app.launch",
   "device.input",
   "command.invoke",
+  "tab.close",
+  "pane.close",
 ] as const
 
 /** Each feed frame's `type` tag and the validator name for it. */

@@ -31,7 +31,8 @@ fn run(layout: Layout, actions: &[LayoutAction]) -> Layout {
 /// A step refers to existing panes and tabs by position, so most steps do something.
 #[derive(Clone, Debug)]
 enum Step {
-    Maximize(usize),
+    Maximize(usize, bool),
+    SideCollapsed(bool, bool),
     Equalize,
     Reset,
     Open(usize, bool),
@@ -45,7 +46,7 @@ enum Step {
     DockPane(usize, Edge),
     ClosePane(usize),
     Focus(usize),
-    SwapSidebars,
+    Sides(bool),
     Sizes(usize, Vec<u8>),
 }
 
@@ -71,7 +72,9 @@ fn edge() -> impl Strategy<Value = Edge> {
 fn step() -> impl Strategy<Value = Step> {
     let n = || 0usize..64;
     prop_oneof![
-        n().prop_map(Step::Maximize),
+        (n(), any::<bool>()).prop_map(|(p, on)| Step::Maximize(p, on)),
+        (any::<bool>(), any::<bool>())
+            .prop_map(|(left, collapsed)| Step::SideCollapsed(left, collapsed)),
         Just(Step::Equalize),
         Just(Step::Reset),
         (n(), any::<bool>()).prop_map(|(p, named)| Step::Open(p, named)),
@@ -85,7 +88,7 @@ fn step() -> impl Strategy<Value = Step> {
         (n(), edge()).prop_map(|(p, e)| Step::DockPane(p, e)),
         n().prop_map(Step::ClosePane),
         n().prop_map(Step::Focus),
-        Just(Step::SwapSidebars),
+        any::<bool>().prop_map(Step::Sides),
         (n(), prop::collection::vec(1u8..100, 2..5)).prop_map(|(s, w)| Step::Sizes(s, w)),
     ]
 }
@@ -114,7 +117,13 @@ fn action(
     let tabs: Vec<&String> = layout.tabs.keys().collect();
     let tab_at = |i: &usize| (!tabs.is_empty()).then(|| tabs[i % tabs.len()].clone());
     Some(match step {
-        Step::Maximize(p) => LayoutAction::ToggleMaximize { pane_id: pane(p)? },
+        Step::Maximize(p, on) => LayoutAction::SetMaximized {
+            pane_id: if *on { Some(pane(p)?) } else { None },
+        },
+        Step::SideCollapsed(left, collapsed) => LayoutAction::SetSideCollapsed {
+            side: if *left { Side::Left } else { Side::Right },
+            collapsed: *collapsed,
+        },
         Step::Equalize => LayoutAction::EqualizeSplits { split_id: None },
         Step::Reset => LayoutAction::ResetLayout,
         Step::Open(p, named) => LayoutAction::OpenTab {
@@ -162,7 +171,13 @@ fn action(
         },
         Step::ClosePane(p) => LayoutAction::ClosePane { pane_id: pane(p)? },
         Step::Focus(p) => LayoutAction::FocusPane { pane_id: pane(p)? },
-        Step::SwapSidebars => LayoutAction::SwapSidebars,
+        Step::Sides(navigator) => LayoutAction::SetSidebarSides {
+            left: if *navigator {
+                SidebarId::Navigator
+            } else {
+                SidebarId::Inspector
+            },
+        },
         Step::Sizes(s, weights) => {
             let all = splits(&layout.root);
             let (id, count) = (!all.is_empty()).then(|| all[s % all.len()].clone())?;
@@ -202,9 +217,9 @@ proptest! {
         }
     }
 
-    /// An action that makes a pane is its own retry: applied again it changes nothing.
+    /// Every repeatable action is its own retry: applied again it changes nothing.
     #[test]
-    fn an_action_that_makes_a_pane_is_idempotent(steps in prop::collection::vec(step(), 1..40)) {
+    fn every_repeatable_action_is_idempotent(steps in prop::collection::vec(step(), 1..40)) {
         let mut counter = 0;
         let mut fresh = || {
             counter += 1;
@@ -214,10 +229,7 @@ proptest! {
         for step in &steps {
             let Some(action) = action(&layout, step, &mut fresh) else { continue };
             let once = apply(&layout, &action).unwrap();
-            if matches!(action, LayoutAction::SplitPane { .. } | LayoutAction::DropTab { .. }
-                | LayoutAction::DockTab { .. } | LayoutAction::OpenTab { .. }
-                | LayoutAction::CloseTab { .. } | LayoutAction::ClosePane { .. })
-            {
+            if repeatable(&action) {
                 prop_assert_eq!(apply(&once, &action).unwrap(), once.clone(), "{:?}", action);
             }
             layout = once;

@@ -2,7 +2,7 @@
 //! `store::layouts`, and their `window_changed`, `layout_changed` and
 //! `layout_removed` feed frames.
 use super::*;
-use crate::store::layouts::{LayoutChange, Proposal, WindowChange, WorkspaceRemoval};
+use crate::store::layouts::{LayoutChange, WindowChange, WorkspaceRemoval};
 use ade_core::contract::layout::{
     LayoutApplied, LayoutApplyRequest, LayoutGetRequest, LayoutRecord, LayoutReplaceRequest,
     LayoutReply, Window, WindowAck, WindowCloseRequest, WindowCreateRequest, WindowList,
@@ -104,31 +104,19 @@ impl Sessions {
         }
     }
 
-    /// For a `layout.apply` or `layout.replace` request: the shell terminals
-    /// whose last tab in the layout it removes, which close first (decision 5).
-    pub fn layout_removed_shells(&self, request: &Value) -> Result<Vec<String>> {
-        let d = self.data.lock().unwrap();
-        match request["op"].as_str().unwrap_or("") {
-            "layout.apply" => {
-                let apply: LayoutApplyRequest = decode(request)?;
-                d.store.removed_shells(
-                    &apply.window_id,
-                    apply.workspace_id.as_deref(),
-                    Proposal::Apply(&apply.action),
-                    apply.expected_revision,
-                )
-            }
-            "layout.replace" => {
-                let replace: LayoutReplaceRequest = decode(request)?;
-                d.store.removed_shells(
-                    &replace.window_id,
-                    replace.workspace_id.as_deref(),
-                    Proposal::Replace(&replace.layout),
-                    replace.expected_revision,
-                )
-            }
-            _ => Ok(Vec::new()),
-        }
+    /// For `tab.close` and `pane.close`: the shell terminals, running or
+    /// not, whose last tab across every window's layouts `action` removes.
+    pub fn closing_shells(
+        &self,
+        window_id: &str,
+        workspace_id: Option<&str>,
+        action: &ade_core::contract::layout::LayoutAction,
+    ) -> Result<Vec<String>> {
+        self.data
+            .lock()
+            .unwrap()
+            .store
+            .closing_shells(window_id, workspace_id, action)
     }
 
     fn window_reply(&self, d: &mut Data, change: WindowChange) -> Result<Value> {
@@ -174,5 +162,6 @@ impl Sessions {
             );
         }
         self.windows_changed(d, &removal.windows);
+        self.layouts_changed(d, &removal.shown);
     }
 }
