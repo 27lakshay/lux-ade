@@ -150,7 +150,8 @@ claiming a UI change works.
   | `<Code>` | 12 mono | Code, paths, commands; `size="inline"` inside other text |
 
   Props: `tone` (`default`, `muted`, `inherit`), `weight`, `truncate`, `lines` (2–4), `numeric`
-  (tabular figures), `selectable` (off for chrome text, on for `Body` and `Code`), `as`;
+  (tabular figures), `steadyWidth` (hold the width of a heavier weight, for text whose weight
+  changes with selection, such as tabs), `selectable` (off for chrome text, on for `Body` and `Code`), `as`;
   `className` is for placement only. The theme moves the kit's `text-sm` to 13px, so kit menus and
   buttons match `<Text>`. Lint: `ade/type-scale` (no size, weight, line-height or `font-mono`
   classes) and `ade/text-elements` (no raw paragraphs or headings) outside that file. In Pen the

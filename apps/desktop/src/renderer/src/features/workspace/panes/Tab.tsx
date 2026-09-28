@@ -95,7 +95,14 @@ export function Tab({
         />
       )}
       <Icon name={TAB_ICON[tab.kind]} size="sm" className="relative" />
-      <Caption tone="inherit" weight={active ? 'medium' : 'regular'} truncate className="relative min-w-0 flex-1">
+      {/* Always as wide as when selected: selecting a tab never nudges its neighbours. */}
+      <Caption
+        tone="inherit"
+        weight={active ? 'medium' : 'regular'}
+        steadyWidth="medium"
+        truncate
+        className="relative min-w-0 flex-1"
+      >
         {tab.title}
       </Caption>
       <span className={cn('relative flex', active ? 'visible' : 'invisible group-hover/tab:visible')}>

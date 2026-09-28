@@ -129,3 +129,21 @@ test('numbers, line clamps and inline code', async () => {
   expect(clamped.getBoundingClientRect().height).toBe(44)
   expect(parseFloat(getComputedStyle(screen.getByText('pnpm dev').element()).fontSize)).toBeCloseTo(14 * 0.92, 1)
 })
+
+test('steadyWidth holds the width of the heavier weight, without repeating the text', async () => {
+  const screen = await render(
+    <div className="flex">
+      <Caption data-testid="regular" steadyWidth="medium">
+        New conversation
+      </Caption>
+      <Caption data-testid="medium" weight="medium" steadyWidth="medium">
+        New conversation
+      </Caption>
+      <Caption data-testid="plain">New conversation</Caption>
+    </div>,
+  )
+  const width = (id: string) => screen.getByTestId(id).element().getBoundingClientRect().width
+  await expect.poll(() => width('regular')).toBeGreaterThan(width('plain'))
+  expect(width('regular')).toBe(width('medium'))
+  expect(screen.getByTestId('regular').element().textContent).toBe('New conversation')
+})

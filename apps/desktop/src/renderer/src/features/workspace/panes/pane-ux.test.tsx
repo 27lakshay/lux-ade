@@ -217,3 +217,20 @@ test('a window saved with sidebars collapsed opens with every pane that fits, an
   await screen.getByRole('button', { name: 'Toggle left sidebar' }).click()
   await expect.poll(() => Math.round(section('Navigator')!.getBoundingClientRect().width)).toBe(300)
 })
+
+test('selecting a tab moves no tab: each is as wide as when selected', async () => {
+  await panesWith(['New conversation', 'New conversation 2', 'Build'])
+  const boxes = () =>
+    [...document.querySelectorAll('[role=tab]')]
+      .filter((tab) => tab.closest('[data-tab-bar]'))
+      .map((tab) => {
+        const rect = tab.getBoundingClientRect()
+        return `${rect.left.toFixed(1)}/${rect.width.toFixed(1)}`
+      })
+  const before = boxes()
+  for (const title of ['New conversation', 'New conversation 2', 'Build']) {
+    tabEl(title).click()
+    await expect.poll(() => tabEl(title).getAttribute('aria-selected')).toBe('true')
+    expect(boxes()).toEqual(before)
+  }
+})

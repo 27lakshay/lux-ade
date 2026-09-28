@@ -10,6 +10,13 @@ import { cn } from '@/lib/utils'
 const TONES = { default: 'text-foreground', muted: 'text-muted-foreground', inherit: '' } as const
 const WEIGHTS = { regular: 'font-normal', medium: 'font-medium', semibold: 'font-semibold' } as const
 const LINES = { 2: 'line-clamp-2', 3: 'line-clamp-3', 4: 'line-clamp-4' } as const
+/** An invisible, zero-height copy of the text at a weight, which holds the element at that width. */
+const STEADY = {
+  regular: 'after:font-normal',
+  medium: 'after:font-medium',
+  semibold: 'after:font-semibold',
+} as const
+const STEADY_BASE = 'after:invisible after:block after:h-0 after:overflow-hidden after:content-[attr(data-text)]'
 
 type Tone = keyof typeof TONES
 type Weight = keyof typeof WEIGHTS
@@ -25,6 +32,11 @@ type TextProps<Tag extends ElementType> = Omit<ComponentProps<'span'>, 'color'> 
   lines?: keyof typeof LINES
   /** Tabular figures, so counts, timers and percentages do not shift as they change. */
   numeric?: boolean
+  /**
+   * Keep the width this text has at the given weight, so switching to it (a selected tab turning
+   * medium) does not move what sits beside it. The text must be a plain string.
+   */
+  steadyWidth?: Weight
   /**
    * Whether the text can be selected. Chrome text (labels, rows, titles) cannot, as in a native
    * app; content people may copy (messages, code) can.
@@ -48,14 +60,17 @@ function textComponent<Default extends ElementType, Tags extends ElementType>(na
     truncate,
     lines,
     numeric,
+    steadyWidth,
     selectable = style.selectable,
     className,
     ...props
   }: TextProps<Default | Tags>) {
+    const steadyText = steadyWidth && typeof props.children === 'string' ? props.children : undefined
     const Element: ElementType = as ?? style.element
     return (
       <Element
         {...props}
+        data-text={steadyText}
         // The size stays outside cn(): tailwind-merge reads text-title as a colour and would drop it
         // beside the tone. Lint keeps size classes out of className, so nothing can conflict.
         className={`${style.size} ${cn(
@@ -65,6 +80,7 @@ function textComponent<Default extends ElementType, Tags extends ElementType>(na
           truncate && 'truncate',
           lines && LINES[lines],
           numeric && 'tabular-nums',
+          steadyText !== undefined && [STEADY_BASE, STEADY[steadyWidth!]],
           className,
         )}`}
       />
