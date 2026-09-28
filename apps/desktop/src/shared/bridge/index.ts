@@ -7,6 +7,7 @@ import type { FilesBridge } from './files'
 import type { ProfilesBridge } from './profiles'
 import type { ReviewBridge } from './review'
 import type { ServicesBridge } from './services'
+import type { TerminalsBridge } from './terminals'
 import type { WorkspacesBridge } from './workspaces'
 
 /**
@@ -32,5 +33,7 @@ export interface AdeHost {
   review: ReviewBridge
   files: FilesBridge
   browser: BrowserBridge
+  /** A terminal's output and input, over the stream bridge. */
   terminal: TerminalBridge
+  terminals: TerminalsBridge
 }

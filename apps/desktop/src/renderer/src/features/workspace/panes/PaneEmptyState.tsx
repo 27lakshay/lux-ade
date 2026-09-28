@@ -3,6 +3,7 @@ import { Shortcut } from '@/components/Shortcut'
 import { Caption, Text } from '@/components/Typography'
 import { Icon } from '@/icons/Icon'
 import { openTab } from '../model/layout-store'
+import { newTerminal } from '../terminals/terminal-tabs'
 import { TAB_ICON } from './Tab'
 
 // The body of a pane with nothing open: what can be started here, with the keys for each.
@@ -21,10 +22,7 @@ export function PaneEmptyState({ paneId }: { paneId: string }) {
         >
           New conversation
         </Row>
-        <Row
-          leading={<Icon name={TAB_ICON.terminal} tone="muted" />}
-          onClick={() => openTab({ kind: 'terminal', title: 'Terminal' }, paneId)}
-        >
+        <Row leading={<Icon name={TAB_ICON.terminal} tone="muted" />} onClick={() => void newTerminal(paneId)}>
           New terminal
         </Row>
         <Row

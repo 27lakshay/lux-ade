@@ -1,4 +1,5 @@
 import { toast } from '@/components/ui/toast'
+import { hostErrorMessage } from '@/lib/host-error'
 import { confirm } from '../../../provisional/ConfirmDialog'
 import { askName } from '../../../provisional/NameDialog'
 import { selectWorkspace } from './workspace-selection'
@@ -6,18 +7,12 @@ import { selectWorkspace } from './workspace-selection'
 // What the navigator's project and workspace menus do. Main runs each action against the daemon
 // (main/workspace-actions.ts); a refusal comes back as reasons and is shown as a toast.
 
-/** The message of an error from main, without Electron's "Error invoking remote method" prefix. */
-function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/^Error invoking remote method '[^']+': (?:\w*Error: )?/, '')
-}
-
 function refused(title: string, reasons: string[]): void {
   toast.add({ type: 'error', title, description: reasons.join('. ') + '.' })
 }
 
 function failed(title: string, error: unknown): void {
-  toast.add({ type: 'error', title, description: errorMessage(error) })
+  toast.add({ type: 'error', title, description: hostErrorMessage(error) })
 }
 
 export async function renameWorkspace(id: string, name: string): Promise<void> {
@@ -74,7 +69,7 @@ export async function newWorkspace(projectWorkspaceId: string, projectName: stri
     const id = await toast.promise(window.adeHost.workspaces.createWorktree(projectWorkspaceId, name), {
       loading: { title: `Creating “${name}”…` },
       success: { title: `Created “${name}”` },
-      error: (error: unknown) => ({ title: `Could not create “${name}”`, description: errorMessage(error) }),
+      error: (error: unknown) => ({ title: `Could not create “${name}”`, description: hostErrorMessage(error) }),
     })
     selectWorkspace(id)
   } catch {

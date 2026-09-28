@@ -7,6 +7,7 @@ import type { ProfilesBridge } from './bridge/profiles'
 import type { ReviewBridge } from './bridge/review'
 import type { ServicesBridge } from './bridge/services'
 import type { ProfileState } from './bridge/types'
+import type { TerminalsBridge } from './bridge/terminals'
 import type { WorkspacesBridge } from './bridge/workspaces'
 
 // The IPC contract between main and preload. Each request channel is typed as the bridge method
@@ -38,6 +39,9 @@ export interface InvokeChannels {
   'ade:worktree-create': WorkspacesBridge['createWorktree']
   'ade:worktree-check': WorkspacesBridge['checkWorktree']
   'ade:worktree-delete': WorkspacesBridge['deleteWorktree']
+  'ade:terminal-create': TerminalsBridge['create']
+  'ade:terminal-close': TerminalsBridge['close']
+  'ade:terminal-restart': TerminalsBridge['restart']
   'ade:restore-bindings': WorkspacesBridge['listRestoreBindings']
   'ade:restore-binding': WorkspacesBridge['rebindRestored']
   'ade:restore-choose-folder': WorkspacesBridge['chooseRestoreFolder']

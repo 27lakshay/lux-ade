@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@ade/client": "workspace:*",
+    "@ade/contracts": "workspace:*",
     "@ade/terminal": "workspace:*",
     "@atlaskit/pragmatic-drag-and-drop": "4.0.0",
     "@atlaskit/pragmatic-drag-and-drop-auto-scroll": "3.2.1",

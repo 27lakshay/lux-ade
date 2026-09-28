@@ -6,6 +6,7 @@ import { findPane, neighbourPane } from './layout-tree'
 import { toggleSidebar } from '../cards/fit'
 import { growFocusedPane } from '../panes/grow'
 import { hasRoomFor, noRoom, trySplit } from '../panes/room'
+import { closePane, closeTab } from '../terminals/terminal-tabs'
 import { dispatch, layoutStore, openTab } from './layout-store'
 
 // The workspace's commands: from the native menu (app commands) and in the palette. Every mouse
@@ -40,7 +41,7 @@ export function handleLayoutCommand(command: AppCommand): boolean {
       return true
     case 'close-tab': {
       const { pane } = focused()
-      if (pane?.active) dispatch({ type: 'closeTab', tabId: pane.active })
+      if (pane?.active) void closeTab(pane.active)
       return true
     }
     default:
@@ -73,7 +74,7 @@ export function registerLayoutCommands(): void {
   commandService.registerKeybinding({ key: '$mod+Shift+Enter', command: 'layout.toggleMaximize' })
   add('layout.closePane', 'Close pane', () => {
     const { pane } = focused()
-    if (pane) dispatch({ type: 'closePane', paneId: pane.id })
+    if (pane) void closePane(pane.id)
   })
 }
 

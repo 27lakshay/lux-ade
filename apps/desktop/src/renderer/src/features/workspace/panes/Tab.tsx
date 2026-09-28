@@ -10,6 +10,7 @@ import type { IconName } from '@/icons/icons'
 import type { Tab as TabData, TabKind } from '../model/layout'
 import { transitions } from '../../../app/motion'
 import { dispatch } from '../model/layout-store'
+import { closeTab } from '../terminals/terminal-tabs'
 import { activeLayout, showDragPreview, type DragData } from './drag'
 import { DragChip } from './DragChip'
 
@@ -77,7 +78,7 @@ export function Tab({
       // re-renders no tab.
       data-active={active || undefined}
       onClick={activate}
-      onAuxClick={(event) => event.button === 1 && dispatch({ type: 'closeTab', tabId: tab.id })}
+      onAuxClick={(event) => event.button === 1 && void closeTab(tab.id)}
       onKeyDown={(event) => (event.key === 'Enter' || event.key === ' ') && activate()}
       className={cn(
         interactive,
@@ -110,12 +111,7 @@ export function Tab({
         {tab.title}
       </Caption>
       <span className={cn('relative flex', active ? 'visible' : 'invisible group-hover/tab:visible')}>
-        <IconButton
-          icon="close"
-          label="Close tab"
-          size="xs"
-          onClick={() => dispatch({ type: 'closeTab', tabId: tab.id })}
-        />
+        <IconButton icon="close" label="Close tab" size="xs" onClick={() => void closeTab(tab.id)} />
       </span>
     </m.div>
   )

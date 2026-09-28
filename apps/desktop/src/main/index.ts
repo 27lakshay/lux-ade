@@ -38,6 +38,7 @@ import { registerReviewIpc, setGitJournal } from './review'
 import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
 import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge } from './stream-bridge'
+import { registerTerminalIpc } from './terminals'
 import { registerWorkspaceActionIpc } from './workspace-actions'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
 import { installAppMenu } from './app-menu'
@@ -87,6 +88,7 @@ registerProfileIpc()
 registerConversationIpc()
 registerWorkspaceIpc()
 registerWorkspaceActionIpc()
+registerTerminalIpc()
 registerServiceIpc()
 registerReviewIpc()
 registerFileIpc()

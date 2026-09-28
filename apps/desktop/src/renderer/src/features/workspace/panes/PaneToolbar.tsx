@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Icon } from '@/icons/Icon'
 import type { IconName } from '@/icons/icons'
 import { dispatch, useLayout } from '../model/layout-store'
+import { closePane } from '../terminals/terminal-tabs'
 import { trySplit } from './room'
 
 // A pane's actions beside its tabs. In a narrow pane (under 320px) they fold into a "More" menu so
@@ -37,7 +38,7 @@ export function PaneToolbar({ paneId }: { paneId: string }) {
             run: () => dispatch({ type: 'toggleMaximize', paneId }),
           } satisfies Action,
         ]),
-    { icon: 'close', label: 'Close pane', run: () => dispatch({ type: 'closePane', paneId }) },
+    { icon: 'close', label: 'Close pane', run: () => void closePane(paneId) },
   ]
   return (
     <>

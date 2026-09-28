@@ -170,6 +170,9 @@ importers:
       '@ade/client':
         specifier: workspace:*
         version: link:../../packages/client
+      '@ade/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@ade/terminal':
         specifier: workspace:*
         version: link:../../packages/terminal

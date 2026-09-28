@@ -60,7 +60,12 @@ function attachTerminal(link: WindowLink, message: Extract<WindowToBridge, { typ
   }
   const state = client?.getState()
   const workspace = state?.catalog?.workspaces.find((item) => item.id === workspaceId)
-  if (!socket || state?.status !== 'connected' || !workspace || workspace.terminal_id !== terminalId) {
+  if (
+    !socket ||
+    state?.status !== 'connected' ||
+    !workspace ||
+    (workspace.terminal_id !== terminalId && !workspace.extra_terminals?.includes(terminalId))
+  ) {
     reply('The selected terminal is unavailable in this profile')
     return
   }

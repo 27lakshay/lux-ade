@@ -117,8 +117,19 @@ const activeLayout = (state: LayoutState): Layout => state.layouts[state.active]
 
 /** Applies an action to the active workspace's layout. */
 export function dispatch(action: LayoutAction): void {
+  dispatchTo(layoutStore.getState().active, action)
+}
+
+/**
+ * Applies an action to one workspace's layout, shown or not: for work that finishes after the
+ * window may have switched workspaces, such as a terminal the daemon has just started.
+ */
+function dispatchTo(workspaceId: string, action: LayoutAction): void {
   layoutStore.setState((state) => ({
-    layouts: { ...state.layouts, [state.active]: layoutReducer(activeLayout(state), action) },
+    layouts: {
+      ...state.layouts,
+      [workspaceId]: layoutReducer(state.layouts[workspaceId] ?? defaultLayout(newPaneId()), action),
+    },
   }))
 }
 
@@ -165,7 +176,9 @@ export const useLayout = <T>(selector: (layout: Layout) => T): T =>
 
 // Actions that need new ids.
 export const openTab = (tab: Omit<Tab, 'id'>, paneId?: string): void =>
-  dispatch({ type: 'openTab', tab: { ...tab, id: `tab-${nanoid(8)}` }, paneId })
+  openTabIn(layoutStore.getState().active, tab, paneId)
+export const openTabIn = (workspaceId: string, tab: Omit<Tab, 'id'>, paneId?: string): void =>
+  dispatchTo(workspaceId, { type: 'openTab', tab: { ...tab, id: `tab-${nanoid(8)}` }, paneId })
 export const splitPane = (paneId: string, direction: SplitDirection): void =>
   dispatch({ type: 'splitPane', paneId, direction, newPaneId: newPaneId() })
 export const dropTab = (tabId: string, paneId: string, zone: DropZone): void =>

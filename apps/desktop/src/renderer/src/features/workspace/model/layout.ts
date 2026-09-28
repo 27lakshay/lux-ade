@@ -2,6 +2,8 @@
 // and the tree of panes in the centre with their tabs. Components read it; layout.logic.ts changes
 // it. One layout per workspace (layout-store.ts).
 
+import type { TabTarget } from '@ade/contracts'
+
 /** The two sidebars. They only ever swap sides with each other and never hold panes. */
 export type SidebarId = 'navigator' | 'inspector'
 export type Side = 'left' | 'right'
@@ -12,6 +14,8 @@ export interface Tab {
   id: string
   kind: TabKind
   title: string
+  /** The record the tab shows, once it has one (a terminal's ID); the daemon's `TabTarget`. */
+  target?: TabTarget
 }
 
 export type SplitDirection = 'row' | 'column'

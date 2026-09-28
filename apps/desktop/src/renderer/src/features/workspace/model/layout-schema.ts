@@ -5,10 +5,20 @@ import type { Layout, LayoutNode } from './layout'
 // back to the default rather than breaking the window.
 
 const sidebar = z.enum(['navigator', 'inspector'])
+const target = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('conversation'), id: z.string() }),
+  z.object({ kind: z.literal('terminal'), id: z.string() }),
+  z.object({ kind: z.literal('browser'), id: z.string() }),
+  z.object({ kind: z.literal('file'), path: z.string() }),
+  z.object({ kind: z.literal('diff'), path: z.string(), staged: z.boolean() }),
+  z.object({ kind: z.literal('new_conversation') }),
+])
 const tab = z.object({
   id: z.string(),
   kind: z.enum(['conversation', 'terminal', 'browser', 'file', 'diff']),
   title: z.string(),
+  // Added with real terminals: older tabs load without one.
+  target: target.optional(),
 })
 const pane = z.object({
   type: z.literal('pane'),
