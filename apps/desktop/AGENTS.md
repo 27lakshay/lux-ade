@@ -36,10 +36,24 @@ claiming a UI change works.
 ## Renderer
 
 - The workspace shell (`features/workspace`) is built to the Pen screen "Workspace — graphite —
-  dark": fixed chrome (`chrome/`: title bar, rail, bottom bar) around floating cards (`cards/`:
-  the sidebars and the panes). The layout is data (`model/layout.ts`), changed only by the reducer
-  (`model/layout.logic.ts`), stored per workspace (`model/layout-store.ts`). Sidebars only swap
-  sides; panes split and move anywhere in the centre. Pane content is empty for now.
+  dark":
+  - `chrome/`: the fixed title bar, rail and bottom bar. They never move.
+  - `cards/`: the floating layer. `CardArea` lays out sidebar, centre, sidebar with 8px gutters
+    (`ResizeHandle`); `Card` is two layers, a plain background that may scale and content that
+    only moves, so layout animations never stretch content.
+  - `model/`: the layout is data (`layout.ts`), changed only by the reducer (`layout.logic.ts`),
+    stored per workspace and saved (`layout-store.ts`, checked on load by `layout-schema.ts`).
+    Native-menu and palette commands live in `layout-commands.ts`.
+  - `panes/`: the pane tree (`PaneGrid`), panes, tabs and dragging (`drag.ts`): tabs reorder,
+    move between panes and split a pane when dropped on its edge; panes move by their grip.
+    Sidebars only swap sides, by grip or the Swap sidebars command; they never hold panes.
+  - `content/`: every tab's content renders once into its own element (`hosts.ts`,
+    `ContentHosts.tsx`); panes attach the element, so moving a tab never remounts it. Content of
+    the recently used workspaces stays mounted; how many is `keepMounted` in the layout store (3).
+    Pane content is empty for now.
+  - Layout animations key on structure (sidebar order, collapsed sidebars, the pane tree), never
+    on sizes. `testing.tsx` renders the workspace for browser tests and drives drags with native
+    drag events.
 - Folders in `src/renderer/src`:
   - `bootstrap.ts`: the entry. It imports `app/start.tsx` dynamically and shows a plain error
     screen if that fails.
