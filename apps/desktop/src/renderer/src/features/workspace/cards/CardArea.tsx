@@ -1,9 +1,11 @@
 import { LayoutGroup } from 'motion/react'
+import * as m from 'motion/react-m'
 import { useEffect, useRef } from 'react'
 import { Group, Panel, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
+import { transitions } from '../../../app/motion'
 import { SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
 import { structureKey } from '../model/layout.logic'
-import { dispatch, useLayout } from '../model/layout-store'
+import { dispatch, layoutStore, useLayout } from '../model/layout-store'
 import { PaneGrid } from '../panes/PaneGrid'
 import { Inspector } from '../sidebars/Inspector'
 import { Navigator } from '../sidebars/Navigator'
@@ -22,6 +24,7 @@ const SIDEBAR = {
 
 function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObject<PanelImperativeHandle | null> }) {
   const width = useLayout((layout) => layout.widths[id])
+  const collapsed = useLayout((layout) => layout.collapsed[id])
   const { label, Content } = SIDEBAR[id]
   return (
     <Panel
@@ -34,9 +37,13 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
       collapsedSize={0}
       groupResizeBehavior="preserve-pixel-size"
     >
-      <Card surface="panel" label={label} grip={<Grip label={`Move ${label.toLowerCase()}`} />}>
-        <Content />
-      </Card>
+      {/* The sidebar itself never animates its size: it fades as it returns, while the centre
+          card animates into the space it leaves or takes. */}
+      <m.div className="h-full" initial={false} animate={{ opacity: collapsed ? 0 : 1 }} transition={transitions.fade}>
+        <Card surface="panel" label={label} grip={<Grip label={`Move ${label.toLowerCase()}`} />}>
+          <Content />
+        </Card>
+      </m.div>
     </Panel>
   )
 }
@@ -47,6 +54,18 @@ export function CardArea() {
   const root = useLayout((layout) => layout.root)
   const refs = { navigator: usePanelRef(), inspector: usePanelRef() }
   const syncing = useRef(false)
+  // A resize ended: keep widths, and notice a sidebar dragged shut or open. Read a frame later:
+  // inside onLayoutChanged the panels still report their sizes from before the change.
+  const commitSizes = (): void => {
+    for (const id of ['navigator', 'inspector'] as const) {
+      const panel = refs[id].current
+      if (!panel) continue
+      const isCollapsed = panel.isCollapsed()
+      if (isCollapsed !== layoutStore.getState().layouts[layoutStore.getState().active]?.collapsed[id])
+        dispatch({ type: 'setCollapsed', sidebar: id, collapsed: isCollapsed })
+      if (!isCollapsed) dispatch({ type: 'setWidth', sidebar: id, width: panel.getSize().inPixels })
+    }
+  }
 
   // The model decides what is collapsed; the panels follow it.
   useEffect(() => {
@@ -70,15 +89,7 @@ export function CardArea() {
           orientation="horizontal"
           className="min-h-0 flex-1 p-2"
           onLayoutChanged={(_layout, meta) => {
-            if (!meta.isUserInteraction || syncing.current) return
-            // A resize ended: keep widths, and notice a sidebar dragged shut or open.
-            for (const id of sidebars) {
-              const panel = refs[id].current
-              if (!panel) continue
-              const isCollapsed = panel.isCollapsed()
-              if (isCollapsed !== collapsed[id]) dispatch({ type: 'setCollapsed', sidebar: id, collapsed: isCollapsed })
-              if (!isCollapsed) dispatch({ type: 'setWidth', sidebar: id, width: panel.getSize().inPixels })
-            }
+            if (meta.isUserInteraction && !syncing.current) requestAnimationFrame(commitSizes)
           }}
         >
           <SidebarPanel key={left} id={left} panelRef={refs[left]} />
