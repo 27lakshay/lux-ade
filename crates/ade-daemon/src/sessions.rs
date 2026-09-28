@@ -58,6 +58,7 @@ mod restart;
 mod retention;
 mod review_feedback;
 mod services;
+mod settings;
 mod skills;
 mod terminals;
 mod workspaces;
@@ -885,6 +886,7 @@ impl Sessions {
             }
             op if op.starts_with("device.") => self.device_command(request),
             op if op.starts_with("context.") => self.context_command(request),
+            op if op.starts_with("settings.") => self.settings_command(request),
             _ => bail!("Unknown session operation"),
         }
     }

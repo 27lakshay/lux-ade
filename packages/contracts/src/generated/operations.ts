@@ -297,6 +297,8 @@ export const operations = {
   "layout.replace": { tier: "idempotent_command", domain: "layout", request: "LayoutReplaceRequest", response: "LayoutApplied" },
   "tab.close": { tier: "effect_command", domain: "layout", request: "TabCloseRequest", response: "LayoutApplied" },
   "pane.close": { tier: "effect_command", domain: "layout", request: "PaneCloseRequest", response: "LayoutApplied" },
+  "settings.get": { tier: "query", domain: "settings", request: "SettingsGetRequest", response: "Settings" },
+  "settings.set": { tier: "idempotent_command", domain: "settings", request: "SettingsSetRequest", response: "Settings" },
 } as const
 
 /**
@@ -401,6 +403,7 @@ export const frames = {
   "window_changed": { domain: "layout", frame: "WindowChanged" },
   "layout_changed": { domain: "layout", frame: "LayoutChanged" },
   "layout_removed": { domain: "layout", frame: "LayoutRemoved" },
+  "settings_changed": { domain: "settings", frame: "SettingsChanged" },
 } as const
 
 /** Each terminal attachment frame's `type` tag and the validator name for it. */

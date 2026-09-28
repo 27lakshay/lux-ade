@@ -1766,6 +1766,15 @@
       ],
       "type": "object"
     },
+    "Appearance": {
+      "description": "Light, dark, or follow the system.",
+      "enum": [
+        "light",
+        "dark",
+        "system"
+      ],
+      "type": "string"
+    },
     "Attachment": {
       "properties": {
         "id": {
@@ -18987,6 +18996,22 @@
         }
       ]
     },
+    "ProfileSettings": {
+      "description": "Every profile setting, each at its default until set. Typography (F014)\nand keybindings (F015) join as keys here.",
+      "properties": {
+        "appearance": {
+          "$ref": "#/$defs/Appearance"
+        },
+        "reduced_motion": {
+          "$ref": "#/$defs/ReducedMotion"
+        }
+      },
+      "required": [
+        "appearance",
+        "reduced_motion"
+      ],
+      "type": "object"
+    },
     "ProjectKind": {
       "description": "What a project is.",
       "oneOf": [
@@ -20117,6 +20142,15 @@
         "healthy",
         "degraded",
         "corrupt"
+      ],
+      "type": "string"
+    },
+    "ReducedMotion": {
+      "description": "Reduce motion: follow the system, always, or never.",
+      "enum": [
+        "system",
+        "on",
+        "off"
       ],
       "type": "string"
     },
@@ -25960,6 +25994,102 @@
         }
       ]
     },
+    "Settings": {
+      "description": "The `settings.get` and `settings.set` reply: every setting as it is now.",
+      "properties": {
+        "settings": {
+          "$ref": "#/$defs/ProfileSettings"
+        },
+        "type": {
+          "description": "The `settings` type tag.",
+          "enum": [
+            "settings"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "SettingsChanged": {
+      "description": "The `settings_changed` feed frame: every setting after a change.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settings": {
+          "$ref": "#/$defs/ProfileSettings"
+        },
+        "type": {
+          "description": "The `settings_changed` type tag.",
+          "enum": [
+            "settings_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "settings",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "SettingsGetRequest": {
+      "additionalProperties": false,
+      "description": "`settings.get`: read every profile setting.",
+      "properties": {
+        "op": {
+          "const": "settings.get"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "SettingsSetRequest": {
+      "additionalProperties": false,
+      "description": "`settings.set`: change the named settings and leave the others. A key the\nprofile does not keep is refused with `unknown_setting`, before anything\nchanges.",
+      "properties": {
+        "appearance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Appearance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "op": {
+          "const": "settings.set"
+        },
+        "reduced_motion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReducedMotion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "SetupState": {
       "description": "Whether a tree is ready for an Agent, from its latest `worktree.switch`.",
       "enum": [
@@ -31302,6 +31432,11 @@
       "domain": "layout",
       "frame": "LayoutRemoved",
       "type": "layout_removed"
+    },
+    {
+      "domain": "settings",
+      "frame": "SettingsChanged",
+      "type": "settings_changed"
     }
   ],
   "operations": [
@@ -33369,6 +33504,20 @@
       "request": "PaneCloseRequest",
       "response": "LayoutApplied",
       "tier": "effect_command"
+    },
+    {
+      "domain": "settings",
+      "name": "settings.get",
+      "request": "SettingsGetRequest",
+      "response": "Settings",
+      "tier": "query"
+    },
+    {
+      "domain": "settings",
+      "name": "settings.set",
+      "request": "SettingsSetRequest",
+      "response": "Settings",
+      "tier": "idempotent_command"
     }
   ],
   "streams": {

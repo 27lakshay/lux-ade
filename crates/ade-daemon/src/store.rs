@@ -37,6 +37,7 @@ mod projects;
 pub mod runtime_recovery;
 mod send_intents;
 mod send_outbox;
+mod settings;
 mod snoozes;
 pub(crate) mod terminal_records;
 mod terminals;

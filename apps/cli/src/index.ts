@@ -41,6 +41,7 @@ import { hookUsage, runHookCommand } from './commands/hooks.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { layoutUsage, runLayoutCommand } from './commands/layouts.js'
 import { reviewUsage, runReviewCommand } from './commands/review.js'
+import { runSettingsCommand, settingsUsage } from './commands/settings.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
 import { runWorktreeLifecycleCommand, worktreeLifecycleUsage } from './commands/worktrees.js'
 import { listOperations, requestUsage, runRequestCommand } from './commands/request.js'
@@ -153,6 +154,7 @@ const usage = [
   serviceUsage,
   gitUsage,
   reviewUsage,
+  settingsUsage,
   checkpointUsage,
   repositoryUsage,
   listenerUsage,
@@ -363,6 +365,7 @@ const commandAreas = [
   runServiceCommand,
   runGitCommand,
   runReviewCommand,
+  runSettingsCommand,
   runCheckpointCommand,
   runRepositoryCommand,
   runListenerCommand,
