@@ -46,8 +46,9 @@ delivered once, and only once, after the daemon restarts.
   characters.
 - **Concurrent CLI commands serialise on a lock.** A journal keeps its records
   in memory between saves, so each CLI command that uses the journals holds
-  `journals.lock` in the client directory. A lock whose owner has exited is
-  taken over. A second command waits up to 60 s, then fails with `in_progress`.
+  the directory's lock (`journal-lock.ts`, see "Review fixes"). A second
+  command waits up to 60 s, then fails with `in_progress`. A holder whose event
+  loop stalls for more than 30 s loses the lock to the next command.
 - **Suppressions.** Fallow cannot see class members called from another
   package through an accessor. Nine members of `SendPipeline` and `SendJournal`
   carry a `fallow-ignore-next-line unused-class-member` with the reason.
@@ -116,3 +117,32 @@ user data folder, under the same file names as before.
 
 After every run, no `ade-daemon` or `ade-runtime` process from this worktree was
 left running.
+
+## Review fixes
+
+A read-only review found four problems in the CLI journal code. All four are
+fixed, in `3605c5b` and `53d46a4`.
+
+1. **Stale-lock takeover race.** The lock is now a series of generations
+   (`journals.lock.<n>`), each created only by an exclusive `link`, so one
+   process wins each takeover and nobody deletes the current lock. Release marks
+   only the holder's own generation. `docs/agents/libraries.md` names no lock
+   package.
+2. **Process ID reuse.** The holder writes a random token and refreshes a
+   heartbeat every 2 s. A lock is stale when its process is gone or its
+   heartbeat is 30 s old.
+3. **Git request IDs in bytes.** The CLI and the Git journal limit IDs to 256
+   UTF-8 bytes. A mutation refused `not_sent` leaves the journal at once.
+4. **Relative `ADE_CLIENT_DIR`.** It is resolved only when a command uses the
+   journals, against the working directory.
+
+| Run | Result |
+|---|---|
+| `journal-lock.test.mjs`: one holder, exited-owner takeover, reused process ID, taken-over holder cannot release its successor, 8 processes racing over a stale lock | 5 passed; the race test passed 5 of 5 repeats |
+| `journals.test.mjs`: new byte-limit and unsent-mutation tests | 9 passed |
+| `conversations/cli-journal.spec.ts`: new relative `ADE_CLIENT_DIR` and Git byte-limit/unsent tests | 4 passed |
+| Protocol conversations, files-git, orchestration/parity, profiles/continuity | 67 passed |
+| Legacy git-cli-ordinary, git-discard, review-mutations, local-cli | 16 passed |
+| `pnpm check:static` | passed |
+
+The race test was not run against the old lock to show that it fails there.
