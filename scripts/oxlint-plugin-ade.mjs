@@ -151,6 +151,92 @@ const noNativeTitle = {
   },
 }
 
+const iconsFromTable = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'Icons come from the icon table, so each idea has one icon.' },
+  },
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        const source = node.source.value
+        if (source !== 'lucide-react' && !source.startsWith('lucide-react/')) return
+        context.report({
+          node,
+          message:
+            'Draw icons with <Icon name="…" /> from src/renderer/src/icons/Icon.tsx. Add a missing icon to icons/icons.ts under the name of what it means.',
+        })
+      },
+    }
+  },
+}
+
+// Every string literal inside an attribute value: "a b", `a ${x}`, cn('a', cond && 'b').
+function stringsIn(node) {
+  if (!node) return []
+  if (node.type === 'Literal') return typeof node.value === 'string' ? [node.value] : []
+  if (node.type === 'TemplateLiteral') return node.quasis.map((quasi) => quasi.value.cooked ?? '')
+  if (node.type === 'JSXExpressionContainer') return stringsIn(node.expression)
+  if (node.type === 'CallExpression') return node.arguments.flatMap(stringsIn)
+  if (node.type === 'LogicalExpression' || node.type === 'BinaryExpression')
+    return [...stringsIn(node.left), ...stringsIn(node.right)]
+  if (node.type === 'ConditionalExpression') return [...stringsIn(node.consequent), ...stringsIn(node.alternate)]
+  return []
+}
+
+const attribute = (element, name) =>
+  element.attributes.find(
+    (attr) => attr.type === 'JSXAttribute' && attr.name.type === 'JSXIdentifier' && attr.name.name === name,
+  )
+
+const SIZE_CLASS = /(^|[\s:])(size|w|h)-/
+
+const iconSizeClass = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'Icons take their size from the scale, not from classes.' },
+  },
+  create(context) {
+    return {
+      JSXOpeningElement(node) {
+        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'Icon') return
+        const className = attribute(node, 'className')
+        if (!className || !stringsIn(className.value).some((value) => SIZE_CLASS.test(value))) return
+        context.report({
+          node: className,
+          message: 'Size an icon with size="xs" | "sm" | "md" | "lg" (12, 14, 16, 18px), not a size, w- or h- class.',
+        })
+      },
+    }
+  },
+}
+
+const iconButtonLabel = {
+  meta: {
+    type: 'problem',
+    docs: { description: 'A button showing only an icon has a name for screen readers.' },
+  },
+  create(context) {
+    return {
+      JSXOpeningElement(node) {
+        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'Button') return
+        const size = attribute(node, 'size')?.value
+        if (size?.type !== 'Literal' || typeof size.value !== 'string' || !size.value.startsWith('icon')) return
+        const named = node.attributes.some(
+          (attr) =>
+            attr.type === 'JSXSpreadAttribute' ||
+            (attr.name?.type === 'JSXIdentifier' && ['aria-label', 'aria-labelledby'].includes(attr.name.name)),
+        )
+        if (named) return
+        context.report({
+          node,
+          message: 'An icon-only button needs aria-label (and a Tooltip with the same words for sighted users).',
+        })
+      },
+    }
+  },
+}
+
 export default {
   meta: { name: 'ade' },
   rules: {
@@ -158,5 +244,8 @@ export default {
     'require-store-selector': requireStoreSelector,
     'no-loose-record': noLooseRecord,
     'no-native-title': noNativeTitle,
+    'icons-from-table': iconsFromTable,
+    'icon-size-class': iconSizeClass,
+    'icon-button-label': iconButtonLabel,
   },
 }

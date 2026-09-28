@@ -7,6 +7,7 @@ import { Toaster } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { TITLEBAR_HEIGHT } from '../../../shared/window-chrome'
 import { Workspace } from '../features/workspace/Workspace'
+import { IconProvider } from '../icons/Icon'
 import { CommandPalette, openCommandPalette } from '../provisional/CommandPalette'
 import { ConfirmHost } from '../provisional/ConfirmDialog'
 import { ErrorReport } from '../provisional/ErrorReport'
@@ -45,13 +46,15 @@ export async function start(): Promise<void> {
         fallbackRender={({ error, resetErrorBoundary }) => <ErrorReport error={error} onRetry={resetErrorBoundary} />}
       >
         <QueryClientProvider client={queryClient}>
-          <TooltipProvider>
-            <Toaster>
-              <RouterProvider router={router} />
-              <CommandPalette service={commandService} />
-              <ConfirmHost />
-            </Toaster>
-          </TooltipProvider>
+          <IconProvider>
+            <TooltipProvider>
+              <Toaster>
+                <RouterProvider router={router} />
+                <CommandPalette service={commandService} />
+                <ConfirmHost />
+              </Toaster>
+            </TooltipProvider>
+          </IconProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </StrictMode>,

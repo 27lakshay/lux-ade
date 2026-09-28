@@ -135,3 +135,60 @@ invalid(
   'fixture.tsx',
 )
 invalid('no-native-title', 'reports title on an SVG element', '<svg title="Logo" />', /native title/, 'fixture.tsx')
+
+invalid('icons-from-table', 'reports a lucide-react import', "import { X } from 'lucide-react'", /icon table|Icon name/)
+invalid(
+  'icons-from-table',
+  'reports a lucide-react subpath import',
+  "import X from 'lucide-react/icons/x'",
+  /Icon name/,
+)
+valid('icons-from-table', 'allows other imports', "import { useState } from 'react'")
+
+valid(
+  'icon-size-class',
+  'allows a size token and placement classes',
+  '<Icon name="close" size="sm" className="ml-auto" />',
+  'fixture.tsx',
+)
+invalid(
+  'icon-size-class',
+  'reports a size class',
+  '<Icon name="close" className="size-5" />',
+  /size="xs"/,
+  'fixture.tsx',
+)
+invalid(
+  'icon-size-class',
+  'reports w- and h- classes inside cn()',
+  '<Icon name="close" className={cn("text-sm", open && "h-3 w-3")} />',
+  /size="xs"/,
+  'fixture.tsx',
+)
+invalid(
+  'icon-size-class',
+  'reports a variant-prefixed size class',
+  '<Icon name="close" className="md:size-6" />',
+  /size="xs"/,
+  'fixture.tsx',
+)
+
+valid(
+  'icon-button-label',
+  'allows an icon button with aria-label',
+  '<Button size="icon-sm" aria-label="Close tab"><Icon name="close" /></Button>',
+  'fixture.tsx',
+)
+valid(
+  'icon-button-label',
+  'allows a button with text',
+  '<Button size="sm"><Icon name="new" />New</Button>',
+  'fixture.tsx',
+)
+invalid(
+  'icon-button-label',
+  'reports an unnamed icon button',
+  '<Button size="icon"><Icon name="close" /></Button>',
+  /aria-label/,
+  'fixture.tsx',
+)

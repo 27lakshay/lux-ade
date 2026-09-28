@@ -45,6 +45,7 @@ claiming a UI change works.
   - `features/<name>/`: one folder per product area. Put pure logic for `X.tsx` in `X.logic.ts`
     and test it there.
   - `provisional/`: surfaces built from the stock kit until Pen designs them.
+  - `icons/`: the icon table (`icons.ts`) and `<Icon>`.
   - `components/ui/` (the kit), `commands/`, `state/`, `lib/`, `hooks/`.
   - Lint keeps files short: 300 lines for `.ts`, 400 for `.tsx` and 800 for tests.
 - Startup (`app/start.tsx`): theme, commands, `router.load()`, then one render. The providers are
@@ -60,6 +61,13 @@ claiming a UI change works.
 - Window chrome: title-bar height and traffic-light position live in `src/shared/window-chrome.ts`
   (CSS: `var(--titlebar-height)`). A `drag` region exempts its interactive children and the kit's
   popups.
+- Icons: `<Icon name="terminal" size="sm" />` (`icons/Icon.tsx`). `name` is what the icon means,
+  from the table in `icons/icons.ts`; add an icon there before using it. Sizes are `xs` 12, `sm`
+  14, `md` 16 and `lg` 18px, the same scale as the Pen components. Leave `size` unset inside kit
+  components, which size their own icons. Colour follows the text; `tone` sets emphasis only, and
+  status colours belong to the Status component. `IconProvider` fixes the stroke at 1.25 screen
+  pixels for every icon, the kit's included. Lint refuses `lucide-react` outside `icons/` and the
+  kit, size classes on `<Icon>`, and icon-only buttons without `aria-label`.
 - Styles: `app/app.css` imports the kit's theme (`shadcn.css`) and adds only what every window
   needs. Use the kit's tokens (`bg-background`, `text-muted-foreground`, …); there are no ADE
   colour tokens in code. Lint (`@shadcn/lint`) refuses restyled kit components and raw colours,

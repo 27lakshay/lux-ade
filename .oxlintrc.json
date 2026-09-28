@@ -137,6 +137,9 @@
         "shadcn/no-restyle": ["error", { "allow": ["layout"] }],
         "shadcn/no-raw-colors": "error",
         "ade/no-native-title": "error",
+        "ade/icons-from-table": "error",
+        "ade/icon-size-class": "error",
+        "ade/icon-button-label": "error",
         "max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }]
       }
     },
@@ -153,12 +156,22 @@
       }
     },
     {
+      // The icon table and <Icon> are where lucide-react is imported.
+      "files": ["apps/desktop/src/renderer/src/icons/**"],
+      "rules": {
+        "ade/icons-from-table": "off"
+      }
+    },
+    {
       // The stock kit, installed and updated by shadcn, is exempt from the renderer's own rules.
       "files": ["apps/desktop/src/renderer/src/components/ui/**", "apps/desktop/src/renderer/src/hooks/**"],
       "rules": {
         "shadcn/no-restyle": "off",
         "shadcn/no-raw-colors": "off",
         "ade/no-native-title": "off",
+        "ade/icons-from-table": "off",
+        "ade/icon-size-class": "off",
+        "ade/icon-button-label": "off",
         "max-lines": "off"
       }
     },

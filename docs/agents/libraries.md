@@ -28,7 +28,7 @@ When you first import a package listed here, remove it from `ignoreDependencies`
 |---|---|---|
 | UI primitives (button, dialog, menu, popover, tooltip, …) | the shadcn kit in `src/renderer/src/components/ui` (Base UI) | new primitives |
 | Class name merging and variants | `cn` (`lib/utils.ts`), `class-variance-authority` | string concatenation |
-| Icons | `lucide-react` | inline SVGs |
+| Icons | `lucide-react`, through `<Icon>` (`apps/desktop/src/renderer/src/icons`) | inline SVGs; never imported directly outside the kit |
 | Animation, layout and gesture motion | `motion` (see the `motion` skill) | hand-written animation loops |
 | Stopping one pane's crash from taking down the window | `react-error-boundary` | class component boundaries |
 | Media queries, resize observers, event listeners, debounced values, local storage | `usehooks-ts` | new `useEffect` hooks for these |
