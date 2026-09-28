@@ -81,6 +81,11 @@ removing the owner decides what happens to the record. **Links** are references 
 - Frontend review (2026-09-29): `review.feedback.send` also owns the stale-anchor checks (lane B);
   every layout action that drops a shell terminal's tab closes the terminal, refusing when busy
   (lane A); main's duplicate request checks, selection and fixed keybindings move out (ticket 10).
+- Lane A review (2026-09-29): `layout.apply` and `layout.replace` stay idempotent and never end a
+  process. Closing a tab or pane that holds a running shell's last tab (counted across every
+  window) is the effect commands `tab.close` and `pane.close`, with a receipt; `layout.apply`
+  refuses such a change with `tab_close_required`. Toggle actions carry their target state so every
+  layout action is safe to repeat.
 
 ## Who owns what
 
