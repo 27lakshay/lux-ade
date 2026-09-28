@@ -119,6 +119,45 @@ fn terminal_busy_message(foreground: Option<&str>) -> String {
 #[error("{0}")]
 pub struct Unsupported(pub String);
 
+/// A window or layout command the daemon refused. Each kind has a stable code.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LayoutError {
+    #[error("Window {0} does not exist; list the windows again")]
+    WindowNotFound(String),
+    #[error("Window {0} already exists on another workspace; choose another window ID")]
+    WindowExists(String),
+    #[error(
+        "The layout is at revision {current}, not {expected}; read it again before changing it"
+    )]
+    Conflict { expected: u64, current: u64 },
+    #[error("The tab target does not exist: {0}")]
+    TabTargetMissing(String),
+    #[error("{0}")]
+    Invalid(String),
+}
+
+impl LayoutError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::WindowNotFound(_) => "window_not_found",
+            Self::WindowExists(_) => "window_exists",
+            Self::Conflict { .. } => "layout_conflict",
+            Self::TabTargetMissing(_) => "tab_target_missing",
+            Self::Invalid(_) => "invalid_layout",
+        }
+    }
+
+    pub fn recovery(&self) -> &'static str {
+        match self {
+            Self::WindowNotFound(_) => "reload_windows",
+            Self::WindowExists(_) => "choose_another_id",
+            Self::Conflict { .. } => "reload_layout",
+            Self::TabTargetMissing(_) => "reload_catalog",
+            Self::Invalid(_) => "fix_request",
+        }
+    }
+}
+
 /// An effect whose outcome cannot be known, such as a Git command interrupted
 /// by a crash. The message is the operation's own account of what to inspect;
 /// the envelope types it `outcome_unknown`, so a client can tell it from a
@@ -494,6 +533,10 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
     if let Some(unsupported) = error.downcast_ref::<Unsupported>() {
         return serde_json::json!({"type":"error","message":unsupported.to_string(),
             "code":"unsupported","recovery":"omit_unsupported_field"});
+    }
+    if let Some(layout) = error.downcast_ref::<LayoutError>() {
+        return serde_json::json!({"type":"error","message":layout.to_string(),
+            "code":layout.code(),"recovery":layout.recovery()});
     }
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),

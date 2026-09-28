@@ -3,6 +3,7 @@
 
 pub mod contract;
 pub mod credentials;
+pub mod layout;
 pub mod model;
 pub mod prompt;
 pub mod prompt_context;

@@ -1,0 +1,8493 @@
+[
+  {
+    "name": "walk 1 step 1",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "reset_layout"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 2",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n1",
+        "target": {
+          "kind": "conversation",
+          "id": "c-n1"
+        }
+      },
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 3",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "drop_tab",
+      "tab_id": "n1",
+      "pane_id": "p0",
+      "zone": "bottom",
+      "new_pane_id": "n2"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 4",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "dock_tab",
+      "tab_id": "n1",
+      "edge": "left",
+      "new_pane_id": "n3"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 5",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 6",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1"],
+        "active": "n1"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n4",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n4"
+        }
+      },
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 7",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_panes",
+      "pane_id": "p0",
+      "target_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 8",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 9",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 10",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4"],
+        "active": "n4"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n5",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n5"
+        }
+      }
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4", "n5"],
+        "active": "n5"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 11",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": ["n1", "n4", "n5"],
+        "active": "n5"
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "drop_tab",
+      "tab_id": "n5",
+      "pane_id": "p0",
+      "zone": "left",
+      "new_pane_id": "n6"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n4"],
+            "active": "n4"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 12",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n4"],
+            "active": "n4"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "dock_tab",
+      "tab_id": "n4",
+      "edge": "left",
+      "new_pane_id": "n7"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1"],
+            "active": "n1"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 13",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1"],
+            "active": "n1"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1"],
+            "active": "n1"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 14",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1"],
+            "active": "n1"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n8",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n8"
+        }
+      },
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 15",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_panes",
+      "pane_id": "n6",
+      "target_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 16",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "n6"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 17",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 18",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4"],
+            "active": "n4"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n9",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n9"
+        }
+      },
+      "pane_id": "n7"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 19",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_panes",
+      "pane_id": "n6",
+      "target_id": "n6"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 20",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "n7"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 21",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 22",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n10",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n10"
+        }
+      },
+      "pane_id": "n6"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 23",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_panes",
+      "pane_id": "n7",
+      "target_id": "n7"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 24",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "n6"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 25",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 26",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n11",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n11"
+        }
+      }
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 27",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9"],
+            "active": "n9"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "drop_tab",
+      "tab_id": "n11",
+      "pane_id": "n7",
+      "zone": "centre",
+      "new_pane_id": "n12"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 28",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n10"],
+            "active": "n10"
+          }
+        ],
+        "sizes": [33.333333333333336, 33.33333333333333, 33.33333333333333]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "dock_tab",
+      "tab_id": "n10",
+      "edge": "left",
+      "new_pane_id": "n13"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n13",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 29",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n13",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n13",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 30",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n13",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n14",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n14"
+        }
+      },
+      "pane_id": "n6"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 31",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_panes",
+      "pane_id": "n7",
+      "target_id": "n6"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 32",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "n6"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 33",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 34",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11"],
+            "active": "n11"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n15",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n15"
+        }
+      },
+      "pane_id": "n7"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 35",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_panes",
+      "pane_id": "n6",
+      "target_id": "n7"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 36",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n6",
+      "maximized": null
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "n7"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 37",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 38",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15"],
+            "active": "n15"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "n16",
+        "target": {
+          "kind": "terminal",
+          "id": "t-n16"
+        }
+      }
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n16": {
+          "id": "n16",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n16"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15", "n16"],
+            "active": "n16"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 39",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n16": {
+          "id": "n16",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n16"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n13",
+            "tabs": ["n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15", "n16"],
+            "active": "n16"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8"],
+            "active": "n8"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [25, 25, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "n7",
+      "maximized": null
+    },
+    "action": {
+      "type": "drop_tab",
+      "tab_id": "n10",
+      "pane_id": "p0",
+      "zone": "centre",
+      "new_pane_id": "n17"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n16": {
+          "id": "n16",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n16"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15", "n16"],
+            "active": "n16"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8", "n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [50, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 1 step 40",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n16": {
+          "id": "n16",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n16"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15", "n16"],
+            "active": "n16"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8", "n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5", "n14"],
+            "active": "n14"
+          }
+        ],
+        "sizes": [50, 24.999999999999996, 24.999999999999996]
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "dock_tab",
+      "tab_id": "n14",
+      "edge": "left",
+      "new_pane_id": "n18"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "n1": {
+          "id": "n1",
+          "target": {
+            "kind": "conversation",
+            "id": "c-n1"
+          }
+        },
+        "n10": {
+          "id": "n10",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n10"
+          }
+        },
+        "n11": {
+          "id": "n11",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n11"
+          }
+        },
+        "n14": {
+          "id": "n14",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n14"
+          }
+        },
+        "n15": {
+          "id": "n15",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n15"
+          }
+        },
+        "n16": {
+          "id": "n16",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n16"
+          }
+        },
+        "n4": {
+          "id": "n4",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n4"
+          }
+        },
+        "n5": {
+          "id": "n5",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n5"
+          }
+        },
+        "n8": {
+          "id": "n8",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n8"
+          }
+        },
+        "n9": {
+          "id": "n9",
+          "target": {
+            "kind": "terminal",
+            "id": "t-n9"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-n6",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n18",
+            "tabs": ["n14"],
+            "active": "n14"
+          },
+          {
+            "type": "pane",
+            "id": "n7",
+            "tabs": ["n4", "n9", "n11", "n15", "n16"],
+            "active": "n16"
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": ["n1", "n8", "n10"],
+            "active": "n10"
+          },
+          {
+            "type": "pane",
+            "id": "n6",
+            "tabs": ["n5"],
+            "active": "n5"
+          }
+        ],
+        "sizes": [25, 37.5, 18.749999999999996, 18.749999999999996]
+      },
+      "focused_pane": "n18",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 2",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 3",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "left"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 4",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 6",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 9",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 10",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "right"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 11",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 13",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 16",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 17",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "right"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 18",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 20",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 23",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 24",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "right"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 25",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 27",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 30",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 31",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "centre"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 32",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 34",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 37",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 38",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "top"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 2 step 39",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 1",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "split_pane",
+      "pane_id": "p0",
+      "direction": "column",
+      "new_pane_id": "n1"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-n1",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 2",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-n1",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n1",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-n1",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 5",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-n1",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n1",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-n1",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 6",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-n1",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "n1",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "n1",
+      "zone": "bottom"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-p0",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 7",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-p0",
+        "direction": "column",
+        "children": [
+          {
+            "type": "pane",
+            "id": "n1",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "p0",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "n1"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 9",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 12",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 13",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "bottom"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 14",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 16",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 19",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 20",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "top"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 21",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 23",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 26",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 27",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "bottom"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 28",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 30",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 33",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 34",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_pane",
+      "pane_id": "p0",
+      "target_id": "p0",
+      "zone": "top"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 35",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p0"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 37",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  },
+  {
+    "name": "walk 3 step 40",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p0",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p0",
+      "maximized": null
+    }
+  }
+]

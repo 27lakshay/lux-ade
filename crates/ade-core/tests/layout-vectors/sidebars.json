@@ -1,0 +1,381 @@
+[
+  {
+    "name": "swap sides",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "toggle acts on whichever sidebar is on that side",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "toggle_side",
+      "side": "left"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "toggle again expands",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "toggle_side",
+      "side": "left"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "toggle the right side",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "toggle_side",
+      "side": "right"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "set collapsed",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "set_collapsed",
+      "sidebar": "navigator",
+      "collapsed": true
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": true,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "width clamps to the minimum",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "set_width",
+      "sidebar": "navigator",
+      "width": 50
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 200,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "width clamps to the maximum",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "set_width",
+      "sidebar": "navigator",
+      "width": 9000
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 480,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "width rounds to whole pixels",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "set_width",
+      "sidebar": "inspector",
+      "width": 300.6
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 301
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  }
+]

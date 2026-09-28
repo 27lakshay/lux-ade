@@ -1,0 +1,1274 @@
+[
+  {
+    "name": "open into the empty pane",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "a",
+        "target": {
+          "kind": "conversation",
+          "id": "c-a"
+        }
+      }
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "open after the active tab, in the focused pane, and become active (step 1)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "activate_tab",
+      "tab_id": "a"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "open after the active tab, in the focused pane, and become active (step 2)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "c",
+        "target": {
+          "kind": "conversation",
+          "id": "c-c"
+        }
+      }
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "c", "b"],
+        "active": "c"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "open into a named pane",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": [],
+            "active": null
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "a",
+        "target": {
+          "kind": "conversation",
+          "id": "c-a"
+        }
+      },
+      "pane_id": "p1"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "open into a missing pane falls back to the first",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "a",
+        "target": {
+          "kind": "conversation",
+          "id": "c-a"
+        }
+      },
+      "pane_id": "nowhere"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "closing the active tab activates its right neighbour (step 1)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b", "c"],
+        "active": "c"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "activate_tab",
+      "tab_id": "b"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b", "c"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "closing the active tab activates its right neighbour (step 2)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b", "c"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_tab",
+      "tab_id": "b"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "c"],
+        "active": "c"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "closing the last active tab activates its left neighbour",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_tab",
+      "tab_id": "b"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "closing the last tab of the only pane keeps the empty pane",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_tab",
+      "tab_id": "a"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {},
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": [],
+        "active": null
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "closing a missing tab changes nothing",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "close_tab",
+      "tab_id": "zz"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "activating a missing tab changes nothing",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "activate_tab",
+      "tab_id": "zz"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "reordering within a pane lands where it was dropped (step 1)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b", "c"],
+        "active": "c"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_tab",
+      "tab_id": "a",
+      "pane_id": "p1",
+      "index": 3
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["b", "c", "a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "reordering within a pane lands where it was dropped (step 2)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["b", "c", "a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_tab",
+      "tab_id": "a",
+      "pane_id": "p1",
+      "index": 0
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b", "c"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "a huge index clamps to the end",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b", "c"],
+        "active": "c"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_tab",
+      "tab_id": "b",
+      "pane_id": "p1",
+      "index": 9007199254740991
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        },
+        "c": {
+          "id": "c",
+          "target": {
+            "kind": "conversation",
+            "id": "c-c"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "c", "b"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "moving the last tab out of a pane removes that pane (step 1)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a", "b"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "drop_tab",
+      "tab_id": "b",
+      "pane_id": "p1",
+      "zone": "right",
+      "new_pane_id": "p2"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  },
+  {
+    "name": "moving the last tab out of a pane removes that pane (step 2)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "move_tab",
+      "tab_id": "b",
+      "pane_id": "p1",
+      "index": 0
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["b", "a"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  }
+]

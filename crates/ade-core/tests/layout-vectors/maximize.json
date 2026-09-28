@@ -1,0 +1,1940 @@
+[
+  {
+    "name": "a lone pane does not maximize",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "toggle_maximize",
+      "pane_id": "p1"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "a pane maximizes among others and restores on a second toggle (step 1)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "toggle_maximize",
+      "pane_id": "p1"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    }
+  },
+  {
+    "name": "a pane maximizes among others and restores on a second toggle (step 2)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "toggle_maximize",
+      "pane_id": "p1"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "opening a tab keeps the maximized pane",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "b",
+        "target": {
+          "kind": "conversation",
+          "id": "c-b"
+        }
+      }
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a", "b"],
+            "active": "b"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    }
+  },
+  {
+    "name": "focusing another pane restores the grid",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "p2"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  },
+  {
+    "name": "splitting restores the grid",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "split_pane",
+      "pane_id": "p1",
+      "direction": "column",
+      "new_pane_id": "p3"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "split",
+            "id": "split-p3",
+            "direction": "column",
+            "children": [
+              {
+                "type": "pane",
+                "id": "p1",
+                "tabs": ["a"],
+                "active": "a"
+              },
+              {
+                "type": "pane",
+                "id": "p3",
+                "tabs": [],
+                "active": null
+              }
+            ],
+            "sizes": [50, 50]
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p3",
+      "maximized": null
+    }
+  },
+  {
+    "name": "closing the other pane restores the grid",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "close_pane",
+      "pane_id": "p2"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["a"],
+        "active": "a"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "moving the other pane only tab in removes that pane and restores the grid (step 1)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "open_tab",
+      "tab": {
+        "id": "b",
+        "target": {
+          "kind": "conversation",
+          "id": "c-b"
+        }
+      },
+      "pane_id": "p2"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  },
+  {
+    "name": "moving the other pane only tab in removes that pane and restores the grid (step 2)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "focus_pane",
+      "pane_id": "p1"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "moving the other pane only tab in removes that pane and restores the grid (step 3)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    },
+    "action": {
+      "type": "toggle_maximize",
+      "pane_id": "p1"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    }
+  },
+  {
+    "name": "moving the other pane only tab in removes that pane and restores the grid (step 4)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": ["b"],
+            "active": "b"
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "move_tab",
+      "tab_id": "b",
+      "pane_id": "p1",
+      "index": 0
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        },
+        "b": {
+          "id": "b",
+          "target": {
+            "kind": "conversation",
+            "id": "c-b"
+          }
+        }
+      },
+      "root": {
+        "type": "pane",
+        "id": "p1",
+        "tabs": ["b", "a"],
+        "active": "b"
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "a no-op rearrangement still restores the grid",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": "p1"
+    },
+    "action": {
+      "type": "drop_tab",
+      "tab_id": "a",
+      "pane_id": "p1",
+      "zone": "left",
+      "new_pane_id": "p5"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p1",
+      "maximized": null
+    }
+  },
+  {
+    "name": "skew the inner split",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "split",
+            "id": "split-p3",
+            "direction": "column",
+            "children": [
+              {
+                "type": "pane",
+                "id": "p2",
+                "tabs": [],
+                "active": null
+              },
+              {
+                "type": "pane",
+                "id": "p3",
+                "tabs": [],
+                "active": null
+              }
+            ],
+            "sizes": [50, 50]
+          }
+        ],
+        "sizes": [20, 80]
+      },
+      "focused_pane": "p3",
+      "maximized": null
+    },
+    "action": {
+      "type": "set_split_sizes",
+      "split_id": "split-p3",
+      "sizes": [10, 90]
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "split",
+            "id": "split-p3",
+            "direction": "column",
+            "children": [
+              {
+                "type": "pane",
+                "id": "p2",
+                "tabs": [],
+                "active": null
+              },
+              {
+                "type": "pane",
+                "id": "p3",
+                "tabs": [],
+                "active": null
+              }
+            ],
+            "sizes": [10, 90]
+          }
+        ],
+        "sizes": [20, 80]
+      },
+      "focused_pane": "p3",
+      "maximized": null
+    }
+  },
+  {
+    "name": "equalizing evens one split",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "split",
+            "id": "split-p3",
+            "direction": "column",
+            "children": [
+              {
+                "type": "pane",
+                "id": "p2",
+                "tabs": [],
+                "active": null
+              },
+              {
+                "type": "pane",
+                "id": "p3",
+                "tabs": [],
+                "active": null
+              }
+            ],
+            "sizes": [10, 90]
+          }
+        ],
+        "sizes": [20, 80]
+      },
+      "focused_pane": "p3",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits",
+      "split_id": "split-p3"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "split",
+            "id": "split-p3",
+            "direction": "column",
+            "children": [
+              {
+                "type": "pane",
+                "id": "p2",
+                "tabs": [],
+                "active": null
+              },
+              {
+                "type": "pane",
+                "id": "p3",
+                "tabs": [],
+                "active": null
+              }
+            ],
+            "sizes": [50, 50]
+          }
+        ],
+        "sizes": [20, 80]
+      },
+      "focused_pane": "p3",
+      "maximized": null
+    }
+  },
+  {
+    "name": "equalizing evens every split",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "split",
+            "id": "split-p3",
+            "direction": "column",
+            "children": [
+              {
+                "type": "pane",
+                "id": "p2",
+                "tabs": [],
+                "active": null
+              },
+              {
+                "type": "pane",
+                "id": "p3",
+                "tabs": [],
+                "active": null
+              }
+            ],
+            "sizes": [10, 90]
+          }
+        ],
+        "sizes": [20, 80]
+      },
+      "focused_pane": "p3",
+      "maximized": null
+    },
+    "action": {
+      "type": "equalize_splits"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "split",
+            "id": "split-p3",
+            "direction": "column",
+            "children": [
+              {
+                "type": "pane",
+                "id": "p2",
+                "tabs": [],
+                "active": null
+              },
+              {
+                "type": "pane",
+                "id": "p3",
+                "tabs": [],
+                "active": null
+              }
+            ],
+            "sizes": [50, 50]
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p3",
+      "maximized": null
+    }
+  },
+  {
+    "name": "reset puts the sidebars back and evens the splits, keeping panes and tabs (step 1)",
+    "before": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "swap_sidebars"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  },
+  {
+    "name": "reset puts the sidebars back and evens the splits, keeping panes and tabs (step 2)",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "toggle_side",
+      "side": "left"
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  },
+  {
+    "name": "reset puts the sidebars back and evens the splits, keeping panes and tabs (step 3)",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "set_width",
+      "sidebar": "navigator",
+      "width": 420
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 420,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  },
+  {
+    "name": "reset puts the sidebars back and evens the splits, keeping panes and tabs (step 4)",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 420,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "set_split_sizes",
+      "split_id": "split-p2",
+      "sizes": [30, 70]
+    },
+    "after": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 420,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [30, 70]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  },
+  {
+    "name": "reset puts the sidebars back and evens the splits, keeping panes and tabs (step 5)",
+    "before": {
+      "sidebars": ["inspector", "navigator"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": true
+      },
+      "widths": {
+        "navigator": 420,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [30, 70]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    },
+    "action": {
+      "type": "reset_layout"
+    },
+    "after": {
+      "sidebars": ["navigator", "inspector"],
+      "collapsed": {
+        "navigator": false,
+        "inspector": false
+      },
+      "widths": {
+        "navigator": 260,
+        "inspector": 340
+      },
+      "tabs": {
+        "a": {
+          "id": "a",
+          "target": {
+            "kind": "conversation",
+            "id": "c-a"
+          }
+        }
+      },
+      "root": {
+        "type": "split",
+        "id": "split-p2",
+        "direction": "row",
+        "children": [
+          {
+            "type": "pane",
+            "id": "p1",
+            "tabs": ["a"],
+            "active": "a"
+          },
+          {
+            "type": "pane",
+            "id": "p2",
+            "tabs": [],
+            "active": null
+          }
+        ],
+        "sizes": [50, 50]
+      },
+      "focused_pane": "p2",
+      "maximized": null
+    }
+  }
+]
