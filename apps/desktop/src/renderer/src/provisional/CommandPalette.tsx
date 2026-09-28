@@ -11,6 +11,7 @@ import {
   CommandShortcut,
 } from '@/components/ui/command'
 import type { Command, CommandService } from '../commands/command-service'
+import { Shortcut } from '../components/Shortcut'
 
 // The command palette: every command available now, grouped by category, with its shortcut. The
 // native menu opens it (the `command-palette` app command). Stock kit until designed in Pen.
@@ -39,7 +40,9 @@ export function CommandPalette({ service }: { service: CommandService }) {
                 <CommandItem key={command.id} value={`${category} ${command.title}`} onSelect={() => run(command)}>
                   {command.title}
                   {service.keybindingFor(command.id) && (
-                    <CommandShortcut>{service.keybindingFor(command.id)}</CommandShortcut>
+                    <CommandShortcut>
+                      <Shortcut keys={service.keybindingFor(command.id)!} />
+                    </CommandShortcut>
                   )}
                 </CommandItem>
               ))}

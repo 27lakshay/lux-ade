@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron'
 import { emit } from './ipc'
-import type { AppCommand } from '../shared/app-commands'
+import { APP_COMMAND_KEYS, type AppCommand } from '../shared/app-commands'
 import { exportDiagnostics } from './diagnostics'
 
 // The native application menu. Global shortcuts live here as accelerators so they fire wherever
@@ -12,9 +12,9 @@ const send = (command: AppCommand) => () => {
   if (window && !window.isDestroyed()) emit(window.webContents, 'ade:command', command)
 }
 
-const item = (label: string, accelerator: string, command: AppCommand): MenuItemConstructorOptions => ({
+const item = (label: string, command: keyof typeof APP_COMMAND_KEYS): MenuItemConstructorOptions => ({
   label,
-  accelerator,
+  accelerator: APP_COMMAND_KEYS[command],
   click: send(command),
 })
 
@@ -26,7 +26,7 @@ export function installAppMenu(): void {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
-        item('Settings…', 'CmdOrCtrl+,', 'open-settings'),
+        item('Settings…', 'open-settings'),
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -40,10 +40,10 @@ export function installAppMenu(): void {
     {
       label: 'File',
       submenu: [
-        item('New Conversation', 'CmdOrCtrl+N', 'new-conversation'),
-        item('New Tab', 'CmdOrCtrl+T', 'new-tab'),
+        item('New Conversation', 'new-conversation'),
+        item('New Tab', 'new-tab'),
         { type: 'separator' },
-        item('Close Tab', 'CmdOrCtrl+W', 'close-tab'),
+        item('Close Tab', 'close-tab'),
         { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },
       ],
     },
@@ -52,11 +52,11 @@ export function installAppMenu(): void {
     {
       label: 'View',
       submenu: [
-        item('Command Palette…', 'CmdOrCtrl+Shift+P', 'command-palette'),
+        item('Command Palette…', 'command-palette'),
         { type: 'separator' },
-        item('Toggle Left Sidebar', 'CmdOrCtrl+B', 'toggle-left-sidebar'),
-        item('Toggle Right Sidebar', 'CmdOrCtrl+Alt+B', 'toggle-right-sidebar'),
-        item('Split Right', 'CmdOrCtrl+\\', 'split-right'),
+        item('Toggle Left Sidebar', 'toggle-left-sidebar'),
+        item('Toggle Right Sidebar', 'toggle-right-sidebar'),
+        item('Split Right', 'split-right'),
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
@@ -66,7 +66,7 @@ export function installAppMenu(): void {
         ...(development
           ? ([
               { type: 'separator' },
-              item('Toggle Dev Panel', 'CmdOrCtrl+.', 'toggle-dev-panel'),
+              item('Toggle Dev Panel', 'toggle-dev-panel'),
               { label: 'Show Onboarding', click: send('open-onboarding') },
               { role: 'reload' },
               { role: 'toggleDevTools' },
