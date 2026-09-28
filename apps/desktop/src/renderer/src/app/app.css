@@ -1,8 +1,8 @@
 /* The app's stylesheet: the stock shadcn theme, plus what every window needs. */
-@import './shadcn.css';
+@import '../shadcn.css';
 
 /* The terminal surface (packages/terminal) builds its elements with Tailwind classes. */
-@source '../../../../../packages/terminal/src';
+@source '../../../../../../packages/terminal/src';
 
 html,
 body,
@@ -20,8 +20,43 @@ body {
 .drag {
   -webkit-app-region: drag;
 }
-.drag button,
-.drag a,
+.drag :is(button, a, input, textarea, select, [contenteditable], [role='button'], [role='tab'], [role='menuitem']),
 .no-drag {
   -webkit-app-region: no-drag;
+}
+
+/* The kit's popups render in portals, outside any drag region, but can sit over one: a click there
+   must reach the popup, not move the window. */
+:is(
+  [data-slot='alert-dialog-content'],
+  [data-slot='alert-dialog-overlay'],
+  [data-slot='combobox-content'],
+  [data-slot='context-menu-content'],
+  [data-slot='context-menu-sub-content'],
+  [data-slot='dialog-content'],
+  [data-slot='dialog-overlay'],
+  [data-slot='drawer-content'],
+  [data-slot='drawer-overlay'],
+  [data-slot='drawer-popup'],
+  [data-slot='drawer-viewport'],
+  [data-slot='dropdown-menu-content'],
+  [data-slot='dropdown-menu-sub-content'],
+  [data-slot='hover-card-content'],
+  [data-slot='menubar-content'],
+  [data-slot='menubar-sub-content'],
+  [data-slot='navigation-menu-content'],
+  [data-slot='popover-content'],
+  [data-slot='select-content'],
+  [data-slot='sheet-content'],
+  [data-slot='sheet-overlay'],
+  [data-slot='toast-viewport'],
+  [data-slot='tooltip-content']
+) {
+  -webkit-app-region: no-drag;
+}
+
+/* Set for two frames while the theme changes (theme.ts), so colours flip at once. */
+.theme-switching,
+.theme-switching * {
+  transition: none !important;
 }

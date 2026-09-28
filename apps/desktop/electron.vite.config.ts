@@ -22,7 +22,7 @@ function devHelpers(): Plugin {
     apply: 'serve',
     transformIndexHtml(html) {
       const scripts = helpers.map((path) => `<script type="module" src="${path}"></script>`).join('\n    ')
-      return html.replace('<script type="module" src="./src/main.tsx">', `${scripts}\n    $&`)
+      return html.replace('<script type="module" src="./src/bootstrap.ts">', `${scripts}\n    $&`)
     },
   }
 }

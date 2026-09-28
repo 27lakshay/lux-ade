@@ -36,10 +36,34 @@ claiming a UI change works.
 ## Renderer
 
 - The UI is being rebuilt from scratch (2026-09-28; the design prototype was removed). The
-  workspace (`Workspace.tsx`) renders only "Hello world" so far.
-- Styles: `app.css` imports the kit's theme (`shadcn.css`) and adds only what every window needs
-  (full height, the `drag` and `no-drag` window-drag regions). Use the kit's tokens
-  (`bg-background`, `text-muted-foreground`, …); there are no ADE colour tokens in code.
+  workspace (`features/workspace/Workspace.tsx`) renders only "Hello world" so far.
+- Folders in `src/renderer/src`:
+  - `bootstrap.ts`: the entry. It imports `app/start.tsx` dynamically and shows a plain error
+    screen if that fails.
+  - `app/`: startup, providers, the router, the theme, the query client and the window's command
+    service. Nothing feature-specific.
+  - `features/<name>/`: one folder per product area. Put pure logic for `X.tsx` in `X.logic.ts`
+    and test it there.
+  - `provisional/`: surfaces built from the stock kit until Pen designs them.
+  - `components/ui/` (the kit), `commands/`, `state/`, `lib/`, `hooks/`.
+  - Lint keeps files short: 300 lines for `.ts`, 400 for `.tsx` and 800 for tests.
+- Startup (`app/start.tsx`): theme, commands, `router.load()`, then one render. The providers are
+  an error boundary, then TanStack Query, then Tooltip, then the toast manager. The command palette
+  (`provisional/CommandPalette.tsx`) and the `confirm()` dialog (`provisional/ConfirmDialog.tsx`)
+  are mounted once at the root. Show a toast with `toast.add()` from `components/ui/toast`.
+- Server state fetched with TanStack Query uses `queryClient` (`app/query-client.ts`), which is
+  cleared when another profile is selected.
+- Theme: light, dark or system (`app/theme.ts`), saved in localStorage. `public/theme-boot.js`
+  applies it before the first paint. Main mirrors it to the native window and paints the window
+  `WINDOW_BACKGROUND` (`src/shared/window-chrome.ts`, kept equal to the theme's `--background` by
+  a test). There is no vibrancy.
+- Window chrome: title-bar height and traffic-light position live in `src/shared/window-chrome.ts`
+  (CSS: `var(--titlebar-height)`). A `drag` region exempts its interactive children and the kit's
+  popups.
+- Styles: `app/app.css` imports the kit's theme (`shadcn.css`) and adds only what every window
+  needs. Use the kit's tokens (`bg-background`, `text-muted-foreground`, …); there are no ADE
+  colour tokens in code. Lint (`@shadcn/lint`) refuses restyled kit components and raw colours,
+  and `ade/no-native-title` refuses the `title` attribute: use the kit's Tooltip.
 - `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI (Nova preset, all
   components), with `hooks/use-mobile.ts`, `lib/utils.ts` and its theme in `shadcn.css`. Keep the
   kit files unmodified so `shadcn add` can update them; build product components from them
@@ -53,12 +77,15 @@ claiming a UI change works.
 - `?safeMode=1` in the window URL means main reloaded the window after a hang or crash
   (`src/main/renderer-recovery.ts`). Load no plugins in safe mode, and keep pending approvals and
   core recovery visible.
-- Full-screen views are routes (`src/renderer/src/router.tsx`, TanStack Router, hash history):
+- Full-screen views are routes (`src/renderer/src/app/router.tsx`, TanStack Router, hash history):
   `/` the workspace, `/onboarding`, `/settings`. The workspace stays mounted, hidden, under the
-  others. Panes, tabs and open conversations are layout state, never routes.
+  others. Panes, tabs and open conversations are layout state, never routes. The root route shows
+  `provisional/ErrorReport.tsx` when a screen throws and `provisional/NotFound.tsx` for an unknown
+  route.
 - Global shortcuts belong to the native menu (`src/main/app-menu.ts`), which sends commands listed
   in `src/shared/app-commands.ts`. Do not bind the same keys in the renderer.
-- Other shortcuts go through the command service (`src/renderer/src/commands`): register a command,
-  then a keybinding with a `when` clause. Never add a raw `keydown` listener for a shortcut.
+- Other shortcuts go through the command service (`src/renderer/src/commands`): register a command
+  on the window's `commandService` (`app/commands.ts`), then a keybinding with a `when` clause.
+  Never add a raw `keydown` listener for a shortcut.
 - State from the daemon lives in the stores in `src/renderer/src/state`; read them with a selector
   (`useDaemon`, or zustand's `useStore(store, selector)`). Test against `state/fake-host.ts`.

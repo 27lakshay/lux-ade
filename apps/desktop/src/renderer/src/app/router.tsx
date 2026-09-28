@@ -5,11 +5,15 @@ import {
   createRouter,
   Outlet,
   useMatchRoute,
+  useRouter,
+  type ErrorComponentProps,
   type RouterHistory,
 } from '@tanstack/react-router'
 import type { ComponentType } from 'react'
-import { OnboardingScreen } from './screens/OnboardingScreen'
-import { SettingsScreen } from './screens/SettingsScreen'
+import { ErrorReport } from '../provisional/ErrorReport'
+import { NotFound } from '../provisional/NotFound'
+import { OnboardingScreen } from '../provisional/OnboardingScreen'
+import { SettingsScreen } from '../provisional/SettingsScreen'
 
 // Full-screen views. The route picks the screen: `/` is the workspace, `/onboarding` and
 // `/settings` replace it. Panes, tabs and open conversations are never in the URL; they are layout
@@ -38,11 +42,27 @@ export function createAppRouter({
       </>
     )
   }
-  const root = createRootRoute({ component: Root })
+  const root = createRootRoute({ component: Root, errorComponent: RouteError, notFoundComponent: NotFound })
   const workspace = createRoute({ getParentRoute: () => root, path: '/', component: () => null })
   const onboarding = createRoute({ getParentRoute: () => root, path: 'onboarding', component: OnboardingScreen })
   const settings = createRoute({ getParentRoute: () => root, path: 'settings', component: SettingsScreen })
   return createRouter({ routeTree: root.addChildren([workspace, onboarding, settings]), history })
+}
+
+// A screen that throws while rendering or loading. Retrying reloads its data and renders it again.
+function RouteError({ error, reset }: ErrorComponentProps) {
+  const router = useRouter()
+  return (
+    <div className="fixed inset-0 bg-background">
+      <ErrorReport
+        error={error}
+        onRetry={() => {
+          reset()
+          void router.invalidate()
+        }}
+      />
+    </div>
+  )
 }
 
 declare module '@tanstack/react-router' {

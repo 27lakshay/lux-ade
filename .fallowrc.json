@@ -4,7 +4,7 @@
     "apps/desktop/src/main/index.ts",
     "apps/desktop/src/preload/index.ts",
     "apps/desktop/src/stream-bridge/index.ts",
-    "apps/desktop/src/renderer/src/main.tsx",
+    "apps/desktop/src/renderer/src/bootstrap.ts",
     "apps/desktop/src/renderer/src/dev/*.ts"
   ],
   // The stock shadcn/ui kit: installed whole, used piece by piece, so unused parts are expected.
@@ -13,6 +13,8 @@
     "apps/desktop/src/renderer/src/hooks/**",
     "apps/desktop/src/renderer/src/lib/utils.ts"
   ],
+  // Files in the renderer's public folder (src/renderer/public), served from the site root.
+  "ignoreUnresolvedImports": ["/theme-boot.js"],
   "ignoreDependencies": [
     // Installed by shadcn for the calendar component's date picker.
     "date-fns",
@@ -39,7 +41,6 @@
     "@codemirror/view",
     "@pierre/trees",
     "@tanstack/react-hotkeys",
-    "@tanstack/react-query",
     "codemirror",
     "electron-context-menu",
     "jsonc-parser",
@@ -50,7 +51,6 @@
     "@tanstack/react-table",
     "anser",
     "culori",
-    "es-toolkit",
     "fast-check",
     "fuzzysort",
     "ignore",
@@ -66,7 +66,6 @@
     "picomatch",
     "pretty-bytes",
     "pretty-ms",
-    "react-error-boundary",
     "semver",
     "smol-toml",
     "strip-ansi",

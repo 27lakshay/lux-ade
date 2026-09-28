@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, nativeTheme, session } from 'electron'
+import { app, BrowserWindow, dialog, session } from 'electron'
 import { broadcast, handle, listen, registerAppWindow } from './ipc'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -46,6 +46,8 @@ import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
 import { startCrashReporter } from './diagnostics'
 import { recoverRendererFailures } from './renderer-recovery'
+import { loadAppearance, setAppearance, windowBackground } from './appearance'
+import { isThemePreference, TRAFFIC_LIGHTS } from '../shared/window-chrome'
 
 let singleWindowId = ''
 enableRemoteDebugging()
@@ -60,9 +62,9 @@ startDevStateServer()
 registerBrowserIpc(selectProfile)
 
 handle('ade:app-version', () => app.getVersion())
-// The renderer's theme drives the native appearance, which picks the vibrancy material.
+// The renderer owns the appearance preference; main mirrors it to macOS and remembers it.
 listen('ade:theme', (_event, theme: unknown) => {
-  if (theme === 'dark' || theme === 'light') nativeTheme.themeSource = theme
+  if (isThemePreference(theme)) setAppearance(theme)
 })
 registerProfileIpc()
 registerConversationIpc()
@@ -88,13 +90,10 @@ registerQuitTeardown(() => {
 // setting changed just before quitting survives.
 registerQuitTeardown(() => session.defaultSession.flushStorageData())
 
-// Native macOS window buttons sit at a fixed spot. A renderer title row laid out around them must
-// follow this position.
-const TRAFFIC_LIGHTS = { x: 16, y: 26 }
-
 function openMainWindow(): void {
   const window = new BrowserWindow({
-    show: process.env.ADE_E2E_HIDE_WINDOW !== '1',
+    // Shown once the first frame is painted (ready-to-show below), so it never opens blank.
+    show: false,
     width: 1440,
     height: 900,
     minWidth: 720,
@@ -106,11 +105,8 @@ function openMainWindow(): void {
     windowStatePersistence: true,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: TRAFFIC_LIGHTS,
-    // Glass: macOS blurs whatever is behind the window and the renderer paints translucent cards
-    // over it. `active` keeps the blur when the window loses focus.
-    vibrancy: 'under-window',
-    visualEffectState: 'active',
-    backgroundColor: '#00000000',
+    // The page's own background, so resizing or loading never shows another colour.
+    backgroundColor: windowBackground(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -118,6 +114,7 @@ function openMainWindow(): void {
       sandbox: true,
     },
   })
+  if (process.env.ADE_E2E_HIDE_WINDOW !== '1') window.once('ready-to-show', () => window.show())
   windowIds.set(window.webContents.id, singleWindowId)
   registerAppWindow(window.webContents)
   logWindowConsole(window.webContents, 'window')
@@ -202,7 +199,7 @@ app
       app.setActivationPolicy('accessory')
       app.dock?.hide()
     }
-    nativeTheme.themeSource = 'dark'
+    loadAppearance()
     singleWindowId = await persistentWindowId()
     setSendJournal(await SendJournal.open(join(app.getPath('userData'), 'pending-sends-v1.json')))
     setGitJournal(await GitJournal.open(join(app.getPath('userData'), 'git-intents-v1.json')))

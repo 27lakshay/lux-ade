@@ -1,5 +1,6 @@
 import type { TerminalBridge } from '@ade/terminal'
 import type { AppCommand } from '../app-commands'
+import type { ThemePreference } from '../window-chrome'
 import type { BrowserBridge } from './browser'
 import type { ConversationsBridge } from './conversations'
 import type { FilesBridge } from './files'
@@ -15,7 +16,8 @@ import type { WorkspacesBridge } from './workspaces'
  */
 export interface AdeHost {
   getAppVersion(): Promise<string>
-  setTheme(theme: 'dark' | 'light'): void
+  /** Mirrors the appearance preference to the native window, which remembers it for next launch. */
+  setTheme(theme: ThemePreference): void
   /** Commands from the native menu; returns the unsubscribe function. */
   onCommand(listener: (command: AppCommand) => void): () => void
   profiles: ProfilesBridge
