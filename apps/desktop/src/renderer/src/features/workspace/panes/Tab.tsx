@@ -9,6 +9,7 @@ import { Icon } from '@/icons/Icon'
 import type { IconName } from '@/icons/icons'
 import type { Tab as TabData, TabKind } from '../model/layout'
 import { transitions } from '../../../app/motion'
+import { useDaemon } from '../../../state/hooks'
 import { dispatch } from '../model/layout-store'
 import { closeTab } from '../terminals/terminal-tabs'
 import { activeLayout, showDragPreview, type DragData } from './drag'
@@ -44,6 +45,10 @@ export function Tab({
   const ref = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
   const activate = (): void => dispatch({ type: 'activateTab', tabId: tab.id })
+  // A terminal's tab shows the terminal's own title (the shell, or the command it runs).
+  const title = useDaemon((state) =>
+    tab.target?.kind === 'terminal' ? (state.terminals[tab.target.id]?.title ?? tab.title) : tab.title,
+  )
 
   useEffect(() => {
     const element = ref.current
@@ -108,7 +113,7 @@ export function Tab({
         truncate
         className="relative min-w-0 flex-1"
       >
-        {tab.title}
+        {title}
       </Caption>
       <span className={cn('relative flex', active ? 'visible' : 'invisible group-hover/tab:visible')}>
         <IconButton icon="close" label="Close tab" size="xs" onClick={() => void closeTab(tab.id)} />

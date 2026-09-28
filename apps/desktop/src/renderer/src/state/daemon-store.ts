@@ -1,4 +1,4 @@
-import type { ClientState, Conversation, Workspace } from '@ade/client'
+import type { ClientState, Conversation, Terminal, Workspace } from '@ade/client'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 import type { AdeHost } from '../../../shared/bridge'
 import { latestPerFrame } from './frame-batch'
@@ -16,6 +16,8 @@ export interface DaemonState {
   workspaces: Record<string, Workspace>
   conversationIds: string[]
   conversations: Record<string, Conversation>
+  /** Every workspace's terminals by ID: kind, title, status and whether a command is running. */
+  terminals: Record<string, Terminal>
   /** Each Git repository's name (its checkout folder), by the `repository_id` workspaces carry. */
   repositoryNames: Record<string, string>
 }
@@ -31,6 +33,7 @@ const initialState: DaemonState = {
   workspaces: {},
   conversationIds: [],
   conversations: {},
+  terminals: {},
   repositoryNames: {},
 }
 
@@ -57,6 +60,7 @@ function normalize<T extends { id: string }>(
 function reduceClientState(state: DaemonState, client: ClientState): DaemonState {
   const workspaces = normalize(client.catalog?.workspaces ?? [], state.workspaceIds, state.workspaces)
   const conversations = normalize(client.catalog?.conversations ?? [], state.conversationIds, state.conversations)
+  const terminals = normalize(client.catalog?.terminals ?? [], [], state.terminals)
   const repositoryNames = Object.fromEntries(
     (client.catalog?.repositories ?? []).map((repository) => [repository.id, repository.name]),
   )
@@ -69,6 +73,7 @@ function reduceClientState(state: DaemonState, client: ClientState): DaemonState
     workspaces: workspaces.byId,
     conversationIds: conversations.ids,
     conversations: conversations.byId,
+    terminals: terminals.byId,
     repositoryNames: sameRecord(state.repositoryNames, repositoryNames) ? state.repositoryNames : repositoryNames,
   }
 }

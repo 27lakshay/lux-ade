@@ -39,6 +39,7 @@ test('the title-bar toggles collapse and restore the sidebar on that side', asyn
 test('tabs open in the pane, and the pane splits and closes', async () => {
   const screen = await renderWorkspace()
   await screen.getByRole('button', { name: 'New tab' }).click()
+  await screen.getByRole('menuitem', { name: /New conversation/ }).click()
   await expect.element(screen.getByRole('tab', { name: /New conversation/ })).toBeVisible()
   await screen.getByRole('button', { name: 'Split right' }).click()
   await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(2)

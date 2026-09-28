@@ -4,6 +4,7 @@
 const APP_COMMANDS = [
   'new-conversation',
   'new-tab',
+  'new-terminal',
   'close-tab',
   'split-right',
   'command-palette',
@@ -28,6 +29,8 @@ export const APP_COMMAND_KEYS = {
   'open-settings': 'CmdOrCtrl+,',
   'new-conversation': 'CmdOrCtrl+N',
   'new-tab': 'CmdOrCtrl+T',
+  // VS Code's key for a new terminal; ⌘T stays with new tabs.
+  'new-terminal': 'Ctrl+Shift+`',
   'close-tab': 'CmdOrCtrl+W',
   'command-palette': 'CmdOrCtrl+Shift+P',
   'toggle-left-sidebar': 'CmdOrCtrl+B',

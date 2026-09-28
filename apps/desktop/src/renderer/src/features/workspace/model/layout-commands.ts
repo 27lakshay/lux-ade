@@ -6,7 +6,7 @@ import { findPane, neighbourPane } from './layout-tree'
 import { toggleSidebar } from '../cards/fit'
 import { growFocusedPane } from '../panes/grow'
 import { hasRoomFor, noRoom, trySplit } from '../panes/room'
-import { closePane, closeTab } from '../terminals/terminal-tabs'
+import { closePane, closeTab, newTerminal } from '../terminals/terminal-tabs'
 import { dispatch, layoutStore, openTab } from './layout-store'
 
 // The workspace's commands: from the native menu (app commands) and in the palette. Every mouse
@@ -39,6 +39,9 @@ export function handleLayoutCommand(command: AppCommand): boolean {
     case 'new-conversation':
       openTab({ kind: 'conversation', title: 'New conversation' })
       return true
+    case 'new-terminal':
+      void newTerminal(focused().pane?.id)
+      return true
     case 'close-tab': {
       const { pane } = focused()
       if (pane?.active) void closeTab(pane.active)
@@ -54,6 +57,12 @@ export function registerLayoutCommands(): void {
   const add = (id: string, title: string, run: () => void): void => {
     commandService.registerCommand({ id, title, category: 'Layout', run })
   }
+  commandService.registerCommand({
+    id: 'terminal.new',
+    title: 'New terminal',
+    category: 'Terminal',
+    run: () => void newTerminal(focused().pane?.id),
+  })
   add('layout.swapSidebars', 'Swap sidebars', () => dispatch({ type: 'swapSidebars' }))
   add('layout.toggleLeft', 'Toggle left sidebar', () => toggleSidebar('left'))
   add('layout.toggleRight', 'Toggle right sidebar', () => toggleSidebar('right'))

@@ -42,6 +42,7 @@ export function installAppMenu(): void {
       submenu: [
         item('New Conversation', 'new-conversation'),
         item('New Tab', 'new-tab'),
+        item('New Terminal', 'new-terminal'),
         { type: 'separator' },
         item('Close Tab', 'close-tab'),
         { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' },

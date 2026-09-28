@@ -1,11 +1,13 @@
 import { toast } from '@/components/ui/toast'
 import { hostErrorMessage } from '@/lib/host-error'
+import { confirm } from '../../../provisional/ConfirmDialog'
 import { DEFAULT_WORKSPACE, dispatch, layoutStore, openTabIn } from '../model/layout-store'
 import type { Tab } from '../model/layout'
 import { findPane } from '../model/layout-tree'
 
 // Terminal tabs: a new one starts a shell in the daemon first, then opens a tab on it; closing one
-// stops its terminal first, and the tab closes only once the daemon has. Every close in the window
+// stops its terminal first (asking when a command is running), and the tab closes only once the
+// daemon has. Every close in the window
 // (the tab's ×, middle-click, ⌘W, closing its pane) comes through here, so no shell is left running
 // behind a closed tab.
 
@@ -32,11 +34,21 @@ const shownTab = (tabId: string): Tab | undefined => {
 
 const terminalOf = (tab: Tab | undefined): string | null => (tab?.target?.kind === 'terminal' ? tab.target.id : null)
 
-/** Stops the terminal a tab shows; false when the daemon could not. */
+/**
+ * Stops the terminal a tab shows; false when it keeps running. A busy terminal (a command in the
+ * foreground) closes only after the person confirms ending that command.
+ */
 async function stopTerminal(tab: Tab, terminalId: string): Promise<boolean> {
   try {
-    await window.adeHost.terminals.close(layoutStore.getState().active, terminalId)
-    return true
+    const outcome = await window.adeHost.terminals.close(terminalId)
+    if (outcome.closed) return true
+    const confirmed = await confirm({
+      title: outcome.running ? `Stop “${outcome.running}”?` : 'Stop the running command?',
+      description: 'Closing this terminal ends the command running in it.',
+      confirmLabel: 'Close terminal',
+      destructive: true,
+    })
+    return confirmed && (await window.adeHost.terminals.close(terminalId, true)).closed
   } catch (error) {
     toast.add({ type: 'error', title: `Could not close “${tab.title}”`, description: hostErrorMessage(error) })
     return false

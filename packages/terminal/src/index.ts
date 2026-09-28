@@ -70,6 +70,14 @@ export function mountTerminal(
   let visible = true
   let disposed = false
   let failed = false
+  // Focus asked for before the surface exists (a terminal just opened) or while it is hidden (its tab
+  // is being shown) is applied once it can take it.
+  let focusPending = false
+  const applyFocus = (): void => {
+    if (!surface || !visible) return
+    focusPending = false
+    surface.focus()
+  }
 
   const reportSize = (): void => {
     if (!surface || !channel || !feed?.ready || disposed) return
@@ -100,6 +108,7 @@ export function mountTerminal(
       return
     }
     surface = created
+    if (focusPending) applyFocus()
     feed = new TerminalFeed(created, {
       status: (message) => options.onStatus(message),
       ready: reportSize,
@@ -133,12 +142,18 @@ export function mountTerminal(
     setVisible: (next) => {
       visible = next
       surface?.setVisible(next)
+      // A request made for a tab that was hidden again before it showed is dropped.
+      if (!next) focusPending = false
+      else if (focusPending) applyFocus()
     },
     setTheme: (theme) => surface?.setTheme(theme ?? terminalThemeFrom(container)),
     setFont: async (font) => {
       await surface?.setFont(font)
     },
-    focus: () => surface?.focus(),
+    focus: () => {
+      focusPending = true
+      applyFocus()
+    },
     dispose: () => {
       if (disposed) return
       disposed = true

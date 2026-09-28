@@ -2,7 +2,6 @@ import { combine } from '@atlaskit/pragmatic-drag-and-drop/combine'
 import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import * as m from 'motion/react-m'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { IconButton } from '@/components/IconButton'
 import { Caption } from '@/components/Typography'
 import { cn } from '@/lib/utils'
 import { transitions } from '../../../app/motion'
@@ -10,7 +9,7 @@ import { Card } from '../cards/Card'
 import { Grip } from '../cards/Grip'
 import { attachHost } from '../content/hosts'
 import type { DropZone, PaneNode } from '../model/layout'
-import { dispatch, openTab, useLayout } from '../model/layout-store'
+import { dispatch, useLayout } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
 import {
   activeLayout,
@@ -23,6 +22,7 @@ import {
   type TargetData,
 } from './drag'
 import { DragChip } from './DragChip'
+import { NewTabMenu } from './NewTabMenu'
 import { PaneEmptyState } from './PaneEmptyState'
 import { PaneToolbar } from './PaneToolbar'
 import { SizeReadout } from './SizeReadout'
@@ -142,12 +142,7 @@ export function Pane({ pane }: { pane: PaneNode }) {
       >
         <div ref={bar} data-tab-bar className="@container flex h-10 shrink-0 items-center gap-0.5 px-1.5">
           <TabStrip pane={pane} bar={bar}>
-            <IconButton
-              icon="new"
-              label="New tab"
-              shortcut={{ appCommand: 'new-tab' }}
-              onClick={() => openTab({ kind: 'conversation', title: 'New conversation' }, pane.id)}
-            />
+            <NewTabMenu paneId={pane.id} />
             <div className="flex-1" />
             <PaneToolbar paneId={pane.id} />
           </TabStrip>
