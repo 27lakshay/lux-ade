@@ -160,18 +160,19 @@
   --terminal: oklch(0.165 0.004 285.9);
 }
 
-/* The type scale, the same five sizes as the Pen components. ADE code uses only these (lint:
-   ade/type-scale); the kit keeps its own sizes.
-     meta   11px  status bar, times, counts
-     label  12px  tabs, section labels, code
-     ui     13px  rows, buttons, menus: the default for controls
-     body   14px  messages and text people read or type
-     title  15px  dialog and pane titles */
+/* The type scale, the same five sizes as the Pen components. Only components/Typography.tsx
+   uses these classes (lint: ade/type-scale); everything else renders text through its components.
+   The kit keeps its own sizes.
+     meta     11px  <Meta>     status bar, times, counts
+     caption  12px  <Caption>  tabs, section labels; <Code> is the same size in mono
+     ui       13px  <Text>     rows, buttons, menus: the default for controls
+     body     14px  <Body>     messages and text people read or type
+     title    15px  <Title>    dialog and pane titles */
 @theme {
   --text-meta: 11px;
   --text-meta--line-height: 16px;
-  --text-label: 12px;
-  --text-label--line-height: 16px;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
   --text-ui: 13px;
   --text-ui--line-height: 20px;
   --text-body: 14px;

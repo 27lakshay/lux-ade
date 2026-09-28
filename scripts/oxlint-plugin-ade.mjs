@@ -251,22 +251,24 @@ const utility = (name) =>
     .replace(/^!/, '')
     .replace(/\/[\w.[\]]+$/, '')
 
-const TYPE_SIZE = /^text-(xs|sm|base|lg|xl|[2-9]xl|\[[^\]]*\])$/
+// Size, weight, line height and the mono face belong to components/Typography.tsx.
+const TYPE_CLASS =
+  /^(text-(xs|sm|base|lg|xl|[2-9]xl|meta|caption|ui|body|title|\[[^\]]*\])|font-(thin|extralight|light|normal|medium|semibold|bold|extrabold|black|mono)|leading-.+)$/
 
 const typeScale = {
   meta: {
     type: 'problem',
-    docs: { description: 'Text sizes come from the type scale.' },
+    docs: { description: 'Text is rendered through the typography components.' },
   },
   create(context) {
     return {
       JSXAttribute(node) {
         if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'className') return
-        const bad = classesIn(node.value).find((name) => TYPE_SIZE.test(utility(name)))
+        const bad = classesIn(node.value).find((name) => TYPE_CLASS.test(utility(name)))
         if (!bad) return
         context.report({
           node,
-          message: `"${bad}" is off the type scale. Use text-meta (11px), text-label (12), text-ui (13), text-body (14) or text-title (15); see shadcn.css.`,
+          message: `"${bad}": render text with <Title>, <Body>, <Text>, <Caption>, <Meta> or <Code> from components/Typography.tsx, which set size, weight and line height. Use their tone, weight and truncate props.`,
         })
       },
     }

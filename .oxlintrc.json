@@ -158,6 +158,13 @@
       }
     },
     {
+      // The typography components are where text sizes and weights are set.
+      "files": ["apps/desktop/src/renderer/src/components/Typography.tsx"],
+      "rules": {
+        "ade/type-scale": "off"
+      }
+    },
+    {
       // The icon table and <Icon> are where lucide-react is imported.
       "files": ["apps/desktop/src/renderer/src/icons/**"],
       "rules": {

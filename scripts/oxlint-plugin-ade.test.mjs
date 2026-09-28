@@ -195,23 +195,31 @@ invalid(
 
 valid(
   'type-scale',
-  'allows the scale and text colours',
-  '<p className="text-ui text-muted-foreground md:text-body" />',
+  'allows colours, alignment and placement',
+  '<p className="text-muted-foreground text-center mt-2" />',
   'fixture.tsx',
 )
-invalid('type-scale', 'reports a Tailwind size', '<p className="text-sm" />', /off the type scale/, 'fixture.tsx')
+invalid('type-scale', 'reports a Tailwind size', '<p className="text-sm" />', /Typography/, 'fixture.tsx')
+invalid(
+  'type-scale',
+  'reports a scale token outside the components',
+  '<p className="text-ui" />',
+  /Typography/,
+  'fixture.tsx',
+)
 invalid(
   'type-scale',
   'reports an arbitrary size inside cn()',
-  '<p className={cn("font-medium", big && "text-[13px]")} />',
-  /off the type scale/,
+  '<p className={cn("mt-1", big && "text-[13px]")} />',
+  /Typography/,
   'fixture.tsx',
 )
+invalid('type-scale', 'reports a weight', '<span className="font-semibold" />', /Typography/, 'fixture.tsx')
 invalid(
   'type-scale',
-  'reports a variant-prefixed size',
-  '<p className="hover:text-lg" />',
-  /off the type scale/,
+  'reports the mono face and line height',
+  '<span className="hover:font-mono leading-5" />',
+  /Typography/,
   'fixture.tsx',
 )
 

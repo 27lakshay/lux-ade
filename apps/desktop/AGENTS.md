@@ -46,7 +46,8 @@ claiming a UI change works.
     and test it there.
   - `provisional/`: surfaces built from the stock kit until Pen designs them.
   - `icons/`: the icon table (`icons.ts`) and `<Icon>`.
-  - `components/`: ADE's shared components built from the kit (`Status`, `Shortcut`).
+  - `components/`: ADE's shared components built from the kit (`Typography`, `Status`,
+    `Shortcut`).
   - `components/ui/` (the kit), `commands/`, `state/`, `lib/`, `hooks/`.
   - Lint keeps files short: 300 lines for `.ts`, 400 for `.tsx` and 800 for tests.
 - Startup (`app/start.tsx`): theme, commands, `router.load()`, then one render. The providers are
@@ -86,11 +87,14 @@ claiming a UI change works.
 
   `ade/surface-steps` refuses `border`, `divide` and fills off these steps (status colours
   excepted).
-- Type: five sizes, the Pen components' scale. `text-meta` 11px (status bar, times, counts),
-  `text-label` 12 (tabs, section labels, code), `text-ui` 13 (rows, buttons, menus), `text-body` 14
-  (messages and text people read or type), `text-title` 15 (dialog and pane titles).
-  `ade/type-scale` refuses Tailwind's sizes and arbitrary ones. shadcn's "typography" entries are
-  prose examples, not components; long-form markdown gets its own styles when it is built.
+- Text: render it with the typography components in `components/Typography.tsx`, never with size
+  or weight classes. `<Title>` 15px semibold (dialog and pane titles), `<Body>` 14 (messages, text
+  people read or type), `<Text>` 13 (rows, buttons, menus), `<Caption>` 12 (tabs, section labels),
+  `<Meta>` 11 muted (status bar, times, counts), `<Code>` 12 mono. Props: `tone` (`default`,
+  `muted`, `inherit`), `weight`, `truncate`, `as`; `className` is for placement only.
+  `ade/type-scale` refuses size, weight, line-height and `font-mono` classes outside that file.
+  The kit keeps its own sizes. shadcn's "typography" entries are prose examples, not components;
+  long-form markdown gets its own styles when it is built.
 - Status: `<Status state="needsYou" />` (`idle`, `running`, `needsYou`, `error`, `done`) is the only
   status mark. Amber means "needs you" and nothing else.
 - Shortcuts: `<Shortcut appCommand="command-palette" />` for native-menu commands (keys from
