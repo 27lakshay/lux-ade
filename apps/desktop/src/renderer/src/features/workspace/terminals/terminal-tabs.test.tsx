@@ -180,3 +180,20 @@ test('a terminal tab is titled by its terminal: the shell, or the command runnin
   setCatalog({ workspaces: [], conversations: [], terminals: [{ ...terminal, title: 'sleep 60', busy: true }] })
   await expect.element(screen.getByRole('tab', { name: /sleep 60/ })).toBeVisible()
 })
+
+test('a hidden terminal frees its canvas, and draws again when shown', async () => {
+  hostSpy()
+  await renderWorkspace()
+  setActiveWorkspace('w1')
+  openTabIn('w1', { kind: 'terminal', title: 'Terminal', target: { kind: 'terminal', id: 't1' } })
+  await expect.poll(() => document.querySelector('[data-terminal="t1"] canvas')).toBeTruthy()
+  // Held directly: a hidden tab's element is out of the page.
+  const canvas = document.querySelector<HTMLCanvasElement>('[data-terminal="t1"] canvas')!
+  await expect.poll(() => canvas.width).toBeGreaterThan(0)
+  openTabIn('w1', { kind: 'conversation', title: 'Chat' })
+  await expect.poll(() => canvas.isConnected).toBe(false)
+  await expect.poll(() => canvas.width).toBe(0)
+  const terminalTab = tabsOf('w1').find((tab) => tab.kind === 'terminal')!
+  dispatch({ type: 'activateTab', tabId: terminalTab.id })
+  await expect.poll(() => canvas.width).toBeGreaterThan(0)
+})

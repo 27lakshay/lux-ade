@@ -707,9 +707,21 @@ export class GhosttyTerminalSurface {
     if (!visible) {
       this.cancelRender()
       this.setSelectionAutoscroll(0)
+      this.releaseCanvas()
       return
     }
     this.fit()
+  }
+
+  /**
+   * Frees the canvas's backing store while the terminal is hidden or has no size: at full size it
+   * is width x height x 4 bytes (5 to 20 MB for a pane on a Retina screen), held for nothing while
+   * no one sees it. The next fit sizes it again and redraws the whole screen from the Ghostty state.
+   */
+  private releaseCanvas(): void {
+    this.canvas.width = 0
+    this.canvas.height = 0
+    this.canvasConfigured = false
   }
 
   // The terminal feed calls this and restoreSnapshot through its FeedScreen interface.
@@ -821,6 +833,8 @@ export class GhosttyTerminalSurface {
       this.hasSize = false
       this.forceFullRender = true
       this.cancelRender()
+      // Out of the page (a pane showing another tab) or collapsed: nothing to draw into.
+      this.releaseCanvas()
       return false
     }
     this.hasSize = true
