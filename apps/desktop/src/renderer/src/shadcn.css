@@ -1,6 +1,5 @@
 /* The stock shadcn/ui theme (Base UI, Nova, Stone base colour), kept as the kit's theme: ADE's tokens are not
-   mapped onto it (decided 2026-09-28). Kept apart from the prototype shell's styles.css, whose
-   variable names (--border, --muted, …) overlap these; not imported by the app yet. */
+   mapped onto it (decided 2026-09-28). The app imports it through app.css. */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

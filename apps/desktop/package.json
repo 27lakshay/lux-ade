@@ -9,8 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "check:contrast": "node scripts/check-contrast.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@ade/client": "workspace:*",

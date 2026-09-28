@@ -8,7 +8,8 @@ the ways below. Checked 2026-09-28 against [the v4 docs](https://tailwindcss.com
   `@import "tailwindcss";`.
 - **Theme values are CSS variables** declared in `@theme { … }` (for example
   `--color-panel: …;` creates `bg-panel`, `text-panel`). `@theme inline` references other
-  variables without copying their values; ADE uses it to map `tokens.ts` variables.
+  variables without copying their values; the shadcn theme (`shadcn.css`) uses it to map its
+  variables.
 - **Custom variants and utilities:** `@custom-variant` and `@utility` replace plugins written in
   JavaScript.
 - **Vite:** the `@tailwindcss/vite` plugin; no PostCSS config is needed.

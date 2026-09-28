@@ -6,9 +6,9 @@ import type { ReactNode } from 'react'
 // their content comes from Pen.
 export function FullScreen({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <main className="fixed inset-0 flex flex-col bg-app text-fg">
+    <main className="fixed inset-0 flex flex-col bg-background text-foreground">
       <header className="drag flex h-[52px] shrink-0 items-center justify-end px-4">
-        <Link to="/" className="no-drag text-[13px] text-fg-muted hover:text-fg">
+        <Link to="/" className="no-drag text-[13px] text-muted-foreground hover:text-foreground">
           Back to workspace
         </Link>
       </header>

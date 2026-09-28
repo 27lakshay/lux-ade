@@ -88,8 +88,8 @@ registerQuitTeardown(() => {
 // setting changed just before quitting survives.
 registerQuitTeardown(() => session.defaultSession.flushStorageData())
 
-// Native macOS window buttons sit at a fixed spot. The renderer's title row (layout.ts) is laid out
-// around them; change one and the other must follow.
+// Native macOS window buttons sit at a fixed spot. A renderer title row laid out around them must
+// follow this position.
 const TRAFFIC_LIGHTS = { x: 16, y: 26 }
 
 function openMainWindow(): void {

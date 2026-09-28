@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { expect, test } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { createAppRouter } from './router'
-import './styles.css'
+import './app.css'
 
 // A stand-in workspace with state, to show it stays mounted under full-screen views.
 function Workspace() {

@@ -35,17 +35,16 @@ claiming a UI change works.
 
 ## Renderer
 
-- The workspace shell in `src/renderer/src` (`App.tsx`, `panes/`, `parts/`, `tokens.ts`,
-  `motion.ts`, `layout.ts`) came from the design prototype and runs on sample data. Its design is
-  not settled: change it only against an approved Pen design.
-- Colours come from `tokens.ts` (`applyTokens`); `styles.css` only maps them into Tailwind.
-  `pnpm --dir apps/desktop check:contrast` reports the glass contrast floors.
+- The UI is being rebuilt from scratch (2026-09-28; the design prototype was removed). The
+  workspace (`Workspace.tsx`) renders only "Hello world" so far.
+- Styles: `app.css` imports the kit's theme (`shadcn.css`) and adds only what every window needs
+  (full height, the `drag` and `no-drag` window-drag regions). Use the kit's tokens
+  (`bg-background`, `text-muted-foreground`, …); there are no ADE colour tokens in code.
 - `src/renderer/src/components/ui` is the stock shadcn/ui kit on Base UI (Nova preset, all
   components), with `hooks/use-mobile.ts`, `lib/utils.ts` and its theme in `shadcn.css`. Keep the
   kit files unmodified so `shadcn add` can update them; build product components from them
   elsewhere. The kit keeps its stock theme (decided 2026-09-28): ADE's tokens are not mapped onto
-  it. `shadcn.css` is not imported by the prototype shell yet, because its variable names overlap
-  the prototype's tokens. Surfaces with no Pen design are built from the stock kit under
+  it. Surfaces with no Pen design are built from the stock kit under
   `src/renderer/src/provisional/` (root `AGENTS.md`, Design workflow).
   Use the `shadcn` skill and the `shadcn` MCP server (`.mcp.json`); config is `components.json`.
 - Terminal output stays outside React state. Terminals render with Ghostty compiled to

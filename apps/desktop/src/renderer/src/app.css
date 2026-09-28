@@ -1,0 +1,27 @@
+/* The app's stylesheet: the stock shadcn theme, plus what every window needs. */
+@import './shadcn.css';
+
+/* The terminal surface (packages/terminal) builds its elements with Tailwind classes. */
+@source '../../../../../packages/terminal/src';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Window dragging: empty chrome moves the window, anything interactive stays clickable. */
+.drag {
+  -webkit-app-region: drag;
+}
+.drag button,
+.drag a,
+.no-drag {
+  -webkit-app-region: no-drag;
+}
