@@ -2,7 +2,7 @@
 // Run after `pnpm build:sdk`: node --test packages/client/src/catalog.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseCatalog } from '../dist/index.js'
+import { applyWindowFrame, parseCatalog } from '../dist/index.js'
 
 const workspace = (fields = {}) => ({
   id: 'workspace_1',
@@ -168,4 +168,53 @@ test('a malformed project, kind or attention rejects the catalog', () => {
   assert.equal(parseCatalog({ workspaces: [workspace({ branch: 3 })], conversations: [] }), null)
   assert.equal(parseCatalog({ workspaces: [], conversations: [conversation({ attention: 'busy' })] }), null)
   assert.equal(parseCatalog({ workspaces: [], conversations: [conversation({ group_id: 7 })] }), null)
+})
+
+const window = (fields = {}) => ({
+  id: 'window_1',
+  workspace_id: 'workspace_1',
+  state: 'open',
+  bounds: null,
+  view: { collapsed_projects: [], recent_workspaces: ['workspace_1'] },
+  layouts: { workspace_1: 3 },
+  ...fields,
+})
+
+test('the catalog keeps windows, drops a malformed one alone, and an older daemon lists none', () => {
+  const bounds = { x: 0, y: 20, width: 1200, height: 800 }
+  const catalog = parseCatalog({
+    workspaces: [workspace()],
+    conversations: [],
+    windows: [window({ bounds }), window({ id: 'bad', state: 'hidden' }), window({ id: 'w2', layouts: { a: -1 } })],
+  })
+  assert.deepEqual(catalog.windows, [window({ bounds })])
+  assert.deepEqual(parseCatalog({ workspaces: [], conversations: [] }).windows, [])
+  assert.equal(parseCatalog({ workspaces: [], conversations: [], windows: {} }), null)
+})
+
+test('window and layout frames keep the windows and their layout revisions current', () => {
+  const windows = [window()]
+  const moved = applyWindowFrame(windows, { type: 'window_changed', window: window({ workspace_id: 'workspace_2' }) })
+  assert.equal(moved[0].workspace_id, 'workspace_2')
+  const added = applyWindowFrame(windows, { type: 'window_changed', window: window({ id: 'window_2' }) })
+  assert.deepEqual(
+    added.map((item) => item.id),
+    ['window_1', 'window_2'],
+  )
+  const layout = (revision, workspace_id = 'workspace_1') => ({
+    type: 'layout_changed',
+    layout: { window_id: 'window_1', workspace_id, revision, layout: {} },
+  })
+  assert.deepEqual(applyWindowFrame(windows, layout(4))[0].layouts, { workspace_1: 4 })
+  // An older revision, arriving late, never lowers the one held.
+  assert.deepEqual(applyWindowFrame(windows, layout(2))[0].layouts, { workspace_1: 3 })
+  assert.deepEqual(applyWindowFrame(windows, layout(1, 'workspace_2'))[0].layouts, { workspace_1: 3, workspace_2: 1 })
+  const removed = applyWindowFrame(windows, {
+    type: 'layout_removed',
+    window_id: 'window_1',
+    workspace_id: 'workspace_1',
+  })
+  assert.deepEqual(removed[0].layouts, {})
+  assert.equal(applyWindowFrame(windows, { type: 'window_changed', window: { id: 'x' } }), null)
+  assert.equal(applyWindowFrame(windows, { type: 'conversation_changed' }), undefined)
 })

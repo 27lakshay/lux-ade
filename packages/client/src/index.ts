@@ -1,6 +1,7 @@
 import { createConnection, type Socket } from 'node:net'
 import { call, type CallRequest } from './call.js'
 import { helloLine } from './request.js'
+import { applyWindowFrame, parseWindows, type Window } from './windows.js'
 import {
   decodeFeedFrame as decodeDailyUseFeedFrame,
   decodeRequest as decodeDailyUseRequest,
@@ -48,6 +49,22 @@ export {
   type ReviewAnchor,
   type ReviewFeedback,
 } from './review.js'
+export {
+  applyWindowFrame,
+  parseWindow,
+  parseWindows,
+  type Layout,
+  type LayoutAction,
+  type LayoutNode,
+  type LayoutRecord,
+  type PaneNode,
+  type SplitNode,
+  type Tab,
+  type TabTarget,
+  type Window,
+  type WindowBounds,
+  type WindowView,
+} from './windows.js'
 export {
   workspaceRemoveBlockers,
   worktreeDeleteBlockers,
@@ -216,6 +233,12 @@ export interface Catalog {
    * always sets it; it is optional only so hand-built fixtures stay valid.
    */
   terminals?: Terminal[]
+  /**
+   * Every window, open and closed, with the revision of each of its layouts.
+   * The SDK's catalog parser always sets it; it is optional only so
+   * hand-built fixtures stay valid.
+   */
+  windows?: Window[]
 }
 
 export type ConnectionStatus =
@@ -421,11 +444,13 @@ export function parseCatalog(value: unknown): Catalog | null {
   // A malformed terminal is dropped alone, so a newer daemon's records never
   // blank an older client's catalog.
   const terminals = listedTerminals.map(parseTerminal).filter((terminal) => terminal !== null)
+  const windows = parseWindows(source.windows)
   if (
     repositories.includes(null) ||
     projects.includes(null) ||
     workspaces.includes(null) ||
-    conversations.includes(null)
+    conversations.includes(null) ||
+    !windows
   )
     return null
   return {
@@ -437,6 +462,7 @@ export function parseCatalog(value: unknown): Catalog | null {
     workspaces: workspaces as Workspace[],
     conversations: conversations as Conversation[],
     terminals,
+    windows,
   }
 }
 
@@ -755,6 +781,13 @@ export class AdeClient {
       // A terminal the catalog does not list was removed; its catalog frame came first.
       const terminals = (catalog.terminals ?? []).map((item) => (item.id === terminal.id ? terminal : item))
       this.publish({ revision, catalog: { ...catalog, terminals } })
+      return 'stream'
+    }
+    const catalog = this.state.catalog
+    const windows = catalog ? applyWindowFrame(catalog.windows ?? [], frame) : undefined
+    if (windows === null) return 'invalid'
+    if (catalog && windows) {
+      this.publish({ revision, catalog: { ...catalog, windows } })
       return 'stream'
     }
     // Other event families do not change this read-only summary projection.
