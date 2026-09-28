@@ -1,24 +1,29 @@
 import { combine } from '@atlaskit/pragmatic-drag-and-drop/combine'
 import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
-import { LayoutGroup } from 'motion/react'
 import * as m from 'motion/react-m'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Group, Panel, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
-import { transitions } from '../../../app/motion'
+import { DURATION, transitions } from '../../../app/motion'
 import { SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
-import { structureKey } from '../model/layout.logic'
 import { dispatch, layoutStore, useLayout } from '../model/layout-store'
 import { isDragData, useDropMonitor, type DragData, type TargetData } from '../panes/drag'
 import { PaneGrid } from '../panes/PaneGrid'
 import { Inspector } from '../sidebars/Inspector'
 import { Navigator } from '../sidebars/Navigator'
-import { Card, LayoutKeyContext } from './Card'
+import { Card } from './Card'
 import { Grip } from './Grip'
 import { ResizeHandle } from './ResizeHandle'
 
 // The floating layer between the chrome: a sidebar, the centre, a sidebar, with 8px gutters that
 // resize them. The sidebars keep their pixel width when the window resizes; the centre takes the
 // rest. Collapsing a sidebar gives its space to the centre.
+//
+// Collapsing or expanding a sidebar animates by transitioning the top-level panels' real sizes for a
+// moment (app.css, [data-layout-animating]): the content reflows each frame, as it does while
+// dragging a handle, so nothing slides or stretches. Dragging a handle never animates. Splits and
+// closes are instant: the resize library measures a new split group as it mounts, and must not do
+// so mid-transition.
+// Swapping sidebars moves whole cards (layout="position"), which keep their own widths.
 
 const SIDEBAR = {
   navigator: { label: 'Navigator', Content: Navigator },
@@ -28,6 +33,7 @@ const SIDEBAR = {
 function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObject<PanelImperativeHandle | null> }) {
   const width = useLayout((layout) => layout.widths[id])
   const collapsed = useLayout((layout) => layout.collapsed[id])
+  const order = useLayout((layout) => layout.sidebars.join(','))
   const { label, Content } = SIDEBAR[id]
   const card = useRef<HTMLElement>(null)
   const grip = useRef<HTMLDivElement>(null)
@@ -64,13 +70,15 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
       collapsedSize={0}
       groupResizeBehavior="preserve-pixel-size"
     >
-      {/* The sidebar itself never animates its size: it fades as it returns, while the centre
-          card animates into the space it leaves or takes. */}
+      {/* The sidebar never animates its own size: it fades as it returns while the centre grows
+          or shrinks. On a swap the whole card moves to its new side, keeping its width. */}
       <m.div
+        layout="position"
+        layoutDependency={order}
+        transition={transitions.layout}
         className="relative h-full"
         initial={false}
         animate={{ opacity: collapsed ? 0 : 1 }}
-        transition={transitions.fade}
       >
         <Card ref={card} surface="panel" label={label} grip={<Grip ref={grip} label={`Move ${label.toLowerCase()}`} />}>
           <Content />
@@ -119,28 +127,61 @@ export function CardArea() {
     }
   })
 
-  const layoutKey = `${sidebars.join(',')}|${collapsed.navigator ? 1 : 0}${collapsed.inspector ? 1 : 0}|${structureKey(root)}`
+  // Animate panel sizes while a collapse or expand settles, then stop, so a drag never lags.
+  const sizesKey = `${collapsed.navigator ? 1 : 0}${collapsed.inspector ? 1 : 0}`
+  const group = useRef<HTMLDivElement>(null)
+  const first = useRef(true)
+  useLayoutEffect(() => {
+    const element = group.current
+    if (!element || first.current) {
+      first.current = false
+      return
+    }
+    element.dataset.layoutAnimating = ''
+    const done = setTimeout(() => delete element.dataset.layoutAnimating, DURATION.base * 1000 + 50)
+    return () => clearTimeout(done)
+  }, [sizesKey])
+  // Any direct resize ends a size animation at once: the pointer or key must win. Plain listeners,
+  // not props: the resize library handles these events on the group itself.
+  useEffect(() => {
+    const element = group.current
+    if (!element) return
+    const stop = (): void => {
+      delete element.dataset.layoutAnimating
+    }
+    element.addEventListener('pointerdown', stop, true)
+    element.addEventListener('keydown', stop, true)
+    return () => {
+      element.removeEventListener('pointerdown', stop, true)
+      element.removeEventListener('keydown', stop, true)
+    }
+  }, [])
   const [left, right] = sidebars
   return (
-    <LayoutKeyContext value={layoutKey}>
-      <LayoutGroup>
-        <Group
-          id="cards"
-          orientation="horizontal"
-          className="min-h-0 flex-1 p-2"
-          onLayoutChanged={(_layout, meta) => {
-            if (meta.isUserInteraction && !syncing.current) requestAnimationFrame(commitSizes)
-          }}
+    <Group
+      id="cards"
+      elementRef={group}
+      orientation="horizontal"
+      className="min-h-0 flex-1 p-2"
+      onLayoutChanged={(_layout, meta) => {
+        if (meta.isUserInteraction && !syncing.current) requestAnimationFrame(commitSizes)
+      }}
+    >
+      <SidebarPanel key={left} id={left} panelRef={refs[left]} />
+      <ResizeHandle key={`gutter-${left}`} orientation="horizontal" hidden={collapsed[left]} />
+      <Panel id="centre" minSize="320px">
+        {/* Moves with a sidebar swap when the sidebars differ in width. */}
+        <m.div
+          layout="position"
+          layoutDependency={sidebars.join(',')}
+          transition={transitions.layout}
+          className="h-full"
         >
-          <SidebarPanel key={left} id={left} panelRef={refs[left]} />
-          <ResizeHandle key={`gutter-${left}`} orientation="horizontal" hidden={collapsed[left]} />
-          <Panel id="centre" minSize="320px">
-            <PaneGrid node={root} />
-          </Panel>
-          <ResizeHandle key={`gutter-${right}`} orientation="horizontal" hidden={collapsed[right]} />
-          <SidebarPanel key={right} id={right} panelRef={refs[right]} />
-        </Group>
-      </LayoutGroup>
-    </LayoutKeyContext>
+          <PaneGrid node={root} />
+        </m.div>
+      </Panel>
+      <ResizeHandle key={`gutter-${right}`} orientation="horizontal" hidden={collapsed[right]} />
+      <SidebarPanel key={right} id={right} panelRef={refs[right]} />
+    </Group>
   )
 }

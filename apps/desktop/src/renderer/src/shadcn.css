@@ -210,6 +210,8 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 :root {
+  /* Also declared here: Tailwind emits @theme values only when a class uses them. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --duration-fast: 100ms;
   --duration-base: 200ms;
   --duration-slow: 300ms;

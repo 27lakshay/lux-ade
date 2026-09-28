@@ -61,6 +61,18 @@ a[href] {
   -webkit-app-region: no-drag;
 }
 
+/* While a sidebar collapses or expands (features/workspace/cards/CardArea.tsx), the top-level
+   panels transition to their new size: content reflows each frame instead of sliding or
+   stretching. Never set while dragging a handle, so resizing follows the pointer exactly. */
+[data-layout-animating] > [data-panel] {
+  transition: flex-grow var(--duration-base) var(--ease-standard);
+}
+[data-layout-animating] > [data-separator] {
+  transition-property: width, height;
+  transition-duration: var(--duration-base);
+  transition-timing-function: var(--ease-standard);
+}
+
 /* Set for two frames while the theme changes (theme.ts), so colours flip at once. */
 .theme-switching,
 .theme-switching * {

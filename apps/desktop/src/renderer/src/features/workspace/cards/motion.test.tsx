@@ -1,57 +1,58 @@
 import { beforeEach, expect, test } from 'vitest'
 import { userEvent } from 'vitest/browser'
-import { layoutStore, toggleSide } from '../model/layout-store'
+import { layoutStore, openTab, toggleSide } from '../model/layout-store'
 import { renderWorkspace, resetLayout, section } from '../testing'
 
 beforeEach(resetLayout)
 
-// Samples an element's transform every frame for a while.
-async function transformsOf(element: Element, frames = 20): Promise<string[]> {
-  const seen: string[] = []
-  for (let frame = 0; frame < frames; frame++) {
-    seen.push(getComputedStyle(element).transform)
-    await new Promise(requestAnimationFrame)
-  }
-  return seen
-}
-const scaleOf = (transform: string): number => (transform === 'none' ? 1 : new DOMMatrixReadOnly(transform).a)
-const layers = () => {
-  const card = section('Pane')!
-  return { surface: card.children[0]!, content: card.children[1]! }
-}
+const frame = (): Promise<unknown> => new Promise(requestAnimationFrame)
 
-test('collapsing a sidebar animates the centre card; its content moves but is never scaled', async () => {
-  await renderWorkspace()
-  const { surface, content } = layers()
+test('collapsing a sidebar grows the centre frame by frame; its contents stay anchored and are never transformed', async () => {
+  const screen = await renderWorkspace()
+  openTab({ kind: 'terminal', title: 'Shell' })
+  await expect.element(screen.getByRole('tab', { name: /Shell/ })).toBeVisible()
+  const tab = screen.getByRole('tab', { name: /Shell/ }).element()
+  const split = screen.getByRole('button', { name: 'Split right' }).element()
+  const pane = section('Pane')!
+  const lefts: number[] = []
   toggleSide('left')
-  const [surfaceFrames, contentFrames] = await Promise.all([transformsOf(surface), transformsOf(content)])
-  // The background layer animates into the new space…
-  expect(surfaceFrames.some((transform) => transform !== 'none')).toBe(true)
-  // …while the content only ever moves.
-  expect(contentFrames.every((transform) => scaleOf(transform) === 1)).toBe(true)
-  expect(contentFrames.some((transform) => transform !== 'none')).toBe(true)
+  for (let index = 0; index < 20; index++) {
+    const box = pane.getBoundingClientRect()
+    lefts.push(Math.round(box.left))
+    // The tab keeps its place inside the pane; controls never leave it.
+    expect(Math.round(tab.getBoundingClientRect().left - box.left)).toBe(6)
+    expect(split.getBoundingClientRect().right).toBeLessThanOrEqual(box.right)
+    for (const element of [pane, tab, split]) expect(getComputedStyle(element).transform).toBe('none')
+    await frame()
+  }
+  // It glides: several distinct in-between positions, moving one way only.
+  expect(new Set(lefts).size).toBeGreaterThan(4)
+  expect(lefts.every((left, index) => index === 0 || left <= lefts[index - 1]!)).toBe(true)
 })
 
-test('resizing never starts a layout animation, and the new width is saved', async () => {
+test('resizing follows the pointer with no transition, and the new width is saved', async () => {
   await renderWorkspace()
-  const { surface, content } = layers()
   const width = () => section('Navigator')!.getBoundingClientRect().width
   const before = width()
   const gutter = document.querySelectorAll('[data-separator]')[0] as HTMLElement
   gutter.focus()
   await userEvent.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}')
-  const frames = [...(await transformsOf(surface, 10)), ...(await transformsOf(content, 10))]
-  expect(width()).toBeGreaterThan(before)
-  expect(frames.every((transform) => transform === 'none')).toBe(true)
+  const after = width()
+  expect(after).toBeGreaterThan(before)
+  await frame()
+  // Already at its final size: no animation stood between the key and the result.
+  expect(width()).toBe(after)
+  expect(document.querySelector('[data-layout-animating]')).toBeNull()
   await expect
     .poll(() => layoutStore.getState().layouts.default!.widths.navigator, { timeout: 4000 })
-    .toBe(Math.round(width()))
+    .toBe(Math.round(after))
 })
 
 test('resizing between split panes saves the new split', async () => {
   const screen = await renderWorkspace()
   await screen.getByRole('button', { name: 'Split right' }).click()
   await expect.poll(() => document.querySelectorAll('[data-separator]').length).toBe(3)
+  await expect.poll(() => document.querySelector('[data-layout-animating]')).toBeNull()
   // Gutters in order: left sidebar, the split between panes, right sidebar.
   const between = document.querySelectorAll('[data-separator]')[1] as HTMLElement
   between.focus()
@@ -62,4 +63,15 @@ test('resizing between split panes saves the new split', async () => {
       return root.type === 'split' ? root.sizes[0]! : 0
     })
     .toBeGreaterThan(50)
+})
+
+test('pressing a handle while a size animation runs ends the animation at once', async () => {
+  const screen = await renderWorkspace()
+  await screen.getByRole('button', { name: 'Toggle left sidebar' }).click()
+  expect(document.querySelector('[data-layout-animating]')).not.toBeNull()
+  const gutters = document.querySelectorAll('[data-separator]')
+  const right = gutters[gutters.length - 1] as HTMLElement
+  right.focus()
+  await userEvent.keyboard('{ArrowLeft}')
+  expect(document.querySelector('[data-layout-animating]')).toBeNull()
 })

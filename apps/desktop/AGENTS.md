@@ -39,8 +39,10 @@ claiming a UI change works.
   dark":
   - `chrome/`: the fixed title bar, rail and bottom bar. They never move.
   - `cards/`: the floating layer. `CardArea` lays out sidebar, centre, sidebar with 8px gutters
-    (`ResizeHandle`); `Card` is two layers, a plain background that may scale and content that
-    only moves, so layout animations never stretch content.
+    (`ResizeHandle`); `Card` is the card surface. Collapsing a sidebar transitions the panels'
+    real sizes for 200ms, so content reflows smoothly instead of sliding or scaling; any pointer or
+    key on the cards ends that at once. Splits and closes are instant. Only moves that keep sizes
+    use Motion layout animations: swapping sidebars and reordering tabs.
   - `model/`: the layout is data (`layout.ts`), changed only by the reducer (`layout.logic.ts`),
     stored per workspace and saved (`layout-store.ts`, checked on load by `layout-schema.ts`).
     Native-menu and palette commands live in `layout-commands.ts`.
@@ -51,8 +53,7 @@ claiming a UI change works.
     `ContentHosts.tsx`); panes attach the element, so moving a tab never remounts it. Content of
     the recently used workspaces stays mounted; how many is `keepMounted` in the layout store (3).
     Pane content is empty for now.
-  - Layout animations key on structure (sidebar order, collapsed sidebars, the pane tree), never
-    on sizes. `testing.tsx` renders the workspace for browser tests and drives drags with native
+  - Layout animations key on structure (sidebar order, tab order), never on sizes. `testing.tsx` renders the workspace for browser tests and drives drags with native
     drag events.
 - Folders in `src/renderer/src`:
   - `bootstrap.ts`: the entry. It imports `app/start.tsx` dynamically and shows a plain error
@@ -166,8 +167,9 @@ claiming a UI change works.
   terminal or canvas animates with `layout="position"`, never scaled. Reduce motion follows the
   system or the palette commands (`app/motion-preference.ts`); it turns off transforms and layout
   animations, keeps fades, and stops CSS transitions through `<html data-reduced-motion>`.
-  Collapsing a sidebar expands the centre frame: its content takes the final size at once, and
-  only the card's plain background and the content's position animate.
+  Collapsing a sidebar expands the centre frame by animating the panels' real size (a CSS
+  transition while it settles): translating content that is already at its final size made it
+  overflow the card and slide, so layout animations are kept to moves that preserve size.
 - Scrolling: everything that scrolls sits in the kit's `<ScrollArea>` (`ade/scroll-area` refuses
   `overflow-auto`/`scroll`).
 - Cursors: the arrow on controls and in-app links, as native Mac apps do.
