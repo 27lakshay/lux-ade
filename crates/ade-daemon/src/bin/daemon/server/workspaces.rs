@@ -85,6 +85,7 @@ impl Host {
             self.runtime.command(terminal_runtime::Command::Stop {
                 workspace_id: id.to_owned(),
                 terminal_id: terminal,
+                if_idle: false,
             })?;
         }
         let deadline = Instant::now() + STOP_WAIT;

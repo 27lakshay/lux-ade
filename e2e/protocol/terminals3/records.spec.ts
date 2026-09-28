@@ -159,6 +159,50 @@ test('closing the primary shell gives the workspace a new one, and a close repla
   expect(unknown.json?.message).toMatch(/does not exist/)
 })
 
+test('a close racing restarts never leaves a shell running without its record', async ({ profile, repo }) => {
+  const { workspace, terminalId, stream, runId } = await shell(profile)
+  stream.send({ op: 'input', run_id: runId, data: 'sleep 30\n' })
+  await expect.poll(async () => (await record(profile, terminalId))?.busy).toBe(true)
+
+  // A client keeps restarting the shell while the forced close runs.
+  let closing = true
+  const restarts = (async () => {
+    let attempt = 0
+    while (closing) {
+      await profile
+        .call('terminal.restart', {
+          operation_id: `race-restart-${++attempt}`,
+          workspace_id: workspace.id,
+          terminal_id: terminalId,
+        })
+        .catch(() => undefined)
+    }
+  })()
+  const closed = await profile
+    .call('terminal.close', { operation_id: 'race-close', terminal_id: terminalId, force: true })
+    .then(
+      () => true,
+      () => false,
+    )
+  closing = false
+  await restarts
+
+  // The record and the runtime terminal go together, or stay together.
+  const listed = (await record(profile, terminalId)) !== undefined
+  const running = (await terminalMetrics(profile, workspace.id, terminalId)) !== undefined
+  expect(listed).toBe(!closed)
+  if (closed) expect(running).toBe(false)
+  // Lease bookkeeping still works: another workspace's shell stops and closes.
+  const other = (await profile.call('workspace.open', { path: repo.path })).workspace
+  const next = await profile.call('terminal.create', { workspace_id: other.id })
+  const attached = TerminalStream.open(profile, other.id, next.terminal_id)
+  await attached.snapshot()
+  await profile.call('terminal.close', { operation_id: 'race-after', terminal_id: next.terminal_id })
+  expect(await record(profile, next.terminal_id)).toBeUndefined()
+  attached.close()
+  stream.close()
+})
+
 test('terminal create takes a title, refuses a bad one, and refuses place as unsupported', async ({ profile }) => {
   const { workspace } = await profile.call('workspace.open', { path: profile.defaultWorkspaceRoot })
   const created = await profile.cli('terminal', 'create', workspace.id, '--request-id', 'titled', '--title', ' Logs ')

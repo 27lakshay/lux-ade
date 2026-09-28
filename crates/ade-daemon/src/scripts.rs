@@ -341,6 +341,7 @@ pub fn command(
                 runtime.command(TerminalCommand::Stop {
                     workspace_id: workspace.id.clone(),
                     terminal_id: run_id.to_string(),
+                    if_idle: false,
                 })?;
             }
             let deadline = Instant::now() + Duration::from_secs(5);

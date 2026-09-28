@@ -160,6 +160,7 @@ impl Sessions {
                     self.runtime.command(runtime::Command::Stop {
                         workspace_id: c.workspace_id.clone(),
                         terminal_id: owner.terminal_id.clone(),
+                        if_idle: false,
                     })?;
                     stopped = true;
                 }

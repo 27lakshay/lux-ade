@@ -1426,6 +1426,7 @@ impl Host {
                     self.runtime.command(terminal_runtime::Command::Stop {
                         workspace_id: workspace.id,
                         terminal_id: workspace.terminal_id,
+                        if_idle: false,
                     })?;
                 }
                 continue;
@@ -1649,6 +1650,7 @@ impl Host {
             self.runtime.command(terminal_runtime::Command::Stop {
                 workspace_id: workspace,
                 terminal_id: terminal,
+                if_idle: false,
             })?;
             return Ok(serde_json::to_value(Ack::default())?);
         }
@@ -1675,9 +1677,14 @@ impl Host {
     }
     /// `terminal.close`: stop a shell and remove it from its workspace, in
     /// one daemon rule every client shares (daemon-authority decision 5).
-    /// Busy is read from the runtime now, not from the record, which trails
-    /// it by up to one tick. The record is retired before the runtime's
-    /// storage, as `terminal.retire` does.
+    ///
+    /// Each round holds `leases`, as `terminal.retire` does, across reading
+    /// the runtime and acting on it; `ensure_terminal` holds the same lock
+    /// to start a shell, so an attachment cannot restart the shell between
+    /// the check and the retirement. A running shell is stopped under the
+    /// lock and waited for outside it, then the next round checks again.
+    /// Without `force`, the runtime refuses the stop while a command holds
+    /// the foreground, in the same step as the stop.
     fn terminal_close(&self, request: &Value) -> anyhow::Result<Value> {
         let close: TerminalCloseRequest = decode_terminal_request(request)?;
         let record = self
@@ -1693,50 +1700,58 @@ impl Host {
             }
         );
         let workspace = record.workspace_id.clone();
+        let force = close.force == Some(true);
         self.sessions.ensure_workspace_bound(&workspace)?;
         let running = |terminals: &[terminal_runtime::Terminal]| {
-            terminals
-                .iter()
-                .find(|entry| {
-                    entry.workspace.id == workspace
-                        && entry.workspace.terminal_id == record.id
-                        && entry.shell_running()
-                })
-                .cloned()
+            terminals.iter().any(|entry| {
+                entry.workspace.id == workspace
+                    && entry.workspace.terminal_id == record.id
+                    && entry.shell_running()
+            })
         };
-        if let Some(entry) = running(&self.runtime_terminals()?) {
-            if entry.activity.busy && close.force != Some(true) {
-                return Err(ade_core::error::TerminalBusy {
-                    terminal_id: record.id,
-                    foreground: entry.activity.foreground,
-                }
-                .into());
-            }
+        // A shell gets a hang-up and two seconds before its whole tree is
+        // killed; then the runtime proves the tree stopped.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut stopped = false;
+        loop {
             {
                 let _leases = self.leases.lock().unwrap();
-                self.runtime.command(terminal_runtime::Command::Stop {
-                    workspace_id: workspace.clone(),
-                    terminal_id: record.id.clone(),
-                })?;
-            }
-            // A shell gets a hang-up and two seconds before its whole tree
-            // is killed; then the runtime proves the tree stopped.
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while running(&self.runtime_terminals()?).is_some() {
+                if !running(&self.runtime_terminals()?) {
+                    self.sessions.retire_terminal(&workspace, &record.id)?;
+                    self.runtime.command(terminal_runtime::Command::Retire {
+                        workspace_id: workspace.clone(),
+                        terminal_id: record.id.clone(),
+                    })?;
+                    break;
+                }
+                // Still running after the wait: either the stop has not
+                // finished, or the shell was started again and is stopped
+                // again below, with the same busy check.
                 anyhow::ensure!(
-                    Instant::now() < deadline,
+                    !stopped || Instant::now() < deadline,
                     "Terminal is still stopping; close it again with a new operation ID"
                 );
+                let stop = self.runtime.command(terminal_runtime::Command::Stop {
+                    workspace_id: workspace.clone(),
+                    terminal_id: record.id.clone(),
+                    if_idle: !force,
+                });
+                if let Err(error) = stop {
+                    let message = error.to_string();
+                    if let Some(command) = message.strip_prefix("terminal_busy:") {
+                        return Err(ade_core::error::TerminalBusy {
+                            terminal_id: record.id,
+                            foreground: (!command.is_empty()).then(|| command.to_owned()),
+                        }
+                        .into());
+                    }
+                    return Err(error);
+                }
+                stopped = true;
+            }
+            while running(&self.runtime_terminals()?) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
             }
-        }
-        {
-            let _leases = self.leases.lock().unwrap();
-            self.sessions.retire_terminal(&workspace, &record.id)?;
-            self.runtime.command(terminal_runtime::Command::Retire {
-                workspace_id: workspace,
-                terminal_id: record.id,
-            })?;
         }
         if let Err(error) = self.refresh_leases() {
             eprintln!("Terminal leases were not refreshed after terminal.close: {error}");

@@ -498,6 +498,11 @@ pub mod runtime {
         Stop {
             workspace_id: String,
             terminal_id: String,
+            /// Refuse with `terminal_busy` instead of stopping when a command
+            /// holds the terminal's foreground. The runtime checks this in the
+            /// same step as the stop.
+            #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+            if_idle: bool,
         },
         #[serde(rename = "terminal.retire")]
         Retire {
@@ -829,7 +834,8 @@ mod tests {
         assert_eq!(
             runtime::Command::Stop {
                 workspace_id: "w".into(),
-                terminal_id: "t".into()
+                terminal_id: "t".into(),
+                if_idle: false,
             }
             .to_value(),
             json!({"op": "terminal.stop", "workspace_id": "w", "terminal_id": "t"})

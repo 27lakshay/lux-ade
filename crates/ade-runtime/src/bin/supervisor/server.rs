@@ -197,11 +197,12 @@ impl Host {
             TerminalCommand::Stop {
                 workspace_id,
                 terminal_id,
-            } => self.stop_terminal(data, &workspace_id, &terminal_id, false),
+                if_idle,
+            } => self.stop_terminal(data, &workspace_id, &terminal_id, false, if_idle),
             TerminalCommand::Retire {
                 workspace_id,
                 terminal_id,
-            } => self.stop_terminal(data, &workspace_id, &terminal_id, true),
+            } => self.stop_terminal(data, &workspace_id, &terminal_id, true, false),
             TerminalCommand::Ensure(ensure) => self.start_terminal(data, ensure, None, false),
             TerminalCommand::Restart(ensure) => self.start_terminal(data, ensure, None, true),
             TerminalCommand::Launch {
@@ -229,6 +230,7 @@ impl Host {
         workspace_id: &str,
         terminal_id: &str,
         retire: bool,
+        if_idle: bool,
     ) -> Result<Value> {
         ensure!(
             !data.owner.as_ref().unwrap().draining,
@@ -245,7 +247,7 @@ impl Host {
         if let Some(key) = key {
             let terminal = &data.terminals[&key];
             if !retire {
-                terminal.runtime.stop()?;
+                terminal.runtime.stop(if_idle)?;
             } else {
                 ensure!(
                     terminal.runtime.metrics()["shell_running"] != true,

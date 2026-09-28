@@ -1069,8 +1069,21 @@ impl Runtime {
             "bytes_base64":base64::engine::general_purpose::STANDARD.encode(bytes)})
     }
 
-    pub fn stop(&self) -> anyhow::Result<()> {
+    /// Stops the terminal's program. With `if_idle`, a terminal whose
+    /// foreground is held by another process group is refused instead,
+    /// checked under the same state lock as the stop so no command can
+    /// start in between unnoticed by the check (it can still start between
+    /// `tcgetpgrp` and the signal).
+    pub fn stop(&self, if_idle: bool) -> anyhow::Result<()> {
         let mut state = self.state.lock().unwrap();
+        if if_idle && state.shell_running {
+            use ade_runtime::foreground::{busy, process_name};
+            let group = self.master.lock().unwrap().process_group_leader();
+            if busy(state.shell_pid.map(|pid| pid as i32), group) {
+                let command = group.and_then(process_name).unwrap_or_default();
+                anyhow::bail!("terminal_busy:{command}");
+            }
+        }
         if state.shell_running && state.transfer_id.is_none() {
             // A shell: hang up so it can exit cleanly, then prove the tree.
             // The reader settles the exit by the tree's verdict; a shell that

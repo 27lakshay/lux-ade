@@ -1420,6 +1420,7 @@ impl Sessions {
                 self.runtime.command(TerminalCommand::Stop {
                     workspace_id: workspace.to_string(),
                     terminal_id: owner.terminal_id.clone(),
+                    if_idle: false,
                 })?;
                 sent = true;
             }
