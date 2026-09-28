@@ -46,15 +46,25 @@ claiming a UI change works.
   - `model/`: the layout is data (`layout.ts`), changed only by the reducer (`layout.logic.ts`),
     stored per workspace and saved (`layout-store.ts`, checked on load by `layout-schema.ts`).
     Native-menu and palette commands live in `layout-commands.ts`.
-  - `panes/`: the pane tree (`PaneGrid`), panes, tabs and dragging (`drag.ts`): tabs reorder,
-    move between panes and split a pane when dropped on its edge; panes move by their grip.
-    Sidebars only swap sides, by grip or the Swap sidebars command; they never hold panes.
+  - `panes/`: the pane tree (`PaneGrid`), panes, tabs and dragging (`drag.ts`). Tabs reorder,
+    move between panes, join a pane dropped on its centre and split it when dropped on its edge;
+    hovering a dragged tab over another tab opens it after `SPRING_LOAD_MS`, and a long strip
+    scrolls. A pane moves by its grip: onto another pane's edge it moves beside it, onto its
+    centre the two swap places. Merging is done with tabs only. While a tab or pane is dragged,
+    strips on the centre's outer edges (`DockEdges`) dock it as a full-height column or full-width
+    row. Every drag shows a small chip (`DragChip`) and dims what is dragged. Each drag has a
+    keyboard or palette equivalent in `layout-commands.ts` (`$mod+Alt+Arrow` focuses the pane that
+    way, adding Shift swaps with it). Sidebars only swap sides, by grip or the Swap sidebars
+    command; they never hold panes. The pane tree's queries and edits are in
+    `model/layout-tree.ts`; `layout.property.test.ts` runs random action sequences against the
+    reducer's invariants.
   - `content/`: every tab's content renders once into its own element (`hosts.ts`,
     `ContentHosts.tsx`); panes attach the element, so moving a tab never remounts it. Content of
     the recently used workspaces stays mounted; how many is `keepMounted` in the layout store (3).
     Pane content is empty for now.
   - Layout animations key on structure (sidebar order, tab order), never on sizes. `testing.tsx` renders the workspace for browser tests and drives drags with native
-    drag events.
+    drag events (`dragTo`, or `startDrag` to look at the page mid-drag). Browser tests run in a
+    1440×900 viewport.
 - Folders in `src/renderer/src`:
   - `bootstrap.ts`: the entry. It imports `app/start.tsx` dynamically and shows a plain error
     screen if that fails.

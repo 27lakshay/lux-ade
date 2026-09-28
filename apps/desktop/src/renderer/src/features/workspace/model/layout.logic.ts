@@ -2,15 +2,26 @@ import { produce } from 'immer'
 import {
   SIDEBAR_WIDTH,
   type DropZone,
+  type Edge,
   type Layout,
-  type LayoutNode,
   type PaneNode,
   type Side,
   type SidebarId,
   type SplitDirection,
-  type SplitNode,
   type Tab,
 } from './layout'
+import {
+  dock,
+  findNode,
+  findPane,
+  insertBeside,
+  paneOfTab,
+  panes,
+  removeNode,
+  swapNodes,
+  zoneAfter,
+  zoneDirection,
+} from './layout-tree'
 
 // Every change to a workspace layout, as one pure function: (layout, action) → layout. New ids come
 // in with the action, so the reducer stays deterministic and testable.
@@ -27,109 +38,14 @@ export type LayoutAction =
   | { type: 'dropTab'; tabId: string; paneId: string; zone: DropZone; newPaneId: string }
   | { type: 'splitPane'; paneId: string; direction: SplitDirection; newPaneId: string }
   | { type: 'movePane'; paneId: string; targetId: string; zone: DropZone }
+  | { type: 'swapPanes'; paneId: string; targetId: string }
+  | { type: 'dockTab'; tabId: string; edge: Edge; newPaneId: string }
+  | { type: 'dockPane'; paneId: string; edge: Edge }
   | { type: 'closePane'; paneId: string }
   | { type: 'focusPane'; paneId: string }
   | { type: 'setSplitSizes'; splitId: string; sizes: number[] }
 
 /** Every pane, in reading order. */
-export function panes(node: LayoutNode): PaneNode[] {
-  return node.type === 'pane' ? [node] : node.children.flatMap(panes)
-}
-
-export const findPane = (root: LayoutNode, id: string): PaneNode | undefined =>
-  panes(root).find((pane) => pane.id === id)
-
-const paneOfTab = (root: LayoutNode, tabId: string): PaneNode | undefined =>
-  panes(root).find((pane) => pane.tabs.includes(tabId))
-
-/** A string that changes only when the tree's shape changes, never when sizes do. */
-export function structureKey(node: LayoutNode): string {
-  return node.type === 'pane' ? node.id : `${node.direction}(${node.children.map(structureKey).join(',')})`
-}
-
-function findNode(node: LayoutNode, id: string): LayoutNode | undefined {
-  if (node.id === id) return node
-  if (node.type === 'pane') return undefined
-  for (const child of node.children) {
-    const found = findNode(child, id)
-    if (found) return found
-  }
-  return undefined
-}
-
-function parentOf(root: LayoutNode, id: string): SplitNode | undefined {
-  if (root.type === 'pane') return undefined
-  for (const child of root.children) {
-    if (child.id === id) return root
-    const found = parentOf(child, id)
-    if (found) return found
-  }
-  return undefined
-}
-
-const zoneDirection = (zone: Exclude<DropZone, 'centre'>): SplitDirection =>
-  zone === 'left' || zone === 'right' ? 'row' : 'column'
-const zoneAfter = (zone: Exclude<DropZone, 'centre'>): boolean => zone === 'right' || zone === 'bottom'
-
-/** Puts `node` beside `targetId`, splitting the target in two. Mutates the draft; returns the root. */
-function insertBeside(
-  root: LayoutNode,
-  targetId: string,
-  node: LayoutNode,
-  direction: SplitDirection,
-  after: boolean,
-): LayoutNode {
-  const parent = parentOf(root, targetId)
-  if (parent && parent.direction === direction) {
-    const index = parent.children.findIndex((child) => child.id === targetId)
-    const half = parent.sizes[index]! / 2
-    parent.sizes[index] = half
-    const at = after ? index + 1 : index
-    parent.children.splice(at, 0, node)
-    parent.sizes.splice(at, 0, half)
-    return root
-  }
-  const target = findNode(root, targetId)!
-  const split: SplitNode = {
-    type: 'split',
-    id: `split-${node.id}`,
-    direction,
-    children: after ? [target, node] : [node, target],
-    sizes: [50, 50],
-  }
-  if (!parent) return split
-  const index = parent.children.findIndex((child) => child.id === targetId)
-  parent.children[index] = split
-  return root
-}
-
-/** Takes a node out of the tree, giving its space to a neighbour and collapsing one-child splits. */
-function removeNode(root: LayoutNode, id: string): LayoutNode {
-  const parent = parentOf(root, id)
-  if (!parent) return root
-  const index = parent.children.findIndex((child) => child.id === id)
-  const [freed] = parent.sizes.splice(index, 1)
-  parent.children.splice(index, 1)
-  const neighbour = index > 0 ? index - 1 : 0
-  parent.sizes[neighbour] = (parent.sizes[neighbour] ?? 0) + (freed ?? 0)
-  if (parent.children.length > 1) return root
-  return replaceNode(root, parent.id, parent.children[0]!)
-}
-
-/** Replaces a node, flattening a split into a parent split of the same direction. */
-function replaceNode(root: LayoutNode, id: string, replacement: LayoutNode): LayoutNode {
-  const parent = parentOf(root, id)
-  if (!parent) return replacement
-  const index = parent.children.findIndex((child) => child.id === id)
-  if (replacement.type === 'split' && replacement.direction === parent.direction) {
-    const share = parent.sizes[index]!
-    parent.children.splice(index, 1, ...replacement.children)
-    parent.sizes.splice(index, 1, ...replacement.sizes.map((size) => (size * share) / 100))
-  } else {
-    parent.children[index] = replacement
-  }
-  return root
-}
 
 function refocus(draft: Layout, removedPaneId: string): void {
   if (draft.focusedPane === removedPaneId || !findPane(draft.root, draft.focusedPane))
@@ -241,17 +157,44 @@ export const layoutReducer = (layout: Layout, action: LayoutAction): Layout =>
         const pane = findPane(draft.root, action.paneId)
         const target = findPane(draft.root, action.targetId)
         if (!pane || !target || pane === target) return
+        // A pane dropped on another's centre trades places with it; tabs are merged by dragging tabs.
         if (action.zone === 'centre') {
-          target.tabs.push(...pane.tabs)
-          target.active = pane.active ?? target.active
-          pane.tabs = []
-          draft.root = removeNode(draft.root, pane.id)
-          draft.focusedPane = target.id
+          draft.root = swapNodes(draft.root, pane.id, target.id)
+          draft.focusedPane = pane.id
           return
         }
         const moving = { ...pane, tabs: [...pane.tabs] }
         draft.root = removeNode(draft.root, pane.id)
         draft.root = insertBeside(draft.root, target.id, moving, zoneDirection(action.zone), zoneAfter(action.zone))
+        draft.focusedPane = moving.id
+        return
+      }
+      case 'swapPanes': {
+        const pane = findPane(draft.root, action.paneId)
+        const target = findPane(draft.root, action.targetId)
+        if (!pane || !target || pane === target) return
+        draft.root = swapNodes(draft.root, pane.id, target.id)
+        draft.focusedPane = pane.id
+        return
+      }
+      case 'dockTab': {
+        const source = paneOfTab(draft.root, action.tabId)
+        if (!source) return
+        // Docking the only tab of the only pane would leave nothing behind: nothing to do.
+        if (source.tabs.length === 1 && panes(draft.root).length === 1) return
+        takeTab(draft, action.tabId)
+        dropIfEmpty(draft, source)
+        const pane: PaneNode = { type: 'pane', id: action.newPaneId, tabs: [action.tabId], active: action.tabId }
+        draft.root = dock(draft.root, pane, action.edge)
+        draft.focusedPane = pane.id
+        return
+      }
+      case 'dockPane': {
+        const pane = findPane(draft.root, action.paneId)
+        if (!pane || panes(draft.root).length === 1) return
+        const moving = { ...pane, tabs: [...pane.tabs] }
+        draft.root = removeNode(draft.root, pane.id)
+        draft.root = dock(draft.root, moving, action.edge)
         draft.focusedPane = moving.id
         return
       }

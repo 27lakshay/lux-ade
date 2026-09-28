@@ -20,6 +20,9 @@ export default defineConfig({
       headless: true,
       provider: playwright(),
       instances: [{ browser: 'chromium' }],
+      // A desktop window: the workspace needs its sidebars, two panes and their grips on screen,
+      // and a drag starts only where the pointer actually hits the grip.
+      viewport: { width: 1440, height: 900 },
     },
   },
 })

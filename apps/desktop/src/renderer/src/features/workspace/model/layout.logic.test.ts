@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { defaultLayout, SIDEBAR_WIDTH, type Layout, type LayoutNode, type Tab } from './layout'
-import { findPane, layoutReducer, panes, structureKey, type LayoutAction } from './layout.logic'
+import { findPane, neighbourPane, panes, structureKey } from './layout-tree'
+import { layoutReducer, type LayoutAction } from './layout.logic'
 
 const tab = (id: string): Tab => ({ id, kind: 'conversation', title: id })
 const run = (layout: Layout, ...actions: LayoutAction[]): Layout => actions.reduce(layoutReducer, layout)
@@ -114,19 +115,61 @@ describe('splits and drops', () => {
     expect(sizes(closed.root)).toEqual({ row: [50, 25, 25], of: ['p1', 'p3', 'p4'] })
   })
 
-  test('moving a whole pane beside another, or into it', () => {
-    const three = run(
+  const three = () =>
+    run(
       withTabs('a'),
       { type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' },
       { type: 'openTab', tab: tab('b'), paneId: 'p2' },
       { type: 'splitPane', paneId: 'p2', direction: 'row', newPaneId: 'p3' },
       { type: 'openTab', tab: tab('c'), paneId: 'p3' },
     )
-    const moved = run(three, { type: 'movePane', paneId: 'p1', targetId: 'p3', zone: 'bottom' })
+
+  test('moving a pane onto another pane’s edge places it beside that pane', () => {
+    const moved = run(three(), { type: 'movePane', paneId: 'p1', targetId: 'p3', zone: 'bottom' })
     expect(shape(moved)).toBe('row(p2,column(p3,p1))')
-    const merged = run(moved, { type: 'movePane', paneId: 'p1', targetId: 'p2', zone: 'centre' })
-    expect(shape(merged)).toBe('row(p2,p3)')
-    expect(findPane(merged.root, 'p2')?.tabs).toEqual(['b', 'a'])
+  })
+
+  test('moving a pane onto another pane’s centre swaps their places; each place keeps its size', () => {
+    const resized = run(three(), { type: 'setSplitSizes', splitId: three().root.id, sizes: [20, 30, 50] })
+    const swapped = run(resized, { type: 'movePane', paneId: 'p1', targetId: 'p3', zone: 'centre' })
+    expect(shape(swapped)).toBe('row(p3,p2,p1)')
+    expect(sizes(swapped.root)).toEqual({ row: [20, 30, 50], of: ['p3', 'p2', 'p1'] })
+    expect(findPane(swapped.root, 'p1')?.tabs).toEqual(['a'])
+    expect(swapped.focusedPane).toBe('p1')
+  })
+
+  test('swapping works across nested splits', () => {
+    const nested = run(three(), { type: 'splitPane', paneId: 'p3', direction: 'column', newPaneId: 'p4' })
+    expect(shape(nested)).toBe('row(p1,p2,column(p3,p4))')
+    expect(shape(run(nested, { type: 'swapPanes', paneId: 'p1', targetId: 'p4' }))).toBe('row(p4,p2,column(p3,p1))')
+  })
+
+  test('docking a pane on an outer edge makes it a full-height column or full-width row', () => {
+    const left = run(three(), { type: 'dockPane', paneId: 'p3', edge: 'left' })
+    expect(shape(left)).toBe('row(p3,p1,p2)')
+    const bottom = run(three(), { type: 'dockPane', paneId: 'p2', edge: 'bottom' })
+    expect(shape(bottom)).toBe('column(row(p1,p3),p2)')
+    // The only pane cannot dock anywhere.
+    expect(run(start(), { type: 'dockPane', paneId: 'p1', edge: 'left' })).toEqual(start())
+  })
+
+  test('docking a tab gives it a new pane along that edge', () => {
+    const layout = run(withTabs('a', 'b'), { type: 'dockTab', tabId: 'b', edge: 'top', newPaneId: 'p2' })
+    expect(shape(layout)).toBe('column(p2,p1)')
+    expect(findPane(layout.root, 'p2')?.tabs).toEqual(['b'])
+    // The only tab of the only pane stays put.
+    expect(run(withTabs('a'), { type: 'dockTab', tabId: 'a', edge: 'top', newPaneId: 'p2' })).toEqual(withTabs('a'))
+  })
+
+  test('the neighbour in each direction is the nearest pane that way', () => {
+    const layout = run(three(), { type: 'splitPane', paneId: 'p3', direction: 'column', newPaneId: 'p4' })
+    const root = layout.root
+    expect(neighbourPane(root, 'p1', 'right')?.id).toBe('p2')
+    expect(neighbourPane(root, 'p2', 'right')?.id).toBe('p3')
+    expect(neighbourPane(root, 'p4', 'left')?.id).toBe('p2')
+    expect(neighbourPane(root, 'p3', 'bottom')?.id).toBe('p4')
+    expect(neighbourPane(root, 'p1', 'left')).toBeUndefined()
+    expect(neighbourPane(root, 'p2', 'top')).toBeUndefined()
   })
 
   test('closing the focused pane focuses another; the last pane only empties', () => {

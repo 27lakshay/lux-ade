@@ -13,7 +13,12 @@ import type { IconName } from '@/icons/icons'
 import type { Tab as TabData, TabKind } from '../model/layout'
 import { transitions } from '../../../app/motion'
 import { dispatch } from '../model/layout-store'
-import { isDragData, type DragData, type TargetData } from './drag'
+import { findPane } from '../model/layout-tree'
+import { activeLayout, isDragData, showDragPreview, type DragData, type TargetData } from './drag'
+import { DragChip } from './DragChip'
+
+/** How long a dragged item hovers over an inactive tab before that tab opens. */
+export const SPRING_LOAD_MS = 600
 
 export const TAB_ICON: Record<TabKind, IconName> = {
   conversation: 'conversation',
@@ -51,10 +56,24 @@ export function Tab({
   useEffect(() => {
     const element = ref.current
     if (!element) return
+    const tabId = tab.id
+    // Read at drag time, so the drag is not re-attached whenever the title or active tab changes.
+    const now = () => {
+      const layout = activeLayout()
+      return { tab: layout?.tabs[tabId], active: layout ? findPane(layout.root, paneId)?.active === tabId : false }
+    }
+    // Hovering a dragged item over an inactive tab opens it, so the item can land in its content.
+    let springLoad: ReturnType<typeof setTimeout> | undefined
+    const cancelSpringLoad = (): void => clearTimeout(springLoad)
     return combine(
+      cancelSpringLoad,
       draggable({
         element,
         getInitialData: (): DragData => ({ kind: 'tab', tabId: tab.id, paneId }),
+        onGenerateDragPreview: ({ nativeSetDragImage }) => {
+          const { tab: data } = now()
+          if (data) showDragPreview(nativeSetDragImage, <DragChip icon={TAB_ICON[data.kind]} label={data.title} />)
+        },
         onDragStart: () => setDragging(true),
         onDrop: () => setDragging(false),
       }),
@@ -67,9 +86,19 @@ export function Tab({
             input,
             allowedEdges: ['left', 'right'],
           }),
+        onDragEnter: () => {
+          cancelSpringLoad()
+          if (!now().active) springLoad = setTimeout(() => dispatch({ type: 'activateTab', tabId }), SPRING_LOAD_MS)
+        },
         onDrag: ({ self }) => setEdge(extractClosestEdge(self.data) as 'left' | 'right' | null),
-        onDragLeave: () => setEdge(null),
-        onDrop: () => setEdge(null),
+        onDragLeave: () => {
+          cancelSpringLoad()
+          setEdge(null)
+        },
+        onDrop: () => {
+          cancelSpringLoad()
+          setEdge(null)
+        },
       }),
     )
   }, [tab.id, paneId, index])

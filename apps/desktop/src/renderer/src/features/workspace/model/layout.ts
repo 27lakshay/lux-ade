@@ -36,8 +36,11 @@ export interface SplitNode {
 
 export type LayoutNode = PaneNode | SplitNode
 
-/** Where a dragged tab or pane lands on a pane: one of its edges (a split) or its centre (join). */
+/** Where a dragged tab or pane lands on a pane: one of its edges (a split) or its centre. */
 export type DropZone = 'left' | 'right' | 'top' | 'bottom' | 'centre'
+
+/** An outer edge of the whole centre area, or a direction to a neighbouring pane. */
+export type Edge = Exclude<DropZone, 'centre'>
 
 export interface Layout {
   version: 1

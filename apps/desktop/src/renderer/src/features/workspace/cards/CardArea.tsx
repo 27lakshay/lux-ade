@@ -6,7 +6,10 @@ import { Group, Panel, usePanelRef, type PanelImperativeHandle } from 'react-res
 import { DURATION, transitions } from '../../../app/motion'
 import { SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
 import { dispatch, layoutStore, useLayout } from '../model/layout-store'
-import { isDragData, useDropMonitor, type DragData, type TargetData } from '../panes/drag'
+import { cn } from '@/lib/utils'
+import { DockEdges } from '../panes/DockEdges'
+import { isDragData, showDragPreview, useDropMonitor, type DragData, type TargetData } from '../panes/drag'
+import { DragChip } from '../panes/DragChip'
 import { PaneGrid } from '../panes/PaneGrid'
 import { Inspector } from '../sidebars/Inspector'
 import { Navigator } from '../sidebars/Navigator'
@@ -26,8 +29,8 @@ import { ResizeHandle } from './ResizeHandle'
 // Swapping sidebars moves whole cards (layout="position"), which keep their own widths.
 
 const SIDEBAR = {
-  navigator: { label: 'Navigator', Content: Navigator },
-  inspector: { label: 'Inspector', Content: Inspector },
+  navigator: { label: 'Navigator', icon: 'toggleLeftSidebar', Content: Navigator },
+  inspector: { label: 'Inspector', icon: 'toggleRightSidebar', Content: Inspector },
 } as const
 
 function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObject<PanelImperativeHandle | null> }) {
@@ -38,6 +41,7 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
   const card = useRef<HTMLElement>(null)
   const grip = useRef<HTMLDivElement>(null)
   const [over, setOver] = useState(false)
+  const [dragging, setDragging] = useState(false)
 
   // Drag a sidebar by its grip onto the other sidebar to swap sides.
   useEffect(() => {
@@ -47,6 +51,10 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
         element: card.current,
         dragHandle: grip.current,
         getInitialData: (): DragData => ({ kind: 'sidebar', sidebar: id }),
+        onGenerateDragPreview: ({ nativeSetDragImage }) =>
+          showDragPreview(nativeSetDragImage, <DragChip icon={SIDEBAR[id].icon} label={SIDEBAR[id].label} />),
+        onDragStart: () => setDragging(true),
+        onDrop: () => setDragging(false),
       }),
       dropTargetForElements({
         element: card.current,
@@ -80,7 +88,13 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
         initial={false}
         animate={{ opacity: collapsed ? 0 : 1 }}
       >
-        <Card ref={card} surface="panel" label={label} grip={<Grip ref={grip} label={`Move ${label.toLowerCase()}`} />}>
+        <Card
+          ref={card}
+          surface="panel"
+          label={label}
+          className={cn(dragging && 'opacity-50')}
+          grip={<Grip ref={grip} label={`Move ${label.toLowerCase()}`} />}
+        >
           <Content />
         </Card>
         {over && (
@@ -175,9 +189,10 @@ export function CardArea() {
           layout="position"
           layoutDependency={sidebars.join(',')}
           transition={transitions.layout}
-          className="h-full"
+          className="relative h-full"
         >
           <PaneGrid node={root} />
+          <DockEdges />
         </m.div>
       </Panel>
       <ResizeHandle key={`gutter-${right}`} orientation="horizontal" hidden={collapsed[right]} />
