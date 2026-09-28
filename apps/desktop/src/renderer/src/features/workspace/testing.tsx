@@ -41,3 +41,32 @@ export function renderWorkspace(renderContent?: RenderContent) {
 }
 
 export const section = (label: string): Element | null => document.querySelector(`section[aria-label="${label}"]`)
+
+const frame = (): Promise<unknown> => new Promise(requestAnimationFrame)
+
+/**
+ * Drags `source` onto `target` at a point inside it (default: its centre) by dispatching the native
+ * drag events, as pragmatic-drag-and-drop's own tests do. Playwright's drag delivers the drop to
+ * the library's "honey pot" element, so it cannot be used here.
+ */
+export async function dragTo(source: Element, target: Element, point?: { x: number; y: number }): Promise<void> {
+  const from = source.getBoundingClientRect()
+  const to = target.getBoundingClientRect()
+  const at = { clientX: to.left + (point?.x ?? to.width / 2), clientY: to.top + (point?.y ?? to.height / 2) }
+  const dataTransfer = new DataTransfer()
+  const fire = (element: Element, type: string, position: { clientX: number; clientY: number }): void => {
+    element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer, ...position }))
+  }
+  // The browser fires dragstart on the draggable element itself, even when a child was pressed (a
+  // drag handle); the pointer position says where the drag began.
+  const draggableElement = source.closest('[draggable="true"]') ?? source
+  fire(draggableElement, 'dragstart', { clientX: from.left + from.width / 2, clientY: from.top + from.height / 2 })
+  await frame()
+  fire(target, 'dragenter', at)
+  fire(target, 'dragover', at)
+  await frame()
+  fire(target, 'dragover', at)
+  fire(target, 'drop', at)
+  fire(draggableElement, 'dragend', at)
+  await frame()
+}

@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid'
 import { createStore, useStore } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { defaultLayout, type Layout, type Side, type SplitDirection, type Tab } from './layout'
+import { defaultLayout, type DropZone, type Layout, type Side, type SplitDirection, type Tab } from './layout'
 import { layoutReducer, type LayoutAction } from './layout.logic'
 import { parseLayout } from './layout-schema'
 
@@ -87,4 +87,6 @@ export const openTab = (tab: Omit<Tab, 'id'>, paneId?: string): void =>
   dispatch({ type: 'openTab', tab: { ...tab, id: `tab-${nanoid(8)}` }, paneId })
 export const splitPane = (paneId: string, direction: SplitDirection): void =>
   dispatch({ type: 'splitPane', paneId, direction, newPaneId: newPaneId() })
+export const dropTab = (tabId: string, paneId: string, zone: DropZone): void =>
+  dispatch({ type: 'dropTab', tabId, paneId, zone, newPaneId: newPaneId() })
 export const toggleSide = (side: Side): void => dispatch({ type: 'toggleSide', side })

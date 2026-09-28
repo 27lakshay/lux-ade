@@ -1,5 +1,5 @@
 import * as m from 'motion/react-m'
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useContext, type ReactNode, type Ref } from 'react'
 import { cn } from '@/lib/utils'
 import { transitions } from '../../../app/motion'
 
@@ -20,7 +20,9 @@ export function Card({
   grip,
   children,
   className,
+  ref,
 }: {
+  ref?: Ref<HTMLElement>
   surface: 'panel' | 'pane'
   label: string
   /** The drag handle on the bottom edge. */
@@ -30,7 +32,7 @@ export function Card({
 }) {
   const layoutKey = useContext(LayoutKeyContext)
   return (
-    <section aria-label={label} className={cn('relative flex h-full min-w-0 flex-col', className)}>
+    <section ref={ref} aria-label={label} className={cn('relative flex h-full min-w-0 flex-col', className)}>
       <m.div
         aria-hidden
         layout

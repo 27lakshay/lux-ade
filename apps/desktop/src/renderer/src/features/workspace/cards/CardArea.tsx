@@ -6,6 +6,7 @@ import { transitions } from '../../../app/motion'
 import { SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
 import { structureKey } from '../model/layout.logic'
 import { dispatch, layoutStore, useLayout } from '../model/layout-store'
+import { useDropMonitor } from '../panes/drag'
 import { PaneGrid } from '../panes/PaneGrid'
 import { Inspector } from '../sidebars/Inspector'
 import { Navigator } from '../sidebars/Navigator'
@@ -54,6 +55,7 @@ export function CardArea() {
   const root = useLayout((layout) => layout.root)
   const refs = { navigator: usePanelRef(), inspector: usePanelRef() }
   const syncing = useRef(false)
+  useDropMonitor()
   // A resize ended: keep widths, and notice a sidebar dragged shut or open. Read a frame later:
   // inside onLayoutChanged the panels still report their sizes from before the change.
   const commitSizes = (): void => {
