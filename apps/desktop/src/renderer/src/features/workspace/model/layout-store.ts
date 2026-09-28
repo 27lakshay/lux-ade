@@ -83,6 +83,7 @@ export const layoutStore = createStore<LayoutState>()(
         },
       })),
       partialize: (state) => ({
+        active: state.active,
         layouts: state.layouts,
         keepMounted: state.keepMounted,
         keepTerminals: state.keepTerminals,
@@ -103,7 +104,10 @@ export const layoutStore = createStore<LayoutState>()(
           typeof persisted.keepTerminals === 'number' && persisted.keepTerminals >= 1
             ? persisted.keepTerminals
             : current.keepTerminals
-        return { ...current, layouts, keepMounted, keepTerminals }
+        // The workspace this window showed last, if its layout is still here.
+        const active =
+          typeof persisted.active === 'string' && layouts[persisted.active] ? persisted.active : current.active
+        return { ...current, active, layouts, keepMounted, keepTerminals, recent: [active] }
       },
     },
   ),
@@ -125,6 +129,23 @@ export function setActiveWorkspace(id: string): void {
     layouts: state.layouts[id] ? state.layouts : { ...state.layouts, [id]: defaultLayout(newPaneId()) },
     recent: [id, ...state.recent.filter((other) => other !== id)].slice(0, state.keepMounted),
   }))
+}
+
+/**
+ * Gives the layout kept under `from` to workspace `to`, when `to` has none yet: the window's layout
+ * from before it knew the daemon's workspaces carries over to the first one it shows.
+ */
+export function adoptLayout(from: string, to: string): void {
+  layoutStore.setState((state) => {
+    const layout = state.layouts[from]
+    if (!layout || state.layouts[to]) return state
+    const { [from]: _moved, ...rest } = state.layouts
+    return {
+      layouts: { ...rest, [to]: layout },
+      active: state.active === from ? to : state.active,
+      recent: state.recent.map((id) => (id === from ? to : id)),
+    }
+  })
 }
 
 export function setKeepMounted(count: number): void {

@@ -4,7 +4,11 @@ import { StrictMode } from 'react'
 import { render } from 'vitest-browser-react'
 import { Toaster } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import type { ClientState } from '@ade/client'
 import { createAppRouter } from '../../app/router'
+import { createDaemonStore } from '../../state/daemon-store'
+import { clientState, createFakeHost } from '../../state/fake-host'
+import { DaemonStoreContext } from '../../state/hooks'
 import { MotionProvider } from '../../app/MotionProvider'
 import '../../app/app.css'
 import type { RenderContent } from './content/ContentHosts'
@@ -28,22 +32,37 @@ export function resetLayout(): void {
   document.documentElement.style.setProperty('--traffic-lights-inset', '80px')
 }
 
+/**
+ * The daemon the rendered workspace sees: push catalogs with `setCatalog`. Replaced per render; the
+ * window's host (`window.adeHost`) is left to each test.
+ */
+let daemon = createFakeHost()
+
+/** Shows these workspaces and conversations in the navigator, as a connected daemon's catalog. */
+export function setCatalog(catalog: NonNullable<ClientState['catalog']>): void {
+  daemon.pushClientState(clientState({ sequence: Date.now(), catalog }))
+}
+
 export function renderWorkspace(renderContent?: RenderContent) {
+  daemon = createFakeHost()
+  const { store } = createDaemonStore(daemon.host)
   const Screen = () => <Workspace renderContent={renderContent} />
   const router = createAppRouter({ Workspace: Screen, history: createMemoryHistory({ initialEntries: ['/'] }) })
   return render(
     <StrictMode>
-      <div data-window-frame style={{ width: 1440, height: 900 }}>
-        <QueryClientProvider client={new QueryClient()}>
-          <MotionProvider>
-            <TooltipProvider delay={0}>
-              <Toaster>
-                <RouterProvider router={router} />
-              </Toaster>
-            </TooltipProvider>
-          </MotionProvider>
-        </QueryClientProvider>
-      </div>
+      <DaemonStoreContext value={store}>
+        <div data-window-frame style={{ width: 1440, height: 900 }}>
+          <QueryClientProvider client={new QueryClient()}>
+            <MotionProvider>
+              <TooltipProvider delay={0}>
+                <Toaster>
+                  <RouterProvider router={router} />
+                </Toaster>
+              </TooltipProvider>
+            </MotionProvider>
+          </QueryClientProvider>
+        </div>
+      </DaemonStoreContext>
     </StrictMode>,
   )
 }

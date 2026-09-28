@@ -4,13 +4,13 @@ import { interactive } from '@/components/interactive'
 import { Row } from '@/components/Row'
 import { Shortcut } from '@/components/Shortcut'
 import { Caption, Text } from '@/components/Typography'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { Icon } from '@/icons/Icon'
 import { openTab } from '../model/layout-store'
+import { ProjectTree } from './ProjectTree'
 
-// The navigator sidebar: the profile, starting a conversation, and (later) projects, workspaces
-// and conversations. Its first row lines up with the other cards' top rows.
+// The navigator sidebar: the profile, starting a conversation, and the projects, workspaces and
+// conversations (ProjectTree). Its first row lines up with the other cards' top rows.
 
 function ProfileSwitcher() {
   const { data } = useQuery({
@@ -43,7 +43,7 @@ export function Navigator() {
       >
         New conversation
       </Row>
-      <ScrollArea className="min-h-0 flex-1" />
+      <ProjectTree />
       <div className="flex h-10 shrink-0 items-center">
         <IconButton icon="addProject" label="Add project" onClick={() => void window.adeHost?.workspaces.choose()} />
       </div>

@@ -69,7 +69,6 @@
     "smol-toml",
     "strip-ansi",
     "ts-pattern",
-    "usehooks-ts",
     "yaml"
   ],
   "boundaries": {
