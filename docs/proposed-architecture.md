@@ -63,10 +63,10 @@ processes; it does not own conversations, application state, or scheduling.
 
 | Boundary | Owns | Must not own |
 |---|---|---|
-| Electron main | Windows, native menus, notifications, browser surfaces, fresh-renderer recovery | Authoritative conversations or provider lifecycle |
-| UI renderer | Rendering, interaction state, trusted UI extensions | Direct database access or implicit execution ownership |
+| Electron main | Native windows for the daemon's window records, native menus, notifications, browser surfaces, fresh-renderer recovery | Authoritative conversations, layouts or provider lifecycle; chains of daemon calls that another client would repeat |
+| UI renderer | Rendering, gestures, transient interaction state, trusted UI extensions | Durable state, layouts, business rules, direct database access or implicit execution ownership |
 | Client SDK | Commands, queries, projection application, reconnect and cursor consistency | Electron, UI framework, backend implementation, provider SDK dependencies |
-| `ade-daemon` | Profile state, command admission, operation journal, change feed, orchestration policy | Provider processes whose lifetime depends on its connection |
+| `ade-daemon` | Profile state including windows, layouts, panes and tabs; command admission, operation journal, change feed, orchestration policy | Provider processes whose lifetime depends on its connection |
 | `ade-runtime` | Actual execution, provider workers, PTYs, service processes, resource claims | The core application database or presentation state |
 | Backend plugin hosts | Restartable extension services and extension computation | Unbounded work inside core transactions |
 | Provider workers | Native provider protocol and account execution context | Undocumented privileged application APIs |
@@ -171,6 +171,10 @@ A plugin marketplace is also later; explicit pinned installation comes first.
 | Execution attempt | Runtime incarnation and attempt/turn generation; distinct from conversation ID |
 | Plugin activation | Plugin artifact version plus activation generation; separate from data schema |
 | Browser session | Explicit profile, host and frontend/background ownership |
+| Window | Stable ID owned by the profile; shows one workspace at a time |
+| Layout | One per window and workspace; owns its panes and tabs; carries a revision |
+| Tab | Stable ID inside a layout; names what it shows with a tab target (a conversation, terminal, browser tab, file or diff) |
+| Terminal | Stable ID owned by a workspace; kind, status and whether a command is running |
 
 A workspace can contain many conversations, terminals, services, and plugin
 records. Starting work in the same workspace versus a new worktree is explicit.
@@ -183,9 +187,12 @@ Remote credentials belong to their execution host. Transfer or installation is a
 explicit operation, never an incidental side effect of connecting.
 
 Submitted messages are shared application state. Drafts belong to a client and
-conversation, with durable recovery and explicit transfer. Focus, scroll position,
-expanded rows, and pending visual feedback are local interaction state. Optimistic
-updates must retain their pending or failed status until authoritative settlement.
+conversation, with durable recovery and explicit transfer. Windows, layouts, panes,
+tabs and per-window view state such as collapsed rows are daemon-owned, so the CLI and
+any UI can read and drive what a window shows (decided 2026-09-29, D18). Focus, hover,
+scroll position, drag state and pending visual feedback are local interaction state.
+Optimistic updates must retain their pending or failed status until authoritative
+settlement.
 
 ## 4. Commands, execution, and crash recovery
 

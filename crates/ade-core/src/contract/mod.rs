@@ -47,6 +47,7 @@ pub mod devices;
 pub mod files;
 pub mod history;
 pub mod hooks;
+pub mod layout;
 pub mod mcp;
 pub mod orchestration;
 pub mod placement;
@@ -59,6 +60,7 @@ pub mod retention;
 pub mod review;
 pub mod scripts;
 pub mod services;
+pub mod settings;
 pub mod skills;
 pub mod terminals;
 pub mod usage;
@@ -217,7 +219,21 @@ pub const DOMAINS: &[Domain] = &[
         operations: context::operations,
         frames: context::frames,
     },
+    Domain {
+        name: "layout",
+        operations: layout::operations,
+        frames: layout::frames,
+    },
+    Domain {
+        name: "settings",
+        operations: settings::operations,
+        frames: settings::frames,
+    },
 ];
+
+/// Types clients need before any operation carries them, so parallel work can
+/// agree on their shape first. A type may stay here once an operation uses it.
+const SHARED_TYPES: &[SchemaFn] = &[subschema::<layout::TabTarget>];
 
 /// Streams outside `session.subscribe`, each with its own frames. Their frames
 /// are not feed frames: a terminal attachment carries PTY output, not catalog
@@ -324,6 +340,9 @@ pub fn bundle() -> Value {
             let frame = reference(&(spec.frame)(&mut replies));
             frames.push(json!({"type": spec.kind, "domain": domain.name, "frame": frame}));
         }
+    }
+    for shared in SHARED_TYPES {
+        shared(&mut replies);
     }
     let mut streams = Map::new();
     for stream in STREAMS {

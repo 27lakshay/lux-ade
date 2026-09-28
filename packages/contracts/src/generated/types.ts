@@ -779,6 +779,7 @@ export type ContractDefinition =
   | StartOutcome
   | Support
   | SwitchContinuity
+  | TabTarget
   | TerminalConversationFrame
   | TerminalCreateRequest
   | TerminalCreated
@@ -1940,6 +1941,41 @@ export type SkillSourceKind = 'local_directory' | 'adopted'
  * What a placement did at its provider path.
  */
 export type SkillPlaceOutcome = 'created' | 'replaced' | 'up_to_date' | 'external_identical'
+/**
+ * What a tab shows. Records are named by ID; a file or diff by its path
+ * inside the layout's workspace.
+ */
+export type TabTarget =
+  | {
+      id: string
+      kind: 'conversation'
+      [k: string]: unknown
+    }
+  | {
+      id: string
+      kind: 'terminal'
+      [k: string]: unknown
+    }
+  | {
+      id: string
+      kind: 'browser'
+      [k: string]: unknown
+    }
+  | {
+      kind: 'file'
+      path: string
+      [k: string]: unknown
+    }
+  | {
+      kind: 'diff'
+      path: string
+      staged: boolean
+      [k: string]: unknown
+    }
+  | {
+      kind: 'new_conversation'
+      [k: string]: unknown
+    }
 /**
  * How a snapshot restores the screen, by snapshot format.
  */

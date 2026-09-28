@@ -107,9 +107,9 @@ notifications, browser pages with their automation, capture and recording.
 
 | Lane | Ticket | Worker | Owns (files) | Blocked by |
 |---|---|---|---|---|
-| Foundation | [01](issues/01-phase-0-foundation.md) | Coordinator, serial | Decisions, architecture doc, CONTEXT.md, contract domain registration, migration slots, `TabTarget` contract, worktrees | none |
+| Foundation | [01](issues/01-phase-0-foundation.md) | Coordinator, serial | Decisions, architecture doc, CONTEXT.md, contract domain registration, `TabTarget` contract, worktrees | none |
 | A. Windows and layouts | [02](issues/02-lane-windows-layouts.md) | Backend agent | `contract/layout.rs`, `ade-core` layout core, daemon window and layout store and handlers, CLI `window` and `layout`, `e2e/protocol/layouts/` | 01 |
-| B. Catalog and workspaces | [03](issues/03-lane-catalog-workspaces.md) | Backend agent | `contract/workspaces.rs`, `worktrees.rs`, `review.rs`, `settings.rs`, conversation attention fields, store migrations in its slots, `e2e/protocol/workspaces/` | 01 |
+| B. Catalog and workspaces | [03](issues/03-lane-catalog-workspaces.md) | Backend agent | `contract/workspaces.rs`, `worktrees.rs`, `review.rs`, `settings.rs`, conversation attention fields, `e2e/protocol/workspaces/` | 01 |
 | C. Terminal records | [04](issues/04-lane-terminal-records.md) | Backend agent | `contract/terminals.rs`, daemon terminal records, runtime busy detection, `e2e/protocol/terminals3/` | 01 |
 | D. Desktop terminals | [05](issues/05-desktop-terminals.md) | Coordinator | `apps/desktop` terminal tabs, stream bridge, terminal content | 01 |
 | E. SDK reliability | [06](issues/06-lane-sdk-reliability.md) | Backend agent | `packages/client` journals; `apps/desktop/src/main` journal files and `conversations/` | 01 |
@@ -146,8 +146,9 @@ This reuses what worked in the [parallel build](../parallel-build/issues/13-coor
   `.ade/native`, `.ade/vendor` and `.ade/tools` from the main checkout.
 - **Shared files.** Only the coordinator edits the contract `DOMAINS` list, migration
   numbering, `AGENTS.md`, `CONTEXT.md`, the decision register, `progress.md`, the requirements
-  register and `THIRD-PARTY-NOTICES.md`. Ticket 01 pre-registers every new domain and reserves
-  migration numbers, so lanes never touch those lists.
+  register and `THIRD-PARTY-NOTICES.md`. Ticket 01 pre-registers every new domain, so lanes never
+  touch that list. Lanes write migrations as named functions under a provisional number; the
+  coordinator assigns the final schema version at merge time.
 - **Contracts.** Each lane edits only its own contract files and runs `pnpm contract:generate`.
   On a merge conflict in `packages/contracts`, regenerate rather than hand-merge.
 - **Gate.** Each finished step passes `pnpm check:static` in its tree, plus the lane's protocol

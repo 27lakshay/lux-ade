@@ -59,6 +59,12 @@ window shows. The desktop's current model is the reference behaviour:
    `ade layout apply --action <json>`, plus `ade tab open <kind> <id> [--pane]`,
    `ade tab close <tab-id>`, `ade pane split <pane-id> --direction row|column`.
 
+## Migrations
+
+Write the schema change as a named function in this lane's own module and call it from a
+provisional `if version < 18` block in `store/migrations.rs`. The coordinator assigns the final
+number when merging.
+
 ## Acceptance
 
 - `e2e/protocol/layouts/` drives every action through the SDK and the CLI and reads the layout

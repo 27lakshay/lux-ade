@@ -45,6 +45,12 @@ single daemon operations.
 8. **CLI** for each: `ade workspace create-worktree`, `ade workspace delete-worktree`,
    `ade conversation mark-seen`, `ade review send`, `ade settings get|set`.
 
+## Migrations
+
+Write the schema change as a named function in this lane's own module and call it from a
+provisional `if version < 18` block in `store/migrations.rs`. The coordinator assigns the final
+number when merging.
+
 ## Acceptance
 
 - `e2e/protocol/workspaces/` extended: project kinds and IDs for a main checkout, a linked

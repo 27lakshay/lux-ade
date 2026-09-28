@@ -25718,6 +25718,108 @@
         }
       ]
     },
+    "TabTarget": {
+      "description": "What a tab shows. Records are named by ID; a file or diff by its path\ninside the layout's workspace.",
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "conversation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "terminal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "browser",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "file",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "diff",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "staged": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "staged"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A conversation not started yet: the composer for a new one.",
+          "properties": {
+            "kind": {
+              "const": "new_conversation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "TerminalConversationFrame": {
       "description": "The runtime's simulated conversation (a prototype leftover), broadcast to\nevery attachment while `simulate` runs.",
       "properties": {

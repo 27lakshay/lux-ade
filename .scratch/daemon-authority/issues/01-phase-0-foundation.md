@@ -23,16 +23,18 @@ the coordinator edits; after it, the lanes never need to.
    Project kind, Workspace kind, Attention, Busy terminal. Change Project to "Repository or
    ordinary folder; every workspace belongs to exactly one".
 3. **Contract domains.** Register the new domains in `crates/ade-core/src/contract/mod.rs`
-   `DOMAINS` with empty operation lists: `layout` (windows and layouts) and `settings`. Move
-   `window.save` and `window.close` (legacy, unused by the desktop) out of `conversations.rs`
-   into `layout.rs`, marked for replacement by lane A.
+   `DOMAINS` with empty operation lists: `layout` (windows and layouts) and `settings`. The
+   legacy `window.save` and `window.close` stay in `conversations.rs`; lane A replaces them.
 4. **`TabTarget`.** Define it fully in `contract/layout.rs` now, so lanes A and D build against
    the same shape:
    `conversation {id}`, `terminal {id}`, `browser {id}`, `file {path}`,
-   `diff {path, staged}`, `new_conversation {}`. Run `pnpm contract:generate`.
-5. **Migrations.** Reserve migration numbers in `crates/ade-daemon/src/store/migrations.rs`
-   with comments naming the owning lane: A (windows, layouts), B (projects, workspace attributes,
-   attention, settings), C (terminal records).
+   `diff {path, staged}`, `new_conversation`. A `SHARED_TYPES` list in `contract/mod.rs` puts
+   it in the bundle before any operation uses it. Run `pnpm contract:generate`.
+5. **Migrations.** Schema versions are sequential (`PRAGMA user_version`): a database already
+   at a later version would skip an earlier-numbered migration merged afterwards. So numbers are
+   not reserved. Each lane writes its migration body as a named function in its own module and
+   calls it from a provisional `if version < 18` block; the coordinator assigns the final number
+   at merge time (18, 19, 20 in merge order) and widens the supported range.
 6. **Trees.** Commit steps 1–5 on `main`. Cut one `wt` tree per backend lane (A, B, C, E) from
    that commit.
 

@@ -29,6 +29,12 @@ terminal a record, and make closing one a single daemon rule.
    (after lane A merges; refuse `place` with `unsupported` before then).
 5. **CLI**: `ade terminal list`, `ade terminal close [--force]`, and `--title` on create.
 
+## Migrations
+
+Write the schema change as a named function in this lane's own module and call it from a
+provisional `if version < 18` block in `store/migrations.rs`. The coordinator assigns the final
+number when merging.
+
 ## Acceptance
 
 - `e2e/protocol/terminals3/`: a shell is idle, `sleep 30` makes it busy and names `sleep`,
