@@ -48,6 +48,8 @@ export const daemonRefusalCodes = [
   'project_not_found',
   'project_not_repository',
   'unknown_setting',
+  'review_anchor_stale',
+  'draft_not_empty',
 ] as const
 
 export type KnownDaemonErrorCode = (typeof categoryErrorCodes)[number] | (typeof daemonRefusalCodes)[number]

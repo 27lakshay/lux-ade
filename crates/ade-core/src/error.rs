@@ -194,6 +194,19 @@ fn delete_blocked_message(blockers: &[crate::workspaces::DeleteBlocker]) -> Stri
     format!("This worktree cannot be deleted: {}", labels.join(", "))
 }
 
+/// A review anchor no longer matches the workspace's diff: its status
+/// revision, the file's diff token or the selected text moved. Refresh
+/// Changes and select the line again.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct ReviewAnchorStale(pub &'static str);
+
+/// Review feedback would replace text or attachments the window's draft
+/// still holds.
+#[derive(Debug, thiserror::Error)]
+#[error("Send or clear the ordinary conversation draft before sending review feedback")]
+pub struct DraftNotEmpty;
+
 /// No project has this ID, and no worktree lifecycle alias names one.
 #[derive(Debug, thiserror::Error)]
 #[error("Project {0} does not exist; reload the catalog")]
@@ -604,6 +617,14 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
             "code":"worktree_delete_blocked","recovery":"clear_worktree_blockers",
             "blockers":blocked.0});
     }
+    if let Some(stale) = error.downcast_ref::<ReviewAnchorStale>() {
+        return serde_json::json!({"type":"error","message":stale.to_string(),
+            "code":"review_anchor_stale","recovery":"refresh_changes"});
+    }
+    if error.downcast_ref::<DraftNotEmpty>().is_some() {
+        return serde_json::json!({"type":"error","message":DraftNotEmpty.to_string(),
+            "code":"draft_not_empty","recovery":"send_or_clear_draft"});
+    }
     if let Some(missing) = error.downcast_ref::<ProjectNotFound>() {
         return serde_json::json!({"type":"error","message":missing.to_string(),
             "code":"project_not_found","recovery":"reload_catalog"});
@@ -765,6 +786,14 @@ mod workspace_tests {
         assert_eq!(folder["code"], "project_not_repository");
         let unknown = error_envelope(UnknownSetting("colour".into()).into());
         assert_eq!(unknown["code"], "unknown_setting");
+        let stale = error_envelope(ReviewAnchorStale("Stale diff: token moved").into());
+        assert_eq!(stale["code"], "review_anchor_stale");
+        assert_eq!(stale["recovery"], "refresh_changes");
+        assert_eq!(stale["message"], "Stale diff: token moved");
+        assert_eq!(
+            error_envelope(DraftNotEmpty.into())["code"],
+            "draft_not_empty"
+        );
     }
 }
 

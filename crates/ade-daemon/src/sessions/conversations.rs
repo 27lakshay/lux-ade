@@ -86,7 +86,7 @@ impl Sessions {
     }
 
     /// Applies one queue change under the store lock and publishes the Conversation.
-    fn queue_change(
+    pub(super) fn queue_change(
         &self,
         conversation: &str,
         change: impl FnOnce(&mut Data, &mut Conversation) -> Result<()>,

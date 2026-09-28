@@ -76,7 +76,111 @@ pub fn operations() -> Vec<OperationSpec> {
             "review.feedback.search",
             Tier::Query,
         ),
+        // Queues one prompt under the operation ID; a retry returns the
+        // recorded reply and never queues it twice.
+        OperationSpec::new::<ReviewFeedbackSendRequest, ReviewFeedbackQueued>(
+            "review.feedback.send",
+            Tier::EffectCommand,
+        ),
     ]
+}
+
+/// One selected line or range in a workspace's diff, as `review.diff_page`
+/// showed it. The daemon checks it is still current before using it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewAnchor {
+    pub workspace_id: String,
+    /// Relative to the workspace root.
+    pub path: String,
+    pub staged: bool,
+    /// The `review.status` revision the diff was read at.
+    pub revision: String,
+    /// The `review.diff_page` token of the file's diff.
+    pub token: String,
+    /// The hunk header, starting `@@ `.
+    pub hunk: String,
+    /// The new-side line number, from 1.
+    pub line: u64,
+    /// The selected line's text.
+    pub text: String,
+    /// The last line of a range, with its text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_text: Option<String>,
+}
+
+/// The review feedback format: `ade-review-feedback-v1`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReviewFeedbackFormat {
+    #[serde(rename = "ade-review-feedback-v1")]
+    V1,
+}
+
+/// One note on one anchor.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewNote {
+    pub anchor: ReviewAnchor,
+    /// 1 to 4096 bytes.
+    pub note: String,
+}
+
+/// A batch of notes, each on its own anchor, as `formatReviewFeedback` in
+/// `@ade/client` formats it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewFeedback {
+    pub format: ReviewFeedbackFormat,
+    pub workspace_id: String,
+    /// 1 to 16 notes.
+    pub notes: Vec<ReviewNote>,
+}
+
+/// `review.feedback.send`: build the review prompt from anchors in the
+/// Conversation's workspace and queue it on the Conversation.
+///
+/// Send either `anchors` with one `note` (one anchor on one line gives the
+/// one-line prompt; anything else the batch form, the note under each
+/// anchor), or `feedback` with a note per anchor. Before queueing, the daemon
+/// checks every anchor against the workspace's current status and diff and
+/// refuses a moved one with `review_anchor_stale`. With `window_id`, it also
+/// refuses while that window's draft for the Conversation holds text or
+/// attachments (`draft_not_empty`), which the prompt would otherwise
+/// replace. The queued prompt's ID is the operation ID, and the delivered
+/// message keeps the feedback for `review.feedback.search`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewFeedbackSendRequest {
+    /// The caller's operation ID; it also names the queued prompt.
+    pub operation_id: String,
+    pub conversation_id: String,
+    /// 1 to 16 anchors for one note; excludes `feedback`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<ReviewAnchor>,
+    /// The note on `anchors`: 1 byte to 64 KiB for one anchor, 4 KiB for several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// A note per anchor; excludes `anchors` and `note`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<ReviewFeedback>,
+    /// The window whose draft must be empty first; no draft check when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
+}
+
+wire_tag!(ReviewFeedbackQueuedTag, "review_feedback_queued");
+
+/// The `review.feedback.send` reply: the prompt is queued on the Conversation.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ReviewFeedbackQueued {
+    #[serde(rename = "type")]
+    pub tag: ReviewFeedbackQueuedTag,
+    pub conversation_id: String,
+    /// The queued prompt's ID: the operation ID.
+    pub queued_prompt_id: String,
+    /// The prompt as queued.
+    pub text: String,
 }
 
 pub fn frames() -> Vec<FrameSpec> {
@@ -779,6 +883,46 @@ mod tests {
     }
 
     #[test]
+    fn feedback_send_round_trips_both_shapes() {
+        let anchor = json!({"workspace_id": "w", "path": "a.txt", "staged": false,
+            "revision": "0123456789abcdef", "token": "fedcba9876543210",
+            "hunk": "@@ -1 +1,2 @@", "line": 2, "text": "second"});
+        let single: ReviewFeedbackSendRequest = request(
+            "review.feedback.send",
+            json!({"operation_id": "op", "conversation_id": "c", "anchors": [anchor],
+                "note": "Check this", "window_id": "window_1"}),
+        );
+        assert_eq!(single.anchors[0].line, 2);
+        let mut range = anchor.clone();
+        range["end_line"] = json!(3);
+        range["end_text"] = json!("third");
+        let batch: ReviewFeedbackSendRequest = request(
+            "review.feedback.send",
+            json!({"operation_id": "op", "conversation_id": "c", "feedback": {
+                "format": "ade-review-feedback-v1", "workspace_id": "w",
+                "notes": [{"anchor": range, "note": "Both"}]}}),
+        );
+        assert_eq!(batch.feedback.unwrap().notes[0].anchor.end_line, Some(3));
+        let (name, _) = names("review.feedback.send");
+        let mut unknown = anchor.clone();
+        unknown["colour"] = json!("red");
+        let rejected = json!({"op": "review.feedback.send", "operation_id": "op",
+            "conversation_id": "c", "anchors": [unknown], "note": "x"});
+        let schema = json!({"$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": bundle()["$defs"], "$ref": format!("#/$defs/{name}")});
+        assert!(
+            !jsonschema::validator_for(&schema)
+                .unwrap()
+                .is_valid(&rejected)
+        );
+        reply::<ReviewFeedbackQueued>(
+            "review.feedback.send",
+            json!({"type": "review_feedback_queued", "conversation_id": "c",
+                "queued_prompt_id": "op", "text": "Review feedback for workspace w"}),
+        );
+    }
+
+    #[test]
     fn mutations_are_effect_commands_and_reads_are_queries() {
         for spec in operations() {
             let effect = matches!(
@@ -794,6 +938,7 @@ mod tests {
                     | "review.fetch"
                     | "review.pull"
                     | "review.push"
+                    | "review.feedback.send"
             );
             assert_eq!(spec.tier == Tier::EffectCommand, effect, "{}", spec.name);
             let acknowledge = spec.name == "review.operation.acknowledge";

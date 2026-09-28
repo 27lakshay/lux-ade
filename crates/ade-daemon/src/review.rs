@@ -1418,7 +1418,9 @@ impl Review {
                 .context("Invalid review line text")?;
             ensure!(
                 state["revision"] == revision,
-                "Stale diff: workspace changes moved; refresh Changes"
+                ade_core::error::ReviewAnchorStale(
+                    "Stale diff: workspace changes moved; refresh Changes"
+                )
             );
             let key = (path.to_owned(), staged);
             if !snapshots.contains_key(&key) {
@@ -1431,7 +1433,9 @@ impl Review {
             let snapshot = &snapshots[&key];
             ensure!(
                 snapshot.token == token,
-                "Stale diff: selected file changed; refresh Changes"
+                ade_core::error::ReviewAnchorStale(
+                    "Stale diff: selected file changed; refresh Changes"
+                )
             );
             let mut cursor = DiffCursor {
                 snapshot_id: String::new(),
@@ -1470,14 +1474,18 @@ impl Review {
                     if next_line == line {
                         ensure!(
                             row.text == text,
-                            "Stale diff: selected line changed; refresh Changes"
+                            ade_core::error::ReviewAnchorStale(
+                                "Stale diff: selected line changed; refresh Changes"
+                            )
                         );
                         found_start = true;
                     }
                     if next_line == end_line {
                         ensure!(
                             row.text == end_text,
-                            "Stale diff: selected range changed; refresh Changes"
+                            ade_core::error::ReviewAnchorStale(
+                                "Stale diff: selected range changed; refresh Changes"
+                            )
                         );
                         found_end = true;
                         break;
@@ -1487,12 +1495,16 @@ impl Review {
             }
             ensure!(
                 found_start && found_end,
-                "Stale diff: selected range changed; refresh Changes"
+                ade_core::error::ReviewAnchorStale(
+                    "Stale diff: selected range changed; refresh Changes"
+                )
             );
         }
         ensure!(
             git.status()?["revision"] == state["revision"],
-            "Stale diff: workspace changes moved; refresh Changes"
+            ade_core::error::ReviewAnchorStale(
+                "Stale diff: workspace changes moved; refresh Changes"
+            )
         );
         admit()
     }

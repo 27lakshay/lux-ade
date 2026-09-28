@@ -40,6 +40,7 @@ import { pluginDevUsage, runPluginDevCommand } from './commands/plugin-dev.js'
 import { hookUsage, runHookCommand } from './commands/hooks.js'
 import { attachTerminal, runTerminalCommand, terminalUsage } from './commands/terminals.js'
 import { layoutUsage, runLayoutCommand } from './commands/layouts.js'
+import { reviewUsage, runReviewCommand } from './commands/review.js'
 import { runWorkspaceCommand, workspaceUsage } from './commands/workspaces.js'
 import { runWorktreeLifecycleCommand, worktreeLifecycleUsage } from './commands/worktrees.js'
 import { listOperations, requestUsage, runRequestCommand } from './commands/request.js'
@@ -92,7 +93,8 @@ A workspace_remove_blocked or worktree_delete_blocked error also lists
   20 invalid_workspace_name              21 workspace_remove_blocked
   22 terminal_busy                       23 unsupported
   24 worktree_delete_blocked             25 project_not_found, project_not_repository
-  26 unknown_setting
+  26 unknown_setting                     27 review_anchor_stale
+  28 draft_not_empty
   16 also: a workspace worktree operation that ended "failed"
 Commands that change state without their own --request-id take the global
 --operation-id ID. Without it the CLI generates one, and an error names it as
@@ -150,6 +152,7 @@ const usage = [
   browserUsage,
   serviceUsage,
   gitUsage,
+  reviewUsage,
   checkpointUsage,
   repositoryUsage,
   listenerUsage,
@@ -359,6 +362,7 @@ const commandAreas = [
   runBrowserCommand,
   runServiceCommand,
   runGitCommand,
+  runReviewCommand,
   runCheckpointCommand,
   runRepositoryCommand,
   runListenerCommand,
@@ -479,6 +483,8 @@ const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
   project_not_found: 25,
   project_not_repository: 25,
   unknown_setting: 26,
+  review_anchor_stale: 27,
+  draft_not_empty: 28,
 }
 
 void main()

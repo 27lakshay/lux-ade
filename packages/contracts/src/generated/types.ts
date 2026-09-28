@@ -671,6 +671,7 @@ export type ContractDefinition =
   | RetentionPreviewRequest
   | RetentionReceiptStore
   | RetentionWithheld
+  | ReviewAnchor
   | ReviewBranchRequest
   | ReviewCommitRequest
   | ReviewDiff
@@ -680,14 +681,19 @@ export type ContractDefinition =
   | ReviewDiffRow
   | ReviewDiffRowKind
   | ReviewDiscardRequest
+  | ReviewFeedback
+  | ReviewFeedbackFormat
   | ReviewFeedbackMatch
+  | ReviewFeedbackQueued
   | ReviewFeedbackSearch
   | ReviewFeedbackSearchRequest
+  | ReviewFeedbackSendRequest
   | ReviewFetchRequest
   | ReviewFile
   | ReviewHunkRequest
   | ReviewMergeAction
   | ReviewMergeRequest
+  | ReviewNote
   | ReviewOperationAcknowledgeRequest
   | ReviewOperationAcknowledged
   | ReviewOperationEntry
@@ -2119,6 +2125,10 @@ export type RetentionOutcome = 'removed' | 'failed'
  * What one diff line is.
  */
 export type ReviewDiffRowKind = 'hunk' | 'context' | 'added' | 'removed' | 'meta'
+/**
+ * The review feedback format: `ade-review-feedback-v1`.
+ */
+export type ReviewFeedbackFormat = 'ade-review-feedback-v1'
 /**
  * What `review.merge` does.
  */
@@ -11532,6 +11542,43 @@ export interface RetentionPreviewRequest {
   op: 'retention.preview'
 }
 /**
+ * One selected line or range in a workspace's diff, as `review.diff_page`
+ * showed it. The daemon checks it is still current before using it.
+ */
+export interface ReviewAnchor {
+  /**
+   * The last line of a range, with its text.
+   */
+  end_line?: number | null
+  end_text?: string | null
+  /**
+   * The hunk header, starting `@@ `.
+   */
+  hunk: string
+  /**
+   * The new-side line number, from 1.
+   */
+  line: number
+  /**
+   * Relative to the workspace root.
+   */
+  path: string
+  /**
+   * The `review.status` revision the diff was read at.
+   */
+  revision: string
+  staged: boolean
+  /**
+   * The selected line's text.
+   */
+  text: string
+  /**
+   * The `review.diff_page` token of the file's diff.
+   */
+  token: string
+  workspace_id: string
+}
+/**
  * `review.branch`: create a branch at HEAD, switch to a local branch, or both.
  * Git refuses a switch that would overwrite local changes.
  */
@@ -11676,6 +11723,28 @@ export interface ReviewDiscardRequest {
   workspace_id: string
 }
 /**
+ * A batch of notes, each on its own anchor, as `formatReviewFeedback` in
+ * `@ade/client` formats it.
+ */
+export interface ReviewFeedback {
+  format: ReviewFeedbackFormat
+  /**
+   * 1 to 16 notes.
+   */
+  notes: ReviewNote[]
+  workspace_id: string
+}
+/**
+ * One note on one anchor.
+ */
+export interface ReviewNote {
+  anchor: ReviewAnchor
+  /**
+   * 1 to 4096 bytes.
+   */
+  note: string
+}
+/**
  * One message whose review notes match a search.
  */
 export interface ReviewFeedbackMatch {
@@ -11685,6 +11754,25 @@ export interface ReviewFeedbackMatch {
    * The matching notes as `ade-review-feedback-v1`.
    */
   review_feedback: unknown
+  [k: string]: unknown
+}
+/**
+ * The `review.feedback.send` reply: the prompt is queued on the Conversation.
+ */
+export interface ReviewFeedbackQueued {
+  conversation_id: string
+  /**
+   * The queued prompt's ID: the operation ID.
+   */
+  queued_prompt_id: string
+  /**
+   * The prompt as queued.
+   */
+  text: string
+  /**
+   * The `review_feedback_queued` type tag.
+   */
+  type: 'review_feedback_queued'
   [k: string]: unknown
 }
 /**
@@ -11718,6 +11806,44 @@ export interface ReviewFeedbackSearchRequest {
   path?: string
   query?: string
   workspace_id: string
+}
+/**
+ * `review.feedback.send`: build the review prompt from anchors in the
+ * Conversation's workspace and queue it on the Conversation.
+ *
+ * Send either `anchors` with one `note` (one anchor on one line gives the
+ * one-line prompt; anything else the batch form, the note under each
+ * anchor), or `feedback` with a note per anchor. Before queueing, the daemon
+ * checks every anchor against the workspace's current status and diff and
+ * refuses a moved one with `review_anchor_stale`. With `window_id`, it also
+ * refuses while that window's draft for the Conversation holds text or
+ * attachments (`draft_not_empty`), which the prompt would otherwise
+ * replace. The queued prompt's ID is the operation ID, and the delivered
+ * message keeps the feedback for `review.feedback.search`.
+ */
+export interface ReviewFeedbackSendRequest {
+  /**
+   * 1 to 16 anchors for one note; excludes `feedback`.
+   */
+  anchors?: ReviewAnchor[]
+  conversation_id: string
+  /**
+   * A note per anchor; excludes `anchors` and `note`.
+   */
+  feedback?: ReviewFeedback | null
+  /**
+   * The note on `anchors`: 1 byte to 64 KiB for one anchor, 4 KiB for several.
+   */
+  note?: string | null
+  op: 'review.feedback.send'
+  /**
+   * The caller's operation ID; it also names the queued prompt.
+   */
+  operation_id: string
+  /**
+   * The window whose draft must be empty first; no draft check when absent.
+   */
+  window_id?: string | null
 }
 /**
  * `review.fetch`: fetch one configured remote. Only remote-tracking refs change.
@@ -14757,7 +14883,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "layout.replace" | "tab.close" | "pane.close"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.create_worktree" | "workspace.delete_worktree" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "conversation.mark_seen" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "review.feedback.send" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan" | "window.list" | "window.create" | "window.close" | "window.reopen" | "window.set_bounds" | "window.show_workspace" | "window.set_view_state" | "layout.get" | "layout.apply" | "layout.replace" | "tab.close" | "pane.close"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -14862,6 +14988,7 @@ export interface RequestByOperation {
   "review.operation.list": ReviewOperationListRequest
   "review.operation.acknowledge": ReviewOperationAcknowledgeRequest
   "review.feedback.search": ReviewFeedbackSearchRequest
+  "review.feedback.send": ReviewFeedbackSendRequest
   "worktree.repository": WorktreeRepositoryRequest
   "worktree.get": WorktreeGetRequest
   "worktree.switch": WorktreeSwitchRequest
@@ -15159,6 +15286,7 @@ export interface ResponseByOperation {
   "review.operation.list": ReviewOperationList
   "review.operation.acknowledge": ReviewOperationAcknowledged
   "review.feedback.search": ReviewFeedbackSearch
+  "review.feedback.send": ReviewFeedbackQueued
   "worktree.repository": WorktreeState
   "worktree.get": WorktreeState
   "worktree.switch": WorktreeState

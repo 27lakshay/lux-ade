@@ -22322,6 +22322,70 @@
       ],
       "type": "object"
     },
+    "ReviewAnchor": {
+      "additionalProperties": false,
+      "description": "One selected line or range in a workspace's diff, as `review.diff_page`\nshowed it. The daemon checks it is still current before using it.",
+      "properties": {
+        "end_line": {
+          "description": "The last line of a range, with its text.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "end_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hunk": {
+          "description": "The hunk header, starting `@@ `.",
+          "type": "string"
+        },
+        "line": {
+          "description": "The new-side line number, from 1.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Relative to the workspace root.",
+          "type": "string"
+        },
+        "revision": {
+          "description": "The `review.status` revision the diff was read at.",
+          "type": "string"
+        },
+        "staged": {
+          "type": "boolean"
+        },
+        "text": {
+          "description": "The selected line's text.",
+          "type": "string"
+        },
+        "token": {
+          "description": "The `review.diff_page` token of the file's diff.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "path",
+        "staged",
+        "revision",
+        "token",
+        "hunk",
+        "line",
+        "text"
+      ],
+      "type": "object"
+    },
     "ReviewBranchRequest": {
       "additionalProperties": false,
       "description": "`review.branch`: create a branch at HEAD, switch to a local branch, or both.\nGit refuses a switch that would overwrite local changes.",
@@ -22665,6 +22729,38 @@
       ],
       "type": "object"
     },
+    "ReviewFeedback": {
+      "additionalProperties": false,
+      "description": "A batch of notes, each on its own anchor, as `formatReviewFeedback` in\n`@ade/client` formats it.",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/ReviewFeedbackFormat"
+        },
+        "notes": {
+          "description": "1 to 16 notes.",
+          "items": {
+            "$ref": "#/$defs/ReviewNote"
+          },
+          "type": "array"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "workspace_id",
+        "notes"
+      ],
+      "type": "object"
+    },
+    "ReviewFeedbackFormat": {
+      "description": "The review feedback format: `ade-review-feedback-v1`.",
+      "enum": [
+        "ade-review-feedback-v1"
+      ],
+      "type": "string"
+    },
     "ReviewFeedbackMatch": {
       "description": "One message whose review notes match a search.",
       "properties": {
@@ -22682,6 +22778,36 @@
         "message_id",
         "conversation_id",
         "review_feedback"
+      ],
+      "type": "object"
+    },
+    "ReviewFeedbackQueued": {
+      "description": "The `review.feedback.send` reply: the prompt is queued on the Conversation.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "queued_prompt_id": {
+          "description": "The queued prompt's ID: the operation ID.",
+          "type": "string"
+        },
+        "text": {
+          "description": "The prompt as queued.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The `review_feedback_queued` type tag.",
+          "enum": [
+            "review_feedback_queued"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "conversation_id",
+        "queued_prompt_id",
+        "text"
       ],
       "type": "object"
     },
@@ -22750,6 +22876,60 @@
       "required": [
         "op",
         "workspace_id"
+      ],
+      "type": "object"
+    },
+    "ReviewFeedbackSendRequest": {
+      "additionalProperties": false,
+      "description": "`review.feedback.send`: build the review prompt from anchors in the\nConversation's workspace and queue it on the Conversation.\n\nSend either `anchors` with one `note` (one anchor on one line gives the\none-line prompt; anything else the batch form, the note under each\nanchor), or `feedback` with a note per anchor. Before queueing, the daemon\nchecks every anchor against the workspace's current status and diff and\nrefuses a moved one with `review_anchor_stale`. With `window_id`, it also\nrefuses while that window's draft for the Conversation holds text or\nattachments (`draft_not_empty`), which the prompt would otherwise\nreplace. The queued prompt's ID is the operation ID, and the delivered\nmessage keeps the feedback for `review.feedback.search`.",
+      "properties": {
+        "anchors": {
+          "description": "1 to 16 anchors for one note; excludes `feedback`.",
+          "items": {
+            "$ref": "#/$defs/ReviewAnchor"
+          },
+          "type": "array"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "feedback": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewFeedback"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A note per anchor; excludes `anchors` and `note`."
+        },
+        "note": {
+          "description": "The note on `anchors`: 1 byte to 64 KiB for one anchor, 4 KiB for several.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "review.feedback.send"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID; it also names the queued prompt.",
+          "type": "string"
+        },
+        "window_id": {
+          "description": "The window whose draft must be empty first; no draft check when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "conversation_id"
       ],
       "type": "object"
     },
@@ -22903,6 +23083,24 @@
         "operation_id",
         "action",
         "index_token"
+      ],
+      "type": "object"
+    },
+    "ReviewNote": {
+      "additionalProperties": false,
+      "description": "One note on one anchor.",
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/ReviewAnchor"
+        },
+        "note": {
+          "description": "1 to 4096 bytes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "anchor",
+        "note"
       ],
       "type": "object"
     },
@@ -31820,6 +32018,13 @@
       "request": "ReviewFeedbackSearchRequest",
       "response": "ReviewFeedbackSearch",
       "tier": "query"
+    },
+    {
+      "domain": "review",
+      "name": "review.feedback.send",
+      "request": "ReviewFeedbackSendRequest",
+      "response": "ReviewFeedbackQueued",
+      "tier": "effect_command"
     },
     {
       "domain": "worktrees",

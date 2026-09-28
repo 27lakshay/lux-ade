@@ -126,6 +126,13 @@ impl Sessions {
             d.store.queue_heads()?
         };
         for head in heads {
+            // Review feedback queued by `review.feedback.send` stays with its message.
+            let feedback = self
+                .data
+                .lock()
+                .unwrap()
+                .store
+                .queued_review_feedback(&head.id)?;
             {
                 let d = self.data.lock().unwrap();
                 if !d.agents.contains_key(&head.conversation_id) && d.agents.len() >= 16 {
@@ -149,7 +156,10 @@ impl Sessions {
                 &head.text,
                 &head.attachments,
                 true,
-                SendAdmission::ordinary(),
+                SendAdmission {
+                    review_feedback: feedback.as_ref(),
+                    ..SendAdmission::ordinary()
+                },
             ) {
                 let mut d = self.data.lock().unwrap();
                 if d.draining {

@@ -23,6 +23,15 @@ const SCHEMA: &str = "
 /// starts read so an upgrade marks nothing unread.
 pub(super) fn migrate(tx: &Connection) -> Result<()> {
     tx.execute_batch(SCHEMA)?;
+    // `review.feedback.send` queues feedback that the delivered message keeps.
+    let has_feedback: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('queued_prompts') WHERE name='review_feedback')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_feedback {
+        tx.execute_batch("ALTER TABLE queued_prompts ADD COLUMN review_feedback TEXT;")?;
+    }
     assign_project_ids(tx)?;
     tx.execute(
         "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_sequence) SELECT c.id,COALESCE((SELECT MAX(sequence) FROM messages m WHERE m.conversation_id=c.id),0) FROM conversations c",
@@ -323,6 +332,30 @@ impl Store {
             facts.present(conversation);
         }
         Ok(())
+    }
+
+    /// Records the review feedback a queued prompt carries, for its message.
+    pub fn set_queued_review_feedback(&self, id: &str, feedback: &Value) -> Result<()> {
+        self.connection.execute(
+            "UPDATE queued_prompts SET review_feedback=?2 WHERE id=?1 AND status='queued'",
+            params![id, feedback.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// The review feedback a queued prompt carries, if any.
+    pub fn queued_review_feedback(&self, id: &str) -> Result<Option<Value>> {
+        let text: Option<Option<String>> = self
+            .connection
+            .query_row(
+                "SELECT review_feedback FROM queued_prompts WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        text.flatten()
+            .map(|text| Ok(serde_json::from_str(&text)?))
+            .transpose()
     }
 
     /// Marks a Conversation seen up to message `through`, its newest message

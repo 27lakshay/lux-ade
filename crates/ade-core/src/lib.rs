@@ -9,6 +9,7 @@ pub mod prompt;
 pub mod prompt_context;
 pub mod protocol;
 pub mod provider;
+pub mod review_prompt;
 pub mod runtime_protocol;
 pub mod transcript;
 

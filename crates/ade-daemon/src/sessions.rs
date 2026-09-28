@@ -56,6 +56,7 @@ mod remote;
 mod repository;
 mod restart;
 mod retention;
+mod review_feedback;
 mod services;
 mod skills;
 mod terminals;
@@ -636,6 +637,10 @@ impl Sessions {
         }
         if op.starts_with("hook.") {
             return self.hook_command(request);
+        }
+        // Names a Conversation, not a workspace; it checks its own binding.
+        if op == "review.feedback.send" {
+            return self.review_feedback_send(request);
         }
         if op.starts_with("worktree.")
             && op != "worktree.operation"
