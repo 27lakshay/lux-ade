@@ -16,6 +16,12 @@ body {
   overflow: hidden;
 }
 
+/* A desktop app shows the arrow on its controls and in-app links, as native Mac apps do. Web links
+   in content (markdown) set the hand themselves. */
+a[href] {
+  cursor: default;
+}
+
 /* Window dragging: empty chrome moves the window, anything interactive stays clickable. */
 .drag {
   -webkit-app-region: drag;

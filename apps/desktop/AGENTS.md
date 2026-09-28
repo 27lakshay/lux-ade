@@ -46,8 +46,8 @@ claiming a UI change works.
     and test it there.
   - `provisional/`: surfaces built from the stock kit until Pen designs them.
   - `icons/`: the icon table (`icons.ts`) and `<Icon>`.
-  - `components/`: ADE's shared components built from the kit (`Typography`, `Status`,
-    `Shortcut`).
+  - `components/`: ADE's shared components built from the kit (`Typography`, `Row`,
+    `IconButton`, `Status`, `Shortcut`, the `interactive` states).
   - `components/ui/` (the kit), `commands/`, `state/`, `lib/`, `hooks/`.
   - Lint keeps files short: 300 lines for `.ts`, 400 for `.tsx` and 800 for tests.
 - Startup (`app/start.tsx`): theme, commands, `router.load()`, then one render. The providers are
@@ -108,6 +108,33 @@ claiming a UI change works.
   classes) and `ade/text-elements` (no raw paragraphs or headings) outside that file. In Pen the
   same steps are the `type-*` variables and the "Type / …" text components. Agent markdown gets
   a `<Prose>` component built from these when the conversation is built.
+- Sizes: 28px is the default control (`h-7`): buttons (`size="sm"`), icon buttons, rows, menu
+  items. 24px (`h-6`) is compact, 32px (`h-8`) is the field size the kit uses for inputs, selects
+  and tabs, 40px the title bar and tab strip, 28px the bottom bar. Every kit `Button` states its
+  `size` (`ade/kit-button-size`); pixel heights are refused (`ade/fixed-heights`).
+- Spacing is on the 4px grid: steps 0.5, 1, 1.5, 2, 3, 4, 6, 8 (2 to 32px), and 10, 12, 16 for
+  page layout (`ade/spacing-grid`). Rows pad 8px; popovers inset 4px; panes inset 6px.
+- Radius: `rounded-sm` 6 (rows, chips, tabs), `-md` 8 (blocks in a pane), `-lg` 10 (kit controls,
+  rows in a popover), `-xl` 14 (panes, popovers, dialogs), `-full` (`ade/radius-steps`). Nested
+  corners are concentric: inner radius = outer radius − the inset between them.
+- States: ADE's own interactive surfaces use `interactive` (`components/interactive.ts`): hover
+  lifts to `muted`, selected (`data-selected`) and pressed use `accent`, keyboard focus draws a
+  full-strength ring inside the element, disabled fades to 50%. The kit keeps its stock states.
+  `--ring` is set so focus reaches 3:1 on every fill, the kit's 50% ring included
+  (`app/contrast.test.ts` checks every text, mark and ring against every fill, light and dark).
+- Rows: `<Row>` for anything one line and clickable in a sidebar, tree, list or popover: 28px,
+  `depth` indents 16px a level, `leading`/`trailing` slots, `radius="lg"` inside popovers.
+- Icon buttons: `<IconButton icon label shortcut?>`, 28px or `size="xs"` 24px. The label is the
+  accessible name and the tooltip; the shortcut shows from the keys actually bound. Tooltips open
+  after 600ms, then switch instantly between controls.
+- Scrolling: everything that scrolls sits in the kit's `<ScrollArea>` (`ade/scroll-area` refuses
+  `overflow-auto`/`scroll`).
+- Cursors: the arrow on controls and in-app links, as native Mac apps do.
+- Loading, empty and failed: a `Skeleton` for a list that is loading; a spinner only for an
+  action that takes over 300ms; the kit's `Empty` when there is nothing to show; an inline banner
+  or `ErrorReport` when something failed, saying what to do next.
+- Copy: [docs/agents/ui-copy.md](../../docs/agents/ui-copy.md). `ade/button-copy` refuses
+  title-case and vague button labels.
 - Status: `<Status state="needsYou" />` (`idle`, `running`, `needsYou`, `error`, `done`) is the only
   status mark. Amber means "needs you" and nothing else.
 - Shortcuts: `<Shortcut appCommand="command-palette" />` for native-menu commands (keys from
