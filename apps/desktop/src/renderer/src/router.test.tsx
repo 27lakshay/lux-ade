@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { expect, test } from 'vitest'
 import { render } from 'vitest-browser-react'
 import { createAppRouter } from './router'
+import './styles.css'
 
 // A stand-in workspace with state, to show it stays mounted under full-screen views.
 function Workspace() {
@@ -13,6 +14,20 @@ function Workspace() {
     </button>
   )
 }
+
+test('the workspace fills the window height', async () => {
+  // Reported: a band of empty window below the workspace. The shell sizes itself with h-full, so
+  // every wrapper between the window and the shell must pass the full height down.
+  const Shell = () => <div className="h-full" data-testid="shell" />
+  const router = createAppRouter({ Workspace: Shell, history: createMemoryHistory({ initialEntries: ['/'] }) })
+  const screen = await render(
+    <div style={{ height: 600 }}>
+      <RouterProvider router={router} />
+    </div>,
+  )
+  const shell = screen.getByTestId('shell').element()
+  expect(shell.getBoundingClientRect().height).toBe(600)
+})
 
 test('full-screen views cover the workspace without unmounting it', async () => {
   const router = createAppRouter({ Workspace, history: createMemoryHistory({ initialEntries: ['/'] }) })

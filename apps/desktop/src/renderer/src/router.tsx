@@ -30,7 +30,8 @@ export function createAppRouter({
     const onWorkspace = Boolean(useMatchRoute()({ to: '/' }))
     return (
       <>
-        <div hidden={!onWorkspace} data-testid="workspace">
+        {/* Full height, so the workspace inside (sized with h-full) fills the window. */}
+        <div hidden={!onWorkspace} data-testid="workspace" className="h-full">
           <Workspace />
         </div>
         <Outlet />
