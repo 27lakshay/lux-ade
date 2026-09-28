@@ -6,12 +6,15 @@ import { dispatch } from '../model/layout-store'
 import { Pane } from './Pane'
 
 // The centre: the pane tree, rendered as nested resizable groups. Splits save their sizes when a
-// resize ends; each child keeps its id as its key, so moving panes never remounts them.
+// resize ends. The resize library tracks panels by the order they mounted, so a split whose children
+// change (a swap, a move, a split) mounts a fresh group; pane content survives, since it lives in
+// stable hosts (content/hosts.ts) that panes only attach.
 export function PaneGrid({ node }: { node: LayoutNode }) {
   if (node.type === 'pane') return <Pane pane={node} />
   const orientation = node.direction === 'row' ? 'horizontal' : 'vertical'
   return (
     <Group
+      key={node.children.map((child) => child.id).join(',')}
       id={node.id}
       orientation={orientation}
       className="h-full"

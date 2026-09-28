@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from 'vitest'
 import { structureKey, panes } from '../model/layout-tree'
-import { layoutStore, openTab } from '../model/layout-store'
+import { dispatch, layoutStore, openTab } from '../model/layout-store'
 import { dragTo, renderWorkspace, resetLayout, startDrag } from '../testing'
 import { zoneAt } from './drag'
 import { SPRING_LOAD_MS } from './Tab'
@@ -211,4 +211,33 @@ test('a sidebar cannot be dropped onto a pane, nor a pane onto a sidebar', async
     document.querySelector('section[aria-label="Inspector"]')!,
   )
   expect(JSON.stringify(layout())).toBe(before)
+})
+
+test('swapping two panes back and forth never breaks the resize groups', async () => {
+  await twoPanes()
+  const errors: unknown[] = []
+  const onError = (event: ErrorEvent): void => void errors.push(event.error)
+  window.addEventListener('error', onError)
+  const [first, second] = panes(layout().root).map((pane) => pane.id)
+  for (let round = 0; round < 4; round++) {
+    dispatch({ type: 'swapPanes', paneId: first!, targetId: second! })
+    await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(2)
+  }
+  window.removeEventListener('error', onError)
+  expect(errors).toEqual([])
+  expect(document.body.textContent).not.toContain('Something went wrong')
+})
+
+test('nothing in the centre overflows while a drag shows the dock edges', async () => {
+  await twoPanes()
+  const drag = await startDrag(paneGrip(0))
+  await expect.poll(() => document.querySelectorAll('[data-dock-edge]').length).toBe(4)
+  const centre = document.getElementById('centre')!
+  const overflowing = [centre, ...centre.querySelectorAll<HTMLElement>('*')].filter(
+    (element) =>
+      !element.closest('[data-slot=scroll-area-viewport]') &&
+      (element.scrollHeight > element.clientHeight + 1 || element.scrollWidth > element.clientWidth + 1),
+  )
+  await drag.cancel()
+  expect(overflowing.map((element) => element.className)).toEqual([])
 })

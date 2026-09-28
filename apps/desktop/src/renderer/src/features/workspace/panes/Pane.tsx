@@ -52,13 +52,14 @@ const tabCountLabel = (paneId: string): string => {
 function usePaneDrag(paneId: string) {
   const card = useRef<HTMLElement>(null)
   const grip = useRef<HTMLDivElement>(null)
+  const bar = useRef<HTMLDivElement>(null)
   const strip = useRef<HTMLDivElement>(null)
   const body = useRef<HTMLDivElement>(null)
   const [over, setOver] = useState<{ zone: DropZone; source: DragData } | null>(null)
   const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
-    if (!card.current || !grip.current || !strip.current || !body.current) return
+    if (!card.current || !grip.current || !bar.current || !strip.current || !body.current) return
     const bodyElement = body.current
     const viewport = strip.current.closest<HTMLElement>('[data-slot=scroll-area-viewport]')
     const zoneFor = (source: Record<string | symbol, unknown>, x: number, y: number): DropZone | null => {
@@ -84,7 +85,8 @@ function usePaneDrag(paneId: string) {
           })
         : () => {},
       dropTargetForElements({
-        element: strip.current,
+        // The whole bar: a tab dropped on its empty space goes after the last tab.
+        element: bar.current,
         canDrop: ({ source }) => isDragData(source.data) && source.data.kind === 'tab',
         getData: (): TargetData => ({ kind: 'strip-target', paneId }),
       }),
@@ -108,13 +110,13 @@ function usePaneDrag(paneId: string) {
     )
   }, [paneId])
 
-  return { card, grip, strip, body, over, dragging }
+  return { card, grip, bar, strip, body, over, dragging }
 }
 
 export function Pane({ pane }: { pane: PaneNode }) {
   const focused = useLayout((layout) => layout.focusedPane === pane.id)
   const tabs = useLayout((layout) => layout.tabs)
-  const { card, grip, strip, body, over, dragging } = usePaneDrag(pane.id)
+  const { card, grip, bar, strip, body, over, dragging } = usePaneDrag(pane.id)
   const host = useRef<HTMLDivElement>(null)
   // Show the active tab's content: attach its host element, never re-render it.
   useLayoutEffect(
@@ -141,7 +143,7 @@ export function Pane({ pane }: { pane: PaneNode }) {
         className="flex min-h-0 flex-1 flex-col"
         onPointerDownCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
       >
-        <div className="flex h-10 shrink-0 items-center gap-0.5 px-1.5">
+        <div ref={bar} data-tab-bar className="flex h-10 shrink-0 items-center gap-0.5 px-1.5">
           <ScrollArea
             className="min-w-0 shrink"
             onWheel={(event) => {

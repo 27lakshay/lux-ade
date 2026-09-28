@@ -5,7 +5,6 @@ import { extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/clo
 import { useEffect, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import { create } from 'zustand'
 import type { DropZone, Edge, SidebarId } from '../model/layout'
 import { dispatch, dockTab, dropTab, layoutStore } from '../model/layout-store'
 import { findPane, panes } from '../model/layout-tree'
@@ -29,9 +28,6 @@ export type TargetData =
 
 export const isDragData = (data: Record<string | symbol, unknown>): data is DragData & Record<string, unknown> =>
   data.kind === 'tab' || data.kind === 'pane' || data.kind === 'sidebar'
-
-/** What is being dragged right now, for targets that appear only during a drag (the dock edges). */
-export const useDragState = create<{ active: DragData | null }>(() => ({ active: null }))
 
 export const activeLayout = () => layoutStore.getState().layouts[layoutStore.getState().active]
 
@@ -122,9 +118,7 @@ export function useDropMonitor(): void {
     () =>
       monitorForElements({
         canMonitor: ({ source }) => isDragData(source.data),
-        onDragStart: ({ source }) => useDragState.setState({ active: source.data as DragData }),
         onDrop: ({ source, location }) => {
-          useDragState.setState({ active: null })
           const target = location.current.dropTargets[0]
           if (target && isDragData(source.data)) onDrop(source.data, target.data)
         },

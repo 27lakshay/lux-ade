@@ -113,6 +113,7 @@ export function CardArea() {
   const sidebars = useLayout((layout) => layout.sidebars)
   const collapsed = useLayout((layout) => layout.collapsed)
   const root = useLayout((layout) => layout.root)
+  const centre = useRef<HTMLDivElement>(null)
   const refs = { navigator: usePanelRef(), inspector: usePanelRef() }
   const syncing = useRef(false)
   useDropMonitor()
@@ -172,31 +173,34 @@ export function CardArea() {
   }, [])
   const [left, right] = sidebars
   return (
-    <Group
-      id="cards"
-      elementRef={group}
-      orientation="horizontal"
-      className="min-h-0 flex-1 p-2"
-      onLayoutChanged={(_layout, meta) => {
-        if (meta.isUserInteraction && !syncing.current) requestAnimationFrame(commitSizes)
-      }}
-    >
-      <SidebarPanel key={left} id={left} panelRef={refs[left]} />
-      <ResizeHandle key={`gutter-${left}`} orientation="horizontal" hidden={collapsed[left]} />
-      <Panel id="centre" minSize="320px">
-        {/* Moves with a sidebar swap when the sidebars differ in width. */}
-        <m.div
-          layout="position"
-          layoutDependency={sidebars.join(',')}
-          transition={transitions.layout}
-          className="relative h-full"
-        >
-          <PaneGrid node={root} />
-          <DockEdges />
-        </m.div>
-      </Panel>
-      <ResizeHandle key={`gutter-${right}`} orientation="horizontal" hidden={collapsed[right]} />
-      <SidebarPanel key={right} id={right} panelRef={refs[right]} />
-    </Group>
+    <div className="relative flex min-h-0 min-w-0 flex-1">
+      <Group
+        id="cards"
+        elementRef={group}
+        orientation="horizontal"
+        className="min-h-0 flex-1 p-2"
+        onLayoutChanged={(_layout, meta) => {
+          if (meta.isUserInteraction && !syncing.current) requestAnimationFrame(commitSizes)
+        }}
+      >
+        <SidebarPanel key={left} id={left} panelRef={refs[left]} />
+        <ResizeHandle key={`gutter-${left}`} orientation="horizontal" hidden={collapsed[left]} />
+        <Panel id="centre" elementRef={centre} minSize="320px">
+          {/* Moves with a sidebar swap when the sidebars differ in width. */}
+          <m.div
+            layout="position"
+            layoutDependency={sidebars.join(',')}
+            transition={transitions.layout}
+            className="h-full"
+          >
+            <PaneGrid node={root} />
+          </m.div>
+        </Panel>
+        <ResizeHandle key={`gutter-${right}`} orientation="horizontal" hidden={collapsed[right]} />
+        <SidebarPanel key={right} id={right} panelRef={refs[right]} />
+      </Group>
+      {/* Outside the panels, which scroll whatever overflows them: the strips reach into the gutters. */}
+      <DockEdges centre={centre} />
+    </div>
   )
 }

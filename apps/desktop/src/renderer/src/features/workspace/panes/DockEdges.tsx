@@ -1,18 +1,20 @@
-import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
-import { useEffect, useRef, useState } from 'react'
+import { dropTargetForElements, monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { cn } from '@/lib/utils'
 import type { Edge } from '../model/layout'
-import { canDock, isDragData, useDragState, type TargetData } from './drag'
+import { canDock, isDragData, type TargetData } from './drag'
 
 // Thin drop strips along the four outer edges of the centre, present only while a tab or pane is
 // dragged. Dropping there docks it as a full-height column or full-width row on that side; the
 // part of the centre it will take lights up.
 
+// Each strip lies mostly in the 8px gutter around the centre and reaches 4px in: short of the tabs,
+// which start 6px inside a pane, so a tab hovered near the edge still reorders.
 const STRIP: Record<Edge, string> = {
-  left: 'inset-y-0 start-0 w-4',
-  right: 'inset-y-0 end-0 w-4',
-  top: 'inset-x-0 top-0 h-4',
-  bottom: 'inset-x-0 bottom-0 h-4',
+  left: 'inset-y-0 -start-2 w-3',
+  right: 'inset-y-0 -end-2 w-3',
+  top: 'inset-x-0 -top-2 h-3',
+  bottom: 'inset-x-0 -bottom-2 h-3',
 }
 const REGION: Record<Edge, string> = {
   left: 'inset-y-0 start-0 w-1/3',
@@ -43,20 +45,42 @@ function DockStrip({ edge }: { edge: Edge }) {
           className={cn('pointer-events-none absolute z-10 rounded-xl bg-accent opacity-60', REGION[edge])}
         />
       )}
-      <div ref={ref} data-dock-edge={edge} className={cn('absolute z-20', STRIP[edge])} />
+      <div ref={ref} data-dock-edge={edge} className={cn('pointer-events-auto absolute', STRIP[edge])} />
     </>
   )
 }
 
-export function DockEdges() {
-  const active = useDragState((state) => state.active)
-  if (!active || active.kind === 'sidebar') return null
+/** Laid over the centre's box, measured when a tab or pane drag starts (nothing resizes mid-drag). */
+export function DockEdges({ centre }: { centre: RefObject<HTMLElement | null> }) {
+  const [box, setBox] = useState<CSSProperties | null>(null)
+  useEffect(
+    () =>
+      monitorForElements({
+        canMonitor: ({ source }) => isDragData(source.data) && source.data.kind !== 'sidebar',
+        onDragStart: () => {
+          const element = centre.current
+          const parent = element?.closest('#cards')?.parentElement
+          if (!element || !parent) return
+          const inner = element.getBoundingClientRect()
+          const outer = parent.getBoundingClientRect()
+          setBox({
+            left: inner.left - outer.left,
+            top: inner.top - outer.top,
+            width: inner.width,
+            height: inner.height,
+          })
+        },
+        onDrop: () => setBox(null),
+      }),
+    [centre],
+  )
+  if (!box) return null
   return (
-    <>
+    <div className="pointer-events-none absolute" style={box}>
       <DockStrip edge="left" />
       <DockStrip edge="right" />
       <DockStrip edge="top" />
       <DockStrip edge="bottom" />
-    </>
+    </div>
   )
 }
