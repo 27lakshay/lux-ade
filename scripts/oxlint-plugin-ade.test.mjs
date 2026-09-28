@@ -11,10 +11,10 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const oxlint = join(root, 'node_modules/.bin/oxlint')
 const plugin = join(root, 'scripts/oxlint-plugin-ade.mjs')
 
-function lint(rule, source) {
+function lint(rule, source, file = 'fixture.ts') {
   const directory = mkdtempSync(join(tmpdir(), 'ade-oxlint-rule-'))
   try {
-    writeFileSync(join(directory, 'fixture.ts'), source)
+    writeFileSync(join(directory, file), source)
     writeFileSync(
       join(directory, 'config.json'),
       JSON.stringify({
@@ -23,21 +23,21 @@ function lint(rule, source) {
         rules: { [`ade/${rule}`]: 'error' },
       }),
     )
-    const result = spawnSync(oxlint, ['-c', 'config.json', 'fixture.ts'], { cwd: directory, encoding: 'utf8' })
+    const result = spawnSync(oxlint, ['-c', 'config.json', file], { cwd: directory, encoding: 'utf8' })
     return { failed: result.status !== 0, output: `${result.stdout}${result.stderr}` }
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
 }
 
-const valid = (rule, name, source) =>
+const valid = (rule, name, source, file) =>
   test(`${rule}: ${name}`, () => {
-    const { failed, output } = lint(rule, source)
+    const { failed, output } = lint(rule, source, file)
     assert.equal(failed, false, output)
   })
-const invalid = (rule, name, source, message) =>
+const invalid = (rule, name, source, message, file) =>
   test(`${rule}: ${name}`, () => {
-    const { failed, output } = lint(rule, source)
+    const { failed, output } = lint(rule, source, file)
     assert.equal(failed, true, 'expected the rule to report')
     assert.match(output, message)
   })
@@ -124,3 +124,14 @@ invalid(
   'interface Bridge { request(fields: Record<string, any>): Promise<void> }',
   /drops the contract/,
 )
+
+valid('no-native-title', 'allows a title prop on a component', '<CommandDialog title="Commands" />', 'fixture.tsx')
+valid('no-native-title', 'allows an aria-label', '<button aria-label="Close" />', 'fixture.tsx')
+invalid(
+  'no-native-title',
+  'reports title on an HTML element',
+  '<button title="Close" />',
+  /native title/,
+  'fixture.tsx',
+)
+invalid('no-native-title', 'reports title on an SVG element', '<svg title="Logo" />', /native title/, 'fixture.tsx')

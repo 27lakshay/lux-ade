@@ -129,11 +129,34 @@ const noLooseRecord = {
   },
 }
 
+const noNativeTitle = {
+  meta: {
+    type: 'problem',
+    docs: { description: "Tooltips use the kit's Tooltip, not the browser's title attribute." },
+  },
+  create(context) {
+    return {
+      JSXAttribute(node) {
+        if (node.name.type !== 'JSXIdentifier' || node.name.name !== 'title') return
+        const element = node.parent?.name
+        // Lowercase names are HTML and SVG elements; components may take a `title` prop of their own.
+        if (element?.type !== 'JSXIdentifier' || !/^[a-z]/.test(element.name)) return
+        context.report({
+          node,
+          message:
+            "The native title tooltip is slow, unstyled and invisible to keyboard users. Wrap the element in the kit's Tooltip (components/ui/tooltip), or give it an aria-label.",
+        })
+      },
+    }
+  },
+}
+
 export default {
   meta: { name: 'ade' },
   rules: {
     'electron-web-preferences': electronWebPreferences,
     'require-store-selector': requireStoreSelector,
     'no-loose-record': noLooseRecord,
+    'no-native-title': noNativeTitle,
   },
 }

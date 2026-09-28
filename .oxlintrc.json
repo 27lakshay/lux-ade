@@ -130,6 +130,39 @@
       }
     },
     {
+      // The renderer's own code: kit components keep the kit's look (placement may change), colours
+      // come from the theme, tooltips come from the kit, and files stay small enough to read whole.
+      "files": ["apps/desktop/src/renderer/src/**"],
+      "rules": {
+        "shadcn/no-restyle": ["error", { "allow": ["layout"] }],
+        "shadcn/no-raw-colors": "error",
+        "ade/no-native-title": "error",
+        "max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": ["apps/desktop/src/renderer/src/**/*.tsx"],
+      "rules": {
+        "max-lines": ["error", { "max": 400, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": ["apps/desktop/src/renderer/src/**/*.test.*"],
+      "rules": {
+        "max-lines": ["error", { "max": 800, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      // The stock kit, installed and updated by shadcn, is exempt from the renderer's own rules.
+      "files": ["apps/desktop/src/renderer/src/components/ui/**", "apps/desktop/src/renderer/src/hooks/**"],
+      "rules": {
+        "shadcn/no-restyle": "off",
+        "shadcn/no-raw-colors": "off",
+        "ade/no-native-title": "off",
+        "max-lines": "off"
+      }
+    },
+    {
       "files": ["apps/desktop/src/renderer/**"],
       "rules": {
         "ade/require-store-selector": "error",
