@@ -33,9 +33,18 @@ export interface FeedEvents {
 const MAX_PENDING_FRAMES = 512
 const MAX_PENDING_BYTES = 2 * 1024 * 1024
 
+/**
+ * A snapshot runs to megabytes: decode it natively where the engine can (Chromium 140+), else with
+ * a plain loop. Uint8Array.from with a mapping callback took ~40ms per 4MB snapshot, which froze
+ * the window whenever terminals attached.
+ */
 function decodeBase64(base64: string): Uint8Array {
+  const native = (Uint8Array as unknown as { fromBase64?: (text: string) => Uint8Array }).fromBase64
+  if (native) return native.call(Uint8Array, base64)
   const binary = atob(base64)
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  return bytes
 }
 
 /** The snapshot's Ghostty state and the live offset it was taken at. Throws if it has none. */
