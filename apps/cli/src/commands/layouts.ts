@@ -21,16 +21,18 @@ export const layoutUsage = `  window list                           List windows
                                         Set the projects the navigator shows collapsed
   layout get [--window ID] [--workspace ID]
                                         Read a window's panes and tabs for a workspace
-  layout apply --action JSON [--window ID] [--workspace ID] [--expected-revision N]
+  layout apply --action JSON [--window ID] [--workspace ID] [--expected-revision N] [--force]
                                         Apply one layout action; a stale revision is refused
-  layout replace --layout JSON [--window ID] [--workspace ID] [--expected-revision N]
+  layout replace --layout JSON [--window ID] [--workspace ID] [--expected-revision N] [--force]
                                         Store a whole layout
   tab open KIND [ID|PATH] [--pane PANE_ID] [--id TAB_ID] [--staged] [--window ID] [--workspace ID]
                                         Open a tab: conversation, terminal or browser ID,
                                         file or diff PATH, or new_conversation
-  tab close TAB_ID [--window ID] [--workspace ID]
+  tab close TAB_ID [--window ID] [--workspace ID] [--force]
   pane split PANE_ID --direction row|column [--id PANE_ID] [--window ID] [--workspace ID]
-Layout commands without --window act on the only open window.
+Layout commands without --window act on the only open window. A change that
+removes a shell terminal's tab closes the terminal; a busy one refuses it
+(terminal_busy) until the command is repeated with --force.
 `
 
 const TARGET_OPTIONS = ['--window', '--workspace'] as const
@@ -60,8 +62,12 @@ function expectedRevision(options: Record<string, string>) {
     : { expected_revision: boundedInteger(value, '--expected-revision', 0, Number.MAX_SAFE_INTEGER) }
 }
 
-async function apply(socketPath: string, options: Record<string, string>, action: LayoutAction) {
-  return call(socketPath, 'layout.apply', { ...(await target(socketPath, options)), action })
+async function apply(socketPath: string, options: Record<string, string>, action: LayoutAction, force = false) {
+  return call(socketPath, 'layout.apply', {
+    ...(await target(socketPath, options)),
+    action,
+    ...(force ? { force: true } : {}),
+  })
 }
 
 function tabTarget(kind: string | undefined, value: string | undefined, staged: boolean): TabTarget {
@@ -153,10 +159,19 @@ export async function runLayoutCommand(
     }
     if (action === 'apply' || action === 'replace') {
       const option = action === 'apply' ? '--action' : '--layout'
-      const parsed = parseWords(rest, [...TARGET_OPTIONS, option, '--expected-revision'], [], `layout ${action}`)
+      const parsed = parseWords(
+        rest,
+        [...TARGET_OPTIONS, option, '--expected-revision'],
+        ['--force'],
+        `layout ${action}`,
+      )
       positionals(parsed, 0, `layout ${action} requires ${option} JSON`)
       const value = jsonObject(parsed.options[option], option)
-      const fields = { ...(await target(socketPath, parsed.options)), ...expectedRevision(parsed.options) }
+      const fields = {
+        ...(await target(socketPath, parsed.options)),
+        ...expectedRevision(parsed.options),
+        ...(parsed.flags.has('--force') ? { force: true } : {}),
+      }
       return action === 'apply'
         ? call(socketPath, 'layout.apply', { ...fields, action: value as unknown as LayoutAction })
         : call(socketPath, 'layout.replace', { ...fields, layout: value as unknown as Layout })
@@ -178,9 +193,9 @@ export async function runLayoutCommand(
     })
   }
   if (area === 'tab' && action === 'close') {
-    const parsed = parseWords(rest, TARGET_OPTIONS, [], 'tab close')
+    const parsed = parseWords(rest, TARGET_OPTIONS, ['--force'], 'tab close')
     const [tabId] = positionals(parsed, 1, 'tab close requires TAB_ID')
-    return apply(socketPath, parsed.options, { type: 'close_tab', tab_id: tabId! })
+    return apply(socketPath, parsed.options, { type: 'close_tab', tab_id: tabId! }, parsed.flags.has('--force'))
   }
   if (area === 'pane' && action === 'split') {
     const parsed = parseWords(rest, [...TARGET_OPTIONS, '--direction', '--id'], [], 'pane split')

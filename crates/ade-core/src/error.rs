@@ -134,6 +134,21 @@ pub enum LayoutError {
     TabTargetMissing(String),
     #[error("{0}")]
     Invalid(String),
+    /// Shell terminals whose tabs the change removes are busy: each
+    /// `(terminal_id, foreground)`.
+    #[error("{}", terminals_busy_message(.0))]
+    TerminalsBusy(Vec<(String, Option<String>)>),
+}
+
+fn terminals_busy_message(busy: &[(String, Option<String>)]) -> String {
+    let names: Vec<&str> = busy
+        .iter()
+        .map(|(id, foreground)| foreground.as_deref().unwrap_or(id))
+        .collect();
+    format!(
+        "A command is running in a terminal this change closes ({}); apply it with force to stop it",
+        names.join(", ")
+    )
 }
 
 impl LayoutError {
@@ -144,6 +159,7 @@ impl LayoutError {
             Self::Conflict { .. } => "layout_conflict",
             Self::TabTargetMissing(_) => "tab_target_missing",
             Self::Invalid(_) => "invalid_layout",
+            Self::TerminalsBusy(_) => "terminal_busy",
         }
     }
 
@@ -154,6 +170,7 @@ impl LayoutError {
             Self::Conflict { .. } => "reload_layout",
             Self::TabTargetMissing(_) => "reload_catalog",
             Self::Invalid(_) => "fix_request",
+            Self::TerminalsBusy(_) => "confirm_close",
         }
     }
 }
@@ -535,8 +552,15 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
             "code":"unsupported","recovery":"omit_unsupported_field"});
     }
     if let Some(layout) = error.downcast_ref::<LayoutError>() {
-        return serde_json::json!({"type":"error","message":layout.to_string(),
+        let mut envelope = serde_json::json!({"type":"error","message":layout.to_string(),
             "code":layout.code(),"recovery":layout.recovery()});
+        if let LayoutError::TerminalsBusy(busy) = layout {
+            envelope["terminals"] = busy
+                .iter()
+                .map(|(id, foreground)| serde_json::json!({"terminal_id":id,"foreground":foreground}))
+                .collect();
+        }
+        return envelope;
     }
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),

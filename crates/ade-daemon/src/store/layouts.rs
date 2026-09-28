@@ -345,6 +345,22 @@ fn check_bounds(bounds: &WindowBounds) -> Result<()> {
     Ok(())
 }
 
+/// A change `layout.apply` or `layout.replace` proposes.
+pub enum Proposal<'a> {
+    Apply(&'a LayoutAction),
+    Replace(&'a Layout),
+}
+
+fn terminal_targets(layout: &Layout) -> Vec<&str> {
+    layout::targets(layout)
+        .into_iter()
+        .filter_map(|target| match target {
+            TabTarget::Terminal { id } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The outcome of a window command: the window, and whether it changed.
 #[derive(Debug)]
 pub struct WindowChange {
@@ -497,6 +513,43 @@ impl Store {
         let workspace = workspace_id.unwrap_or(&window.workspace_id).to_owned();
         live_workspace(db, &workspace)?;
         Ok(workspace)
+    }
+
+    /// The shell terminals whose last tab in this layout `proposal` removes,
+    /// in tab ID order. A proposal that the layout would refuse (a stale
+    /// revision, malformed input) removes none; applying it reports why.
+    pub fn removed_shells(
+        &self,
+        window_id: &str,
+        workspace_id: Option<&str>,
+        proposal: Proposal<'_>,
+        expected: Option<u64>,
+    ) -> Result<Vec<String>> {
+        let workspace = self.layout_key(&self.connection, window_id, workspace_id)?;
+        let current = layout(&self.connection, window_id, &workspace)?;
+        if expected.is_some_and(|expected| expected != current.revision) {
+            return Ok(Vec::new());
+        }
+        let next = match proposal {
+            Proposal::Apply(action) => match layout::apply(&current.layout, action) {
+                Ok(next) => next,
+                Err(_) => return Ok(Vec::new()),
+            },
+            Proposal::Replace(next) => next.clone(),
+        };
+        let kept = terminal_targets(&next);
+        let mut shells = Vec::new();
+        for id in terminal_targets(&current.layout) {
+            if kept.contains(&id) {
+                continue;
+            }
+            if super::terminal_records::load(&self.connection, id)?.is_some_and(|stored| {
+                stored.record().kind == ade_core::contract::terminals::TerminalKind::Shell
+            }) {
+                shells.push(id.to_owned());
+            }
+        }
+        Ok(shells)
     }
 
     /// `layout.get`.

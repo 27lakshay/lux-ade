@@ -1758,6 +1758,49 @@ impl Host {
         }
         Ok(serde_json::to_value(Ack::default())?)
     }
+    /// `layout.apply` and `layout.replace`. Closing a tab follows its target
+    /// (daemon-authority decision 5): a shell terminal whose last tab in the
+    /// layout the change removes is closed first, by `terminal.close`'s rule,
+    /// which also takes its tabs out of every layout. Busy shells refuse the
+    /// whole change, all listed, unless `force` is set; nothing is closed
+    /// then. The change applies after, to the layout the closes left.
+    fn layout_change(&self, request: &Value) -> anyhow::Result<Value> {
+        let shells = self.sessions.layout_removed_shells(request)?;
+        if shells.is_empty() {
+            return self.sessions.command(request);
+        }
+        let force = request["force"].as_bool() == Some(true);
+        if !force {
+            let mut busy = Vec::new();
+            for id in &shells {
+                if let Some(record) = self.sessions.terminal_record(id)?
+                    && record.busy
+                {
+                    busy.push((record.id, record.foreground));
+                }
+            }
+            if !busy.is_empty() {
+                return Err(ade_core::error::LayoutError::TerminalsBusy(busy).into());
+            }
+        }
+        for id in &shells {
+            self.terminal_close(&json!({
+                "op": "terminal.close",
+                "operation_id": format!("layout-close-{id}"),
+                "terminal_id": id,
+                "force": force,
+            }))?;
+        }
+        // The closes moved the layout's revision; the caller's check already
+        // passed against the layout it saw.
+        let mut request = request.clone();
+        if let Some(fields) = request.as_object_mut() {
+            fields.remove("expected_revision");
+        }
+        let mut reply = self.sessions.command(&request)?;
+        reply["changed"] = json!(true);
+        Ok(reply)
+    }
     /// Routes one command to its handler.
     fn dispatch(&self, op: &str, request: &Value) -> anyhow::Result<Value> {
         if op == "service.proxy.ensure" || op == "service.proxy.remap" {
@@ -1780,6 +1823,8 @@ impl Host {
             self.terminal_restart(request)
         } else if op == "terminal.close" {
             self.terminal_close(request)
+        } else if op == "layout.apply" || op == "layout.replace" {
+            self.layout_change(request)
         } else if op == "workspace.remove" {
             self.workspace_remove(request)
         } else if matches!(

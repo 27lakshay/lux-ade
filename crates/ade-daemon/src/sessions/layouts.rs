@@ -2,7 +2,7 @@
 //! `store::layouts`, and their `window_changed`, `layout_changed` and
 //! `layout_removed` feed frames.
 use super::*;
-use crate::store::layouts::{LayoutChange, WindowChange, WorkspaceRemoval};
+use crate::store::layouts::{LayoutChange, Proposal, WindowChange, WorkspaceRemoval};
 use ade_core::contract::layout::{
     LayoutApplied, LayoutApplyRequest, LayoutGetRequest, LayoutRecord, LayoutReplaceRequest,
     LayoutReply, Window, WindowAck, WindowCloseRequest, WindowCreateRequest, WindowList,
@@ -101,6 +101,33 @@ impl Sessions {
                 self.layout_reply(&mut d, change)
             }
             _ => bail!("Unknown session operation"),
+        }
+    }
+
+    /// For a `layout.apply` or `layout.replace` request: the shell terminals
+    /// whose last tab in the layout it removes, which close first (decision 5).
+    pub fn layout_removed_shells(&self, request: &Value) -> Result<Vec<String>> {
+        let d = self.data.lock().unwrap();
+        match request["op"].as_str().unwrap_or("") {
+            "layout.apply" => {
+                let apply: LayoutApplyRequest = decode(request)?;
+                d.store.removed_shells(
+                    &apply.window_id,
+                    apply.workspace_id.as_deref(),
+                    Proposal::Apply(&apply.action),
+                    apply.expected_revision,
+                )
+            }
+            "layout.replace" => {
+                let replace: LayoutReplaceRequest = decode(request)?;
+                d.store.removed_shells(
+                    &replace.window_id,
+                    replace.workspace_id.as_deref(),
+                    Proposal::Replace(&replace.layout),
+                    replace.expected_revision,
+                )
+            }
+            _ => Ok(Vec::new()),
         }
     }
 

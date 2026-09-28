@@ -14463,7 +14463,7 @@
     },
     "LayoutApplyRequest": {
       "additionalProperties": false,
-      "description": "`layout.apply`: apply one action to a window's layout for a workspace.",
+      "description": "`layout.apply`: apply one action to a window's layout for a workspace.\n\nClosing a tab follows its target (daemon-authority decision 5): when the\nchange removes the last tab of a shell terminal from this layout, that\nterminal closes first, as `terminal.close` would, and its tabs leave every\nlayout. A busy one refuses the change with `terminal_busy`, listing each\nbusy terminal in `terminals`, unless `force` is true. Service, script and\nConversation terminal tabs, and every other target, only leave the layout.",
       "properties": {
         "action": {
           "$ref": "#/$defs/LayoutAction"
@@ -14475,6 +14475,14 @@
           "minimum": 0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "force": {
+          "default": null,
+          "description": "Close busy shell terminals whose tabs this change removes. Without\nit a busy one refuses the whole change with `terminal_busy`.",
+          "type": [
+            "boolean",
             "null"
           ]
         },
@@ -14637,6 +14645,14 @@
           "minimum": 0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "force": {
+          "default": null,
+          "description": "Close busy shell terminals whose tabs this change removes. Without\nit a busy one refuses the whole change with `terminal_busy`.",
+          "type": [
+            "boolean",
             "null"
           ]
         },

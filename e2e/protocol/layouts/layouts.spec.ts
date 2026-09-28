@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import type { CallRequest, DailyUseResponse } from '../../../packages/client/dist/index.js'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { subscribeFeed } from '../fixtures/feed'
+import { TerminalStream } from '../fixtures/terminals'
 
 type LayoutAction = CallRequest<'layout.apply'>['action']
 type LayoutNode = DailyUseResponse<'layout.get'>['layout']['layout']['root']
@@ -448,4 +449,70 @@ test('terminal.create with place opens its tab, and terminal.close removes that 
     }),
   )
   expect(refused.code).toBe('tab_target_missing')
+})
+
+/** The terminal records the catalog lists for a workspace, by ID. */
+async function terminalIds(profile: ScratchProfile, workspaceId: string): Promise<string[]> {
+  return (await profile.call('catalog.get', {})).catalog.terminals
+    .filter((terminal) => terminal.workspace_id === workspaceId)
+    .map((terminal) => terminal.id)
+}
+
+test('closing tabs closes their shell terminals, a busy one refuses the change until forced, and other tabs only leave', async ({
+  profile,
+}) => {
+  const { id: workspaceId } = await workspace(profile, 'decision-5')
+  await profile.call('window.create', { window_id: 'w', workspace_id: workspaceId })
+  const place = { window_id: 'w', pane_id: 'pane-main' }
+  const { terminal_id: idle } = await profile.call('terminal.create', { workspace_id: workspaceId, place })
+  const { terminal_id: busy } = await profile.call('terminal.create', { workspace_id: workspaceId, place })
+  await profile.call('layout.apply', {
+    window_id: 'w',
+    action: { type: 'open_tab', tab: { id: 'notes', target: { kind: 'file', path: 'notes.md' } } },
+  })
+  const stream = TerminalStream.open(profile, workspaceId, busy)
+  const runId = (await stream.snapshot()).run_id as string
+  stream.send({ op: 'input', run_id: runId, data: 'sleep 30\n' })
+  await expect
+    .poll(async () => (await profile.call('catalog.get', {})).catalog.terminals.find((t) => t.id === busy)?.busy)
+    .toBe(true)
+  const before = (await profile.call('layout.get', { window_id: 'w' })).layout
+
+  // Closing the pane would close both shells; the busy one refuses the whole change.
+  const refused = (await profile
+    .call('layout.apply', {
+      window_id: 'w',
+      action: { type: 'close_pane', pane_id: 'pane-main' },
+      expected_revision: before.revision,
+    })
+    .then(
+      () => {
+        throw new Error('The close was expected to be refused')
+      },
+      (failure: unknown) => failure,
+    )) as { code: string; details: { terminals?: Array<{ terminal_id: string; foreground: string | null }> } }
+  expect(refused.code).toBe('terminal_busy')
+  expect(refused.details.terminals).toEqual([{ terminal_id: busy, foreground: 'sleep' }])
+  expect(await terminalIds(profile, workspaceId)).toEqual(expect.arrayContaining([idle, busy]))
+  expect((await profile.call('layout.get', { window_id: 'w' })).layout).toEqual(before)
+
+  // Closing the idle shell's tab closes the shell.
+  const closedIdle = await profile.call('layout.apply', {
+    window_id: 'w',
+    action: { type: 'close_tab', tab_id: `tab-${idle}` },
+    expected_revision: before.revision,
+  })
+  expect(closedIdle.changed).toBe(true)
+  expect(Object.keys(closedIdle.layout.layout.tabs).sort()).toEqual(['notes', `tab-${busy}`])
+  expect(await terminalIds(profile, workspaceId)).not.toContain(idle)
+
+  // Forced, closing the pane stops the busy shell too; the file tab just leaves.
+  const forced = await profile.call('layout.apply', {
+    window_id: 'w',
+    action: { type: 'close_pane', pane_id: 'pane-main' },
+    force: true,
+  })
+  expect(forced.layout.layout.tabs).toEqual({})
+  expect(await terminalIds(profile, workspaceId)).not.toContain(busy)
+  stream.close()
 })

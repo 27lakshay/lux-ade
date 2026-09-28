@@ -491,6 +491,13 @@ pub struct LayoutReply {
 }
 
 /// `layout.apply`: apply one action to a window's layout for a workspace.
+///
+/// Closing a tab follows its target (daemon-authority decision 5): when the
+/// change removes the last tab of a shell terminal from this layout, that
+/// terminal closes first, as `terminal.close` would, and its tabs leave every
+/// layout. A busy one refuses the change with `terminal_busy`, listing each
+/// busy terminal in `terminals`, unless `force` is true. Service, script and
+/// Conversation terminal tabs, and every other target, only leave the layout.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct LayoutApplyRequest {
     pub window_id: String,
@@ -503,6 +510,10 @@ pub struct LayoutApplyRequest {
     /// from that revision, which returns its result.
     #[serde(default)]
     pub expected_revision: Option<u64>,
+    /// Close busy shell terminals whose tabs this change removes. Without
+    /// it a busy one refuses the whole change with `terminal_busy`.
+    #[serde(default)]
+    pub force: Option<bool>,
 }
 
 /// `layout.replace`: store a whole layout, such as one imported from an
@@ -515,6 +526,10 @@ pub struct LayoutReplaceRequest {
     pub layout: Layout,
     #[serde(default)]
     pub expected_revision: Option<u64>,
+    /// Close busy shell terminals whose tabs this change removes. Without
+    /// it a busy one refuses the whole change with `terminal_busy`.
+    #[serde(default)]
+    pub force: Option<bool>,
 }
 
 /// The `layout.apply` and `layout.replace` reply. `changed` is false when

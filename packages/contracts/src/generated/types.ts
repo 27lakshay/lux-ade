@@ -8528,6 +8528,13 @@ export interface LayoutRecord {
 }
 /**
  * `layout.apply`: apply one action to a window's layout for a workspace.
+ *
+ * Closing a tab follows its target (daemon-authority decision 5): when the
+ * change removes the last tab of a shell terminal from this layout, that
+ * terminal closes first, as `terminal.close` would, and its tabs leave every
+ * layout. A busy one refuses the change with `terminal_busy`, listing each
+ * busy terminal in `terminals`, unless `force` is true. Service, script and
+ * Conversation terminal tabs, and every other target, only leave the layout.
  */
 export interface LayoutApplyRequest {
   action: LayoutAction
@@ -8537,6 +8544,11 @@ export interface LayoutApplyRequest {
    * from that revision, which returns its result.
    */
   expected_revision?: number | null
+  /**
+   * Close busy shell terminals whose tabs this change removes. Without
+   * it a busy one refuses the whole change with `terminal_busy`.
+   */
+  force?: boolean | null
   op: 'layout.apply'
   window_id: string
   /**
@@ -8589,6 +8601,11 @@ export interface LayoutRemoved {
  */
 export interface LayoutReplaceRequest {
   expected_revision?: number | null
+  /**
+   * Close busy shell terminals whose tabs this change removes. Without
+   * it a busy one refuses the whole change with `terminal_busy`.
+   */
+  force?: boolean | null
   layout: Layout
   op: 'layout.replace'
   window_id: string
