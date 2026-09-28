@@ -66,7 +66,8 @@ claiming a UI change works.
     - A pane maximizes (double-click its grip, its toolbar, `$mod+Shift+Enter`); rearranging panes
       or focusing another restores the grid. Double-clicking a gutter evens out that split, or
       resets a sidebar's width. Gutters highlight after a short hover; arrow keys resize a focused
-      gutter and Enter collapses. While a gutter is dragged, a tab's content can show its size
+      gutter and Enter collapses. Pointer actions on a gutter never take the focus
+      (`cards/handle-focus.ts`): what was focused stays focused. While a gutter is dragged, a tab's content can show its size
       (`content/size-label.ts`; a terminal will report columns × rows).
     - Splits and sidebars follow the model's sizes when they change from outside (Reset layout,
       Equalize panes). `Panel` sizes in `react-resizable-panels` are pixels when given a number:

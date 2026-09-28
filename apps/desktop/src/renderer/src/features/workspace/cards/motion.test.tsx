@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { dispatch, layoutStore, openTab, toggleSide } from '../model/layout-store'
 import { renderWorkspace, resetLayout, section } from '../testing'
@@ -106,4 +106,27 @@ test('no scrollbar appears while the sidebars swap, and nothing changes size mid
   expect(worst).toBe(0)
   // Only the arrangement before and after: no size in between.
   expect([...seen].filter((set) => set !== before)).toHaveLength(1)
+})
+
+test('pressing, dragging or double-clicking a resize handle leaves the focus where it was', async () => {
+  openTab({ kind: 'terminal', title: 'Shell' })
+  await renderWorkspace()
+  const tab = await vi.waitFor(() => document.querySelector<HTMLElement>('[role=tab]')!)
+  const handle = document
+    .getElementById('cards')!
+    .querySelector<HTMLElement>(':scope > [role=separator]:not([data-separator=disabled])')!
+  tab.focus()
+  await userEvent.click(handle)
+  expect(document.activeElement).toBe(tab)
+  await userEvent.dblClick(handle)
+  expect(document.activeElement).toBe(tab)
+  await userEvent.dragAndDrop(handle, document.querySelector('section[aria-label="Pane"]')!)
+  expect(document.activeElement).toBe(tab)
+  // With nothing focused, nothing gains it.
+  tab.blur()
+  await userEvent.dblClick(handle)
+  expect(document.activeElement).toBe(document.body)
+  // The keyboard still reaches the handle.
+  handle.focus()
+  expect(document.activeElement).toBe(handle)
 })

@@ -18,6 +18,7 @@ import { PaneGrid } from '../panes/PaneGrid'
 import { Inspector } from '../sidebars/Inspector'
 import { Navigator } from '../sidebars/Navigator'
 import { Card } from './Card'
+import { keepFocusOffHandles } from './handle-focus'
 import { Grip } from './Grip'
 import { ResizeHandle } from './ResizeHandle'
 
@@ -143,6 +144,7 @@ export function CardArea() {
   const refs = { navigator: usePanelRef(), inspector: usePanelRef() }
   const syncing = useRef(false)
   useDropMonitor()
+  useEffect(keepFocusOffHandles, [])
   // A resize ended: keep widths, and notice a sidebar dragged shut or open. Read a frame later:
   // inside onLayoutChanged the panels still report their sizes from before the change.
   const commitSizes = (): void => {
