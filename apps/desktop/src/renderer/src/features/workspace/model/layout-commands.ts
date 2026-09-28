@@ -1,8 +1,11 @@
 import type { AppCommand } from '../../../../../shared/app-commands'
 import { commandService } from '../../../app/commands'
 import type { Edge } from './layout'
+import type { LayoutAction } from './layout.logic'
 import { findPane, neighbourPane } from './layout-tree'
-import { dispatch, layoutStore, openTab, splitPane, toggleSide } from './layout-store'
+import { toggleSidebar } from '../cards/fit'
+import { hasRoomFor, noRoom, trySplit } from '../panes/room'
+import { dispatch, layoutStore, openTab } from './layout-store'
 
 // The workspace's commands: from the native menu (app commands) and in the palette. Every mouse
 // action on the layout has one.
@@ -13,18 +16,21 @@ const focused = () => {
   return { layout, pane: findPane(layout.root, layout.focusedPane) }
 }
 
+/** Applies a change to the panes when they still fit afterwards (panes/room.ts). */
+const whenRoom = (action: LayoutAction): void => (hasRoomFor(action) ? dispatch(action) : noRoom())
+
 /** Handles a native-menu command that acts on the layout; returns whether it did. */
 export function handleLayoutCommand(command: AppCommand): boolean {
   switch (command) {
     case 'toggle-left-sidebar':
-      toggleSide('left')
+      toggleSidebar('left')
       return true
     case 'toggle-right-sidebar':
-      toggleSide('right')
+      toggleSidebar('right')
       return true
     case 'split-right': {
       const { pane } = focused()
-      if (pane) splitPane(pane.id, 'row')
+      if (pane) trySplit(pane.id, 'row')
       return true
     }
     case 'new-tab':
@@ -47,15 +53,15 @@ export function registerLayoutCommands(): void {
     commandService.registerCommand({ id, title, category: 'Layout', run })
   }
   add('layout.swapSidebars', 'Swap sidebars', () => dispatch({ type: 'swapSidebars' }))
-  add('layout.toggleLeft', 'Toggle left sidebar', () => toggleSide('left'))
-  add('layout.toggleRight', 'Toggle right sidebar', () => toggleSide('right'))
+  add('layout.toggleLeft', 'Toggle left sidebar', () => toggleSidebar('left'))
+  add('layout.toggleRight', 'Toggle right sidebar', () => toggleSidebar('right'))
   add('layout.splitRight', 'Split pane right', () => {
     const { pane } = focused()
-    if (pane) splitPane(pane.id, 'row')
+    if (pane) trySplit(pane.id, 'row')
   })
   add('layout.splitDown', 'Split pane down', () => {
     const { pane } = focused()
-    if (pane) splitPane(pane.id, 'column')
+    if (pane) trySplit(pane.id, 'column')
   })
   add('layout.resetLayout', 'Reset layout', () => dispatch({ type: 'resetLayout' }))
   add('layout.equalizePanes', 'Equalize panes', () => dispatch({ type: 'equalizeSplits' }))
@@ -94,12 +100,12 @@ function registerPaneDirectionCommands(): void {
     })
     add(`layout.swap${name}`, `Swap pane ${name.toLowerCase()}`, `$mod+Alt+Shift+${arrow}`, () => {
       const found = neighbour(edge)
-      if (found?.target) dispatch({ type: 'swapPanes', paneId: found.pane.id, targetId: found.target.id })
+      if (found?.target) whenRoom({ type: 'swapPanes', paneId: found.pane.id, targetId: found.target.id })
     })
     add(`layout.moveTab${name}`, `Move tab to pane ${name.toLowerCase()}`, null, () => {
       const found = neighbour(edge)
       if (found?.target && found.pane.active)
-        dispatch({ type: 'moveTab', tabId: found.pane.active, paneId: found.target.id, index: Number.MAX_SAFE_INTEGER })
+        whenRoom({ type: 'moveTab', tabId: found.pane.active, paneId: found.target.id, index: Number.MAX_SAFE_INTEGER })
     })
   }
 }

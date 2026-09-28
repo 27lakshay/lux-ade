@@ -31,7 +31,7 @@ function DockStrip({ edge }: { edge: Edge }) {
     if (!ref.current) return
     return dropTargetForElements({
       element: ref.current,
-      canDrop: ({ source }) => isDragData(source.data) && canDock(source.data),
+      canDrop: ({ source }) => isDragData(source.data) && canDock(source.data, edge),
       getData: (): TargetData => ({ kind: 'dock-target', edge }),
       onDragEnter: () => setOver(true),
       onDragLeave: () => setOver(false),

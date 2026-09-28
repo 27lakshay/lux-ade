@@ -2,20 +2,21 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { render } from 'vitest-browser-react'
+import { Toaster } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { createAppRouter } from '../../app/router'
 import { MotionProvider } from '../../app/MotionProvider'
 import '../../app/app.css'
 import type { RenderContent } from './content/ContentHosts'
 import { defaultLayout } from './model/layout'
-import { DEFAULT_WORKSPACE, layoutStore } from './model/layout-store'
+import { DEFAULT_WORKSPACE, layoutStore, STORAGE_KEY } from './model/layout-store'
 import { Workspace } from './Workspace'
 
 // Renders the workspace at window size with the app's providers, for browser tests. StrictMode, as
 // in the app: it runs effects twice, which is where startup bugs hide.
 
 export function resetLayout(): void {
-  localStorage.removeItem('ade.layouts')
+  localStorage.removeItem(STORAGE_KEY)
   layoutStore.setState({
     active: DEFAULT_WORKSPACE,
     layouts: { [DEFAULT_WORKSPACE]: defaultLayout('p1') },
@@ -31,11 +32,13 @@ export function renderWorkspace(renderContent?: RenderContent) {
   const router = createAppRouter({ Workspace: Screen, history: createMemoryHistory({ initialEntries: ['/'] }) })
   return render(
     <StrictMode>
-      <div style={{ width: 1440, height: 900 }}>
+      <div data-window-frame style={{ width: 1440, height: 900 }}>
         <QueryClientProvider client={new QueryClient()}>
           <MotionProvider>
             <TooltipProvider delay={0}>
-              <RouterProvider router={router} />
+              <Toaster>
+                <RouterProvider router={router} />
+              </Toaster>
             </TooltipProvider>
           </MotionProvider>
         </QueryClientProvider>

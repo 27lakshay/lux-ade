@@ -4,7 +4,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Icon } from '@/icons/Icon'
 import type { IconName } from '@/icons/icons'
-import { dispatch, splitPane, useLayout } from '../model/layout-store'
+import { dispatch, useLayout } from '../model/layout-store'
+import { trySplit } from './room'
 
 // A pane's actions beside its tabs. In a narrow pane (under 320px) they fold into a "More" menu so
 // the tabs keep their room.
@@ -23,10 +24,10 @@ export function PaneToolbar({ paneId }: { paneId: string }) {
     {
       icon: 'splitRight',
       label: 'Split right',
-      run: () => splitPane(paneId, 'row'),
+      run: () => trySplit(paneId, 'row'),
       shortcut: { appCommand: 'split-right' },
     },
-    { icon: 'splitDown', label: 'Split down', run: () => splitPane(paneId, 'column') },
+    { icon: 'splitDown', label: 'Split down', run: () => trySplit(paneId, 'column') },
     ...(single
       ? []
       : [

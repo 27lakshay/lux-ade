@@ -44,8 +44,18 @@ claiming a UI change works.
     key on the cards ends that at once. Splits and closes are instant. Only moves that keep sizes
     use Motion layout animations: swapping sidebars and reordering tabs.
   - `model/`: the layout is data (`layout.ts`), changed only by the reducer (`layout.logic.ts`),
-    stored per workspace and saved (`layout-store.ts`, checked on load by `layout-schema.ts`).
-    Native-menu and palette commands live in `layout-commands.ts`.
+    stored per workspace in each window and saved under the window's name (`layout-store.ts`,
+    `app/window-name.ts`; checked on load by `layout-schema.ts`). Native-menu and palette commands
+    live in `layout-commands.ts`.
+  - Limits keep every layout tidy, and are enforced, not advised:
+    - A pane is never smaller than its content needs (`PANE_MIN`). A split, drop, dock or move
+      whose result would not fit the centre is refused (`panes/room.ts`): a drop zone shows "No
+      room", a button or command says so in a toast.
+    - When the window is too narrow for the open sidebars beside the panes, the sidebar opened
+      longest ago closes for the moment and reopens when there is room; the saved layout still
+      has it open (`cards/fit.ts`, `cards/useSidebarPanels.ts`). Opening it closes the other.
+    - The window cannot shrink below what the panes need with both sidebars closed: the renderer
+      tells main (`setWindowMinimumSize`), which keeps its own floor of 720 × 480.
   - `panes/`: the pane tree (`PaneGrid`), panes, tabs and dragging (`drag.ts`).
     - Tabs reorder, move between panes, join a pane dropped on its centre and split it when
       dropped on its edge. `TabStrip` is one drop target per tab bar: it measures the tabs when a
@@ -59,14 +69,12 @@ claiming a UI change works.
       screen readers and an outline settles onto the pane it made (`drop-feedback.ts`,
       `DropSettle`). Sidebars only swap sides, by grip or the Swap sidebars command.
     - Each pane has a minimum size from its tabs' kinds (`PANE_MIN`, `minSize` in
-      `model/layout-tree.ts`); dragged below it, a pane collapses (in a row to a strip of tab icons,
-      `CollapsedPane`; in a column to its tab bar) and a click opens it. Panes that cannot all fit
-      at their minimum collapse the same way. Under 320px a pane's actions fold into a More menu
-      (`PaneToolbar`, a container query).
+      `model/layout-tree.ts`); a gutter stops there. Under 320px a pane's actions fold into a More
+      menu (`PaneToolbar`, a container query).
     - A pane maximizes (double-click its grip, its toolbar, `$mod+Shift+Enter`); rearranging panes
       or focusing another restores the grid. Double-clicking a gutter evens out that split, or
       resets a sidebar's width. Gutters highlight after a short hover; arrow keys resize a focused
-      gutter and Enter collapses. Pointer actions on a gutter never take the focus
+      gutter. Pointer actions on a gutter never take the focus
       (`cards/handle-focus.ts`): what was focused stays focused. While a gutter is dragged, a tab's content can show its size
       (`content/size-label.ts`; a terminal will report columns × rows).
     - Splits and sidebars follow the model's sizes when they change from outside (Reset layout,

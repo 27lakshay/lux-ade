@@ -9,6 +9,7 @@ import type { PaneNode } from '../model/layout'
 import { dispatch, useLayout } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
 import { activeLayout, isDragData, type TargetData } from './drag'
+import { hasRoomFor } from './room'
 import { Tab } from './Tab'
 
 // A pane's tab strip, and the whole bar around it as one drop target for tabs. When a tab is dragged
@@ -69,6 +70,8 @@ export function TabStrip({
     const viewport = stripElement?.closest<HTMLElement>('[data-slot=scroll-area-viewport]')
     if (!barElement || !stripElement || !viewport) return
     let measured: Measured[] = []
+    /** Whether a tab from another pane still fits here (its kind may need a wider pane); per drag. */
+    let fits: boolean | null = null
     let springTimer: ReturnType<typeof setTimeout> | undefined
     let springTab: string | null = null
     const contentX = (clientX: number): number => clientX - viewport.getBoundingClientRect().left + viewport.scrollLeft
@@ -93,6 +96,7 @@ export function TabStrip({
     }
     const reset = (): void => {
       measured = []
+      fits = null
       spring(null)
       setSlot(null)
     }
@@ -102,6 +106,10 @@ export function TabStrip({
       if (measured.length === 0) measure()
       const { index, over } = hitTab(measured, x)
       const from = source.paneId === pane.id ? measured.findIndex((tab) => tab.id === source.tabId) : -1
+      if (from === -1) {
+        fits ??= hasRoomFor({ type: 'moveTab', tabId: source.tabId, paneId: pane.id, index })
+        if (!fits) return { index: null, over }
+      }
       const stays = from !== -1 && (index === from || index === from + 1)
       return { index: stays ? null : index, over: over === source.tabId ? null : over }
     }

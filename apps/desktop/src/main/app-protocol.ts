@@ -40,6 +40,13 @@ export function serveAppScheme(session: Session): void {
 }
 
 /** Where the app window loads its UI from. */
+/** The app page for the window of this name (see src/renderer/src/app/window-name.ts). */
+export function windowUrl(name: string): string {
+  const url = new URL(appUrl())
+  url.searchParams.set('window', name)
+  return url.toString()
+}
+
 export function appUrl(): string {
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) return process.env.ELECTRON_RENDERER_URL
   return `${APP_ORIGIN}/index.html`

@@ -12,8 +12,10 @@ import {
 } from './layout'
 import { layoutReducer, type LayoutAction } from './layout.logic'
 import { parseLayout } from './layout-schema'
+import { WINDOW_NAME } from '../../../app/window-name'
 
-// Layouts, one per workspace, saved across launches. `recent` lists the workspaces whose pane
+// Layouts, one per workspace in each window, saved across launches under the window's name
+// (WINDOW_NAME): two windows on one workspace keep their own arrangements. `recent` lists the workspaces whose pane
 // content stays mounted (hidden) after switching away, most recent first; `keepMounted` sets how
 // many (3 by default).
 
@@ -24,7 +26,9 @@ interface LayoutState {
   keepMounted: number
 }
 
-const STORAGE_KEY = 'ade.layouts'
+export const STORAGE_KEY = `ade.layouts:${WINDOW_NAME}`
+/** Where layouts were saved before each window had its own; the main window takes them over. */
+const LEGACY_KEY = 'ade.layouts'
 /** Until workspace selection is wired, every window shows this one. */
 export const DEFAULT_WORKSPACE = 'default'
 
@@ -41,7 +45,12 @@ export const layoutStore = createStore<LayoutState>()(
     {
       name: STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => ({
+        getItem: (name) =>
+          localStorage.getItem(name) ?? (WINDOW_NAME === 'main' ? localStorage.getItem(LEGACY_KEY) : null),
+        setItem: (name, value) => localStorage.setItem(name, value),
+        removeItem: (name) => localStorage.removeItem(name),
+      })),
       partialize: (state) => ({ layouts: state.layouts, keepMounted: state.keepMounted }),
       // Keep only layouts that still parse; anything else starts from the default.
       merge: (saved, current) => {

@@ -8,6 +8,7 @@ import type { DropZone, Edge, SidebarId } from '../model/layout'
 import { dispatch, dockTab, dropTab, layoutStore } from '../model/layout-store'
 import { findPane, panes } from '../model/layout-tree'
 import { afterDrop, describePane, describeTab } from './drop-feedback'
+import { hasRoomFor } from './room'
 
 // Dragging: tabs (reorder within a strip, move to another strip, join or split a pane, dock on the
 // centre's edges), whole panes (by their grip: beside another pane, swapped with it, or docked), and
@@ -32,13 +33,19 @@ export const isDragData = (data: Record<string | symbol, unknown>): data is Drag
 
 export const activeLayout = () => layoutStore.getState().layouts[layoutStore.getState().active]
 
-/** Whether docking `source` on an outer edge of the centre would change anything. */
-export function canDock(source: DragData): boolean {
+/** Whether docking `source` on an outer edge would change anything and still fit (panes/room.ts). */
+export function canDock(source: DragData, edge: Edge): boolean {
   const layout = activeLayout()
   if (!layout || source.kind === 'sidebar') return false
   const count = panes(layout.root).length
-  if (source.kind === 'pane') return count > 1
-  return count > 1 || (findPane(layout.root, source.paneId)?.tabs.length ?? 0) > 1
+  const changes =
+    source.kind === 'pane' ? count > 1 : count > 1 || (findPane(layout.root, source.paneId)?.tabs.length ?? 0) > 1
+  if (!changes) return false
+  return hasRoomFor(
+    source.kind === 'pane'
+      ? { type: 'dockPane', paneId: source.paneId, edge }
+      : { type: 'dockTab', tabId: source.tabId, edge, newPaneId: 'room-check' },
+  )
 }
 
 /**
@@ -75,7 +82,7 @@ export function zoneAt(rect: DOMRect, x: number, y: number): DropZone {
 }
 
 /** Whether dropping `source` on a pane's zone would change anything. */
-export function canDropOnZone(source: DragData, paneId: string, zone: DropZone): boolean {
+export function dropChanges(source: DragData, paneId: string, zone: DropZone): boolean {
   if (source.kind === 'sidebar') return false
   if (source.kind === 'pane') return source.paneId !== paneId
   if (source.paneId !== paneId) return true
@@ -85,10 +92,23 @@ export function canDropOnZone(source: DragData, paneId: string, zone: DropZone):
   return zone !== 'centre' && tabs > 1
 }
 
+/** Whether the panes still fit after the drop (panes/room.ts). */
+export function dropFits(source: DragData, paneId: string, zone: DropZone): boolean {
+  if (source.kind === 'sidebar') return false
+  return hasRoomFor(
+    source.kind === 'pane'
+      ? { type: 'movePane', paneId: source.paneId, targetId: paneId, zone }
+      : { type: 'dropTab', tabId: source.tabId, paneId, zone, newPaneId: 'room-check' },
+  )
+}
+
+const canDropOnZone = (source: DragData, paneId: string, zone: DropZone): boolean =>
+  dropChanges(source, paneId, zone) && dropFits(source, paneId, zone)
+
 function onDrop(source: DragData, target: Record<string | symbol, unknown>): void {
   const data = target as unknown as TargetData
   if (data.kind === 'dock-target') {
-    if (!canDock(source)) return
+    if (!canDock(source, data.edge)) return
     if (source.kind === 'tab')
       afterDrop(
         () => dockTab(source.tabId, data.edge),

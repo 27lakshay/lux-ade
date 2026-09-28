@@ -12,10 +12,10 @@ import { attachHost } from '../content/hosts'
 import type { DropZone, PaneNode } from '../model/layout'
 import { dispatch, openTab, useLayout } from '../model/layout-store'
 import { findPane } from '../model/layout-tree'
-import { CollapsedPane } from './CollapsedPane'
 import {
   activeLayout,
-  canDropOnZone,
+  dropChanges,
+  dropFits,
   isDragData,
   showDragPreview,
   zoneAt,
@@ -24,7 +24,6 @@ import {
 } from './drag'
 import { DragChip } from './DragChip'
 import { PaneEmptyState } from './PaneEmptyState'
-import { usePaneCollapse } from './pane-collapse'
 import { PaneToolbar } from './PaneToolbar'
 import { SizeReadout } from './SizeReadout'
 import { TabStrip } from './TabStrip'
@@ -32,8 +31,7 @@ import { TabStrip } from './TabStrip'
 // A pane: its tab bar (TabStrip, new tab, PaneToolbar), its body, and the grip that moves it. The
 // body shows the active tab's content by attaching its host element (content/hosts.ts). While a tab
 // or pane is dragged over the body, the zone it would land in lights up. Double-clicking the grip
-// maximizes the pane. Collapsed in a row, the pane shows only its tabs' icons (CollapsedPane);
-// collapsed in a column, only its tab bar; a click anywhere on it opens it again.
+// maximizes the pane.
 
 const ZONE: Record<DropZone, string> = {
   left: 'inset-y-1.5 start-1.5 end-1/2',
@@ -44,8 +42,8 @@ const ZONE: Record<DropZone, string> = {
 }
 
 /** What a drop on the zone does, shown on the highlight when it is not obvious. */
-const zoneLabel = (source: DragData | null, zone: DropZone): string | null =>
-  source?.kind === 'pane' && zone === 'centre' ? 'Swap' : null
+const zoneLabel = (source: DragData | null, zone: DropZone, fits: boolean): string | null =>
+  !fits ? 'No room' : source?.kind === 'pane' && zone === 'centre' ? 'Swap' : null
 
 const tabCountLabel = (paneId: string): string => {
   const layout = activeLayout()
@@ -53,21 +51,21 @@ const tabCountLabel = (paneId: string): string => {
   return count === 1 ? 'Pane · 1 tab' : `Pane · ${count} tabs`
 }
 
-/** `narrow`: the body is not shown, so there is nothing to drop on. */
-function usePaneDrag(paneId: string, narrow: boolean) {
+function usePaneDrag(paneId: string) {
   const card = useRef<HTMLElement>(null)
   const grip = useRef<HTMLDivElement>(null)
   const body = useRef<HTMLDivElement>(null)
-  const [over, setOver] = useState<{ zone: DropZone; source: DragData } | null>(null)
+  const [over, setOver] = useState<{ zone: DropZone; source: DragData; fits: boolean } | null>(null)
   const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
     if (!card.current || !grip.current) return
     const bodyElement = body.current
+    /** The zone under the pointer, when a drop there would change anything. */
     const zoneFor = (source: Record<string | symbol, unknown>, x: number, y: number): DropZone | null => {
       if (!isDragData(source) || !bodyElement) return null
       const next = zoneAt(bodyElement.getBoundingClientRect(), x, y)
-      return canDropOnZone(source, paneId, next) ? next : null
+      return dropChanges(source, paneId, next) ? next : null
     }
     return combine(
       draggable({
@@ -90,38 +88,35 @@ function usePaneDrag(paneId: string, narrow: boolean) {
             }),
             onDrag: ({ location, source }) => {
               const zone = zoneFor(source.data, location.current.input.clientX, location.current.input.clientY)
-              setOver((previous) =>
-                zone === previous?.zone
-                  ? previous
-                  : zone && isDragData(source.data)
-                    ? { zone, source: source.data }
-                    : null,
-              )
+              setOver((previous) => {
+                if (zone === previous?.zone) return previous
+                if (!zone || !isDragData(source.data)) return null
+                // A zone whose result would not fit shows why, and takes no drop (onDrop checks again).
+                return { zone, source: source.data, fits: dropFits(source.data, paneId, zone) }
+              })
             },
             onDragLeave: () => setOver(null),
             onDrop: () => setOver(null),
           })
         : () => {},
     )
-  }, [paneId, narrow])
+  }, [paneId])
 
   return { card, grip, body, over, dragging }
 }
 
 export function Pane({ pane }: { pane: PaneNode }) {
   const focused = useLayout((layout) => layout.focusedPane === pane.id)
-  const { collapsed, expand } = usePaneCollapse()
-  const narrow = collapsed === 'row'
-  const { card, grip, body, over, dragging } = usePaneDrag(pane.id, narrow)
+  const { card, grip, body, over, dragging } = usePaneDrag(pane.id)
   const bar = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   // Show the active tab's content: attach its host element, never re-render it.
   useLayoutEffect(
     () => (host.current && pane.active ? attachHost(host.current, pane.active) : undefined),
-    [pane.active, narrow],
+    [pane.active],
   )
   const zone = over?.zone
-  const label = over ? zoneLabel(over.source, over.zone) : null
+  const label = over ? zoneLabel(over.source, over.zone, over.fits) : null
 
   return (
     <Card
@@ -141,49 +136,42 @@ export function Pane({ pane }: { pane: PaneNode }) {
       <div
         className="flex min-h-0 flex-1 flex-col"
         onPointerDownCapture={() => !focused && dispatch({ type: 'focusPane', paneId: pane.id })}
-        onClickCapture={collapsed ? expand : undefined}
       >
-        {narrow ? (
-          <CollapsedPane pane={pane} expand={expand} />
-        ) : (
-          <>
-            <div ref={bar} data-tab-bar className="@container flex h-10 shrink-0 items-center gap-0.5 px-1.5">
-              <TabStrip pane={pane} focused={focused} bar={bar}>
-                <IconButton
-                  icon="new"
-                  label="New tab"
-                  shortcut={{ appCommand: 'new-tab' }}
-                  onClick={() => openTab({ kind: 'conversation', title: 'New conversation' }, pane.id)}
-                />
-                <div className="flex-1" />
-                <PaneToolbar paneId={pane.id} />
-              </TabStrip>
-            </div>
-            <div ref={body} data-pane-drop={pane.id} className="relative flex min-h-0 flex-1 flex-col">
-              {pane.tabs.length === 0 ? (
-                <PaneEmptyState paneId={pane.id} />
-              ) : (
-                <div ref={host} data-pane-body={pane.id} className="min-h-0 flex-1 px-1.5" />
+        <div ref={bar} data-tab-bar className="@container flex h-10 shrink-0 items-center gap-0.5 px-1.5">
+          <TabStrip pane={pane} focused={focused} bar={bar}>
+            <IconButton
+              icon="new"
+              label="New tab"
+              shortcut={{ appCommand: 'new-tab' }}
+              onClick={() => openTab({ kind: 'conversation', title: 'New conversation' }, pane.id)}
+            />
+            <div className="flex-1" />
+            <PaneToolbar paneId={pane.id} />
+          </TabStrip>
+        </div>
+        <div ref={body} data-pane-drop={pane.id} className="relative flex min-h-0 flex-1 flex-col">
+          {pane.tabs.length === 0 ? (
+            <PaneEmptyState paneId={pane.id} />
+          ) : (
+            <div ref={host} data-pane-body={pane.id} className="min-h-0 flex-1 px-1.5" />
+          )}
+          <SizeReadout tabId={pane.active} />
+          {zone && (
+            <m.div
+              aria-hidden
+              data-drop-zone={zone}
+              layout
+              layoutDependency={zone}
+              transition={transitions.layout}
+              className={cn(
+                'pointer-events-none absolute flex items-center justify-center rounded-md bg-accent/60',
+                ZONE[zone],
               )}
-              <SizeReadout tabId={pane.active} />
-              {zone && (
-                <m.div
-                  aria-hidden
-                  data-drop-zone={zone}
-                  layout
-                  layoutDependency={zone}
-                  transition={transitions.layout}
-                  className={cn(
-                    'pointer-events-none absolute flex items-center justify-center rounded-md bg-accent/60',
-                    ZONE[zone],
-                  )}
-                >
-                  {label && <Caption weight="medium">{label}</Caption>}
-                </m.div>
-              )}
-            </div>
-          </>
-        )}
+            >
+              {label && <Caption weight="medium">{label}</Caption>}
+            </m.div>
+          )}
+        </div>
       </div>
     </Card>
   )

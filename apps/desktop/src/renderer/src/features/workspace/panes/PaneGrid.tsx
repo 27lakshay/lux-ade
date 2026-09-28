@@ -1,52 +1,34 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Group, Panel, useGroupRef, usePanelRef } from 'react-resizable-panels'
+import { Fragment, useEffect } from 'react'
+import { Group, Panel, useGroupRef } from 'react-resizable-panels'
 import { ResizeHandle } from '../cards/ResizeHandle'
 import { noteResizing } from '../content/size-label'
-import { PANE_COLLAPSED, type LayoutNode, type SplitNode } from '../model/layout'
+import type { LayoutNode, SplitNode } from '../model/layout'
 import { dispatch, useLayout } from '../model/layout-store'
 import { minSize } from '../model/layout-tree'
 import { Pane } from './Pane'
-import { PaneCollapse } from './pane-collapse'
 
 // The centre: the pane tree, rendered as nested resizable groups. Splits save their sizes when a
 // resize ends. The resize library tracks panels by the order they mounted, so a split whose children
 // change (a swap, a move, a split) mounts a fresh group; pane content survives, since it lives in
 // stable hosts (content/hosts.ts) that panes only attach.
 //
-// Each pane has a minimum size from what its tabs show (PANE_MIN). Dragged below it, the pane
-// collapses: in a row to a strip of tab icons, in a column to its tab bar. Clicking it opens it
-// again. Double-clicking a gutter evens out that split.
+// Each pane has a minimum size from what its tabs show (PANE_MIN); a gutter stops there. Double-
+// clicking a gutter evens out that split.
 
 const CLIPPED = { overflow: 'hidden' } as const
 
 function Child({ node, split, index }: { node: LayoutNode; split: SplitNode; index: number }) {
   const tabs = useLayout((layout) => layout.tabs)
-  const panel = usePanelRef()
-  const [collapsed, setCollapsed] = useState(false)
-  const row = split.direction === 'row'
   const min = minSize(node, tabs)
-  const isPane = node.type === 'pane'
-  const collapsedSize = row ? PANE_COLLAPSED.width : PANE_COLLAPSED.height
-  const direction = split.direction
-  const collapse = useMemo(
-    () => ({ collapsed: collapsed ? direction : null, expand: () => panel.current?.expand() }),
-    [collapsed, direction, panel],
-  )
   return (
     <Panel
       id={node.id}
-      panelRef={panel}
       defaultSize={`${split.sizes[index]}%`}
-      minSize={`${row ? min.width : min.height}px`}
-      collapsible={isPane}
-      collapsedSize={isPane ? `${collapsedSize}px` : undefined}
+      minSize={`${split.direction === 'row' ? min.width : min.height}px`}
       // Never a scrollbar at this level: content too big for a small pane is clipped by its card.
       style={CLIPPED}
-      onResize={isPane ? (size) => setCollapsed(size.inPixels <= collapsedSize + 1) : undefined}
     >
-      <PaneCollapse value={collapse}>
-        <PaneGrid node={node} />
-      </PaneCollapse>
+      <PaneGrid node={node} />
     </Panel>
   )
 }

@@ -1,4 +1,4 @@
-import { page, userEvent } from 'vitest/browser'
+import { userEvent } from 'vitest/browser'
 import { beforeEach, expect, test } from 'vitest'
 import { commandService } from '../../../app/commands'
 import { setSizeLabel, noteResizing, useSizeLabels } from '../content/size-label'
@@ -123,18 +123,6 @@ async function remountSplits(): Promise<void> {
   await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(2)
 }
 
-test('Enter on a gutter collapses the pane before it to a strip of icons; clicking one opens it', async () => {
-  await panesWith(['A1', 'A2'], ['B'])
-  ;(paneSplitHandle() as HTMLElement).focus()
-  await userEvent.keyboard('{Enter}')
-  await expect.poll(() => document.querySelector('[data-collapsed-pane]')).not.toBeNull()
-  expect(paneWidths()[0]).toBeLessThanOrEqual(42)
-  await page.getByRole('button', { name: 'A2' }).click()
-  await expect.poll(() => document.querySelector('[data-collapsed-pane]')).toBeNull()
-  expect(paneWidths()[0]).toBeGreaterThan(200)
-  expect(panes(layout().root)[0]!.active).toBe(layout().root.type === 'split' ? panes(layout().root)[0]!.tabs[1] : null)
-})
-
 test('arrow keys resize a focused gutter', async () => {
   await panesWith(['A'], ['B'])
   const before = paneWidths()[0]!
@@ -203,7 +191,7 @@ test('palette commands: equalize, reset and maximize with its shortcut', async (
   expect(layout().maximized).toBe(layout().focusedPane)
 })
 
-test('a window saved with sidebars collapsed opens with every pane that fits, and a sidebar opens at its saved width', async () => {
+test('a window saved with sidebars collapsed opens with its panes at full size, and a sidebar opens at its saved width', async () => {
   dispatch({ type: 'setCollapsed', sidebar: 'navigator', collapsed: true })
   dispatch({ type: 'setCollapsed', sidebar: 'inspector', collapsed: true })
   dispatch({ type: 'setWidth', sidebar: 'navigator', width: 300 })
@@ -213,7 +201,8 @@ test('a window saved with sidebars collapsed opens with every pane that fits, an
   }
   const screen = await renderWorkspace()
   await expect.poll(() => document.querySelectorAll('[data-pane-drop]').length).toBe(3)
-  expect(document.querySelector('[data-collapsed-pane]')).toBeNull()
+  // Every pane at its full size, none squeezed by a sidebar that opened for a frame.
+  expect(paneWidths().every((width) => width >= 320)).toBe(true)
   await screen.getByRole('button', { name: 'Toggle left sidebar' }).click()
   await expect.poll(() => Math.round(section('Navigator')!.getBoundingClientRect().width)).toBe(300)
 })

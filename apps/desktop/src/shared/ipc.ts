@@ -64,6 +64,7 @@ export interface InvokeChannels {
 /** Renderer → main messages with no reply (`send` / `listen`). */
 export interface SendChannels {
   'ade:theme': AdeHost['setTheme']
+  'ade:window-minimum-size': AdeHost['setWindowMinimumSize']
 }
 
 /** Main → renderer events (`emit` / `broadcast` / `subscribe`), as the arguments they carry. */

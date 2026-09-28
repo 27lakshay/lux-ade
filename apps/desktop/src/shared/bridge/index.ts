@@ -18,6 +18,11 @@ export interface AdeHost {
   getAppVersion(): Promise<string>
   /** Mirrors the appearance preference to the native window, which remembers it for next launch. */
   setTheme(theme: ThemePreference): void
+  /**
+   * The smallest the window may be, in pixels: what its pane layout needs with both sidebars
+   * closed. Main never goes below its own minimum (720 × 480).
+   */
+  setWindowMinimumSize(width: number, height: number): void
   /** Commands from the native menu; returns the unsubscribe function. */
   onCommand(listener: (command: AppCommand) => void): () => void
   profiles: ProfilesBridge

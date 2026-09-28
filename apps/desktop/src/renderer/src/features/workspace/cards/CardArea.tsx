@@ -1,11 +1,11 @@
 import { combine } from '@atlaskit/pragmatic-drag-and-drop/combine'
 import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import * as m from 'motion/react-m'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Group, Panel, usePanelRef, type PanelImperativeHandle } from 'react-resizable-panels'
-import { DURATION, transitions } from '../../../app/motion'
+import { transitions } from '../../../app/motion'
 import { SIDEBAR_WIDTH, type SidebarId } from '../model/layout'
-import { dispatch, layoutStore, useLayout } from '../model/layout-store'
+import { dispatch, useLayout } from '../model/layout-store'
 import { cn } from '@/lib/utils'
 import { noteResizing } from '../content/size-label'
 import { findPane, minSize } from '../model/layout-tree'
@@ -21,6 +21,7 @@ import { Card } from './Card'
 import { keepFocusOffHandles } from './handle-focus'
 import { Grip } from './Grip'
 import { ResizeHandle } from './ResizeHandle'
+import { useSidebarPanels } from './useSidebarPanels'
 
 // The floating layer between the chrome: a sidebar, the centre, a sidebar, with 8px gutters that
 // resize them. The sidebars keep their pixel width when the window resizes; the centre takes the
@@ -45,9 +46,18 @@ const SIDEBAR = {
   inspector: { label: 'Inspector', icon: 'toggleRightSidebar', Content: Inspector },
 } as const
 
-function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObject<PanelImperativeHandle | null> }) {
+function SidebarPanel({
+  id,
+  panelRef,
+  shown,
+}: {
+  id: SidebarId
+  panelRef: React.RefObject<PanelImperativeHandle | null>
+  /** Open in the layout and with room in the window (useSidebarPanels). */
+  shown: boolean
+}) {
   const width = useLayout((layout) => layout.widths[id])
-  const collapsed = useLayout((layout) => layout.collapsed[id])
+  const collapsed = !shown
   const order = useLayout((layout) => layout.sidebars.join(','))
   const { label, Content } = SIDEBAR[id]
   const card = useRef<HTMLElement>(null)
@@ -129,113 +139,14 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
 
 export function CardArea() {
   const sidebars = useLayout((layout) => layout.sidebars)
-  const collapsed = useLayout((layout) => layout.collapsed)
-  const widths = useLayout((layout) => layout.widths)
-  // The width each sidebar panel was last given, by a drag or by this sync. The panels' own
-  // getSize() reads stale for a frame after a change, so it cannot be compared with the model.
-  const applied = useRef({
-    navigator: collapsed.navigator ? Number.NaN : widths.navigator,
-    inspector: collapsed.inspector ? Number.NaN : widths.inspector,
-  })
   const root = useLayout((layout) => layout.root)
   const tabs = useLayout((layout) => layout.tabs)
   const maximized = useLayout((layout) => (layout.maximized ? findPane(layout.root, layout.maximized) : undefined))
   const centre = useRef<HTMLDivElement>(null)
   const refs = { navigator: usePanelRef(), inspector: usePanelRef() }
-  const syncing = useRef(false)
+  const { group, groupHandle, shown, commitSizes, syncing, resync } = useSidebarPanels(refs, centre)
   useDropMonitor()
   useEffect(keepFocusOffHandles, [])
-  // A resize ended: keep widths, and notice a sidebar dragged shut or open. Read a frame later:
-  // inside onLayoutChanged the panels still report their sizes from before the change.
-  const commitSizes = (): void => {
-    for (const id of ['navigator', 'inspector'] as const) {
-      const panel = refs[id].current
-      if (!panel) continue
-      const isCollapsed = panel.isCollapsed()
-      if (isCollapsed !== layoutStore.getState().layouts[layoutStore.getState().active]?.collapsed[id])
-        dispatch({ type: 'setCollapsed', sidebar: id, collapsed: isCollapsed })
-      if (!isCollapsed) {
-        dispatch({ type: 'setWidth', sidebar: id, width: panel.getSize().inPixels })
-        applied.current[id] = layoutStore.getState().layouts[layoutStore.getState().active]!.widths[id]
-      }
-    }
-  }
-
-  // The model decides what is collapsed and how wide an open sidebar is; the panels follow it
-  // (Reset layout, a double-clicked gutter). Not while a handle is held: the pointer wins. Right
-  // after the sidebars swap, wait a frame: the resize library re-reads the panels' order first, and
-  // a resize in the same update is lost.
-  const order = sidebars.join(',')
-  const syncedOrder = useRef(order)
-  useEffect(() => {
-    const sync = (): void => {
-      if (document.querySelector('[data-separator=active]')) return
-      const layout = layoutStore.getState().layouts[layoutStore.getState().active]
-      if (!layout) return
-      for (const id of ['navigator', 'inspector'] as const) {
-        const panel = refs[id].current
-        if (!panel) continue
-        syncing.current = true
-        // Expanding restores the saved width itself; the size reads stale until the next render.
-        if (panel.isCollapsed() !== layout.collapsed[id]) {
-          if (layout.collapsed[id]) panel.collapse()
-          // A sidebar that mounted collapsed has no width to return to: open it at the saved one.
-          else if (Number.isNaN(applied.current[id])) {
-            const width = layout.widths[id]
-            panel.resize(`${width}px`)
-            applied.current[id] = width
-            // The library turns pixels into a share of the group as it is now, while the gutter
-            // beside the sidebar is still growing in: correct the width once that settles.
-            setTimeout(
-              () => {
-                if (!panel.isCollapsed() && Math.abs(panel.getSize().inPixels - width) > 0.5) panel.resize(`${width}px`)
-              },
-              DURATION.base * 1000 + 100,
-            )
-          } else panel.expand()
-        } else if (!layout.collapsed[id] && applied.current[id] !== layout.widths[id]) {
-          panel.resize(`${layout.widths[id]}px`)
-          applied.current[id] = layout.widths[id]
-        }
-        syncing.current = false
-      }
-    }
-    if (syncedOrder.current === order) return sync()
-    syncedOrder.current = order
-    const next = requestAnimationFrame(sync)
-    return () => cancelAnimationFrame(next)
-  })
-
-  // Animate panel sizes while a collapse or expand settles, then stop, so a drag never lags.
-  const sizesKey = `${collapsed.navigator ? 1 : 0}${collapsed.inspector ? 1 : 0}`
-  const group = useRef<HTMLDivElement>(null)
-  // Compared with the last collapsed state, not a first-run flag: React runs effects twice in
-  // development, and the window must open at its saved sizes without animating.
-  const shownKey = useRef<string | null>(null)
-  useLayoutEffect(() => {
-    const element = group.current
-    const previous = shownKey.current
-    shownKey.current = sizesKey
-    if (!element || previous === null || previous === sizesKey) return
-    element.dataset.layoutAnimating = ''
-    const done = setTimeout(() => delete element.dataset.layoutAnimating, DURATION.base * 1000 + 50)
-    return () => clearTimeout(done)
-  }, [sizesKey])
-  // Any direct resize ends a size animation at once: the pointer or key must win. Plain listeners,
-  // not props: the resize library handles these events on the group itself.
-  useEffect(() => {
-    const element = group.current
-    if (!element) return
-    const stop = (): void => {
-      delete element.dataset.layoutAnimating
-    }
-    element.addEventListener('pointerdown', stop, true)
-    element.addEventListener('keydown', stop, true)
-    return () => {
-      element.removeEventListener('pointerdown', stop, true)
-      element.removeEventListener('keydown', stop, true)
-    }
-  }, [])
   const [left, right] = sidebars
   // Double-clicking a sidebar's gutter puts it back to its default width.
   const resetWidth = (id: SidebarId): void => dispatch({ type: 'setWidth', sidebar: id, width: SIDEBAR_WIDTH[id] })
@@ -244,18 +155,28 @@ export function CardArea() {
       <Group
         id="cards"
         elementRef={group}
+        groupRef={groupHandle}
         orientation="horizontal"
         className="min-h-0 flex-1 p-2"
-        onLayoutChange={noteResizing}
+        onLayoutChange={() => {
+          noteResizing()
+          // The library re-lays the panels out itself as the window resizes; bring them back to
+          // what should show.
+          resync()
+        }}
         onLayoutChanged={(_layout, meta) => {
-          if (meta.isUserInteraction && !syncing.current) requestAnimationFrame(commitSizes)
+          if (syncing.current) return
+          // A drag saves what it did; a change the library made itself (a shrinking window) is undone
+          // where it disagrees with what should show.
+          if (meta.isUserInteraction) requestAnimationFrame(commitSizes)
+          else resync()
         }}
       >
-        <SidebarPanel key={left} id={left} panelRef={refs[left]} />
+        <SidebarPanel key={left} id={left} panelRef={refs[left]} shown={shown[left]} />
         <ResizeHandle
           key={`gutter-${left}`}
           orientation="horizontal"
-          hidden={collapsed[left]}
+          hidden={!shown[left]}
           onDoubleClick={() => resetWidth(left)}
         />
         <Panel id="centre" elementRef={centre} style={MOVING_CARD} minSize={`${minSize(root, tabs).width}px`}>
@@ -273,10 +194,10 @@ export function CardArea() {
         <ResizeHandle
           key={`gutter-${right}`}
           orientation="horizontal"
-          hidden={collapsed[right]}
+          hidden={!shown[right]}
           onDoubleClick={() => resetWidth(right)}
         />
-        <SidebarPanel key={right} id={right} panelRef={refs[right]} />
+        <SidebarPanel key={right} id={right} panelRef={refs[right]} shown={shown[right]} />
       </Group>
       {/* Outside the panels, which scroll whatever overflows them: the strips reach into the gutters. */}
       <DockEdges centre={centre} />

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, session } from 'electron'
+import { app, BrowserWindow, dialog, screen, session } from 'electron'
 import { broadcast, handle, listen, registerAppWindow } from './ipc'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
@@ -40,7 +40,7 @@ import { registerServiceIpc } from './services'
 import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge } from './stream-bridge'
 import { registerWorkspaceIpc, selectedWorkspaces, selectionRequests } from './workspaces'
 import { installAppMenu } from './app-menu'
-import { appUrl, registerAppScheme, serveAppScheme } from './app-protocol'
+import { registerAppScheme, serveAppScheme, windowUrl } from './app-protocol'
 import { lockDownAppSession, lockDownAppWindow, refuseWebviews } from './app-security'
 import { enableRemoteDebugging, startDevStateServer } from './dev'
 import { initializeLogging, logWindowConsole } from './logging'
@@ -66,6 +66,22 @@ handle('ade:app-version', () => app.getVersion())
 listen('ade:theme', (_event, theme: unknown) => {
   if (isThemePreference(theme)) setAppearance(theme)
 })
+// The renderer knows what its pane layout needs; the window may not shrink below it. A window
+// already smaller grows to fit, within its screen.
+listen('ade:window-minimum-size', (event, width: unknown, height: unknown) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || typeof width !== 'number' || typeof height !== 'number') return
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return
+  const area = screen.getDisplayMatching(window.getBounds()).workAreaSize
+  const minimum = {
+    width: Math.round(Math.min(area.width, Math.max(WINDOW_MINIMUM.width, width))),
+    height: Math.round(Math.min(area.height, Math.max(WINDOW_MINIMUM.height, height))),
+  }
+  window.setMinimumSize(minimum.width, minimum.height)
+  const [current, currentHeight] = window.getSize() as [number, number]
+  if (current < minimum.width || currentHeight < minimum.height)
+    window.setSize(Math.max(current, minimum.width), Math.max(currentHeight, minimum.height))
+})
 registerProfileIpc()
 registerConversationIpc()
 registerWorkspaceIpc()
@@ -90,18 +106,23 @@ registerQuitTeardown(() => {
 // setting changed just before quitting survives.
 registerQuitTeardown(() => session.defaultSession.flushStorageData())
 
+/** The window's name: Electron restores its bounds by it, and the renderer keeps its layout by it. */
+const MAIN_WINDOW = 'main'
+/** Main's own floor for any window, whatever its layout asks for. */
+const WINDOW_MINIMUM = { width: 720, height: 480 } as const
+
 function openMainWindow(): void {
   const window = new BrowserWindow({
     // Shown once the first frame is painted (ready-to-show below), so it never opens blank.
     show: false,
     width: 1440,
     height: 900,
-    minWidth: 720,
-    minHeight: 480,
+    minWidth: WINDOW_MINIMUM.width,
+    minHeight: WINDOW_MINIMUM.height,
     title: 'ADE',
     // Electron restores this window's position, size and fullscreen or maximized state by name.
     // (Experimental in Electron 44.) The pane layout is the renderer's, not the window's.
-    name: 'main',
+    name: MAIN_WINDOW,
     windowStatePersistence: true,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: TRAFFIC_LIGHTS,
@@ -186,7 +207,7 @@ function openMainWindow(): void {
   })
 
   lockDownAppWindow(window.webContents)
-  void window.loadURL(appUrl())
+  void window.loadURL(windowUrl(MAIN_WINDOW))
 }
 
 app

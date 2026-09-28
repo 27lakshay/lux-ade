@@ -3,12 +3,12 @@ import { commandService } from '../../../app/commands'
 import { defaultLayout } from './layout'
 import { handleLayoutCommand, registerLayoutCommands } from './layout-commands'
 import { panes } from './layout-tree'
-import { DEFAULT_WORKSPACE, layoutStore } from './layout-store'
+import { DEFAULT_WORKSPACE, layoutStore, STORAGE_KEY } from './layout-store'
 
 const layout = () => layoutStore.getState().layouts[DEFAULT_WORKSPACE]!
 
 beforeEach(() => {
-  localStorage.removeItem('ade.layouts')
+  localStorage.removeItem(STORAGE_KEY)
   layoutStore.setState({
     active: DEFAULT_WORKSPACE,
     layouts: { [DEFAULT_WORKSPACE]: defaultLayout('p1') },

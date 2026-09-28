@@ -113,6 +113,10 @@ test('a pane dropped on the bottom dock edge spans the whole width', async () =>
 
 test('a tab dropped on the left dock edge becomes a full-height pane', async () => {
   await twoPanes()
+  // Three terminal panes need 976px: room the centre has with the sidebars closed.
+  dispatch({ type: 'setCollapsed', sidebar: 'navigator', collapsed: true })
+  dispatch({ type: 'setCollapsed', sidebar: 'inspector', collapsed: true })
+  await expect.poll(() => document.getElementById('centre')!.getBoundingClientRect().width).toBeGreaterThan(1000)
   openTab({ kind: 'terminal', title: 'Extra' })
   await expect.poll(() => screenTab('Extra')).toBeTruthy()
   const drag = await startDrag(screenTab('Extra'))

@@ -1,8 +1,16 @@
 import { beforeEach, expect, test } from 'vitest'
 import { defaultLayout } from './layout'
-import { DEFAULT_WORKSPACE, dispatch, layoutStore, setActiveWorkspace, setKeepMounted } from './layout-store'
+import {
+  DEFAULT_WORKSPACE,
+  dispatch,
+  layoutStore,
+  setActiveWorkspace,
+  setKeepMounted,
+  STORAGE_KEY,
+} from './layout-store'
 
 beforeEach(() => {
+  localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem('ade.layouts')
   layoutStore.setState({
     active: DEFAULT_WORKSPACE,
@@ -35,7 +43,7 @@ test('layouts survive a reload; damaged ones fall back to the default', async ()
   const collapsed = { ...defaultLayout('p1'), collapsed: { navigator: false, inspector: true } }
   const damaged = { version: 1, sidebars: ['navigator', 'navigator'] }
   localStorage.setItem(
-    'ade.layouts',
+    STORAGE_KEY,
     JSON.stringify({
       state: { layouts: { [DEFAULT_WORKSPACE]: collapsed, broken: damaged }, keepMounted: 3 },
       version: 1,
@@ -45,4 +53,23 @@ test('layouts survive a reload; damaged ones fall back to the default', async ()
   const { layouts } = layoutStore.getState()
   expect(layouts[DEFAULT_WORKSPACE]?.collapsed.inspector).toBe(true)
   expect(layouts.broken).toBeUndefined()
+})
+
+test('each window saves under its own name; the main window takes over layouts saved before', async () => {
+  // Tests run as the main window (no ?window= in the URL).
+  expect(STORAGE_KEY).toBe('ade.layouts:main')
+  const swapped = { ...defaultLayout('p1'), sidebars: ['inspector', 'navigator'] }
+  localStorage.setItem(
+    'ade.layouts',
+    JSON.stringify({ state: { layouts: { [DEFAULT_WORKSPACE]: swapped } }, version: 1 }),
+  )
+  // Only when this window has nothing of its own yet.
+  localStorage.removeItem(STORAGE_KEY)
+  await layoutStore.persist.rehydrate()
+  expect(layoutStore.getState().layouts[DEFAULT_WORKSPACE]?.sidebars).toEqual(['inspector', 'navigator'])
+  dispatch({ type: 'swapSidebars' })
+  expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).state.layouts[DEFAULT_WORKSPACE].sidebars).toEqual([
+    'navigator',
+    'inspector',
+  ])
 })

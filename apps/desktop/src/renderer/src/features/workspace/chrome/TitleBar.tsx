@@ -1,6 +1,6 @@
 import { IconButton } from '@/components/IconButton'
 import { openCommandPalette } from '../../../provisional/CommandPalette'
-import { toggleSide } from '../model/layout-store'
+import { toggleSidebar } from '../cards/fit'
 
 // The fixed top row: the window buttons (native), the sidebar toggles and search. The whole row
 // drags the window except its controls.
@@ -11,7 +11,7 @@ export function TitleBar() {
         icon="toggleLeftSidebar"
         label="Toggle left sidebar"
         shortcut={{ appCommand: 'toggle-left-sidebar' }}
-        onClick={() => toggleSide('left')}
+        onClick={() => toggleSidebar('left')}
       />
       <div className="flex-1" />
       <IconButton
@@ -24,7 +24,7 @@ export function TitleBar() {
         icon="toggleRightSidebar"
         label="Toggle right sidebar"
         shortcut={{ appCommand: 'toggle-right-sidebar' }}
-        onClick={() => toggleSide('right')}
+        onClick={() => toggleSidebar('right')}
       />
     </header>
   )

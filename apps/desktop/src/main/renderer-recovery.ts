@@ -10,8 +10,9 @@ import { appUrl } from './app-protocol'
 const HANG_GRACE_MS = 8_000
 const REPEAT_WINDOW_MS = 30_000
 
-function safeModeUrl(): string {
-  const url = new URL(appUrl())
+/** The window's own page, keeping its name, in safe mode. */
+function safeModeUrl(window: BrowserWindow): string {
+  const url = new URL(window.webContents.getURL() || appUrl())
   url.searchParams.set('safeMode', '1')
   return url.toString()
 }
@@ -37,7 +38,7 @@ export function recoverRendererFailures(window: BrowserWindow): void {
     }
     lastRecovery = now
     scoped.warn(`reloading window in safe mode (${reason})`)
-    void window.loadURL(safeModeUrl())
+    void window.loadURL(safeModeUrl(window))
     void dialog.showMessageBox(window, {
       type: 'warning',
       title: 'Window reloaded',
