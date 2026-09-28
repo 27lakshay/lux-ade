@@ -1,20 +1,20 @@
 # Lane A: windows and layouts in the daemon (daemon-authority ticket 02)
 
-Status: built. Branch `claude/agent-a885b80600a051798`, rebased on `main` at `b048501`
-(lane C merged).
+Status: built. Branch `claude/agent-a885b80600a051798`, rebased on `main` at `9286c36`
+(lanes C and E merged). Three commits: layout core, daemon windows and layouts,
+decision 5 for layout changes.
 
 ## Results
 
 | Check | Result |
 |---|---|
-| `pnpm check:static`, final commit | RESULT_FINAL |
-| `pnpm check:static`, first commit (layout core) | RESULT_FIRST |
+| `pnpm check:static`, each of the three commits after the last rebase | passed (842, 850, 850 Rust tests) |
 | Shared JSON vectors (`crates/ade-core/tests/layout_vectors.rs`) | 162 vectors, all pass |
 | Proptest (`ade_core::layout::tests`), 2000 cases each | well-formed after every step; pane-making actions idempotent |
-| `e2e/protocol/layouts` (`ADE_E2E_WORKERS=2`) | 8 passed |
-| Regression: `conversation-delete`, `terminals3`, `workspaces` | 17 passed |
+| `e2e/protocol/layouts` (`ADE_E2E_WORKERS=2`), final | 9 passed |
+| Final run: `layouts`, `terminals3`, `conversation-delete`, `orchestration/parity`, `workspaces` | 31 passed |
 | Regression: `backup`, `restarts`, `storage`, `catalogs` | 46 passed |
-| Full protocol suite without `@load` | RESULT_FULL |
+| Full protocol suite without `@load` (before the decision 5 commit) | 852 passed, 14 skipped, 1 failed: `orchestration/parity` lacked a `layout` domain sample; added, it passes |
 
 ## What was built
 
@@ -81,8 +81,20 @@ Status: built. Branch `claude/agent-a885b80600a051798`, rebased on `main` at `b0
   workspace's layouts are deleted, and a window showing it moves to the first remaining
   workspace ordered by project name, then workspace name (case-insensitive), in the same
   transaction. The feed carries `layout_removed` and `window_changed`.
+- **Decision 5 for every layout change** (`layout_change` in
+  `bin/daemon/server.rs`): when `layout.apply` or `layout.replace` removes a shell
+  terminal's last tab from the layout, the daemon closes that terminal first by
+  `terminal.close`'s rule, which also removes its tabs from every layout. Busy shells
+  (from their records) refuse the whole change with `terminal_busy`, listing
+  `terminals: [{terminal_id, foreground}]`, and nothing is closed; `force: true` closes
+  them. The change then applies without its `expected_revision`, since the closes moved
+  the revision; the reply says `changed: true`. Service, script and Conversation
+  terminal tabs and every other target only leave the layout. `window.close` keeps its
+  layouts, so it closes nothing. CLI: `--force` on `tab close`, `layout apply`,
+  `layout replace`.
 - **Errors.** `ade_core::error::LayoutError`: `window_not_found`, `window_exists`,
-  `layout_conflict`, `tab_target_missing`, `invalid_layout`, each with a recovery.
+  `layout_conflict`, `tab_target_missing`, `invalid_layout`, and `terminal_busy` for a
+  layout change, each with a recovery.
 
 ## Decisions to confirm (flagged)
 
@@ -105,7 +117,15 @@ Status: built. Branch `claude/agent-a885b80600a051798`, rebased on `main` at `b0
    its own `type` tag, so generated TS types are flat. `active` and `maximized` are
    required and nullable in both directions (`Nullable` schema helper), matching the TS
    layout.
-7. **`remove_workspace` signature** changed from `Result<bool>` to
+7. **Busy check for a layout change** reads the terminal records' `busy`, which trails
+   the runtime by up to 250 ms; `terminal.close`'s own stop is authoritative. If a shell
+   turns busy in between, the change fails with lane C's single-terminal
+   `terminal_busy` after closing the shells before it; their tabs are already gone,
+   so the state stays consistent.
+8. **A retry of a change that closed terminals** with the original `expected_revision`
+   is a `layout_conflict`, because the closes moved the revision; without one it
+   converges.
+9. **`remove_workspace` signature** changed from `Result<bool>` to
    `Result<Option<WorkspaceRemoval>>` (lane B owns workspace removal; small merge risk).
 
 ## Not done or untested
@@ -132,4 +152,5 @@ Status: built. Branch `claude/agent-a885b80600a051798`, rebased on `main` at `b0
 | Reading, exploring the daemon and desktop model | 03:05–03:15 |
 | Layout core, vectors from the TS reducer, proptest, first gate and commit | 03:15–03:30 |
 | Daemon storage, operations, feed, CLI, E2E | 03:30–03:45 |
-| Rebase onto lane C, wiring its hooks, regression E2E | 03:45–TIME_END |
+| Rebase onto lane C, wiring its hooks, regression and full E2E | 03:45–04:10 |
+| Decision 5 for layout changes, rebase, gating each commit | 04:10–04:30 |
