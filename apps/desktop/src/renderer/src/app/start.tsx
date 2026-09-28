@@ -47,7 +47,8 @@ export async function start(): Promise<void> {
       >
         <QueryClientProvider client={queryClient}>
           <IconProvider>
-            <TooltipProvider>
+            {/* Tooltips wait 600ms, then switch instantly while the pointer moves between controls. */}
+            <TooltipProvider delay={600}>
               <Toaster>
                 <RouterProvider router={router} />
                 <CommandPalette service={commandService} />
