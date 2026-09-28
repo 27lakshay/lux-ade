@@ -17,6 +17,12 @@ import { Pane } from './Pane'
 
 const CLIPPED = { overflow: 'hidden' } as const
 
+/**
+ * The id of the panel a node sits in. Not the node's own id: a split's group already has that one,
+ * and element ids must be unique (the gutters point at panels by id for screen readers).
+ */
+const slotId = (nodeId: string): string => `slot-${nodeId}`
+
 function Child({ node, split, index }: { node: LayoutNode; split: SplitNode; index: number }) {
   // A number, not the tab list: only a change to this node's minimum renders it.
   const row = split.direction === 'row'
@@ -26,7 +32,7 @@ function Child({ node, split, index }: { node: LayoutNode; split: SplitNode; ind
   })
   return (
     <Panel
-      id={node.id}
+      id={slotId(node.id)}
       defaultSize={`${split.sizes[index]}%`}
       minSize={`${min}px`}
       // Never a scrollbar at this level: content too big for a small pane is clipped by its card.
@@ -51,8 +57,8 @@ function Split({ node }: { node: SplitNode }) {
   useEffect(() => {
     const current = group.current?.getLayout()
     if (!current) return
-    const target = Object.fromEntries(node.children.map((child, index) => [child.id, node.sizes[index]!]))
-    if (node.children.some((child) => Math.abs((current[child.id] ?? 0) - target[child.id]!) > 0.5))
+    const target = Object.fromEntries(node.children.map((child, index) => [slotId(child.id), node.sizes[index]!]))
+    if (node.children.some((child) => Math.abs((current[slotId(child.id)] ?? 0) - target[slotId(child.id)]!) > 0.5))
       group.current?.setLayout(target)
     // node.children changing remounts this component (the key in PaneGrid).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sizesKey stands for node.sizes
@@ -69,7 +75,7 @@ function Split({ node }: { node: SplitNode }) {
           dispatch({
             type: 'setSplitSizes',
             splitId: node.id,
-            sizes: node.children.map((child) => layout[child.id] ?? 0),
+            sizes: node.children.map((child) => layout[slotId(child.id)] ?? 0),
           })
       }}
     >

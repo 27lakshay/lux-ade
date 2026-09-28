@@ -248,3 +248,16 @@ test('only the focused pane fills its active tab, and a change of focus re-rende
   await expect.poll(() => renders.Third).toBeGreaterThan(0)
   expect({ Left: renders.Left, Right: renders.Right }).toEqual({ Left: before.Left, Right: before.Right })
 })
+
+test('every element id in the workspace is unique, nested splits included', async () => {
+  await renderWorkspace()
+  openTab({ kind: 'terminal', title: 'A' })
+  dispatch({ type: 'splitPane', paneId: 'p1', direction: 'row', newPaneId: 'p2' })
+  dispatch({ type: 'splitPane', paneId: 'p2', direction: 'column', newPaneId: 'p3' })
+  await expect.poll(() => document.querySelectorAll('section[aria-label="Pane"]').length).toBe(3)
+  const ids = [...document.querySelectorAll('[id]')].map((element) => element.id)
+  expect(ids.filter((id, index) => ids.indexOf(id) !== index)).toEqual([])
+  // Every gutter points at panels that exist.
+  for (const separator of document.querySelectorAll('[role=separator][aria-controls]'))
+    expect(document.getElementById(separator.getAttribute('aria-controls')!)).not.toBeNull()
+})
