@@ -14,6 +14,7 @@ decision 5 for layout changes.
 | `e2e/protocol/layouts` (`ADE_E2E_WORKERS=2`), final | 9 passed |
 | Final run: `layouts`, `terminals3`, `conversation-delete`, `orchestration/parity`, `workspaces` | 31 passed |
 | Regression: `backup`, `restarts`, `storage`, `catalogs` | 46 passed |
+| Review fixes: `layouts` (12) plus terminals, services, reliability, recovery, restarts, backup, errors, orchestration, workspaces, conversation-delete | 494 passed, 2 skipped |
 | Full protocol suite without `@load` (before the decision 5 commit) | 852 passed, 14 skipped, 1 failed: `orchestration/parity` lacked a `layout` domain sample; added, it passes |
 
 ## What was built
@@ -81,27 +82,41 @@ decision 5 for layout changes.
   workspace's layouts are deleted, and a window showing it moves to the first remaining
   workspace ordered by project name, then workspace name (case-insensitive), in the same
   transaction. The feed carries `layout_removed` and `window_changed`.
-- **Decision 5 for every layout change** (`layout_change` in
-  `bin/daemon/server.rs`): when `layout.apply` or `layout.replace` removes a shell
-  terminal's last tab from the layout, the daemon closes that terminal first by
-  `terminal.close`'s rule, which also removes its tabs from every layout. Busy shells
-  (from their records) refuse the whole change with `terminal_busy`, listing
-  `terminals: [{terminal_id, foreground}]`, and nothing is closed; `force: true` closes
-  them. The change then applies without its `expected_revision`, since the closes moved
-  the revision; the reply says `changed: true`. Service, script and Conversation
-  terminal tabs and every other target only leave the layout. `window.close` keeps its
-  layouts, so it closes nothing. CLI: `--force` on `tab close`, `layout apply`,
-  `layout replace`.
+- **Decision 5, after review** (`layout_close` in `bin/daemon/server.rs`):
+  `layout.apply` and `layout.replace` never end a process. A change that would remove
+  the last tab, counted across every window's layouts, of a running shell is refused
+  with `tab_close_required`, listing those tabs in `tabs`. The effect commands
+  `tab.close` and `pane.close` (envelope receipts; observer reads the layout) close
+  every shell terminal, running or not, whose last tab they remove, by
+  `terminal.close`'s rule without its bound-workspace check, so they work in a
+  workspace that needs rebind. All busy shells are found from the runtime under the
+  lease lock before any stops; a busy one refuses with `terminal_busy` listing
+  `terminals: [{terminal_id, foreground}]` and nothing closes, unless `force`. A retry
+  with the same operation ID returns the recorded outcome. CLI: `ade tab close [--force]`
+  uses `tab.close`; `ade pane close [--force]` is new.
+- **Explicit state actions.** `toggle_side`, `swap_sidebars` and `toggle_maximize` became
+  `set_side_collapsed {side, collapsed}`, `set_sidebar_sides {left}` and
+  `set_maximized {pane_id|null}`. Every action but `move_pane`, `swap_panes` and
+  `dock_pane` is idempotent (proptest checks it over 2000 random sequences);
+  `layout.apply` refuses those three without `expected_revision`, so their retry is
+  recognised. The vectors were regenerated from the TS reducer, mapping each TS toggle
+  to the state it reached.
+- **Recovery after missed frames.** `Window.layouts` gives each stored layout's revision
+  by workspace, in `window.list`, the catalog and `window_changed`. A window moved by a
+  workspace removal also gets `layout_changed` for the layout it now shows.
+- **Other review fixes.** A replay of `window.create` whose workspace was removed since
+  returns the window. Service removal and a removed workspace's terminal retirement now
+  publish the layouts that lost tabs.
 - **Errors.** `ade_core::error::LayoutError`: `window_not_found`, `window_exists`,
-  `layout_conflict`, `tab_target_missing`, `invalid_layout`, and `terminal_busy` for a
-  layout change, each with a recovery.
+  `layout_conflict`, `tab_target_missing`, `invalid_layout`, `tab_close_required`, and
+  `terminal_busy` for `tab.close` and `pane.close`, each with a recovery.
 
 ## Decisions to confirm (flagged)
 
-1. **Retry of a toggle.** The ticket says callers supply every new ID so a retry is
-   harmless; toggles (`toggle_side`, `toggle_maximize`, `swap_sidebars`, a centre
-   `move_pane`, `swap_panes`) carry none. A retry sent with the same `expected_revision`
-   returns the first result; without `expected_revision` a toggle applies again.
+1. **Relative pane moves need a revision.** `move_pane`, `swap_panes` and `dock_pane`
+   cannot name a target state, so `layout.apply` requires `expected_revision` for them
+   (`invalid_layout` without); the repeat of the last action from that revision returns
+   its result.
 2. **Window whose last workspace is removed** closes and keeps pointing at the removed
    workspace; `window.reopen` then refuses `workspace_removed` until
    `window.show_workspace` moves it.
@@ -117,14 +132,12 @@ decision 5 for layout changes.
    its own `type` tag, so generated TS types are flat. `active` and `maximized` are
    required and nullable in both directions (`Nullable` schema helper), matching the TS
    layout.
-7. **Busy check for a layout change** reads the terminal records' `busy`, which trails
-   the runtime by up to 250 ms; `terminal.close`'s own stop is authoritative. If a shell
-   turns busy in between, the change fails with lane C's single-terminal
-   `terminal_busy` after closing the shells before it; their tabs are already gone,
-   so the state stays consistent.
-8. **A retry of a change that closed terminals** with the original `expected_revision`
-   is a `layout_conflict`, because the closes moved the revision; without one it
-   converges.
+7. **Which shells `tab.close` ends**: any shell-kind terminal whose last tab it removes,
+   running or not; `layout.apply` refuses only for a running shell, and otherwise leaves
+   a stopped shell without a tab.
+8. **Race**: a shell restarted and made busy between `tab.close`'s check and its stop is
+   stopped only with `force`; without it the close fails part way, having closed the
+   earlier shells (their tabs are gone, so the state is consistent).
 9. **`remove_workspace` signature** changed from `Result<bool>` to
    `Result<Option<WorkspaceRemoval>>` (lane B owns workspace removal; small merge risk).
 
@@ -133,10 +146,6 @@ decision 5 for layout changes.
 - The TS reducer does not run the shared vectors yet: `apps/desktop` is
   coordinator-owned. Ticket 07 can run them through a converter, or delete the reducer.
   The generator is not committed; it ran from a scratch copy of the three TS files.
-- Layouts removed by `terminal_records::remove` inside service removal
-  (`services.rs`) and workspace terminal retirement (`bindings.rs`) are not published;
-  those callers ignore the returned layouts. Only a tab in another workspace's layout can
-  be affected.
 - `ade terminal create` has no `--window`/`--pane` flag for `place`; the SDK covers it.
 - The legacy Python scripts (`scripts/benchmark_runtime.py`, `test_tabs.py` and others)
   still call `window.save`; they drive the removed GPUI prototype and were left alone.
@@ -154,3 +163,4 @@ decision 5 for layout changes.
 | Daemon storage, operations, feed, CLI, E2E | 03:30–03:45 |
 | Rebase onto lane C, wiring its hooks, regression and full E2E | 03:45–04:10 |
 | Decision 5 for layout changes, rebase, gating each commit | 04:10–04:30 |
+| Review fixes: tab.close / pane.close, explicit state actions, revisions, gaps | 04:35–05:30 |
