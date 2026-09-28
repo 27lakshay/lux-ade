@@ -10,7 +10,8 @@ export {
   type SendJournalRecord,
 } from './send-journal.js'
 export { GitJournal, type GitIntent } from './git-journal.js'
-export { fileOutboxStorage, lockJournalDirectory, openClientJournals, type ClientJournals } from './journal-file.js'
+export { fileOutboxStorage, openClientJournals, type ClientJournals } from './journal-file.js'
+export { lockJournalDirectory, type JournalLockOptions } from './journal-lock.js'
 export {
   SendPipeline,
   type SendDraft,

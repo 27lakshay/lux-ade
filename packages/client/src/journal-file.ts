@@ -5,7 +5,7 @@
 // reported as uncertain, because the new file may or may not survive a crash.
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises'
+import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { GitJournal } from './git-journal.js'
 import { OutboxPersistenceUncertain, type OutboxFile, type OutboxStorage } from './outbox.js'
@@ -72,56 +72,6 @@ export function fileOutboxStorage(file: string, name: string): OutboxStorage {
       }
     },
   }
-}
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
-
-/**
- * Takes the journal directory for this process alone. A journal keeps its records
- * in memory between saves, so two processes sharing one directory (two CLI
- * commands at once) would overwrite each other's records. The lock file names its
- * owner's process ID; a lock whose owner has exited is taken over. Resolves to the
- * release function, or throws once `timeoutMs` has passed.
- */
-export async function lockJournalDirectory(directory: string, timeoutMs = 60_000): Promise<() => Promise<void>> {
-  if (!isAbsolute(directory) || directory.includes('\0')) throw new Error('Client journal directory must be absolute')
-  await mkdir(directory, { recursive: true, mode: 0o700 })
-  const file = join(directory, 'journals.lock')
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    try {
-      const handle = await open(file, 'wx', 0o600)
-      try {
-        await handle.writeFile(String(process.pid))
-      } finally {
-        await handle.close()
-      }
-      return () => unlink(file).catch(() => undefined)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    }
-    const owner = Number(await readFile(file, 'utf8').catch(() => ''))
-    const abandoned = Number.isSafeInteger(owner) && owner > 0 ? !alive(owner) : await unnamedAndOld(file)
-    if (abandoned) {
-      await unlink(file).catch(() => undefined)
-      continue
-    }
-    if (Date.now() > deadline) throw new Error(`Client journals at ${directory} are in use by another process`)
-    await new Promise((resolveWait) => setTimeout(resolveWait, 25))
-  }
-}
-
-/** A lock file whose owner never wrote its process ID, left for longer than any write takes. */
-async function unnamedAndOld(file: string): Promise<boolean> {
-  const info = await stat(file).catch(() => null)
-  return info !== null && Date.now() - info.mtimeMs > 10_000
 }
 
 /** A client's two journals: prompts and Git mutations the profile daemon has not admitted. */
