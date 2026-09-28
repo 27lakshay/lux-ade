@@ -9,12 +9,12 @@ import { contentSecurityPolicy } from './src/shared/content-security-policy'
 // Development-only renderer helpers, injected ahead of the app's entry by the dev server and never
 // built into the app. See docs/agents/desktop-debugging.md.
 //   ADE_REACT_DEVTOOLS=1  connect to the standalone React DevTools app on port 8097
-//   ADE_REACT_SCAN=1      outline components as they re-render
+//   ADE_REACT_SCAN=0      turn off React Scan (on by default: re-render outlines and an FPS meter)
 //   ADE_REACT_GRAB=0      turn off react-grab (on by default: hover, then ⌘C copies source context)
 function devHelpers(): Plugin {
   const helpers = [
     process.env.ADE_REACT_DEVTOOLS === '1' && '/src/dev/react-devtools.ts',
-    process.env.ADE_REACT_SCAN === '1' && '/src/dev/react-scan.ts',
+    process.env.ADE_REACT_SCAN !== '0' && '/src/dev/react-scan.ts',
     process.env.ADE_REACT_GRAB !== '0' && '/src/dev/react-grab.ts',
   ].filter((path): path is string => Boolean(path))
   return {

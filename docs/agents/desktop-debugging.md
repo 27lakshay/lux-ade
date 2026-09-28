@@ -54,5 +54,5 @@ Loaded ahead of React by the dev server (`electron.vite.config.ts`), never built
 | Helper | Default | Use |
 | --- | --- | --- |
 | react-grab | on (`ADE_REACT_GRAB=0` turns it off) | Hover an element and press ⌘C: copies its component stack with file and line, to paste into an agent |
-| React Scan | off (`ADE_REACT_SCAN=1`) | Outlines components as they re-render |
+| React Scan | on (`ADE_REACT_SCAN=0` turns it off) | Outlines components as they re-render; its toolbar shows the FPS |
 | React DevTools | off (`ADE_REACT_DEVTOOLS=1`) | Connects to the standalone app: `pnpm --dir apps/desktop exec react-devtools` |
