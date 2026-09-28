@@ -1,4 +1,6 @@
+import { useLayoutEffect, useRef } from 'react'
 import { IconButton } from '@/components/IconButton'
+import { attachHost } from '../content/hosts'
 import { Card } from '../cards/Card'
 import { Grip } from '../cards/Grip'
 import type { PaneNode } from '../model/layout'
@@ -11,6 +13,12 @@ import { Tab } from './Tab'
 export function Pane({ pane }: { pane: PaneNode }) {
   const focused = useLayout((layout) => layout.focusedPane === pane.id)
   const tabs = useLayout((layout) => layout.tabs)
+  const body = useRef<HTMLDivElement>(null)
+  // Show the active tab's content: attach its host element (content/hosts.ts), never re-render it.
+  useLayoutEffect(
+    () => (body.current && pane.active ? attachHost(body.current, pane.active) : undefined),
+    [pane.active],
+  )
   return (
     <Card surface="pane" label="Pane" grip={<Grip label="Move pane" />}>
       <div
@@ -46,7 +54,7 @@ export function Pane({ pane }: { pane: PaneNode }) {
         {pane.tabs.length === 0 ? (
           <PaneEmptyState paneId={pane.id} />
         ) : (
-          <div data-pane-body={pane.id} className="min-h-0 flex-1" />
+          <div ref={body} data-pane-body={pane.id} className="min-h-0 flex-1 px-1.5" />
         )}
       </div>
     </Card>

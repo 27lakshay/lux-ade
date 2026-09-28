@@ -1,42 +1,13 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { beforeEach, expect, test } from 'vitest'
-import { render } from 'vitest-browser-react'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { createAppRouter } from '../../app/router'
-import { MotionProvider } from '../../app/MotionProvider'
-import '../../app/app.css'
-import { defaultLayout } from './model/layout'
-import { DEFAULT_WORKSPACE, dispatch, layoutStore } from './model/layout-store'
-import { Workspace } from './Workspace'
+import { dispatch } from './model/layout-store'
+import { renderWorkspace, resetLayout, section } from './testing'
 
-beforeEach(() => {
-  localStorage.removeItem('ade.layouts')
-  layoutStore.setState({ active: DEFAULT_WORKSPACE, layouts: { [DEFAULT_WORKSPACE]: defaultLayout('p1') } })
-  document.documentElement.style.setProperty('--titlebar-height', '40px')
-  document.documentElement.style.setProperty('--traffic-lights-inset', '80px')
-})
-
-async function renderWorkspace() {
-  const router = createAppRouter({ Workspace, history: createMemoryHistory({ initialEntries: ['/'] }) })
-  return render(
-    <div style={{ width: 1440, height: 900 }}>
-      <QueryClientProvider client={new QueryClient()}>
-        <MotionProvider>
-          <TooltipProvider delay={0}>
-            <RouterProvider router={router} />
-          </TooltipProvider>
-        </MotionProvider>
-      </QueryClientProvider>
-    </div>,
-  )
-}
+beforeEach(resetLayout)
 
 const centre = (element: Element | null | undefined): number => {
   const rect = element!.getBoundingClientRect()
   return Math.round(rect.top + rect.height / 2)
 }
-const section = (label: string) => document.querySelector(`section[aria-label="${label}"]`)
 
 test('rows line up across the rail and every card, as in the design', async () => {
   await renderWorkspace()
