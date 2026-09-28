@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { DEFAULT_SETTINGS, panelTransition, type MotionSettings } from './motion'
+import { Rail } from './parts/Rail'
 import { Sidebar } from './parts/Sidebar'
 import { Panes, type PanesHandle } from './panes/Panes'
 import { CommandPalette } from './parts/CommandPalette'
@@ -41,6 +42,7 @@ import {
   GUTTER,
   LEADING_SLOT,
   LEFT_W,
+  RAIL_END,
   RIGHT_TOGGLE_INSET,
   RIGHT_W,
   SIDEBAR_TOGGLE_X,
@@ -211,7 +213,12 @@ export function App() {
       const card = cardEls.current[from]!.getBoundingClientRect()
       const width = SIDE_W[panel]
       const preview = across
-        ? { left: from === 'left' ? innerWidth - GUTTER - width : GUTTER, top: card.top, width, height: card.height }
+        ? {
+            left: from === 'left' ? innerWidth - GUTTER - width : RAIL_END + GUTTER,
+            top: card.top,
+            width,
+            height: card.height,
+          }
         : null
       setSideDrag({ from, label: SIDE_LABEL[panel], preview, ghostX: ev.clientX - 24, ghostY: ev.clientY - 18 })
     }
@@ -327,6 +334,9 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1" style={{ padding: `${GUTTER}px ${GUTTER}px ${GUTTER}px` }}>
+        <div className="relative z-20 shrink-0" style={{ marginRight: GUTTER }}>
+          <Rail />
+        </div>
         {renderSide('left', leftOpen)}
 
         {/* The panes sit above the sidebars, so in cover mode their edge slides over them. */}
@@ -419,15 +429,15 @@ export function App() {
         </IconButton>
       </div>
 
-      {/* Edge strips: resting the pointer against a hidden side's window edge peeks that sidebar.
-          They cover only the outer gutter, never pane content. */}
+      {/* Edge strips: resting the pointer against a hidden side's edge peeks that sidebar. On the
+          left that edge is the gutter after the rail. They cover only gutters, never pane content. */}
       {(['left', 'right'] as const).map((side) =>
         (side === 'left' ? leftOpen : rightOpen) ? null : (
           <div
             key={`edge-${side}`}
             aria-hidden
-            className={`fixed inset-y-0 z-30 ${side === 'left' ? 'left-0' : 'right-0'}`}
-            style={{ width: GUTTER }}
+            className={`fixed inset-y-0 z-30 ${side === 'left' ? '' : 'right-0'}`}
+            style={{ width: GUTTER, ...(side === 'left' ? { left: RAIL_END } : {}) }}
             onPointerEnter={() => schedulePeek(side, true, PEEK_SHOW_DELAY)}
             onPointerLeave={() => schedulePeek(side, false, PEEK_HIDE_DELAY)}
           />

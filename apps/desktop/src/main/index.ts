@@ -90,7 +90,7 @@ registerQuitTeardown(() => session.defaultSession.flushStorageData())
 
 // Native macOS window buttons sit at a fixed spot. The renderer's title row (layout.ts) is laid out
 // around them; change one and the other must follow.
-const TRAFFIC_LIGHTS = { x: 22, y: 26 }
+const TRAFFIC_LIGHTS = { x: 16, y: 26 }
 
 function openMainWindow(): void {
   const window = new BrowserWindow({
