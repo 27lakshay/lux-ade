@@ -17,6 +17,8 @@ import { PaneCollapse } from './pane-collapse'
 // collapses: in a row to a strip of tab icons, in a column to its tab bar. Clicking it opens it
 // again. Double-clicking a gutter evens out that split.
 
+const CLIPPED = { overflow: 'hidden' } as const
+
 function Child({ node, split, index }: { node: LayoutNode; split: SplitNode; index: number }) {
   const tabs = useLayout((layout) => layout.tabs)
   const panel = usePanelRef()
@@ -38,6 +40,8 @@ function Child({ node, split, index }: { node: LayoutNode; split: SplitNode; ind
       minSize={`${row ? min.width : min.height}px`}
       collapsible={isPane}
       collapsedSize={isPane ? `${collapsedSize}px` : undefined}
+      // Never a scrollbar at this level: content too big for a small pane is clipped by its card.
+      style={CLIPPED}
       onResize={isPane ? (size) => setCollapsed(size.inPixels <= collapsedSize + 1) : undefined}
     >
       <PaneCollapse value={collapse}>

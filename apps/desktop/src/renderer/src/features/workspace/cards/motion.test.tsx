@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from 'vitest'
 import { userEvent } from 'vitest/browser'
-import { layoutStore, openTab, toggleSide } from '../model/layout-store'
+import { dispatch, layoutStore, openTab, toggleSide } from '../model/layout-store'
 import { renderWorkspace, resetLayout, section } from '../testing'
 
 beforeEach(resetLayout)
@@ -74,4 +74,36 @@ test('pressing a handle while a size animation runs ends the animation at once',
   right.focus()
   await userEvent.keyboard('{ArrowLeft}')
   expect(document.querySelector('[data-layout-animating]')).toBeNull()
+})
+
+test('no scrollbar appears while the sidebars swap, and nothing changes size mid-swap', async () => {
+  // Uneven widths, so the centre moves too.
+  dispatch({ type: 'setWidth', sidebar: 'inspector', width: 420 })
+  await renderWorkspace()
+  await expect
+    .poll(() => document.querySelector('section[aria-label="Inspector"]')?.getBoundingClientRect().width)
+    .toBe(420)
+  const cards = document.getElementById('cards')!
+  const scrolling = () =>
+    [...cards.querySelectorAll<HTMLElement>('*')].filter(
+      (element) =>
+        /auto|scroll/.test(getComputedStyle(element).overflowX) &&
+        !element.closest('[data-slot=scroll-area-viewport]') &&
+        element.scrollWidth > element.clientWidth + 1,
+    ).length
+  const sizes = () =>
+    [...cards.querySelectorAll('section')].map((section) => Math.round(section.getBoundingClientRect().width)).join(',')
+  const before = sizes()
+  dispatch({ type: 'swapSidebars' })
+  const seen = new Set<string>()
+  let worst = 0
+  const start = performance.now()
+  while (performance.now() - start < 500) {
+    await new Promise(requestAnimationFrame)
+    worst = Math.max(worst, scrolling())
+    seen.add(sizes())
+  }
+  expect(worst).toBe(0)
+  // Only the arrangement before and after: no size in between.
+  expect([...seen].filter((set) => set !== before)).toHaveLength(1)
 })

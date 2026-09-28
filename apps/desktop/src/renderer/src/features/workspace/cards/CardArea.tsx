@@ -32,6 +32,13 @@ import { ResizeHandle } from './ResizeHandle'
 // so mid-transition.
 // Swapping sidebars moves whole cards (layout="position"), which keep their own widths.
 
+// The resize library wraps each panel's content in a box that scrolls whatever overflows it. A card
+// moving to its new side (a sidebar swap) is drawn at its old place with a transform, which counts
+// as overflow: that box grew a scrollbar for the whole animation, and the content reflowed around
+// it. The top-level panels let their cards overflow instead; nothing inside them scrolls at that
+// level (panes and sidebars scroll within themselves).
+const MOVING_CARD = { overflow: 'visible' } as const
+
 const SIDEBAR = {
   navigator: { label: 'Navigator', icon: 'toggleLeftSidebar', Content: Navigator },
   inspector: { label: 'Inspector', icon: 'toggleRightSidebar', Content: Inspector },
@@ -85,6 +92,7 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
       collapsible
       collapsedSize={0}
       groupResizeBehavior="preserve-pixel-size"
+      style={MOVING_CARD}
     >
       {/* The sidebar never animates its own size: it fades as it returns while the centre grows
           or shrinks. On a swap the whole card moves to its new side, keeping its width. */}
@@ -92,7 +100,8 @@ function SidebarPanel({ id, panelRef }: { id: SidebarId; panelRef: React.RefObje
         layout="position"
         layoutDependency={order}
         transition={transitions.layout}
-        className="relative h-full"
+        // Above the centre: on a swap, both sidebars pass over the panes, not one over and one under.
+        className="relative z-10 h-full"
         initial={false}
         animate={{ opacity: collapsed ? 0 : 1 }}
       >
@@ -247,7 +256,7 @@ export function CardArea() {
           hidden={collapsed[left]}
           onDoubleClick={() => resetWidth(left)}
         />
-        <Panel id="centre" elementRef={centre} minSize={`${minSize(root, tabs).width}px`}>
+        <Panel id="centre" elementRef={centre} style={MOVING_CARD} minSize={`${minSize(root, tabs).width}px`}>
           {/* Moves with a sidebar swap when the sidebars differ in width. */}
           <m.div
             layout="position"
