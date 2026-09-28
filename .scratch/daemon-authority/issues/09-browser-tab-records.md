@@ -113,8 +113,8 @@ the shown browser tab of each pane has a view attached; hidden tabs detach, like
 
 ## Decisions for the user before it starts
 
-1. **Tabs owned by a workspace** (recommended; removing a workspace closes its tabs) or by the
-   profile as today (tabs survive workspace removal and show in every workspace).
+1. ~~Tabs owned by a workspace or by the profile.~~ **Decided by the user 2026-09-29: a browser tab
+   is owned by a workspace**; removing the workspace closes its tabs.
 2. **Opening with no desktop** creates a `not_loaded` record (recommended) or is refused.
 
 ## Comments
