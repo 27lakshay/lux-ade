@@ -1,10 +1,18 @@
-import { Title } from '@/components/Typography'
+import { BottomBar } from './chrome/BottomBar'
+import { Rail } from './chrome/Rail'
+import { TitleBar } from './chrome/TitleBar'
+import { CardArea } from './cards/CardArea'
 
-// The workspace screen. The UI is being rebuilt from scratch; for now it only proves the app renders.
+// The workspace screen: fixed chrome (title bar, rail, bottom bar) around the floating cards.
 export function Workspace() {
   return (
-    <main className="drag flex h-full items-center justify-center">
-      <Title as="h1">Hello world</Title>
-    </main>
+    <div className="flex h-full flex-col bg-base text-foreground">
+      <TitleBar />
+      <div className="flex min-h-0 flex-1">
+        <Rail />
+        <CardArea />
+      </div>
+      <BottomBar />
+    </div>
   )
 }

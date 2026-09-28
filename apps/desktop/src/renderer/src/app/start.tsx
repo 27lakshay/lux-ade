@@ -5,8 +5,11 @@ import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from 'react-error-boundary'
 import { Toaster } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { TITLEBAR_HEIGHT } from '../../../shared/window-chrome'
+import { TITLEBAR_HEIGHT, TRAFFIC_LIGHTS_INSET } from '../../../shared/window-chrome'
 import { Workspace } from '../features/workspace/Workspace'
+import { handleLayoutCommand, registerLayoutCommands } from '../features/workspace/model/layout-commands'
+import { createDaemonStore } from '../state/daemon-store'
+import { DaemonStoreContext } from '../state/hooks'
 import { IconProvider } from '../icons/Icon'
 import { MotionProvider } from './MotionProvider'
 import { startMotionPreference } from './motion-preference'
@@ -26,19 +29,25 @@ export async function start(): Promise<void> {
   startMotionPreference()
   // Screens lay out their title row with var(--titlebar-height); main places the window buttons.
   document.documentElement.style.setProperty('--titlebar-height', `${TITLEBAR_HEIGHT}px`)
+  document.documentElement.style.setProperty('--traffic-lights-inset', `${TRAFFIC_LIGHTS_INSET}px`)
 
   registerAppCommands()
+  registerLayoutCommands()
   commandService.listen(window)
   if (window.adeHost) clearOnProfileSwitch(window.adeHost.profiles)
 
   const router = createAppRouter({ Workspace })
+  const daemon = window.adeHost ? createDaemonStore(window.adeHost) : null
   // Menu commands that change the screen. Any other command acts on the workspace, so it first
   // returns there from a full-screen view.
   window.adeHost?.onCommand((command) => {
     if (command === 'command-palette') openCommandPalette()
     else if (command === 'open-settings') void router.navigate({ to: '/settings' })
     else if (command === 'open-onboarding') void router.navigate({ to: '/onboarding' })
-    else if (router.state.location.pathname !== '/') void router.navigate({ to: '/' })
+    else {
+      if (router.state.location.pathname !== '/') void router.navigate({ to: '/' })
+      handleLayoutCommand(command)
+    }
   })
   // Resolve the first screen before rendering, so the window never paints an empty frame.
   await router.load()
@@ -48,20 +57,22 @@ export async function start(): Promise<void> {
       <ErrorBoundary
         fallbackRender={({ error, resetErrorBoundary }) => <ErrorReport error={error} onRetry={resetErrorBoundary} />}
       >
-        <QueryClientProvider client={queryClient}>
-          <MotionProvider>
-            <IconProvider>
-              {/* Tooltips wait 600ms, then switch instantly while the pointer moves between controls. */}
-              <TooltipProvider delay={600}>
-                <Toaster>
-                  <RouterProvider router={router} />
-                  <CommandPalette service={commandService} />
-                  <ConfirmHost />
-                </Toaster>
-              </TooltipProvider>
-            </IconProvider>
-          </MotionProvider>
-        </QueryClientProvider>
+        <DaemonStoreContext value={daemon?.store ?? null}>
+          <QueryClientProvider client={queryClient}>
+            <MotionProvider>
+              <IconProvider>
+                {/* Tooltips wait 600ms, then switch instantly while the pointer moves between controls. */}
+                <TooltipProvider delay={600}>
+                  <Toaster>
+                    <RouterProvider router={router} />
+                    <CommandPalette service={commandService} />
+                    <ConfirmHost />
+                  </Toaster>
+                </TooltipProvider>
+              </IconProvider>
+            </MotionProvider>
+          </QueryClientProvider>
+        </DaemonStoreContext>
       </ErrorBoundary>
     </StrictMode>,
   )

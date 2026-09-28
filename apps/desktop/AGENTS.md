@@ -35,8 +35,11 @@ claiming a UI change works.
 
 ## Renderer
 
-- The UI is being rebuilt from scratch (2026-09-28; the design prototype was removed). The
-  workspace (`features/workspace/Workspace.tsx`) renders only "Hello world" so far.
+- The workspace shell (`features/workspace`) is built to the Pen screen "Workspace — graphite —
+  dark": fixed chrome (`chrome/`: title bar, rail, bottom bar) around floating cards (`cards/`:
+  the sidebars and the panes). The layout is data (`model/layout.ts`), changed only by the reducer
+  (`model/layout.logic.ts`), stored per workspace (`model/layout-store.ts`). Sidebars only swap
+  sides; panes split and move anywhere in the centre. Pane content is empty for now.
 - Folders in `src/renderer/src`:
   - `bootstrap.ts`: the entry. It imports `app/start.tsx` dynamically and shows a plain error
     screen if that fails.
@@ -74,17 +77,20 @@ claiming a UI change works.
   diff colours, and the type scale. `app/app.css` imports it and adds only what every window needs.
   Lint (`@shadcn/lint`) refuses restyled kit components and raw colours, and
   `ade/no-native-title` refuses the `title` attribute: use the kit's Tooltip.
-- Surfaces separate by fill, never borders. The steps, darkest to lightest:
+- Surfaces separate by fill, never borders. Each layer steps up in tone (dark mode shown):
 
   | Class | For |
   |---|---|
-  | `bg-sidebar` | Window chrome: title bar, rail, sidebars, bottom bar |
+  | `bg-sidebar` | Chrome: title bar, rail, bottom bar (darkest) |
+  | `bg-base` | The gutters between floating cards |
+  | `bg-panel` | The floating sidebars |
   | `bg-background` | Panes |
   | `bg-card` | Blocks inside a pane: code, tool calls, the composer |
   | `bg-popover` | Anything floating: menus, palettes, toasts, dialogs |
   | `bg-muted` | Chips, the active tab, user messages |
   | `bg-accent` | Hover and selected rows |
 
+  Inside a pane the steps are larger than between frame layers, because no gutter draws the edge.
   `ade/surface-steps` refuses `border`, `divide` and fills off these steps (status colours
   excepted).
 - Text: render it with the typography components in `components/Typography.tsx`, never with size
