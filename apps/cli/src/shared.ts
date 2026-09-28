@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { requestDaemon, type DaemonResponse } from '@ade/client'
+import { lockJournalDirectory, openClientJournals, type ClientJournals } from '@ade/client/journals'
 
 export type CommandResult = DaemonResponse | Record<string, unknown>
 
@@ -49,6 +50,42 @@ export function effectOperationId(): string {
 /** The operation ID this invocation sent, if it sent one. */
 export function usedOperationId(): string | undefined {
   return sentOperationId
+}
+
+/** The profile this invocation acts for, as its client journals name it, and where they live. */
+type JournalOwner = { profileId: string; directory: string }
+let journalOwner: JournalOwner | undefined
+
+export function selectJournalOwner(owner: JournalOwner): void {
+  journalOwner = owner
+}
+
+/**
+ * Runs `work` with this profile's client journals, which hold prompts and Git
+ * mutations the daemon has not admitted. The journal directory is held for this
+ * process alone until `work` ends, so concurrent commands never overwrite each
+ * other's records.
+ */
+export async function withJournals<T>(work: (journals: ClientJournals, profileId: string) => Promise<T>): Promise<T> {
+  if (!journalOwner) throw new CliError('protocol', 'Client journals are unavailable for this command.')
+  const { profileId, directory } = journalOwner
+  let release: () => Promise<void>
+  let journals: ClientJournals
+  try {
+    release = await lockJournalDirectory(directory)
+  } catch (error) {
+    throw new CliError('in_progress', String(error instanceof Error ? error.message : error))
+  }
+  try {
+    try {
+      journals = await openClientJournals(directory)
+    } catch (error) {
+      throw new CliError('protocol', `Client journals at ${directory} are unreadable: ${String(error)}`)
+    }
+    return await work(journals, profileId)
+  } finally {
+    await release()
+  }
 }
 
 export function required(value: string | undefined, label: string): string {

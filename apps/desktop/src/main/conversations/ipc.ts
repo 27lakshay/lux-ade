@@ -5,11 +5,14 @@ import { isAbsolute } from 'node:path'
 import {
   dailyUseCommand,
   requestDaemon,
+  sameReviewAnchor,
+  sameReviewFeedback,
   type DailyUseRequest,
   type DailyUseResponse,
   type ReviewAnchor,
   type ReviewFeedback,
 } from '@ade/client'
+import { SendJournal, type SendIntent } from '@ade/client/journals'
 import {
   getClient,
   getClientGeneration,
@@ -23,36 +26,24 @@ import {
   setSwitching,
   type Profile,
 } from '../profile-connection'
-import {
-  activeReviewContext,
-  assertReviewContext,
-  reviewBatchPrompt,
-  reviewPrompt,
-  sameReviewAnchor,
-  sameReviewFeedback,
-} from '../review'
-import { SendJournal } from '../send-journal'
+import { activeReviewContext, assertReviewContext, reviewBatchPrompt, reviewPrompt } from '../review'
 import type { DraftState, SendPending } from '../../shared/bridge/conversations'
 import { conversationOperations, isAllowedOperation } from '../../shared/bridge/operations'
 import { validId } from '../validation'
 import { selectedWorkspaces } from '../workspaces'
 import {
+  beginSend,
   daemon,
   dispatchSend,
   draftKey,
   drafts,
-  e2ePauseAfterSendJournal,
   flushDraft,
-  journal,
-  journalIdentity,
-  journalRecord,
-  listWindowSends,
   loadDraft,
   pendingSend,
-  scheduleDraft,
+  pipeline,
+  reviewSelections,
   windowIds,
   type DraftEntry,
-  type SendIntent,
 } from './send-pipeline'
 
 function sendTransferRequest(
@@ -107,7 +98,7 @@ export function registerConversationIpc(): void {
     const request = sendTransferRequest(event, id, destination, true)
     setSwitching(true)
     try {
-      return await journal().exportProfile(request.profile.id, request.location)
+      return await pipeline().journal.exportProfile(request.profile.id, request.location)
     } finally {
       setSwitching(false)
     }
@@ -124,11 +115,16 @@ export function registerConversationIpc(): void {
       const started = await launcher('start', request.profile.id)
       if (started.type !== 'profile_started' || typeof started.socket !== 'string' || !isAbsolute(started.socket))
         throw new Error('Restored profile daemon is unavailable')
-      return await journal().importProfile(request.location, sourceId, request.profile.id, started.socket, (record) =>
-        daemon(started.socket as string, 'draft.send.get', {
-          conversation_id: record.conversationId,
-          window_id: record.windowId,
-        }),
+      return await pipeline().journal.importProfile(
+        request.location,
+        sourceId,
+        request.profile.id,
+        started.socket,
+        (record) =>
+          daemon(started.socket as string, 'draft.send.get', {
+            conversation_id: record.conversationId,
+            window_id: record.windowId,
+          }),
       )
     } finally {
       setSwitching(false)
@@ -138,7 +134,7 @@ export function registerConversationIpc(): void {
   // the profile daemon is reachable, every send it still holds for this window.
   // While it is unreachable only the journal can answer.
   handle('ade:pending-sends', async (event) => {
-    const pending = (await journal().list()).map((record) => ({
+    const pending = (await pipeline().journal.list()).map((record) => ({
       profileId: record.profileId,
       conversationId: record.conversationId,
       requestId: record.requestId,
@@ -154,7 +150,7 @@ export function registerConversationIpc(): void {
     } catch {
       return pending
     }
-    const sends = await listWindowSends(endpoint, windowId)
+    const sends = await pipeline().listWindowSends(endpoint, windowId)
     if (getClientGeneration() !== generation || getSocket() !== endpoint) {
       throw new Error('Profile changed while pending prompts were listed')
     }
@@ -315,7 +311,7 @@ export function registerConversationIpc(): void {
         if (entry.unclearedText || entry.send) throw new Error('Resolve the previous prompt before editing this draft')
         if (typeof args.text !== 'string' || Buffer.byteLength(args.text) > 120 * 1024) throw new Error('Invalid draft')
         entry.draft = { text: args.text, revision: entry.draft.revision + 1, attachments: [] }
-        scheduleDraft(entry)
+        pipeline().schedule(entry)
       }
       if (op === 'draft.flush') {
         await flushDraft(entry)
@@ -367,28 +363,29 @@ export function registerConversationIpc(): void {
           if (args.request_id !== undefined && args.request_id !== entry.send.requestId) {
             throw new Error('A different prompt is awaiting confirmation')
           }
-          if (entry.send.reviewSelection) {
+          const review = reviewSelections.get(entry.send)
+          if (review) {
             const selection = selectedWorkspaces.get(event.sender.id)
             if (
               !selection ||
-              selection.workspaceId !== entry.send.reviewSelection.workspaceId ||
-              selection.conversationId !== entry.send.reviewSelection.conversationId ||
+              selection.workspaceId !== review.workspaceId ||
+              selection.conversationId !== review.conversationId ||
               selection.generation !== getClientGeneration()
             )
               throw new Error('Return to the feedback workspace before retrying')
-            entry.send.reviewSelection.epoch = selection.epoch
+            review.epoch = selection.epoch
           } else if (entry.send.reviewAnchor || entry.send.reviewFeedback) {
             // The branch guarantees one of the two is set.
             const workspaceId =
               entry.send.reviewAnchor?.workspace_id ?? (entry.send.reviewFeedback?.workspace_id as string)
             const context = activeReviewContext(event.sender.id, workspaceId)
             assertReviewContext(context, workspaceId, args.conversation_id)
-            entry.send.reviewSelection = {
+            reviewSelections.set(entry.send, {
               senderId: event.sender.id,
               workspaceId,
               conversationId: args.conversation_id,
               epoch: context.epoch,
-            }
+            })
           }
           if (entry.send.preparing) return sendPending(entry)
           return await dispatchSend(entry, entry.send)
@@ -437,34 +434,16 @@ export function registerConversationIpc(): void {
           inFlight: null,
           reviewAnchor: reviewContext ? (args.review_anchor as ReviewAnchor) : undefined,
           reviewFeedback,
-          reviewSelection: reviewContext
-            ? {
-                senderId: event.sender.id,
-                workspaceId: reviewWorkspaceId as string,
-                conversationId: args.conversation_id,
-                epoch: reviewContext.epoch,
-              }
-            : undefined,
         }
-        await journal().upsert(journalRecord(entry, intent, false))
-        entry.send = intent
-        await e2ePauseAfterSendJournal()
-        try {
-          await flushDraft(entry)
-        } catch {
-          try {
-            await journal().remove(journalIdentity(entry, intent))
-            entry.send = null
-          } catch {
-            throw new Error('Draft save and recovery cleanup failed; preserve the pending prompt')
-          }
-          throw new Error('Draft could not be saved; prompt was not sent')
+        if (reviewContext) {
+          reviewSelections.set(intent, {
+            senderId: event.sender.id,
+            workspaceId: reviewWorkspaceId as string,
+            conversationId: args.conversation_id,
+            epoch: reviewContext.epoch,
+          })
         }
-        intent.draftText = entry.draft.text
-        intent.revision = entry.draft.revision
-        intent.attachments = entry.draft.attachments
-        intent.preparing = false
-        return await dispatchSend(entry, intent)
+        return await beginSend(entry, intent)
       } catch (error) {
         if (op !== 'agent.send' || (args.review_anchor === undefined && args.review_feedback === undefined)) throw error
         const entry = drafts.get(draftKey(event.sender.id, endpoint, args.conversation_id))

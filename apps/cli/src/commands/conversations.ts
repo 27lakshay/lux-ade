@@ -10,6 +10,7 @@ import {
   type DailyUseRequest,
   type DailyUseResponse,
 } from '@ade/client'
+import { deliverHeldSends, heldDirectSends, SendHeld, sendJournaled } from '@ade/client/journals'
 import {
   boundedInteger,
   catalog,
@@ -20,8 +21,35 @@ import {
   parseWords,
   positionals,
   required,
+  withJournals,
   type CommandResult,
+  type ErrorCode,
 } from '../shared.js'
+
+const heldCodes: ReadonlySet<string> = new Set<ErrorCode>(['unavailable', 'timeout', 'protocol', 'outcome_unknown'])
+
+/**
+ * Runs a journaled request, turning the journal's own refusals into CLI errors. A
+ * daemon error passes through unchanged; a held prompt keeps the failure's code.
+ * A record the journal refuses is `invalid_request`, one another prompt owns is
+ * `conflict`, and a journal that cannot be read or written is a local failure.
+ */
+export async function journalFailure<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (error) {
+    if (error instanceof SendHeld) {
+      throw new CliError(heldCodes.has(error.code) ? (error.code as ErrorCode) : 'outcome_unknown', error.message)
+    }
+    if (error instanceof DaemonRequestError || error instanceof CliError || !(error instanceof Error)) throw error
+    const code: ErrorCode = error.message.startsWith('Invalid')
+      ? 'invalid_request'
+      : /awaiting delivery|owns this|is held|needs reconciliation|belongs to another/.test(error.message)
+        ? 'conflict'
+        : 'protocol'
+    throw new CliError(code, error.message)
+  }
+}
 
 /** A typed request body: the operation's contract without its `op`. */
 export type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
@@ -40,7 +68,10 @@ export const conversationUsage = `  conversation list [WORKSPACE_ID]      List c
   conversation export ID FILE            Write complete readable JSON history to a new file
   conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID] [--preset NAME]
   conversation send ID TEXT [--request-id ID]
-                                        Send a prompt; retain ID for safe lost-reply retries
+                                        Send a prompt; retain ID for safe lost-reply retries.
+                                        An unanswered prompt stays held in the client journal
+  conversation pending                  List prompts held in the client journal
+  conversation deliver                  Deliver each held prompt once, under its original request ID
   conversation cancel ID [--turn TURN_ID]
                                         Request cancellation of the active turn; with --turn, only while that turn is active
   conversation resume ID                Reconnect or resume a stopped agent
@@ -257,13 +288,35 @@ export async function runConversationCommand(
     if (suppliedId !== undefined && (!suppliedId || suppliedId.startsWith('--') || suppliedId.length > 256)) {
       throw new CliError('usage', '--request-id requires an ID of 1 to 256 characters.')
     }
+    if (suppliedId !== undefined && !/^[a-zA-Z0-9_-]{1,128}$/.test(suppliedId)) {
+      throw new CliError('usage', '--request-id must be 1 to 128 letters, digits, "-" or "_".')
+    }
     const requestId = suppliedId ?? randomUUID()
-    const response = await requestDaemon(socketPath, 'agent.send', {
-      conversation_id: conversationId,
-      request_id: requestId,
-      text,
-    })
-    return { ...response, request_id: requestId }
+    const response = await withJournals(({ send }, profileId) =>
+      journalFailure(() =>
+        sendJournaled(send, { endpoint: socketPath, profileId, conversationId }, { requestId, text }),
+      ),
+    )
+    return { ...decodeReply('agent.send', response), request_id: requestId }
+  }
+  if (area === 'conversation' && action === 'pending') {
+    if (rest.length !== 0) throw new CliError('usage', 'conversation pending takes no arguments.')
+    return withJournals(async ({ send }, profileId) => ({
+      type: 'held_sends',
+      sends: (await heldDirectSends(send, profileId)).map((record) => ({
+        request_id: record.requestId,
+        conversation_id: record.conversationId,
+        text: record.text,
+        ...(record.restoreHold ? { restore_hold: true } : {}),
+      })),
+    }))
+  }
+  if (area === 'conversation' && action === 'deliver') {
+    if (rest.length !== 0) throw new CliError('usage', 'conversation deliver takes no arguments.')
+    return withJournals(async ({ send }, profileId) => ({
+      type: 'held_sends_delivered',
+      results: await deliverHeldSends(send, socketPath, profileId),
+    }))
   }
   if (area === 'conversation' && action === 'cancel') {
     const parsed = parseWords(rest, ['--turn'], [], 'conversation cancel')

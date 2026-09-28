@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test src/catalog.test.mjs src/sync.test.mjs src/outbox.test.mjs src/remote-state.test.mjs src/placement.test.mjs src/call.test.mjs src/request.test.mjs"
+    "test": "tsc && node --test src/catalog.test.mjs src/sync.test.mjs src/outbox.test.mjs src/remote-state.test.mjs src/placement.test.mjs src/call.test.mjs src/request.test.mjs src/git-refusal.test.mjs src/journals.test.mjs"
   },
   "dependencies": {
     "@ade/contracts": "workspace:*"
@@ -31,6 +31,10 @@
     "./outbox": {
       "types": "./dist/outbox.d.ts",
       "default": "./dist/outbox.js"
+    },
+    "./journals": {
+      "types": "./dist/journals.d.ts",
+      "default": "./dist/journals.js"
     }
   }
 }

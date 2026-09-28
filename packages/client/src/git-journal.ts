@@ -2,14 +2,37 @@
 // per profile and workspace. After admission the daemon's receipts own the rest:
 // `review.operation.list` shows running and interrupted operations, and
 // `review.operation.acknowledge` records that the person saw an interrupted one.
-import { Outbox, type OutboxCodec } from '@ade/client/outbox'
-import type { GitIntent } from '../shared/bridge/review'
-import { fileOutboxStorage } from './outbox-file'
+import { Outbox, type OutboxCodec, type OutboxStorage } from './outbox.js'
+
+/** A Git write a client journals before sending it, so a lost reply can be recovered. */
+export type GitIntent = {
+  profile_id: string
+  workspace_id: string
+  op: 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
+  request_id: string
+  path?: string
+  revision?: string
+  diff_token?: string
+  index_token?: string
+  message?: string
+}
 
 const id = /^[a-zA-Z0-9_-]{1,128}$/
-const uuid = /^[0-9a-f-]{36}$/
 const token = /^[0-9a-f]{16}$/
 const maxRecords = 256
+
+/**
+ * A caller-chosen request ID: the desktop sends UUIDs, the CLI takes any
+ * `--request-id` of 1 to 256 characters. Control characters are refused.
+ */
+function requestId(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 256 &&
+    [...value].every((character) => character.charCodeAt(0) >= 0x20 && character.charCodeAt(0) !== 0x7f)
+  )
+}
 
 function valid(intent: unknown): intent is GitIntent {
   if (!intent || typeof intent !== 'object' || Array.isArray(intent)) return false
@@ -19,8 +42,7 @@ function valid(intent: unknown): intent is GitIntent {
     !id.test(item.profile_id) ||
     typeof item.workspace_id !== 'string' ||
     !id.test(item.workspace_id) ||
-    typeof item.request_id !== 'string' ||
-    !uuid.test(item.request_id)
+    !requestId(item.request_id)
   )
     return false
   if (item.op === 'review.commit')
@@ -85,10 +107,13 @@ const codec: OutboxCodec<GitIntent> = {
 }
 
 export class GitJournal {
+  /** The journal's name in every refusal, so a person can find its file. */
+  static readonly label = codec.name
+
   private constructor(private readonly outbox: Outbox<GitIntent>) {}
 
-  static async open(file: string): Promise<GitJournal> {
-    return new GitJournal(await Outbox.open(fileOutboxStorage(file, codec.name), codec))
+  static async open(storage: OutboxStorage): Promise<GitJournal> {
+    return new GitJournal(await Outbox.open(storage, codec))
   }
 
   /** The unadmitted operation for this profile and workspace, if any. */

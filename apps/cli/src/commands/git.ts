@@ -1,12 +1,6 @@
 import { createHash } from 'node:crypto'
-import {
-  call,
-  dailyUseCommand,
-  formatReviewFeedback,
-  requestDaemon,
-  type DailyUseRequest,
-  type ReviewFeedback,
-} from '@ade/client'
+import { call, dailyUseCommand, formatReviewFeedback, requestDaemon, type ReviewFeedback } from '@ade/client'
+import { GitOperationBlocked, readGitJournal, sendGitMutation, type GitIntent } from '@ade/client/journals'
 import {
   boundedInteger,
   CliError,
@@ -16,9 +10,10 @@ import {
   positionals,
   required,
   requestIdOption,
+  withJournals,
   type CommandResult,
 } from '../shared.js'
-import { decodeReply, type Fields } from './conversations.js'
+import { decodeReply, journalFailure, type Fields } from './conversations.js'
 
 export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git status and revision tokens
   git diff WORKSPACE_ID PATH [--staged]  Read a file diff and its preview token
@@ -36,6 +31,8 @@ export const gitUsage = `  git status WORKSPACE_ID                Read fresh Git
   git commit WORKSPACE_ID MESSAGE INDEX_TOKEN --request-id ID
                                         Commit the reviewed staged index
   git operation WORKSPACE_ID REQUEST_ID  Inspect a Git operation receipt
+  git recovery WORKSPACE_ID             Show the stage, unstage, commit or discard that still needs you:
+                                        one held in the client journal, or one the daemon holds
   git hunk WORKSPACE_ID PATH DIFF_TOKEN HUNK --request-id ID [--unstage]
                                         Stage, or with --unstage unstage, one hunk of a previewed diff
   git operations WORKSPACE_ID [--all]   List running and unacknowledged interrupted Git mutations;
@@ -196,7 +193,19 @@ async function sendReviewFeedback(
   return { ...response, request_id: requestId }
 }
 
-type GitMutation = 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
+/** A Git mutation through the client journal; a blocking operation names its request ID. */
+function gitJournalFailure<T>(work: () => Promise<T>): Promise<T> {
+  return journalFailure(async () => {
+    try {
+      return await work()
+    } catch (error) {
+      if (error instanceof GitOperationBlocked) {
+        throw new CliError('conflict', `${error.message}: finish or acknowledge request ${error.blocking} first.`)
+      }
+      throw error
+    }
+  })
+}
 
 function gitMutationArgs(
   rest: string[],
@@ -455,23 +464,30 @@ export async function runGitCommand(
   }
   if (area === 'git' && (action === 'stage' || action === 'unstage' || action === 'commit' || action === 'discard')) {
     const { workspaceId, value, token, requestId, diffToken } = gitMutationArgs(rest, action)
-    const target = { workspace_id: workspaceId, operation_id: requestId }
-    const request: DailyUseRequest<GitMutation> =
-      action === 'commit'
-        ? { op: 'review.commit', ...target, message: value, index_token: token }
-        : action === 'discard'
-          ? {
-              op: 'review.discard',
-              ...target,
-              path: value,
-              revision: token,
-              diff_token: required(diffToken, 'DIFF_TOKEN'),
-            }
-          : action === 'stage'
-            ? { op: 'review.stage', ...target, path: value, revision: token }
-            : { op: 'review.unstage', ...target, path: value, revision: token }
-    const response = await dailyUseCommand<GitMutation>(socketPath, request)
+    const response = await withJournals(({ git }, profileId) => {
+      const owner = { profile_id: profileId, workspace_id: workspaceId, request_id: requestId }
+      const intent: GitIntent =
+        action === 'commit'
+          ? { ...owner, op: 'review.commit', message: value, index_token: token }
+          : action === 'discard'
+            ? {
+                ...owner,
+                op: 'review.discard',
+                path: value,
+                revision: token,
+                diff_token: required(diffToken, 'DIFF_TOKEN'),
+              }
+            : { ...owner, op: action === 'stage' ? 'review.stage' : 'review.unstage', path: value, revision: token }
+      return gitJournalFailure(() => sendGitMutation(git, socketPath, intent, { oneAtATime: false }))
+    })
     return { ...response, workspace_id: workspaceId, request_id: requestId }
+  }
+  if (area === 'git' && action === 'recovery') {
+    const [workspaceId] = positionals(parseWords(rest, [], [], 'git recovery'), 1, 'git recovery requires WORKSPACE_ID')
+    return withJournals(async ({ git }, profileId) => ({
+      type: 'git_recovery',
+      ...(await readGitJournal(git, socketPath, profileId, workspaceId)),
+    }))
   }
   return undefined
 }

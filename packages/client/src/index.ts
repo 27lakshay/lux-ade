@@ -41,7 +41,13 @@ export {
   type OperationIdOperation,
 } from './call.js'
 export { isOperation, operationIdOperations, operations, type Operation, type Tier } from '@ade/contracts'
-export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'
+export {
+  formatReviewFeedback,
+  sameReviewAnchor,
+  sameReviewFeedback,
+  type ReviewAnchor,
+  type ReviewFeedback,
+} from './review.js'
 export { workspaceRemoveBlockers, type WorkspaceRemoveBlocker, type WorkspaceRemoveBlockerKind } from './workspaces.js'
 export {
   decodeDailyUseFeedFrame,

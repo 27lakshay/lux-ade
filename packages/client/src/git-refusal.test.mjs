@@ -1,8 +1,8 @@
 // In-process tests for the pure Git refusal decider (AGENTS.md test policy).
-// Run: node --test apps/desktop/src/main/git-refusal.test.mjs
+// Run after `pnpm build:sdk`: node --test packages/client/src/git-refusal.test.mjs
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { decideRefusedGitRecord, definiteRefusal } from './git-refusal.ts'
+import { decideRefusedGitRecord, definiteRefusal } from '../dist/git-refusal.js'
 
 const id = '11111111-2222-3333-4444-555555555555'
 const failure = (code, message, delivery = 'unknown') => ({ code, message, delivery })
@@ -49,6 +49,16 @@ test('a refusal keeps the record while the daemon knows the ID or cannot be aske
   assert.equal(decideRefusedGitRecord(id, busy, failure('daemon', 'Repository is busy'), []), 'keep')
   assert.equal(decideRefusedGitRecord(id, busy, unknown, null), 'keep')
   assert.equal(decideRefusedGitRecord(id, busy, unknown, [id]), 'keep')
+})
+
+test('a refused retry of an ID whose receipt is final releases its record', () => {
+  // The CLI reused a finished request ID for another payload; the daemon refuses it.
+  const reused = failure('daemon', 'Git operation ID belongs to another request')
+  assert.equal(decideRefusedGitRecord(id, reused, null, null, true), 'release')
+  // A running or interrupted receipt is not final and keeps the record.
+  assert.equal(decideRefusedGitRecord(id, reused, null, [id], false), 'keep')
+  // A lost reply keeps the record whatever the receipt says.
+  assert.equal(decideRefusedGitRecord(id, failure('timeout', 'deadline'), null, [], true), 'keep')
 })
 
 test('no failure details keeps the record', () => {

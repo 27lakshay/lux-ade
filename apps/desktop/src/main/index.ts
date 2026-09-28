@@ -17,7 +17,7 @@ import {
 } from './conversations/send-pipeline'
 import { registerFileIpc } from './files'
 import { watchActivity } from './notifications'
-import { GitJournal } from './git-journal'
+import { openDesktopJournals } from './outbox-file'
 import {
   fixedSocket,
   getBrowserOwner,
@@ -35,7 +35,6 @@ import {
 import { registerProfileIpc, selectProfile } from './profiles'
 import { finishQuit, holdQuit, registerQuitGuard, registerQuitTeardown } from './quit-guards'
 import { registerReviewIpc, setGitJournal } from './review'
-import { SendJournal } from './send-journal'
 import { registerServiceIpc } from './services'
 import { disconnectWindow, setStreamProfile, startStreamBridge, stopStreamBridge } from './stream-bridge'
 import { registerTerminalIpc } from './terminals'
@@ -226,8 +225,9 @@ app
     }
     loadAppearance()
     singleWindowId = await persistentWindowId()
-    setSendJournal(await SendJournal.open(join(app.getPath('userData'), 'pending-sends-v1.json')))
-    setGitJournal(await GitJournal.open(join(app.getPath('userData'), 'git-intents-v1.json')))
+    const journals = await openDesktopJournals()
+    setSendJournal(journals.send)
+    setGitJournal(journals.git)
     if (!managedProfiles && fixedSocket) {
       const fixedIdentity = createHash('sha256').update(resolve(fixedSocket)).digest('hex').slice(0, 32)
       const home = join(app.getPath('userData'), 'browser-fixed', fixedIdentity)

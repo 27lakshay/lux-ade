@@ -1,19 +1,20 @@
 import { handle } from './ipc'
 import {
-  DaemonRequestError,
   dailyUseCommand,
   formatReviewFeedback,
-  isDaemonRefusal,
   type DailyUseRequest,
   type DailyUseResponse,
   type ReviewAnchor,
   type ReviewFeedback,
 } from '@ade/client'
-import { decideGitAdmission, gitAdmitted, pendingGitOperation } from '@ade/client/outbox'
+import {
+  acknowledgeGitJournal,
+  readGitJournal,
+  sendGitMutation,
+  type GitIntent,
+  type GitJournal,
+} from '@ade/client/journals'
 import { isAllowedOperation, reviewOperations } from '../shared/bridge/operations'
-import type { DaemonGitIntent, GitIntent } from '../shared/bridge/review'
-import type { GitJournal } from './git-journal'
-import { decideRefusedGitRecord, definiteRefusal, type RequestFailure } from './git-refusal'
 import { getClient, getClientGeneration, getSocket, journalProfileId } from './profile-connection'
 import { validId } from './validation'
 import { selectedWorkspaces } from './workspaces'
@@ -26,74 +27,8 @@ function gitRecovery(): GitJournal {
   if (!gitJournal) throw new Error('Git recovery journal is unavailable')
   return gitJournal
 }
-type ReviewOperationEntry = DailyUseResponse<'review.operation.list'>['operations'][number]
-/** The workspace's daemon-owned Git operations that still need the person. */
-async function listGitOperations(
-  endpoint: string,
-  workspaceId: string,
-  includeAcknowledged = false,
-): Promise<ReviewOperationEntry[]> {
-  const response = await dailyUseCommand<'review.operation.list'>(endpoint, {
-    op: 'review.operation.list',
-    workspace_id: workspaceId,
-    ...(includeAcknowledged ? { include_acknowledged: true } : {}),
-  })
-  return response.operations
-}
-function requestFailure(error: unknown): RequestFailure | null {
-  return error instanceof DaemonRequestError
-    ? { code: error.code, delivery: error.delivery, message: error.message, refusal: isDaemonRefusal(error) }
-    : null
-}
-/**
- * Release a Git mutation's local record when the daemon definitely refused it
- * before admission: the send failed with a daemon answer, and the daemon then
- * neither knows nor lists the ID. Any doubt keeps the record for a retry.
- */
-async function releaseRefusedGitRecord(endpoint: string, intent: GitIntent, error: unknown): Promise<void> {
-  const send = requestFailure(error)
-  if (!definiteRefusal(send)) return
-  let lookup: RequestFailure | null = null
-  try {
-    await dailyUseCommand<'review.operation'>(endpoint, {
-      op: 'review.operation',
-      workspace_id: intent.workspace_id,
-      operation_id: intent.request_id,
-    })
-  } catch (failure) {
-    lookup = requestFailure(failure)
-  }
-  let listed: string[] | null = null
-  try {
-    listed = (await listGitOperations(endpoint, intent.workspace_id, true)).map((entry) => entry.operation.id)
-  } catch {
-    listed = null
-  }
-  if (decideRefusedGitRecord(intent.request_id, send, lookup, listed) === 'release') {
-    await gitRecovery().release(intent.profile_id, intent.workspace_id, intent.request_id)
-  }
-}
 type ReviewStatus = DailyUseResponse<'review.status'>
 type ReviewDiff = DailyUseResponse<'review.diff_page'>
-type GitOperationName = 'review.operation' | 'review.stage' | 'review.unstage' | 'review.commit' | 'review.discard'
-type GitRequest = DailyUseRequest<GitOperationName>
-export function sameReviewFeedback(left: unknown, right: unknown): boolean {
-  const canonical = (value: unknown): string =>
-    JSON.stringify(value ?? null, (_key, item: unknown) =>
-      item && typeof item === 'object' && !Array.isArray(item)
-        ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
-        : item,
-    )
-  return canonical(left) === canonical(right)
-}
-const reviewAnchorFields = ['workspace_id', 'path', 'staged', 'revision', 'token', 'hunk', 'line', 'text'] as const
-export function sameReviewAnchor(left: unknown, right: unknown): boolean {
-  if (left == null || right == null) return left == null && right == null
-  if (typeof left !== 'object' || typeof right !== 'object') return false
-  return reviewAnchorFields.every(
-    (field) => (left as Record<string, unknown>)[field] === (right as Record<string, unknown>)[field],
-  )
-}
 function reviewPromptText(anchor: ReviewAnchor, note: string): string {
   return `Review feedback for workspace ${anchor.workspace_id}\nFile: ${anchor.path}\nSide: ${anchor.staged ? 'staged' : 'unstaged'}\nDiff token: ${anchor.token}\nStatus revision: ${anchor.revision}\nHunk: ${anchor.hunk}\nLine: +${anchor.line}\nSelected text: ${anchor.text}\n\nFeedback:\n${note.trim()}`
 }
@@ -339,10 +274,25 @@ export function registerReviewIpc(): void {
         throw new Error('Invalid Git operation ID')
       }
       const requestId = args.request_id
-      const target = { workspace_id: workspaceId, operation_id: requestId }
-      let request: GitRequest
-      let intent: GitIntent | null = null
-      const profileId = (): string => journalProfileId(context.endpoint)
+      const check = (): void => assertReviewContext(context, workspaceId)
+      if (op === 'review.operation') {
+        const response = await dailyUseCommand<'review.operation'>(context.endpoint, {
+          op,
+          workspace_id: workspaceId,
+          operation_id: requestId,
+        })
+        check()
+        if (
+          response.type !== 'review_operation' ||
+          response.operation?.id !== requestId ||
+          !['running', 'succeeded', 'failed', 'interrupted'].includes(String(response.operation.status))
+        ) {
+          throw new Error('Invalid Git operation receipt')
+        }
+        return response
+      }
+      const owner = { profile_id: journalProfileId(context.endpoint), workspace_id: workspaceId, request_id: requestId }
+      let intent: GitIntent
       if (op === 'review.stage' || op === 'review.unstage' || op === 'review.discard') {
         if (!reviewPath(args.path) || typeof args.revision !== 'string' || !/^[0-9a-f]{16}$/.test(args.revision)) {
           throw new Error('Invalid Git file revision')
@@ -352,20 +302,11 @@ export function registerReviewIpc(): void {
           if (typeof args.diff_token !== 'string' || !/^[0-9a-f]{16}$/.test(args.diff_token)) {
             throw new Error('Invalid Git discard preview token')
           }
-          request = { op, ...target, ...file, diff_token: args.diff_token }
-          intent = {
-            profile_id: profileId(),
-            workspace_id: workspaceId,
-            op,
-            request_id: requestId,
-            ...file,
-            diff_token: args.diff_token,
-          }
+          intent = { ...owner, op, ...file, diff_token: args.diff_token }
         } else {
-          request = op === 'review.stage' ? { op, ...target, ...file } : { op, ...target, ...file }
-          intent = { profile_id: profileId(), workspace_id: workspaceId, op, request_id: requestId, ...file }
+          intent = { ...owner, op, ...file }
         }
-      } else if (op === 'review.commit') {
+      } else {
         if (
           typeof args.message !== 'string' ||
           !args.message.trim() ||
@@ -375,57 +316,9 @@ export function registerReviewIpc(): void {
         ) {
           throw new Error('Invalid Git commit request')
         }
-        const commit = { message: args.message, index_token: args.index_token }
-        request = { op, ...target, ...commit }
-        intent = { profile_id: profileId(), workspace_id: workspaceId, op, request_id: requestId, ...commit }
-      } else {
-        request = { op, ...target }
+        intent = { ...owner, op, message: args.message, index_token: args.index_token }
       }
-      if (intent) {
-        // One operation per workspace may need the person at a time: a local
-        // unadmitted record, or a daemon operation still running or interrupted
-        // and unacknowledged. The record is durable before the request is sent.
-        assertReviewContext(context, workspaceId)
-        const [local, listed] = await Promise.all([
-          gitRecovery().pending(intent.profile_id, workspaceId),
-          listGitOperations(context.endpoint, workspaceId),
-        ])
-        assertReviewContext(context, workspaceId)
-        const admission = decideGitAdmission(
-          requestId,
-          local !== null && JSON.stringify(local) === JSON.stringify(intent),
-          local,
-          listed,
-        )
-        if (admission.kind === 'refuse') throw new Error(admission.reason)
-        await gitRecovery().prepare(intent)
-        assertReviewContext(context, workspaceId)
-      }
-      let response: DailyUseResponse<GitOperationName>
-      try {
-        response = await dailyUseCommand<GitOperationName>(context.endpoint, request)
-      } catch (error) {
-        // A definite refusal before admission leaves no receipt, so the record
-        // would otherwise block every later Git operation in the workspace.
-        // A failed release keeps the record; the send failure is still what the caller sees.
-        if (intent) await releaseRefusedGitRecord(context.endpoint, intent, error).catch(() => undefined)
-        throw error
-      }
-      assertReviewContext(context, workspaceId)
-      const receipt = response.operation
-      if (
-        response.type !== 'review_operation' ||
-        !receipt ||
-        typeof receipt !== 'object' ||
-        receipt.id !== args.request_id ||
-        !['running', 'succeeded', 'failed', 'interrupted'].includes(String(receipt.status)) ||
-        (intent !== null && receipt.op !== intent.op)
-      ) {
-        throw new Error('Invalid Git operation receipt')
-      }
-      // The receipt proves admission, so the daemon owns the operation from here.
-      if (intent) await gitRecovery().release(intent.profile_id, workspaceId, requestId)
-      return response
+      return await sendGitMutation(gitRecovery(), context.endpoint, intent, { check })
     }
     const status = await reviewStatus(context, workspaceId)
     if (op === 'review.status') return status
@@ -457,37 +350,13 @@ export function registerReviewIpc(): void {
     assertReviewContext(context, workspaceId)
     return response
   })
-  // The renderer's Git recovery view keeps its shape: `pending` is one operation
-  // that still needs the person, and `archived` lists acknowledged interrupted
-  // ones. The local outbox supplies only unadmitted records; the daemon supplies
-  // everything it admitted.
+  // The renderer's Git recovery view (`readGitJournal` in the SDK).
   handle('ade:git-journal-read', async (event, workspaceId: unknown) => {
     const context = activeReviewContext(event.sender.id, workspaceId)
     const workspace = workspaceId as string
-    const profileId = journalProfileId(context.endpoint)
-    const [local, listed] = await Promise.all([
-      gitRecovery().pending(profileId, workspace),
-      listGitOperations(context.endpoint, workspace, true),
-    ])
-    assertReviewContext(context, workspace)
-    let record = local
-    if (local && gitAdmitted(local.request_id, listed)) {
-      await gitRecovery().release(profileId, workspace, local.request_id)
-      record = null
-    }
-    const pending = pendingGitOperation(record, listed)
-    const daemonIntent = (entry: ReviewOperationEntry): DaemonGitIntent => ({
-      profile_id: profileId,
-      workspace_id: workspace,
-      op: entry.operation.op,
-      request_id: entry.operation.id,
-    })
-    return {
-      pending: pending === null ? null : pending.source === 'local' ? pending.record : daemonIntent(pending.entry),
-      archived: listed
-        .filter((entry) => entry.acknowledged_at !== null)
-        .map((entry) => ({ intent: daemonIntent(entry), acknowledged_at: entry.acknowledged_at })),
-    }
+    return readGitJournal(gitRecovery(), context.endpoint, journalProfileId(context.endpoint), workspace, () =>
+      assertReviewContext(context, workspace),
+    )
   })
   handle('ade:git-journal-ack', async (event, workspaceId: unknown, requestId: unknown, kind: unknown) => {
     const context = activeReviewContext(event.sender.id, workspaceId)
@@ -498,34 +367,14 @@ export function registerReviewIpc(): void {
     )
       throw new Error('Invalid Git acknowledgment')
     const workspace = workspaceId as string
-    const profileId = journalProfileId(context.endpoint)
-    const local = await gitRecovery().pending(profileId, workspace)
-    if (local && local.request_id !== requestId) throw new Error('Git operation changed before acknowledgment')
-    const response = await dailyUseCommand<'review.operation'>(context.endpoint, {
-      op: 'review.operation',
-      workspace_id: workspace,
-      operation_id: requestId,
-    })
-    assertReviewContext(context, workspace)
-    const operation = response.operation
-    if (
-      operation.id !== requestId ||
-      (kind === 'settle' && operation.status !== 'succeeded' && operation.status !== 'failed') ||
-      (kind === 'interrupted' && operation.status !== 'interrupted')
-    ) {
-      throw new Error('Git operation is not ready for acknowledgment')
-    }
-    if (kind === 'interrupted') {
-      const acknowledged = await dailyUseCommand<'review.operation.acknowledge'>(context.endpoint, {
-        op: 'review.operation.acknowledge',
-        workspace_id: workspace,
-        operation_id: requestId,
-      })
-      if (acknowledged.operation.id !== requestId) throw new Error('Git acknowledgment did not match the operation')
-    }
-    // A local record left by a lost admission reply is settled with its operation.
-    await gitRecovery().release(profileId, workspace, requestId)
-    assertReviewContext(context, workspace)
-    return { type: 'git_journal_acknowledged', request_id: requestId, status: operation.status }
+    return acknowledgeGitJournal(
+      gitRecovery(),
+      context.endpoint,
+      journalProfileId(context.endpoint),
+      workspace,
+      requestId,
+      kind,
+      () => assertReviewContext(context, workspace),
+    )
   })
 }

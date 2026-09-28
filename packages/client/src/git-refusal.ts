@@ -4,7 +4,9 @@
 // admitted the request. That proof has two parts: the send failed with a
 // definite refusal, not a lost or unreadable reply, and afterwards the daemon
 // neither knows the ID (`review.operation` answers `Unknown review operation`)
-// nor lists it (`review.operation.list`). Anything else keeps the record.
+// nor lists it (`review.operation.list`). A refusal of an ID whose receipt is
+// already final is released too: that ID can never run again. Anything else
+// keeps the record.
 
 /** The fields of a failed daemon request that this decision reads. */
 export type RequestFailure = {
@@ -30,7 +32,7 @@ export function definiteRefusal(failure: RequestFailure | null): boolean {
 }
 
 /** Whether a `review.operation` lookup failed because the daemon has no receipt for the ID. */
-export function unknownOperation(failure: RequestFailure | null): boolean {
+function unknownOperation(failure: RequestFailure | null): boolean {
   return failure !== null && failure.code === 'daemon' && failure.message === 'Unknown review operation'
 }
 
@@ -38,14 +40,20 @@ export function unknownOperation(failure: RequestFailure | null): boolean {
  * Decide the local record after a Git mutation request failed. `lookup` is the
  * failure of the follow-up `review.operation` call (null if it returned a
  * receipt), and `listed` the IDs `review.operation.list` returned, or null if
- * that call failed.
+ * that call failed. `settled` says the receipt `review.operation` returned is
+ * final (succeeded or failed): the ID's outcome can no longer change, so a
+ * refused retry under it, with this payload or another, has nothing left to
+ * recover and the record is released.
  */
 export function decideRefusedGitRecord(
   requestId: string,
   send: RequestFailure | null,
   lookup: RequestFailure | null,
   listed: readonly string[] | null,
+  settled = false,
 ): 'release' | 'keep' {
-  if (!definiteRefusal(send) || !unknownOperation(lookup) || listed === null) return 'keep'
+  if (!definiteRefusal(send)) return 'keep'
+  if (lookup === null && settled) return 'release'
+  if (!unknownOperation(lookup) || listed === null) return 'keep'
   return listed.includes(requestId) ? 'keep' : 'release'
 }

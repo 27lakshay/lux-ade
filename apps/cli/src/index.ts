@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process'
+import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { DaemonRequestError, requestDaemon, type KnownDaemonErrorCode } from '@ade/client'
+import { socketProfileId } from '@ade/client/journals'
 import { accountUsage, runAccountCommand } from './commands/accounts.js'
 import { accountSwitchUsage, runAccountSwitchCommand } from './commands/account-switch.js'
 import { adapterUsage, runAdapterCommand } from './commands/adapters.js'
@@ -45,7 +47,15 @@ import { attachmentUsage, runAttachmentCommand } from './commands/attachments.js
 import { fileUsage, runFileCommand } from './commands/files.js'
 import { queueUsage, runQueueCommand } from './commands/queue.js'
 import { runRuntimeCommand, runtimeUsage } from './commands/runtime.js'
-import { chooseOperationId, CliError, object, usedOperationId, type CommandResult, type ErrorCode } from './shared.js'
+import {
+  chooseOperationId,
+  CliError,
+  object,
+  selectJournalOwner,
+  usedOperationId,
+  type CommandResult,
+  type ErrorCode,
+} from './shared.js'
 
 const usageHeader = `ADE local command line
 
@@ -89,7 +99,12 @@ same command and arguments.
 For conversation send, choose a unique --request-id before the first attempt and
 reuse it with the same conversation and text after a lost reply. Omitting it
 generates an ID, but that ID is unavailable if the reply is lost; do not retry
-an uncertain send with a new ID.
+an uncertain send with a new ID. A prompt the daemon did not answer stays held in
+the profile's client journal (with --profile, the profile's client directory;
+otherwise ADE_CLIENT_DIR or ~/.ade/client): conversation pending lists held
+prompts and conversation deliver sends each once under its original ID. Stage,
+unstage, commit and discard are journaled the same way until the daemon's receipt
+proves it has them; git recovery shows one that still needs you.
 Terminal send appends Enter. Terminal attach needs a TTY and relays raw input and output.
 Use --profile ID to start or attach to that exact managed profile. It does not
 change the desktop's selected profile. --profile conflicts with --socket and
@@ -273,7 +288,7 @@ async function managedProfiles(): Promise<Record<string, unknown>> {
   return result
 }
 
-async function profileSocket(profileId: string): Promise<string> {
+async function profileSocket(profileId: string): Promise<{ socket: string; home: string }> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(profileId)) {
     throw new CliError('invalid_request', 'Profile ID must be a UUID from profile list.')
   }
@@ -292,7 +307,26 @@ async function profileSocket(profileId: string): Promise<string> {
   ) {
     throw new CliError('protocol', 'Profile controller started an unexpected profile or returned an invalid socket.')
   }
-  return started.socket
+  const home = (started.profile as Record<string, unknown>).home
+  if (typeof home !== 'string' || !isAbsolute(home)) {
+    throw new CliError('protocol', 'Profile controller returned an invalid profile home.')
+  }
+  return { socket: started.socket, home }
+}
+
+/**
+ * Where this invocation's client journals live. A managed profile keeps them in
+ * its client directory, beside its runtime home. A daemon reached by socket alone
+ * keeps them under `ADE_CLIENT_DIR`, or the user's `~/.ade/client`, named for the socket.
+ */
+function journalOwner(profileId: string | undefined, endpoint: string, home: string | undefined) {
+  if (profileId && home) return { profileId, directory: join(dirname(home), 'client') }
+  const id = socketProfileId(endpoint)
+  const override = process.env.ADE_CLIENT_DIR
+  if (override !== undefined && !isAbsolute(override)) {
+    throw new CliError('usage', 'ADE_CLIENT_DIR must be an absolute directory path.')
+  }
+  return { profileId: id, directory: override ?? join(homedir(), '.ade', 'client', id) }
 }
 
 // Each command area in the order `run` consults it; an area returns undefined when it does not match.
@@ -367,8 +401,10 @@ async function main(): Promise<void> {
     if (words[0] === 'remote' && (words[1] === 'status' || words[1] === 'request')) {
       return void process.stdout.write(`${JSON.stringify(await runRemoteConnectCommand(words.slice(1)))}\n`)
     }
-    const endpoint = profileId ? await profileSocket(profileId) : socketPath
+    const managed = profileId ? await profileSocket(profileId) : undefined
+    const endpoint = managed?.socket ?? socketPath
     if (!endpoint) throw new CliError('usage', 'Select a profile with --profile ID, --socket PATH or ADE_SOCKET.')
+    selectJournalOwner(journalOwner(profileId, endpoint, managed?.home))
     if (words[0] === 'terminal' && words[1] === 'attach') {
       await attachTerminal(endpoint, words)
       return

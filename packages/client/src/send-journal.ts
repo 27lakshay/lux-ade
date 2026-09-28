@@ -1,13 +1,33 @@
 // The send journal keeps only prompts the profile daemon has not admitted, plus
 // the restore-held records the transfer bundle reconciles. Once `draft.send.prepare`
 // (or `draft.send.get`) proves the daemon holds an intent, the daemon owns it and
-// the record leaves the journal. Storage is the client outbox over a file.
+// the record leaves the journal. Storage is the client outbox over whatever
+// `OutboxStorage` the client gives it (a file for Electron main and the CLI).
 import { createHash, randomUUID } from 'node:crypto'
 import { open, readFile, lstat, unlink, link } from 'node:fs/promises'
 import { dirname, isAbsolute, join, basename } from 'node:path'
-import { Outbox, type OutboxCodec } from '@ade/client/outbox'
-import { fileOutboxStorage } from './outbox-file'
-import type { SendJournalExport, SendJournalImport } from '../shared/bridge/conversations'
+import { Outbox, type OutboxCodec, type OutboxStorage } from './outbox.js'
+
+/** `pending_sends_exported`: the export's summary. */
+export type SendJournalExport = {
+  type: 'pending_sends_exported'
+  file: string
+  format: 'ade-send-journal-bundle-v1'
+  source_profile_id: string
+  record_count: number
+  scope: 'profile-pending-sends-only'
+  excluded: string[]
+}
+
+/** `pending_sends_imported_held`: the import's summary. Imported prompts stay held. */
+export type SendJournalImport = {
+  type: 'pending_sends_imported_held'
+  source_profile_id: string
+  profile_id: string
+  record_count: number
+  reconciled_count: number
+  replay: 'held-until-cross-owner-reconciliation'
+}
 
 const version = 1
 const maxFileBytes = 16 * 1024 * 1024
@@ -341,12 +361,18 @@ function matchingIntent(record: SendJournalRecord, response: unknown): boolean {
 }
 
 export class SendJournal {
+  /** The journal's name in every refusal, so a person can find its file. */
+  static readonly label = codec.name
+
   private constructor(private readonly outbox: Outbox<SendJournalRecord>) {}
 
-  static async open(filePath: string): Promise<SendJournal> {
-    return new SendJournal(await Outbox.open(fileOutboxStorage(filePath, codec.name), codec))
+  static async open(storage: OutboxStorage): Promise<SendJournal> {
+    return new SendJournal(await Outbox.open(storage, codec))
   }
 
+  // Electron main's pending-send transfer (conversations/ipc.ts) calls this, exportProfile
+  // and importProfile; fallow cannot follow calls from another package into a class.
+  // fallow-ignore-next-line unused-class-member
   static async inspectTransfer(source: string, expectedSourceProfileId: string): Promise<{ recordCount: number }> {
     const bundle = await this.readTransfer(source, expectedSourceProfileId)
     if (bundle.records.value.some((record) => record.dispatchStarted)) {
@@ -379,6 +405,7 @@ export class SendJournal {
   }
 
   /** A bounded file snapshot only. The profile backup coordinator must still stop source-side sends. */
+  // fallow-ignore-next-line unused-class-member
   async exportProfile(profileId: string, destination: string): Promise<SendJournalExport> {
     if (
       !idPattern.test(profileId) ||
@@ -441,6 +468,7 @@ export class SendJournal {
   }
 
   /** Imported records remain held: a copied daemon intent cannot prove the source never dispatched. */
+  // fallow-ignore-next-line unused-class-member
   async importProfile(
     source: string,
     expectedSourceProfileId: string,
