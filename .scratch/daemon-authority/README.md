@@ -78,6 +78,9 @@ removing the owner decides what happens to the record. **Links** are references 
 
 - 01: migration numbers are assigned by the coordinator at merge; lanes write named migration
   functions under a provisional `if version < 18`.
+- Frontend review (2026-09-29): `review.feedback.send` also owns the stale-anchor checks (lane B);
+  every layout action that drops a shell terminal's tab closes the terminal, refusing when busy
+  (lane A); main's duplicate request checks, selection and fixed keybindings move out (ticket 10).
 
 ## Who owns what
 
@@ -121,6 +124,7 @@ notifications, browser pages with their automation, capture and recording.
 | Switch-over | [07](issues/07-desktop-switch-over.md) | Coordinator | `apps/desktop` onto lanes A–C | 02, 03, 04, 05 |
 | Integration | [08](issues/08-integration-audit.md) | Coordinator and a read-only reviewer | Whole tree | 06, 07 |
 | Browser tab records | [09](issues/09-browser-tab-records.md) | Later | — | 08 |
+| Thin main process | [10](issues/10-thin-main-process.md) | Coordinator | `apps/desktop/src/main` request checks, selection, keybindings | 07 |
 
 ```mermaid
 flowchart LR
@@ -136,6 +140,7 @@ flowchart LR
     T06 --> T08[08 Integration audit]
     T07 --> T08
     T08 --> T09[09 Browser tab records]
+    T07 --> T10[10 Thin main process]
 ```
 
 Lane D does not wait for lane A: it adds the `target` field to today's local layout store from
