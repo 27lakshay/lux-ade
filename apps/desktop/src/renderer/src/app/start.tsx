@@ -8,6 +8,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { TITLEBAR_HEIGHT } from '../../../shared/window-chrome'
 import { Workspace } from '../features/workspace/Workspace'
 import { IconProvider } from '../icons/Icon'
+import { MotionProvider } from './MotionProvider'
+import { startMotionPreference } from './motion-preference'
 import { CommandPalette, openCommandPalette } from '../provisional/CommandPalette'
 import { ConfirmHost } from '../provisional/ConfirmDialog'
 import { ErrorReport } from '../provisional/ErrorReport'
@@ -21,6 +23,7 @@ import { startTheme } from './theme'
 // src/bootstrap.ts.
 export async function start(): Promise<void> {
   startTheme()
+  startMotionPreference()
   // Screens lay out their title row with var(--titlebar-height); main places the window buttons.
   document.documentElement.style.setProperty('--titlebar-height', `${TITLEBAR_HEIGHT}px`)
 
@@ -46,16 +49,18 @@ export async function start(): Promise<void> {
         fallbackRender={({ error, resetErrorBoundary }) => <ErrorReport error={error} onRetry={resetErrorBoundary} />}
       >
         <QueryClientProvider client={queryClient}>
-          <IconProvider>
-            {/* Tooltips wait 600ms, then switch instantly while the pointer moves between controls. */}
-            <TooltipProvider delay={600}>
-              <Toaster>
-                <RouterProvider router={router} />
-                <CommandPalette service={commandService} />
-                <ConfirmHost />
-              </Toaster>
-            </TooltipProvider>
-          </IconProvider>
+          <MotionProvider>
+            <IconProvider>
+              {/* Tooltips wait 600ms, then switch instantly while the pointer moves between controls. */}
+              <TooltipProvider delay={600}>
+                <Toaster>
+                  <RouterProvider router={router} />
+                  <CommandPalette service={commandService} />
+                  <ConfirmHost />
+                </Toaster>
+              </TooltipProvider>
+            </IconProvider>
+          </MotionProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </StrictMode>,

@@ -324,6 +324,68 @@ const buttonCopy = {
   },
 }
 
+// Motion: animate only what the compositor handles, time everything with the presets, and never
+// measure layout on every render.
+const MOTION_TARGETS = new Set([
+  'animate',
+  'initial',
+  'exit',
+  'whileHover',
+  'whileTap',
+  'whileFocus',
+  'whileDrag',
+  'whileInView',
+])
+const COMPOSITED = new Set([
+  'opacity',
+  'transform',
+  'x',
+  'y',
+  'scale',
+  'scaleX',
+  'scaleY',
+  'rotate',
+  'filter',
+  'clipPath',
+  'transition',
+])
+
+const motionProps = {
+  meta: { type: 'problem', docs: { description: 'Motion animates composited properties with preset timing.' } },
+  create(context) {
+    return {
+      JSXOpeningElement(node) {
+        for (const attr of node.attributes) {
+          if (attr.type !== 'JSXAttribute' || attr.name.type !== 'JSXIdentifier') continue
+          const value = attr.value?.type === 'JSXExpressionContainer' ? attr.value.expression : null
+          if (MOTION_TARGETS.has(attr.name.name) && value?.type === 'ObjectExpression') {
+            for (const property of value.properties) {
+              const key = property.type === 'Property' ? keyName(property) : null
+              if (key && !COMPOSITED.has(key))
+                context.report({
+                  node: property,
+                  message: `Animating "${key}" runs layout or paint every frame. Animate opacity or transforms (x, y, scale), or use the layout prop for size and position.`,
+                })
+            }
+          }
+          if (attr.name.name === 'transition' && value?.type === 'ObjectExpression')
+            context.report({
+              node: attr,
+              message: 'Use a preset from app/motion.ts (transition={transitions.layout}), not inline timing.',
+            })
+        }
+        const layout = attribute(node, 'layout')
+        if (layout && !attribute(node, 'layoutDependency'))
+          context.report({
+            node: layout,
+            message:
+              'Give a layout animation a layoutDependency (the order or structure that changes), so Motion measures only when it changes, not on every render.',
+          })
+      },
+    }
+  },
+}
+
 export default {
   meta: { name: 'ade' },
   rules: {
@@ -337,6 +399,7 @@ export default {
     ...classRules,
     'kit-button-size': kitButtonSize,
     'button-copy': buttonCopy,
+    'motion-props': motionProps,
     'text-elements': textElements,
   },
 }

@@ -196,6 +196,27 @@
   --text-sm--line-height: 1.25rem;
 }
 
+/* Motion timing, the CSS side of app/motion.ts (a test keeps them equal). CSS transitions use
+   duration-100 / -200 / -300 and ease-standard; nothing else (lint: ade/motion-classes). */
+@theme {
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+:root {
+  --duration-fast: 100ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+}
+
+/* Reduce motion (app/motion-preference.ts): CSS transitions and the kit's CSS animations finish at
+   once. Motion components follow the same preference through MotionConfig. */
+[data-reduced-motion] *,
+[data-reduced-motion] *::before,
+[data-reduced-motion] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

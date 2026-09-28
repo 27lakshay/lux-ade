@@ -62,6 +62,10 @@ export default defineConfig({
   renderer: {
     // `@/` is the renderer source root, as shadcn/ui expects (components.json).
     resolve: { alias: { '@': resolve(import.meta.dirname, 'src/renderer/src') } },
+    // Pre-bundle every dependency the renderer imports before the dev server serves the page.
+    // Discovering one mid-session (a newly imported package) reloads it with a second React and
+    // throws "Invalid hook call".
+    optimizeDeps: { entries: ['src/**/*.{ts,tsx}'] },
     // React Compiler through Babel: the stable compiler. plugin-react's Rust port is experimental.
     plugins: [
       react(),

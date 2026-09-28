@@ -346,3 +346,53 @@ invalid(
   /sentence case/,
   'fixture.tsx',
 )
+
+valid(
+  'motion-props',
+  'allows composited properties and presets',
+  '<m.div layout layoutDependency={order} animate={{ opacity: 1, x: 4 }} transition={transitions.layout} />',
+  'fixture.tsx',
+)
+invalid(
+  'motion-props',
+  'reports animating width',
+  '<m.div animate={{ width: 200 }} />',
+  /runs layout or paint/,
+  'fixture.tsx',
+)
+invalid(
+  'motion-props',
+  'reports inline timing',
+  '<m.div animate={{ opacity: 1 }} transition={{ duration: 0.3 }} />',
+  /preset/,
+  'fixture.tsx',
+)
+invalid(
+  'motion-props',
+  'reports layout without a dependency',
+  '<m.div layout="position" />',
+  /layoutDependency/,
+  'fixture.tsx',
+)
+
+valid(
+  'motion-classes',
+  'allows the tokens',
+  '<div className="transition-colors duration-100 ease-standard" />',
+  'fixture.tsx',
+)
+invalid(
+  'motion-classes',
+  'reports an off-token duration',
+  '<div className="duration-150" />',
+  /duration-100/,
+  'fixture.tsx',
+)
+invalid('motion-classes', 'reports a stock easing', '<div className="ease-in-out" />', /ease-standard/, 'fixture.tsx')
+invalid(
+  'motion-classes',
+  'reports transition-all',
+  '<div className="transition-all" />',
+  /layout properties/,
+  'fixture.tsx',
+)

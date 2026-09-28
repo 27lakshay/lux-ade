@@ -1,4 +1,5 @@
 import { createCommandService } from '../commands/command-service'
+import { setMotionPreference } from './motion-preference'
 import { setThemePreference } from './theme'
 
 // The window's command service. Features register their commands here; the command palette lists
@@ -23,5 +24,23 @@ export function registerAppCommands(): void {
     title: 'Match system theme',
     category: 'Appearance',
     run: () => setThemePreference('system'),
+  })
+  commandService.registerCommand({
+    id: 'motion.system',
+    title: 'Reduce motion: follow system',
+    category: 'Appearance',
+    run: () => setMotionPreference('system'),
+  })
+  commandService.registerCommand({
+    id: 'motion.on',
+    title: 'Reduce motion: on',
+    category: 'Appearance',
+    run: () => setMotionPreference('on'),
+  })
+  commandService.registerCommand({
+    id: 'motion.off',
+    title: 'Reduce motion: off',
+    category: 'Appearance',
+    run: () => setMotionPreference('off'),
   })
 }

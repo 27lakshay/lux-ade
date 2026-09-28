@@ -149,6 +149,8 @@
         "ade/scroll-area": "error",
         "ade/kit-button-size": "error",
         "ade/button-copy": "error",
+        "ade/motion-props": "error",
+        "ade/motion-classes": "error",
         "max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }]
       }
     },
@@ -198,6 +200,8 @@
         "ade/scroll-area": "off",
         "ade/kit-button-size": "off",
         "ade/button-copy": "off",
+        "ade/motion-props": "off",
+        "ade/motion-classes": "off",
         "max-lines": "off"
       }
     },
@@ -212,6 +216,19 @@
               {
                 "name": "electron",
                 "message": "The renderer is sandboxed. Reach the backend through window.adeHost (see apps/desktop/AGENTS.md)."
+              },
+              {
+                "name": "framer-motion",
+                "message": "Motion's package is motion. Import m from motion/react-m, hooks and providers from motion/react."
+              },
+              {
+                "name": "motion/react",
+                "importNames": ["motion", "m"],
+                "message": "Render m elements: import * as m from 'motion/react-m'. The full motion component bundles every feature (app/MotionProvider.tsx)."
+              },
+              {
+                "name": "motion/react-client",
+                "message": "Render m elements: import * as m from 'motion/react-m'."
               },
               {
                 "name": "@ade/client",

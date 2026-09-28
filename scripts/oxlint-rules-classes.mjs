@@ -168,7 +168,24 @@ const scrollArea = classRule('Scrolling goes through ScrollArea.', (base, name) 
     : null,
 )
 
+// CSS motion uses the timing tokens: duration-100, -200, -300 and ease-standard (or linear), and never
+// transition-all, which also animates layout properties.
+const DURATIONS = new Set(['0', '100', '200', '300'])
+
+const motionClasses = classRule('CSS transitions use the motion tokens.', (base, name) => {
+  const duration = /^duration-(.+)$/.exec(base)?.[1]
+  if (duration !== undefined && !DURATIONS.has(duration))
+    return `"${name}": use duration-100 (fast), duration-200 (base) or duration-300 (slow), as in app/motion.ts.`
+  const ease = /^ease-(.+)$/.exec(base)?.[1]
+  if (ease !== undefined && ease !== 'standard' && ease !== 'linear')
+    return `"${name}": use ease-standard (or ease-linear for loops).`
+  if (base === 'transition-all')
+    return `"${name}" also animates layout properties. Name what changes: transition-colors, transition-opacity or transition-transform.`
+  return null
+})
+
 export const classRules = {
+  'motion-classes': motionClasses,
   'type-scale': typeScale,
   'surface-steps': surfaceSteps,
   'spacing-grid': spacingGrid,

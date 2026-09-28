@@ -127,6 +127,27 @@ claiming a UI change works.
 - Icon buttons: `<IconButton icon label shortcut?>`, 28px or `size="xs"` 24px. The label is the
   accessible name and the tooltip; the shortcut shows from the keys actually bound. Tooltips open
   after 600ms, then switch instantly between controls.
+- Motion (the `motion` package, [docs/agents](../../docs/agents/libraries.md)):
+
+  | Kind | Tool |
+  |---|---|
+  | Hover, press, focus, colour | CSS transitions: `duration-100/200/300`, `ease-standard` |
+  | Kit popups, dialogs, tooltips, toasts | The kit's own CSS animations, untouched |
+  | ADE's structural motion: card swap, pane split and close, tab reorder, drop settle | `m` elements (`motion/react-m`) with `layout` |
+  | Dragging cards, tabs, panes | Pragmatic drag and drop; Motion only animates the settle |
+  | Loops: spinners, caret, shimmer | CSS keyframes |
+
+  `app/MotionProvider.tsx` loads `domMax` once and sets the reduced-motion policy; timing comes
+  from the presets in `app/motion.ts` (the same values as the CSS tokens, which a test checks).
+  Rules, enforced by lint (`ade/motion-props`, `ade/motion-classes`, `no-restricted-imports`):
+  animate only opacity and transforms; use a preset, never inline timing; give every `layout` a
+  `layoutDependency` (the order or structure, never sizes, so resizing never triggers layout
+  animations); import `m`, never the full `motion` component or `framer-motion`. Anything holding a
+  terminal or canvas animates with `layout="position"`, never scaled. Reduce motion follows the
+  system or the palette commands (`app/motion-preference.ts`); it turns off transforms and layout
+  animations, keeps fades, and stops CSS transitions through `<html data-reduced-motion>`.
+  Collapsing a sidebar expands the centre frame: its content takes the final size at once, and
+  only the card's plain background and the content's position animate.
 - Scrolling: everything that scrolls sits in the kit's `<ScrollArea>` (`ade/scroll-area` refuses
   `overflow-auto`/`scroll`).
 - Cursors: the arrow on controls and in-app links, as native Mac apps do.

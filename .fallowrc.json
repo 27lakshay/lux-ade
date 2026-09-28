@@ -34,7 +34,6 @@
     "sonner",
     "streamdown",
     "zod",
-    "motion",
     "@codemirror/state",
     "@codemirror/view",
     "@pierre/trees",
