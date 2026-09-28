@@ -122,11 +122,20 @@ test('pressing, dragging or double-clicking a resize handle leaves the focus whe
   expect(document.activeElement).toBe(tab)
   await userEvent.dragAndDrop(handle, document.querySelector('section[aria-label="Pane"]')!)
   expect(document.activeElement).toBe(tab)
+  // No handle is left looking focused: neither the library's state nor the drawn track.
+  await userEvent.hover(document.querySelector('[data-pane-drop]')!)
+  const lit = () =>
+    [...document.querySelectorAll<HTMLElement>('[role=separator]')].filter((separator) => {
+      const track = getComputedStyle(separator.firstElementChild!).backgroundColor
+      return separator.dataset.separator === 'focus' || !(track.endsWith('/ 0)') || track.endsWith(', 0)'))
+    }).length
+  await expect.poll(lit).toBe(0)
   // With nothing focused, nothing gains it.
   tab.blur()
   await userEvent.dblClick(handle)
   expect(document.activeElement).toBe(document.body)
-  // The keyboard still reaches the handle.
-  handle.focus()
-  expect(document.activeElement).toBe(handle)
+  // The keyboard still reaches the handle, and shows it.
+  tab.focus()
+  while (document.activeElement !== handle) await userEvent.keyboard('{Tab}')
+  await expect.poll(() => getComputedStyle(handle.firstElementChild!).backgroundColor.endsWith('/ 0)')).toBe(false)
 })

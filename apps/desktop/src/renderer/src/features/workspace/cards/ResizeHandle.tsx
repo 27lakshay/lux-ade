@@ -3,8 +3,9 @@ import { cn } from '@/lib/utils'
 
 // The 8px gutter between two cards, and the handle that resizes them. Invisible at rest; after a
 // short hover a track and grip appear (so crossing a gutter does not flash it); while dragging the
-// track brightens. Arrow keys resize a focused handle, Enter collapses. Double-click does what
-// `onDoubleClick` says: even out a split, or reset a sidebar's width.
+// track brightens. Arrow keys resize a focused handle, Enter collapses. Keyboard focus shows by
+// the browser's :focus-visible, not the library's focus state, which can lag behind the real
+// focus. Double-click does what `onDoubleClick` says: even out a split, or reset a sidebar's width.
 export function ResizeHandle({
   orientation,
   hidden,
@@ -24,13 +25,13 @@ export function ResizeHandle({
     <Panels.Separator disabled={hidden} disableDoubleClick onDoubleClick={onDoubleClick} className={gutter}>
       <span
         className={cn(
-          'flex items-center justify-center rounded-full transition-colors duration-100 group-data-[separator=hover]:bg-input group-data-[separator=hover]:delay-150 group-data-[separator=active]:bg-ring group-data-[separator=focus]:bg-ring',
+          'flex items-center justify-center rounded-full transition-colors duration-100 group-data-[separator=hover]:bg-input group-data-[separator=hover]:delay-150 group-data-[separator=active]:bg-ring group-focus-visible:bg-ring',
           across ? 'h-full w-0.5' : 'h-0.5 w-full',
         )}
       >
         <span
           className={cn(
-            'rounded-full transition-colors duration-100 group-data-[separator=hover]:bg-muted-foreground group-data-[separator=hover]:delay-150 group-data-[separator=active]:bg-foreground group-data-[separator=focus]:bg-foreground',
+            'rounded-full transition-colors duration-100 group-data-[separator=hover]:bg-muted-foreground group-data-[separator=hover]:delay-150 group-data-[separator=active]:bg-foreground group-focus-visible:bg-foreground',
             across ? 'h-9 w-1' : 'h-1 w-9',
           )}
         />

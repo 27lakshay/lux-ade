@@ -17,8 +17,14 @@ function onFocusIn(event: FocusEvent): void {
   const target = event.target
   if (!pressing || !(target instanceof HTMLElement) || target.getAttribute('role') !== 'separator') return
   const previous = event.relatedTarget
-  if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true })
-  else target.blur()
+  // Not here, inside the library's focus() call: the handle's blur would reach the library before
+  // its own focus handler, leaving the handle marked focused. A microtask runs once that call has
+  // returned, still before the next paint.
+  queueMicrotask(() => {
+    if (document.activeElement !== target) return
+    if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true })
+    else target.blur()
+  })
 }
 
 /** Installs the rule for the window; returns its removal. */
