@@ -853,6 +853,7 @@ impl Sessions {
             | "attachment.put"
             | "conversation.create"
             | "conversation.get"
+            | "conversation.mark_seen"
             | "agent.child_transcript"
             | "draft.get"
             | "draft.save"

@@ -464,7 +464,7 @@ fn structured_plan_updates_survive_reopen_and_reject_invalid_content() {
         restored.content
     );
 }
-fn assistant(conversation: &Conversation, id: &str, provider: &str) -> Message {
+pub(super) fn assistant(conversation: &Conversation, id: &str, provider: &str) -> Message {
     Message {
         content: None,
         review_feedback: None,

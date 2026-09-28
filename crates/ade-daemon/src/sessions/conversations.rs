@@ -8,11 +8,12 @@ use ade_core::contract::conversations::{
     Ack, AgentAnswerRequest, AgentSendRequest, AttachmentImportRequest, AttachmentInspectRequest,
     AttachmentInspection, AttachmentPutRequest, AttachmentReclaim, AttachmentReclaimApplyRequest,
     AttachmentReclaimPreviewReply, AttachmentReclaimPreviewRequest, AttachmentReply,
-    ConversationCreateRequest, ConversationCreated, ConversationGetRequest, ConversationSnapshot,
-    DraftGetRequest, DraftReply, DraftSaveRequest, DraftSendAbortRequest,
-    DraftSendAcknowledgeRequest, DraftSendCompleteRequest, DraftSendGetRequest,
-    DraftSendListRequest, DraftSendPrepareRequest, PendingSendList, QueueCancelRequest,
-    QueueEnqueueRequest, QueuePauseRequest, SendAcknowledged, SendIntentPrepared, SendIntentState,
+    ConversationCreateRequest, ConversationCreated, ConversationGetRequest,
+    ConversationMarkSeenRequest, ConversationSnapshot, DraftGetRequest, DraftReply,
+    DraftSaveRequest, DraftSendAbortRequest, DraftSendAcknowledgeRequest, DraftSendCompleteRequest,
+    DraftSendGetRequest, DraftSendListRequest, DraftSendPrepareRequest, PendingSendList,
+    QueueCancelRequest, QueueEnqueueRequest, QueuePauseRequest, SendAcknowledged,
+    SendIntentPrepared, SendIntentState,
 };
 
 /// Why `agent.disconnect` must refuse a Conversation, if it must.
@@ -249,6 +250,19 @@ impl Sessions {
                     tag: Default::default(),
                     conversation: Self::presented(&d, &conversation)?,
                 })
+            }
+            "conversation.mark_seen" => {
+                let seen: ConversationMarkSeenRequest = decode(request)?;
+                let id = non_empty("conversation_id", &seen.conversation_id)?;
+                let mut d = self.data.lock().unwrap();
+                let current = d.store.conversation(id)?;
+                // A time past the last change counts as the last change, so a
+                // change the client has not shown stays unread.
+                let through = seen.through.map(|through| through.min(current.updated_at));
+                if d.store.mark_seen(id, through)? {
+                    self.changed(&mut d, &current, &[])?;
+                }
+                reply(&Ack::default())
             }
             "conversation.get" => {
                 let get: ConversationGetRequest = decode(request)?;

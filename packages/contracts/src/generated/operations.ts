@@ -16,6 +16,7 @@ export const operations = {
   "agent.send": { tier: "effect_command", domain: "conversations", request: "AgentSendRequest", response: "Ack" },
   "agent.answer": { tier: "effect_command", domain: "conversations", request: "AgentAnswerRequest", response: "Ack" },
   "conversation.create": { tier: "effect_command", domain: "conversations", request: "ConversationCreateRequest", response: "ConversationCreated" },
+  "conversation.mark_seen": { tier: "idempotent_command", domain: "conversations", request: "ConversationMarkSeenRequest", response: "Ack" },
   "draft.get": { tier: "query", domain: "conversations", request: "DraftGetRequest", response: "DraftReply" },
   "draft.save": { tier: "idempotent_command", domain: "conversations", request: "DraftSaveRequest", response: "DraftReply" },
   "draft.send.get": { tier: "query", domain: "conversations", request: "DraftSendGetRequest", response: "SendIntentState" },

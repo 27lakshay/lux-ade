@@ -8,9 +8,11 @@ use ade_core::model::{CatalogProject, CatalogRepository, ProjectKind, WorkspaceK
 use std::collections::{HashMap, HashSet};
 
 /// The profile schema this module adds. Applied by [`migrate`], which the
-/// provisional `version < 18` block of `Store::open` calls.
+/// provisional `version < 19` block of `Store::open` calls.
+/// `conversation_seen.seen_sequence` is the newest message `sequence` the
+/// person has seen.
 const SCHEMA: &str = "
-    CREATE TABLE IF NOT EXISTS conversation_seen(conversation_id TEXT PRIMARY KEY, seen_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS conversation_seen(conversation_id TEXT PRIMARY KEY, seen_sequence INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS profile_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS workspace_worktree_operations(operation_id TEXT PRIMARY KEY, status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed')), data TEXT NOT NULL, updated_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS workspace_worktree_operations_running ON workspace_worktree_operations(status);
@@ -23,8 +25,21 @@ pub(super) fn migrate(tx: &Connection) -> Result<()> {
     tx.execute_batch(SCHEMA)?;
     assign_project_ids(tx)?;
     tx.execute(
-        "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_at) SELECT id,COALESCE(json_extract(data,'$.updated_at'),0) FROM conversations",
+        "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_sequence) SELECT c.id,COALESCE((SELECT MAX(sequence) FROM messages m WHERE m.conversation_id=c.id),0) FROM conversations c",
         [],
+    )?;
+    Ok(())
+}
+
+/// A message the person did not write themselves: what makes a Conversation unread.
+const NEWS: &str = "COALESCE(json_extract(data,'$.role'),'')!='user'";
+
+/// Marks everything a Conversation holds now as seen, such as history just
+/// imported: old work is not news.
+pub fn seen_as_is(db: &Connection, conversation: &str) -> Result<()> {
+    db.execute(
+        "INSERT INTO conversation_seen(conversation_id,seen_sequence) SELECT ?1,COALESCE(MAX(sequence),0) FROM messages WHERE conversation_id=?1 ON CONFLICT(conversation_id) DO UPDATE SET seen_sequence=MAX(seen_sequence,excluded.seen_sequence)",
+        [conversation],
     )?;
     Ok(())
 }
@@ -143,10 +158,25 @@ fn rows<T>(
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// The newest message `sequence` in `conversation` the person did not write.
+fn newest_news(db: &Connection, conversation: &str) -> Result<Option<i64>> {
+    Ok(db
+        .query_row(
+            &format!(
+                "SELECT sequence FROM messages WHERE conversation_id=?1 AND {NEWS} ORDER BY sequence DESC LIMIT 1"
+            ),
+            [conversation],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 /// The presentation of Conversations, read in one pass.
 struct ConversationFacts {
     open_requests: HashSet<String>,
     seen: HashMap<String, i64>,
+    /// The newest message `sequence` the person did not write, per Conversation.
+    news: HashMap<String, i64>,
     parents: HashMap<String, String>,
     groups: HashMap<String, String>,
 }
@@ -165,13 +195,25 @@ impl ConversationFacts {
         .collect();
         let seen = rows(
             db,
-            "SELECT conversation_id,seen_at FROM conversation_seen WHERE 1",
+            "SELECT conversation_id,seen_sequence FROM conversation_seen WHERE 1",
             "conversation_id",
             only,
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
         )?
         .into_iter()
         .collect();
+        let news = match only {
+            Some(id) => newest_news(db, id)?
+                .map(|sequence| (id.to_owned(), sequence))
+                .into_iter()
+                .collect(),
+            None => db
+                .prepare(&format!(
+                    "SELECT conversation_id,MAX(sequence) FROM messages WHERE {NEWS} GROUP BY conversation_id"
+                ))?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?,
+        };
         let pair =
             |row: &rusqlite::Row<'_>| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?));
         // Orchestration creates its tables on first use.
@@ -204,6 +246,7 @@ impl ConversationFacts {
         Ok(Self {
             open_requests,
             seen,
+            news,
             parents,
             groups,
         })
@@ -214,11 +257,11 @@ impl ConversationFacts {
             &conversation.status,
             self.open_requests.contains(&conversation.id),
         );
-        // A Conversation never marked seen, such as an imported one, is unread.
+        let seen = self.seen.get(&conversation.id).copied().unwrap_or(0);
         conversation.unread = self
-            .seen
+            .news
             .get(&conversation.id)
-            .is_none_or(|seen| conversation.updated_at > *seen);
+            .is_some_and(|newest| *newest > seen);
         conversation.parent_conversation_id = self.parents.get(&conversation.id).cloned();
         conversation.group_id = self.groups.get(&conversation.id).cloned();
     }
@@ -282,27 +325,35 @@ impl Store {
         Ok(())
     }
 
-    /// Marks a Conversation seen up to `through`, its last change when
-    /// absent. Idempotent: the mark never moves back. Returns whether its
-    /// unread state could have changed.
+    /// Marks a Conversation seen up to message `through`, its newest message
+    /// when absent. Idempotent: the mark never moves back, nor past the
+    /// newest message. Returns whether the mark moved.
     pub fn mark_seen(&self, conversation: &str, through: Option<i64>) -> Result<bool> {
-        let current = self.conversation(conversation)?;
-        let through = through.unwrap_or(current.updated_at);
-        ensure!(through >= 0, "Invalid seen time");
-        let changed = self.connection.execute(
-            "INSERT INTO conversation_seen(conversation_id,seen_at) VALUES(?1,?2) ON CONFLICT(conversation_id) DO UPDATE SET seen_at=excluded.seen_at WHERE excluded.seen_at>seen_at",
+        self.conversation(conversation)?;
+        ensure!(
+            through.is_none_or(|through| through >= 0),
+            "Invalid message sequence"
+        );
+        // A message the client has not shown yet stays unread.
+        let newest = newest_news(&self.connection, conversation)?.unwrap_or(0);
+        let through = through.map_or(newest, |through| through.min(newest));
+        let seen: i64 = self
+            .connection
+            .query_row(
+                "SELECT seen_sequence FROM conversation_seen WHERE conversation_id=?1",
+                [conversation],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if through <= seen {
+            return Ok(false);
+        }
+        self.connection.execute(
+            "INSERT INTO conversation_seen(conversation_id,seen_sequence) VALUES(?1,?2) ON CONFLICT(conversation_id) DO UPDATE SET seen_sequence=excluded.seen_sequence",
             params![conversation, through],
         )?;
-        Ok(changed > 0)
-    }
-
-    /// Records a new Conversation as seen at its creation.
-    pub(super) fn created_seen(db: &Connection, conversation: &Conversation) -> Result<()> {
-        db.execute(
-            "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_at) VALUES(?1,?2)",
-            params![conversation.id, conversation.updated_at],
-        )?;
-        Ok(())
+        Ok(true)
     }
 
     /// The workspaces in the catalog, or only `only`, with the facts last
@@ -417,7 +468,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{Database, test_root};
+    use super::super::tests::{Database, assistant, test_root};
     use super::*;
 
     #[test]
@@ -478,6 +529,10 @@ mod tests {
             .workspace_open(&test_root(&new_id("legacy")), None)
             .unwrap();
         let conversation = store.create_conversation(&folder.id, "Old").unwrap();
+        let reply = assistant(&conversation, "old-reply", "old-item");
+        store
+            .commit_conversation(&conversation, &[reply], &[])
+            .unwrap();
         // A record written before projects existed.
         let mut legacy = store.workspace(&folder.id).unwrap();
         legacy.project_id = String::new();
@@ -517,17 +572,32 @@ mod tests {
         let fresh = present(&store, &conversation.id);
         assert!(!fresh.unread);
         assert_eq!(fresh.attention, Attention::Idle);
+        // A status change alone is not news: attention shows it.
         conversation.status = "running".into();
         conversation.updated_at += 10;
         store.commit_conversation(&conversation, &[], &[]).unwrap();
         let running = present(&store, &conversation.id);
-        assert!(running.unread);
+        assert!(!running.unread);
         assert_eq!(running.attention, Attention::Running);
+        // A reply is.
+        let reply = assistant(&conversation, "reply-1", "item-1");
+        store
+            .commit_conversation(&conversation, &[reply], &[])
+            .unwrap();
+        assert!(present(&store, &conversation.id).unread);
         // Marking seen clears it, and is idempotent; an older mark never wins.
+        assert!(!store.mark_seen(&conversation.id, Some(0)).unwrap());
         assert!(store.mark_seen(&conversation.id, None).unwrap());
         assert!(!store.mark_seen(&conversation.id, None).unwrap());
         assert!(!store.mark_seen(&conversation.id, Some(0)).unwrap());
         assert!(!present(&store, &conversation.id).unread);
+        // A mark past the newest message does not hide the next one.
+        assert!(!store.mark_seen(&conversation.id, Some(1_000)).unwrap());
+        let next = assistant(&conversation, "reply-2", "item-2");
+        store
+            .commit_conversation(&conversation, &[next], &[])
+            .unwrap();
+        assert!(present(&store, &conversation.id).unread);
         // The stored record never carries the presentation.
         let stored: String = store
             .connection

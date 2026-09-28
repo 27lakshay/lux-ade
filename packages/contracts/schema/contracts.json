@@ -7472,7 +7472,7 @@
         },
         "unread": {
           "default": false,
-          "description": "Whether the Conversation changed after the profile last marked it\nseen (`conversation.mark_seen`). Set on every reply, never stored.",
+          "description": "Whether the Conversation has a message the person did not write\n(a reply, a notice) newer than the profile's seen mark\n(`conversation.mark_seen`). Status changes show in `attention`\ninstead. Set on every reply, never stored.",
           "type": "boolean"
         },
         "updated_at": {
@@ -8048,6 +8048,32 @@
         },
         "op": {
           "const": "conversation.get"
+        }
+      },
+      "required": [
+        "op",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ConversationMarkSeenRequest": {
+      "additionalProperties": false,
+      "description": "`conversation.mark_seen`: the person has seen the Conversation, so it is\nno longer `unread`. The mark only moves forward; a `conversation_changed`\nframe follows when `unread` changes.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "op": {
+          "const": "conversation.mark_seen"
+        },
+        "through": {
+          "description": "The newest message `sequence` the client showed; the newest message\nwhen absent. A later sequence counts as the newest, so a message the\nclient has not shown yet stays unread.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
@@ -31178,6 +31204,13 @@
       "request": "ConversationCreateRequest",
       "response": "ConversationCreated",
       "tier": "effect_command"
+    },
+    {
+      "domain": "conversations",
+      "name": "conversation.mark_seen",
+      "request": "ConversationMarkSeenRequest",
+      "response": "Ack",
+      "tier": "idempotent_command"
     },
     {
       "domain": "conversations",

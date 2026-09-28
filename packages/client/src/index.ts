@@ -160,7 +160,7 @@ export interface Conversation {
    * its status and open requests. Set when the daemon sends it.
    */
   attention?: Attention
-  /** It changed after the profile last marked it seen (`conversation.mark_seen`). */
+  /** It has a reply or notice newer than the profile last marked seen (`conversation.mark_seen`). */
   unread?: boolean
   /** The Conversation that delegated this one, for an orchestration child. */
   parent_conversation_id?: string | null

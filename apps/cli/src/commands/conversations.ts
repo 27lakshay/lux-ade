@@ -66,6 +66,8 @@ export function decodeReply<O extends DailyUseOperation>(op: O, response: unknow
 export const conversationUsage = `  conversation list [WORKSPACE_ID]      List conversations
   conversation inspect ID               Read conversation and recent messages
   conversation export ID FILE            Write complete readable JSON history to a new file
+  conversation mark-seen ID [--through UPDATED_AT]
+                                        Mark the conversation seen, up to the change shown
   conversation create WORKSPACE_ID [PROVIDER] [TITLE] [--account ID] [--preset NAME]
   conversation send ID TEXT [--request-id ID]
                                         Send a prompt; retain ID for safe lost-reply retries.
@@ -236,6 +238,15 @@ export async function runConversationCommand(
   }
   if (area === 'conversation' && action === 'inspect') {
     return requestDaemon(socketPath, 'conversation.get', { conversation_id: required(rest[0], 'ID') })
+  }
+  if (area === 'conversation' && action === 'mark-seen') {
+    const parsed = parseWords(rest, ['--through'], [], 'conversation mark-seen')
+    const [id] = positionals(parsed, 1, 'conversation mark-seen requires ID')
+    const through = parsed.options['--through']
+    return call(socketPath, 'conversation.mark_seen', {
+      conversation_id: id!,
+      ...(through ? { through: boundedInteger(through, '--through', 0, Number.MAX_SAFE_INTEGER) } : {}),
+    })
   }
   if (area === 'conversation' && action === 'export') {
     if (rest.length !== 2) throw new CliError('usage', 'conversation export requires ID FILE.')

@@ -270,7 +270,6 @@ impl Store {
             "INSERT INTO conversations VALUES(?1,?2,?3)",
             params![conversation.id, workspace_id, encode(&conversation)?],
         )?;
-        Self::created_seen(&self.connection, &conversation)?;
         Ok(conversation)
     }
     pub fn messages(&self, id: &str, before: Option<i64>, limit: usize) -> Result<Vec<Message>> {

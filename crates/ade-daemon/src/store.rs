@@ -52,7 +52,7 @@ pub use conversations::{ACCOUNT_DISABLED, Deleted, delete_conversation};
 pub(crate) use conversations::{HISTORY_EPOCHS, NOT_DELETED, TOMBSTONES, is_deleted};
 pub use conversations::{QUEUE_DISPATCH_STATUSES, QueueEntry};
 pub use drafts::{DraftContent, Restored};
-pub use projects::{FactTarget, Project, WorkspaceFacts};
+pub use projects::{FactTarget, Project, WorkspaceFacts, seen_as_is};
 pub use send_intents::*;
 pub use send_outbox::*;
 pub use worktree_operations::{WorktreeAdmission, WorktreeOperationRecord, WorktreeStep};

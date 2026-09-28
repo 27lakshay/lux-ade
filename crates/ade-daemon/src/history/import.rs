@@ -505,11 +505,6 @@ pub fn commit(
                 parent_conversation_id: None,
                 group_id: None,
             };
-            // Imported history is old work, not news: it starts read.
-            tx.execute(
-                "INSERT OR IGNORE INTO conversation_seen(conversation_id,seen_at) VALUES(?1,?2)",
-                params![conversation.id, conversation.updated_at],
-            )?;
             tx.execute(
                 "INSERT INTO conversations VALUES(?1,?2,?3)",
                 params![
@@ -598,6 +593,10 @@ pub fn commit(
             .context("An imported message ID is already in use")?;
             added += 1;
         }
+    }
+    if prior.is_none() {
+        // A first import is old work, not news: it starts read.
+        crate::store::seen_as_is(&tx, &conversation.id)?;
     }
     let source_path = session.path.to_string_lossy().into_owned();
     let outcome = if prior.is_none() {

@@ -22,6 +22,11 @@ pub fn operations() -> Vec<OperationSpec> {
             "conversation.create",
             Tier::EffectCommand,
         ),
+        // The seen mark only moves forward, so a repeat changes nothing.
+        OperationSpec::new::<ConversationMarkSeenRequest, Ack>(
+            "conversation.mark_seen",
+            Tier::IdempotentCommand,
+        ),
         OperationSpec::new::<DraftGetRequest, DraftReply>("draft.get", Tier::Query),
         OperationSpec::new::<DraftSaveRequest, DraftReply>("draft.save", Tier::IdempotentCommand),
         OperationSpec::new::<DraftSendGetRequest, SendIntentState>("draft.send.get", Tier::Query),
@@ -120,6 +125,19 @@ pub fn frames() -> Vec<FrameSpec> {
         FrameSpec::new::<ConversationDeletedFrame>("conversation_deleted"),
         FrameSpec::new::<ConversationReloadFrame>("conversation_reload"),
     ]
+}
+
+/// `conversation.mark_seen`: the person has seen the Conversation, so it is
+/// no longer `unread`. The mark only moves forward; a `conversation_changed`
+/// frame follows when `unread` changes.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ConversationMarkSeenRequest {
+    pub conversation_id: String,
+    /// The newest message `sequence` the client showed; the newest message
+    /// when absent. A later sequence counts as the newest, so a message the
+    /// client has not shown yet stays unread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<i64>,
 }
 
 /// `conversation.get`: one page of a conversation's messages, newest first.
@@ -1039,6 +1057,7 @@ mod tests {
         let tier = |op: &str| spec(op)["tier"].as_str().unwrap().to_owned();
         for (op, expected) in [
             ("conversation.create", "effect_command"),
+            ("conversation.mark_seen", "idempotent_command"),
             ("draft.get", "query"),
             ("draft.save", "idempotent_command"),
             ("draft.send.get", "query"),
@@ -1198,6 +1217,30 @@ mod tests {
             "op": "draft.stash.restore", "conversation_id": "c", "window_id": "w",
             "name": "n", "stash_revision": 1, "revision": 2,
         })));
+    }
+
+    #[test]
+    fn mark_seen_round_trips_with_and_without_a_time() {
+        let seen: ConversationMarkSeenRequest = request(
+            "conversation.mark_seen",
+            json!({"op": "conversation.mark_seen", "conversation_id": "conversation_1"}),
+        );
+        assert_eq!(seen.through, None);
+        let seen: ConversationMarkSeenRequest = request(
+            "conversation.mark_seen",
+            json!({"op": "conversation.mark_seen", "conversation_id": "c", "through": 12}),
+        );
+        assert_eq!(seen.through, Some(12));
+        let name = spec("conversation.mark_seen")["request"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(!validator(&name).is_valid(&json!({"op": "conversation.mark_seen"})));
+        response(
+            "conversation.mark_seen",
+            &Ack::default(),
+            json!({"type": "ack"}),
+        );
     }
 
     #[test]

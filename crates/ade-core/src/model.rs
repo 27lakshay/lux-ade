@@ -111,8 +111,10 @@ pub struct Conversation {
     /// (`crate::workspaces::attention`). Set on every reply, never stored.
     #[serde(default)]
     pub attention: Attention,
-    /// Whether the Conversation changed after the profile last marked it
-    /// seen (`conversation.mark_seen`). Set on every reply, never stored.
+    /// Whether the Conversation has a message the person did not write
+    /// (a reply, a notice) newer than the profile's seen mark
+    /// (`conversation.mark_seen`). Status changes show in `attention`
+    /// instead. Set on every reply, never stored.
     #[serde(default)]
     pub unread: bool,
     /// The Conversation that delegated this one, when it is an
