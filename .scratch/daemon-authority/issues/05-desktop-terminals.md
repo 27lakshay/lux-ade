@@ -37,3 +37,14 @@ store; ticket 07 moves the same data to the daemon.
 - The four-workspace benchmark rerun with real terminals: workspace switch holds 60 fps.
 
 ## Comments
+- 2026-09-29 — Steps 1–4, 6 and 7 built at `bd82613`. Tabs carry `target`; New terminal calls
+  `terminal.create` and opens the tab in the workspace the terminal runs in; the stream bridge
+  accepts extra terminals; closing a tab or pane calls `terminal.stop` then `terminal.retire`
+  (the workspace's first shell is only stopped) and keeps the tab on refusal; the view draws
+  only while shown, restores from the snapshot, retries attach three times, then offers
+  Reconnect and Restart shell (`provisional/TerminalStatus.tsx`). Checked in the dev app against
+  the real daemon: a shell ran `echo` and `pwd`, survived a workspace switch, and closing its tab
+  removed it from `extra_terminals`. Waiting on lane C for step 5 (`terminal.close` with the
+  busy confirmation). Not done yet: the real-terminal benchmark (deferred to ticket 08 so it
+  does not compete with the lanes' builds). Known gap until ticket 07: Reset layout drops
+  terminal tabs without stopping their terminals.
