@@ -47,6 +47,31 @@ fn field<'a, T>(
 }
 
 impl Sessions {
+    /// `agent.disconnect`: stops the Conversation's Agent, if one runs, and
+    /// marks it disconnected. `workspace.remove` uses it for idle Agents.
+    pub(super) fn disconnect(&self, id: &str) -> Result<()> {
+        let mut d = self.data.lock().unwrap();
+        let c = d.store.conversation(id)?;
+        if let Some(refusal) = disconnect_refusal(&c.status, c.terminal_owner.is_some()) {
+            bail!(refusal);
+        }
+        // The provider stop can take a full shutdown escalation, so it
+        // runs without the session lock.
+        if let Some((run, rpc)) = Self::begin_stop(&mut d, id)? {
+            drop(d);
+            self.finish_stop(id, &run, rpc)?;
+            d = self.data.lock().unwrap();
+            if Self::owns(&d, id, &run) {
+                d.agents.remove(id);
+            }
+        }
+        let mut c = d.store.conversation(id)?;
+        c.status = "disconnected".into();
+        c.updated_at = now_ms();
+        d.store.commit_conversation(&c, &[], &[])?;
+        self.changed(&mut d, &c, &[])?;
+        Ok(())
+    }
     fn attach(&self, conversation: &str, id: &str, name: &str, bytes: &[u8]) -> Result<Value> {
         let attachment = self.data.lock().unwrap().store.attach(
             non_empty("conversation_id", conversation)?,
@@ -642,27 +667,7 @@ impl Sessions {
             }
             "agent.disconnect" => {
                 let disconnect: AgentDisconnectRequest = decode(request)?;
-                let id = non_empty("conversation_id", &disconnect.conversation_id)?;
-                let mut d = self.data.lock().unwrap();
-                let c = d.store.conversation(id)?;
-                if let Some(refusal) = disconnect_refusal(&c.status, c.terminal_owner.is_some()) {
-                    bail!(refusal);
-                }
-                // The provider stop can take a full shutdown escalation, so it
-                // runs without the session lock.
-                if let Some((run, rpc)) = Self::begin_stop(&mut d, id)? {
-                    drop(d);
-                    self.finish_stop(id, &run, rpc)?;
-                    d = self.data.lock().unwrap();
-                    if Self::owns(&d, id, &run) {
-                        d.agents.remove(id);
-                    }
-                }
-                let mut c = d.store.conversation(id)?;
-                c.status = "disconnected".into();
-                c.updated_at = now_ms();
-                d.store.commit_conversation(&c, &[], &[])?;
-                self.changed(&mut d, &c, &[])?;
+                self.disconnect(non_empty("conversation_id", &disconnect.conversation_id)?)?;
                 reply(&Ack::default())
             }
             "agent.resume" => {

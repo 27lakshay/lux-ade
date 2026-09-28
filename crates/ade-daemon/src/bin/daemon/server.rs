@@ -4,6 +4,7 @@ mod browser_tools;
 mod control;
 mod diagnostics;
 mod paired;
+mod workspaces;
 
 use crate::browser_reconcile::{HeldReceipt, owner_settlement};
 use ade_core::contract::conversations::Ack;
@@ -1413,6 +1414,21 @@ impl Host {
         let mut live = HashSet::new();
         for terminal in self.runtime_terminals()? {
             let workspace = terminal.workspace;
+            if self
+                .sessions
+                .workspace_removed(&workspace.id)
+                .unwrap_or(false)
+            {
+                // workspace.remove stops these; one still running means that
+                // removal was interrupted, so finish stopping it.
+                if terminal.metrics["shell_running"] == true {
+                    self.runtime.command(terminal_runtime::Command::Stop {
+                        workspace_id: workspace.id,
+                        terminal_id: workspace.terminal_id,
+                    })?;
+                }
+                continue;
+            }
             if self.sessions.ensure_workspace_bound(&workspace.id).is_err() {
                 continue;
             }
@@ -1676,6 +1692,8 @@ impl Host {
             self.terminal_lifecycle(request)
         } else if op == "terminal.restart" {
             self.terminal_restart(request)
+        } else if op == "workspace.remove" {
+            self.workspace_remove(request)
         } else if matches!(
             op,
             "browser.owner.register"
@@ -1722,6 +1740,7 @@ impl Host {
                 });
                 (listed && !running).then(ack).flatten()
             }
+            "workspace.remove" => self.observe_workspace_remove(request),
             "queue.pause" | "agent.disconnect" => {
                 let snapshot = self
                     .sessions

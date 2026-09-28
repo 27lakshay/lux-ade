@@ -6,6 +6,21 @@ pub(crate) struct CatalogBindingClaim {
     repository: Option<(String, Option<(u64, u64)>)>,
 }
 pub use ade_core::contract::workspaces::WorkspaceRebindEntry;
+use ade_core::workspaces::{RemoveBlocker, RemoveBlockerKind};
+
+/// Workspaces removed from ADE. The workspace row stays, so its
+/// Conversations keep a valid workspace; the catalog, rebind checks and the
+/// prompt queue skip it, and `workspace.open` on its root deletes the row.
+pub(crate) const WORKSPACE_TOMBSTONES: &str = "CREATE TABLE IF NOT EXISTS workspace_tombstones(workspace_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, removed_at INTEGER NOT NULL, terminals_retired INTEGER NOT NULL DEFAULT 0 CHECK(terminals_retired IN (0,1)));";
+/// A SQL condition on a workspace ID column: the workspace is not removed.
+macro_rules! visible {
+    ($column:literal) => {
+        concat!(
+            $column,
+            " NOT IN (SELECT workspace_id FROM workspace_tombstones)"
+        )
+    };
+}
 fn binding_matches(db: &Connection, kind: &str, id: &str, root: &str) -> Result<bool> {
     let saved: Option<(String, String)> = db
         .query_row(
@@ -211,7 +226,11 @@ impl Store {
     pub fn rebind_workspaces(&self) -> Result<Vec<WorkspaceRebindEntry>> {
         let workspaces: Vec<WorkspaceRecord> = all(
             &self.connection,
-            "SELECT data FROM workspaces ORDER BY rowid",
+            concat!(
+                "SELECT data FROM workspaces WHERE ",
+                visible!("id"),
+                " ORDER BY rowid"
+            ),
         )?;
         workspaces
             .into_iter()
@@ -254,10 +273,7 @@ impl Store {
         one(&self.connection, "repositories", id)
     }
     pub fn rebind_repositories(&self) -> Result<Vec<(String, String, bool, bool)>> {
-        let repositories: Vec<Repository> = all(
-            &self.connection,
-            "SELECT data FROM repositories ORDER BY rowid",
-        )?;
+        let repositories: Vec<Repository> = all(&self.connection, VISIBLE_REPOSITORIES)?;
         repositories
             .into_iter()
             .map(|repository| {
@@ -304,6 +320,9 @@ impl Store {
         // launch; durable device/inode identity catches later attempts, but
         // path-based OS APIs cannot make that handoff fully atomic.
         let workspace = self.workspace(id)?;
+        if self.workspace_removed(id)? {
+            return Err(ade_core::error::WorkspaceRemoved(id.to_owned()).into());
+        }
         if workspace.needs_rebind {
             return Err(ade_core::error::NeedsRebind.into());
         }
@@ -335,15 +354,25 @@ impl Store {
         Ok(marker != 0 || self.has_unbound_records()?)
     }
     pub fn has_unbound_records(&self) -> Result<bool> {
+        // A removed workspace, and a repository only removed workspaces use,
+        // never fences the profile: its folder may be gone on purpose.
         let pending: i64 = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1 UNION ALL SELECT 1 FROM repositories WHERE json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1)",
+            concat!(
+                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE (json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1) AND ",
+                visible!("id"),
+                " UNION ALL SELECT 1 FROM repositories WHERE (json_extract(data,'$.needs_rebind')=1 OR json_extract(data,'$.worktree_lifecycle_needs_rebind')=1) AND id IN (SELECT repository_id FROM workspaces WHERE ",
+                visible!("id"),
+                "))"
+            ),
             [], |row| row.get(0),
         )?;
         if pending != 0 {
             return Ok(true);
         }
-        let workspaces: Vec<WorkspaceRecord> =
-            all(&self.connection, "SELECT data FROM workspaces")?;
+        let workspaces: Vec<WorkspaceRecord> = all(
+            &self.connection,
+            concat!("SELECT data FROM workspaces WHERE ", visible!("id")),
+        )?;
         for workspace in workspaces {
             if !binding_matches(
                 &self.connection,
@@ -360,7 +389,7 @@ impl Store {
                 }
             }
         }
-        let repositories: Vec<Repository> = all(&self.connection, "SELECT data FROM repositories")?;
+        let repositories: Vec<Repository> = all(&self.connection, VISIBLE_REPOSITORIES)?;
         for repository in repositories {
             if !binding_matches(
                 &self.connection,
@@ -525,8 +554,10 @@ impl Store {
     pub fn inherited_binding(&self, root: &str) -> Result<(bool, bool)> {
         let mut needs_rebind = false;
         let mut lifecycle_needs_rebind = false;
-        let workspaces: Vec<WorkspaceRecord> =
-            all(&self.connection, "SELECT data FROM workspaces")?;
+        let workspaces: Vec<WorkspaceRecord> = all(
+            &self.connection,
+            concat!("SELECT data FROM workspaces WHERE ", visible!("id")),
+        )?;
         for workspace in workspaces {
             if Path::new(root).starts_with(&workspace.root) {
                 needs_rebind |= workspace.needs_rebind;
@@ -537,13 +568,41 @@ impl Store {
     }
     pub fn catalog(&self) -> Result<Catalogue> {
         let tx = self.connection.unchecked_transaction()?;
+        // A removed workspace leaves the catalog with its Conversations and
+        // windows; they return when its folder is opened again.
+        let repositories: Vec<Repository> = all(&tx, VISIBLE_REPOSITORIES)?;
         let result = Catalogue {
-            workspaces: all(&tx, "SELECT data FROM workspaces ORDER BY rowid")?,
+            repositories: repositories
+                .into_iter()
+                .map(|repository| CatalogRepository {
+                    name: ade_core::workspaces::project_name(&repository.root),
+                    id: repository.id,
+                    root: repository.root,
+                })
+                .collect(),
+            workspaces: all(
+                &tx,
+                concat!(
+                    "SELECT data FROM workspaces WHERE ",
+                    visible!("id"),
+                    " ORDER BY rowid"
+                ),
+            )?,
             conversations: all(
                 &tx,
-                &format!("SELECT data FROM conversations c WHERE {NOT_DELETED} ORDER BY rowid"),
+                &format!(
+                    "SELECT data FROM conversations c WHERE {NOT_DELETED} AND {} ORDER BY rowid",
+                    visible!("c.workspace_id")
+                ),
             )?,
-            windows: all(&tx, "SELECT data FROM windows ORDER BY rowid")?,
+            windows: all(
+                &tx,
+                concat!(
+                    "SELECT data FROM windows WHERE ",
+                    visible!("workspace_id"),
+                    " ORDER BY rowid"
+                ),
+            )?,
         };
         tx.commit()?;
         Ok(result)
@@ -596,6 +655,13 @@ impl Store {
             .optional()?;
         if let Some(existing) = existing {
             let mut workspace: WorkspaceRecord = decode(existing)?;
+            // Opening a removed workspace's folder restores the same identity
+            // (F061) with its Conversations. Its saved physical binding is
+            // checked below like any other: a replaced folder needs a rebind.
+            tx.execute(
+                "DELETE FROM workspace_tombstones WHERE workspace_id=?1",
+                [&workspace.id],
+            )?;
             let repository_changed = if let Some(repository_id) = &workspace.repository_id {
                 let repository: Repository = one(&tx, "repositories", repository_id)?;
                 repository.needs_rebind
@@ -689,5 +755,156 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(workspace)
+    }
+}
+
+/// Repositories that a workspace still in the catalog uses, in registration order.
+const VISIBLE_REPOSITORIES: &str = concat!(
+    "SELECT data FROM repositories WHERE id IN (SELECT repository_id FROM workspaces WHERE ",
+    visible!("id"),
+    ") ORDER BY rowid"
+);
+
+impl Store {
+    /// Whether the workspace exists and was removed from ADE. An unknown ID
+    /// is [`ade_core::error::WorkspaceNotFound`].
+    pub fn workspace_removed(&self, id: &str) -> Result<bool> {
+        let row: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspace_tombstones WHERE workspace_id=?1) FROM workspaces WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match row {
+            Some(removed) => Ok(removed != 0),
+            None => Err(ade_core::error::WorkspaceNotFound(id.to_owned()).into()),
+        }
+    }
+    /// `workspace.rename`: stores a new display name. Only the name changes.
+    pub fn rename_workspace(&self, id: &str, name: &str) -> Result<WorkspaceRecord> {
+        let name = ade_core::workspaces::display_name(name)
+            .map_err(ade_core::error::InvalidWorkspaceName)?;
+        let tx = self.transaction()?;
+        if self.workspace_removed(id)? {
+            return Err(ade_core::error::WorkspaceRemoved(id.to_owned()).into());
+        }
+        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        workspace.name = name;
+        tx.execute(
+            "UPDATE workspaces SET data=?2 WHERE id=?1",
+            params![id, encode(&workspace)?],
+        )?;
+        tx.commit()?;
+        Ok(workspace)
+    }
+    /// What the profile database knows blocks removing the workspace: busy or
+    /// terminal-owned Conversations and running services. The daemon adds the
+    /// runtime's script runs and its default workspace.
+    pub fn workspace_remove_blockers(&self, id: &str) -> Result<Vec<RemoveBlocker>> {
+        let conversations: Vec<Conversation> = self
+            .connection
+            .prepare(&format!(
+                "SELECT data FROM conversations c WHERE {NOT_DELETED} AND c.workspace_id=?1 ORDER BY rowid"
+            ))?
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .map(|row| decode(row?))
+            .collect::<Result<_>>()?;
+        let mut blockers = Vec::new();
+        for conversation in conversations {
+            let kind =
+                if conversation.terminal_owner.is_some() || conversation.view_terminal.is_some() {
+                    RemoveBlockerKind::ConversationInTerminal
+                } else if BUSY.contains(&conversation.status.as_str())
+                    || conversation.active_turn_id.is_some()
+                {
+                    RemoveBlockerKind::ConversationRunning
+                } else {
+                    continue;
+                };
+            blockers.push(RemoveBlocker {
+                kind,
+                label: format!("Conversation \"{}\"", conversation.title),
+                id: conversation.id,
+            });
+        }
+        for service in self.services(id)? {
+            if service.terminal_owner.is_some() {
+                blockers.push(RemoveBlocker {
+                    kind: RemoveBlockerKind::ServiceRunning,
+                    label: format!("Service {}", service.name),
+                    id: service.name,
+                });
+            }
+        }
+        Ok(blockers)
+    }
+    /// Records the removal. Returns false when the workspace was already removed.
+    pub fn remove_workspace(&self, id: &str, operation_id: &str) -> Result<bool> {
+        let tx = self.transaction()?;
+        if self.workspace_removed(id)? {
+            return Ok(false);
+        }
+        let blockers = self.workspace_remove_blockers(id)?;
+        if !blockers.is_empty() {
+            return Err(ade_core::error::WorkspaceRemoveBlocked(blockers).into());
+        }
+        tx.execute(
+            "INSERT INTO workspace_tombstones(workspace_id,operation_id,removed_at) VALUES(?1,?2,?3)",
+            params![id, operation_id, now_ms()],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+    /// Retires a removed workspace's terminals from its record, once per
+    /// removal: its primary terminal gets a fresh ID and every extra terminal
+    /// except a service's is dropped, so reopening the folder starts clean
+    /// shells. Returns the retired terminal IDs, empty on a repeat. Service
+    /// terminals stay with their service.
+    pub fn retire_removed_terminals(&self, id: &str) -> Result<Vec<String>> {
+        let tx = self.transaction()?;
+        let retired: Option<i64> = tx
+            .query_row(
+                "SELECT terminals_retired FROM workspace_tombstones WHERE workspace_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match retired {
+            None => anyhow::bail!("Only a removed workspace retires all its terminals"),
+            Some(1) => return Ok(Vec::new()),
+            Some(_) => {}
+        }
+        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        let services: Vec<String> = self
+            .services(id)?
+            .into_iter()
+            .filter_map(|service| service.terminal_id)
+            .collect();
+        let mut retired = vec![std::mem::replace(
+            &mut workspace.terminal_id,
+            new_id("terminal"),
+        )];
+        workspace.extra_terminals.retain(|terminal| {
+            let keep = services.contains(terminal);
+            if !keep {
+                retired.push(terminal.clone());
+            }
+            keep
+        });
+        tx.execute(
+            "UPDATE workspaces SET terminal_id=?2,data=?3 WHERE id=?1",
+            params![id, workspace.terminal_id, encode(&workspace)?],
+        )?;
+        for terminal in &retired {
+            forget_terminal_views(&tx, terminal)?;
+        }
+        tx.execute(
+            "UPDATE workspace_tombstones SET terminals_retired=1 WHERE workspace_id=?1",
+            [id],
+        )?;
+        tx.commit()?;
+        Ok(retired)
     }
 }

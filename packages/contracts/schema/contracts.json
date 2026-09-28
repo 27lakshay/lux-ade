@@ -4675,11 +4675,41 @@
       ],
       "type": "object"
     },
+    "CatalogRepository": {
+      "description": "A Git repository as the catalog lists it, so a client can group the\nworkspaces that share it into one project. Plain folders have none: their\nworkspace's `repository_id` is null.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "description": "The display name: the top-level checkout folder's name (see\n`crate::workspaces::project_name`).",
+          "type": "string"
+        },
+        "root": {
+          "description": "The Git common directory, as `RepositoryRecord::root` holds it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "name"
+      ],
+      "type": "object"
+    },
     "Catalogue": {
       "properties": {
         "conversations": {
           "items": {
             "$ref": "#/$defs/Conversation"
+          },
+          "type": "array"
+        },
+        "repositories": {
+          "default": [],
+          "description": "The repositories of the listed workspaces, in registration order.",
+          "items": {
+            "$ref": "#/$defs/CatalogRepository"
           },
           "type": "array"
         },
@@ -4695,6 +4725,7 @@
         }
       },
       "required": [
+        "repositories",
         "workspaces",
         "conversations",
         "windows"
@@ -27334,7 +27365,7 @@
       "type": "object"
     },
     "WorkspaceAck": {
-      "description": "The `workspace.open` and `workspace.rebind` reply.",
+      "description": "The `workspace.open`, `workspace.rename` and `workspace.rebind` reply.",
       "properties": {
         "type": {
           "description": "The `ack` type tag.",
@@ -27552,6 +27583,69 @@
         "terminal_id",
         "needs_rebind",
         "worktree_lifecycle_needs_rebind"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRemoveRequest": {
+      "additionalProperties": false,
+      "description": "`workspace.remove` (\"Remove from ADE\"): hide a workspace from the catalog\nwithout touching its files.\n\n- Refused with `workspace_remove_blocked` while a Conversation turn runs, a\n  Conversation is handed to a terminal, a service runs, a script run is\n  still running, or the workspace is the daemon's default. The error frame\n  carries `blockers`: `[{kind, id, label}]`, where `kind` is\n  `conversation_running`, `conversation_in_terminal`, `service_running`,\n  `script_running` or `default_workspace`.\n- Otherwise it disconnects the workspace's idle Agents, records the\n  removal, stops every terminal (primary, extra and exited script runs)\n  and retires all but service terminals, so no process or worktree lease\n  remains. A later `worktree.remove` of the folder sees no `active_work`.\n- The record stays, so Conversations keep their workspace. They leave the\n  catalog with it. `workspace.open` on the same folder restores the same\n  workspace ID and its Conversations.\n- Removing a removed workspace succeeds and changes nothing. An unknown ID\n  is `workspace_not_found`.",
+      "properties": {
+        "op": {
+          "const": "workspace.remove"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID. A retry with the same ID and payload returns\nthe recorded outcome; the same ID with another payload is a conflict.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRemoved": {
+      "description": "The `workspace.remove` reply: the workspace is removed and none of its\nterminals runs.",
+      "properties": {
+        "type": {
+          "description": "The `workspace_removed` type tag.",
+          "enum": [
+            "workspace_removed"
+          ],
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "workspace_id"
+      ],
+      "type": "object"
+    },
+    "WorkspaceRenameRequest": {
+      "additionalProperties": false,
+      "description": "`workspace.rename`: change the name ADE shows for a workspace. The folder,\nits path and any Git branch are unchanged.\n\nThe daemon trims `name` and refuses an empty name, one longer than 100\ncharacters or one with a control character (`invalid_workspace_name`). An\nunknown ID is `workspace_not_found`; a removed workspace is\n`workspace_removed`. The new name persists and a `catalog` frame follows.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "workspace.rename"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "workspace_id",
+        "name"
       ],
       "type": "object"
     },
@@ -29115,6 +29209,20 @@
       "request": "WorkspaceOpenRequest",
       "response": "WorkspaceAck",
       "tier": "idempotent_command"
+    },
+    {
+      "domain": "workspaces",
+      "name": "workspace.rename",
+      "request": "WorkspaceRenameRequest",
+      "response": "WorkspaceAck",
+      "tier": "idempotent_command"
+    },
+    {
+      "domain": "workspaces",
+      "name": "workspace.remove",
+      "request": "WorkspaceRemoveRequest",
+      "response": "WorkspaceRemoved",
+      "tier": "effect_command"
     },
     {
       "domain": "workspaces",

@@ -2,7 +2,9 @@ import { dailyUseCommand } from '@ade/client'
 import { catalog, CliError, effectOperationId, required, type CommandResult } from '../shared.js'
 
 export const workspaceUsage = `  workspace list                        List registered workspaces
-  workspace open PATH                   Register a repository or folder
+  workspace open PATH                   Register a repository or folder, or restore a removed one
+  workspace rename WORKSPACE_ID NAME    Change the name ADE shows; the folder and branch stay
+  workspace remove WORKSPACE_ID         Remove from ADE: stop its terminals, keep its files
   workspace rebind-list                 List restored workspaces requiring a directory
   workspace rebind WORKSPACE_ID PATH    Bind a restored workspace to a verified directory
   repository rebind-list                List restored Git repositories requiring a path
@@ -63,6 +65,22 @@ export async function runWorkspaceCommand(
     return { type: 'workspaces', workspaces: (await catalog(socketPath)).workspaces }
   if (area === 'workspace' && action === 'open')
     return dailyUseCommand(socketPath, { op: 'workspace.open', path: required(rest[0], 'PATH') })
+  if (area === 'workspace' && action === 'rename') {
+    if (rest.length !== 2) throw new CliError('usage', 'workspace rename requires WORKSPACE_ID NAME.')
+    return dailyUseCommand(socketPath, {
+      op: 'workspace.rename',
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+      name: rest[1],
+    })
+  }
+  if (area === 'workspace' && action === 'remove') {
+    if (rest.length !== 1) throw new CliError('usage', 'workspace remove requires WORKSPACE_ID.')
+    return dailyUseCommand(socketPath, {
+      op: 'workspace.remove',
+      operation_id: effectOperationId(),
+      workspace_id: required(rest[0], 'WORKSPACE_ID'),
+    })
+  }
   if (area === 'workspace' && action === 'rebind') {
     if (rest.length !== 2) throw new CliError('usage', 'workspace rebind requires WORKSPACE_ID PATH.')
     return dailyUseCommand(socketPath, {

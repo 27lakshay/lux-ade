@@ -277,8 +277,9 @@ impl Store {
             )? == 1,
             "Schema-12 restore fence is missing; preserve this profile and use a compatible build"
         );
-        // Every read that lists Conversations filters on the tombstones.
+        // Every read that lists Conversations or workspaces filters on the tombstones.
         connection.execute_batch(TOMBSTONES)?;
+        connection.execute_batch(WORKSPACE_TOMBSTONES)?;
         Ok(Self {
             connection,
             data_directory,

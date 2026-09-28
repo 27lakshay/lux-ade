@@ -38,6 +38,10 @@ export const daemonRefusalCodes = [
   'lifecycle_unavailable',
   'lifecycle_invalid_output',
   'conversation_deleted',
+  'workspace_not_found',
+  'workspace_removed',
+  'invalid_workspace_name',
+  'workspace_remove_blocked',
 ] as const
 
 export type KnownDaemonErrorCode = (typeof categoryErrorCodes)[number] | (typeof daemonRefusalCodes)[number]
@@ -57,6 +61,8 @@ export class DaemonRequestError extends Error {
    * `replied` is true when the daemon itself sent this error as a reply frame,
    * so the connection carried a whole answer. It is false for a failure of the
    * connection (socket error, close, deadline) or of the client's own checks.
+   * `details` holds the error frame's other fields, such as the `blockers`
+   * of `workspace_remove_blocked`.
    */
   constructor(
     public readonly code: DaemonErrorCode,
@@ -64,6 +70,7 @@ export class DaemonRequestError extends Error {
     public readonly delivery: RequestDelivery = 'not_sent',
     public readonly replied = false,
     public readonly recovery?: string,
+    public readonly details: Readonly<Record<string, unknown>> = {},
   ) {
     super(message)
     this.name = 'DaemonRequestError'
@@ -191,12 +198,13 @@ function requestOnce(
       delivery: RequestDelivery = requestSent ? 'unknown' : 'not_sent',
       replied = false,
       recovery?: string,
+      details?: Record<string, unknown>,
     ): void {
       if (settled) return
       settled = true
       clearTimeout(timer)
       socket.destroy()
-      reject(new DaemonRequestError(code, message, delivery, replied, recovery))
+      reject(new DaemonRequestError(code, message, delivery, replied, recovery, details))
     }
 
     socket.on('connect', () => socket.write(helloLine(options.pairing)))
@@ -223,12 +231,14 @@ function requestOnce(
           // Keep the daemon's code and recovery hint as sent; only a frame with no code is `daemon`.
           const code = typeof response.code === 'string' && response.code ? response.code : 'daemon'
           const recovery = typeof response.recovery === 'string' && response.recovery ? response.recovery : undefined
+          const { type: _type, code: _code, message, recovery: _recovery, ...details } = response
           return fail(
             code,
-            typeof response.message === 'string' ? response.message : 'Daemon rejected the request.',
+            typeof message === 'string' ? message : 'Daemon rejected the request.',
             phase === 'hello' ? 'not_sent' : response.pre_admission_rejected === true ? 'rejected' : 'unknown',
             true,
             recovery,
+            details,
           )
         }
         if (phase === 'hello') {

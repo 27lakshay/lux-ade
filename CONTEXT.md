@@ -10,6 +10,7 @@ Specifications describe intended behavior, not verified implementation status.
 | Profile | Host-scoped accounts, settings, history, plugins and browser data; not a same-user security sandbox |
 | Project | Registered repository or ordinary folder |
 | Workspace | Independent stable identity for a checkout/directory on an execution host |
+| Remove from ADE | Hide a workspace and stop its terminals without touching its files; opening its folder again restores the same workspace |
 | Conversation | Agent interaction bound to workspace, provider session and explicit account context |
 | Operation | Identified command with payload fingerprint, admission state and outcome evidence |
 | Execution attempt | A particular runtime-owned run, fenced by incarnation/turn identity |

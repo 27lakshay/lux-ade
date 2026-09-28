@@ -62,6 +62,40 @@ pub struct RestoredSendHeld;
 #[error("Conversation {0} was deleted; reload the conversation list")]
 pub struct ConversationDeleted(pub String);
 
+/// No workspace has this ID.
+#[derive(Debug, thiserror::Error)]
+#[error("Workspace {0} does not exist; reload the catalog")]
+pub struct WorkspaceNotFound(pub String);
+
+/// The workspace was removed from ADE. Its record stays so its
+/// Conversations keep their workspace; `workspace.open` on its folder
+/// brings it back under the same ID.
+#[derive(Debug, thiserror::Error)]
+#[error("Workspace {0} was removed from ADE; open its folder again to use it")]
+pub struct WorkspaceRemoved(pub String);
+
+/// `workspace.rename` refused the name.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct InvalidWorkspaceName(pub crate::workspaces::InvalidName);
+
+/// `workspace.remove` refused while work runs in the workspace. The error
+/// frame lists each blocker, so a client can show what to stop first.
+#[derive(Debug, thiserror::Error)]
+#[error("{}", remove_blocked_message(.0))]
+pub struct WorkspaceRemoveBlocked(pub Vec<crate::workspaces::RemoveBlocker>);
+
+fn remove_blocked_message(blockers: &[crate::workspaces::RemoveBlocker]) -> String {
+    let labels: Vec<&str> = blockers
+        .iter()
+        .map(|blocker| blocker.label.as_str())
+        .collect();
+    format!(
+        "Stop the work in this workspace before removing it: {}",
+        labels.join(", ")
+    )
+}
+
 /// An effect whose outcome cannot be known, such as a Git command interrupted
 /// by a crash. The message is the operation's own account of what to inspect;
 /// the envelope types it `outcome_unknown`, so a client can tell it from a
@@ -412,6 +446,23 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
         return serde_json::json!({"type":"error","message":unknown.to_string(),
             "code":"outcome_unknown","recovery":"inspect_before_retry"});
     }
+    if let Some(missing) = error.downcast_ref::<WorkspaceNotFound>() {
+        return serde_json::json!({"type":"error","message":missing.to_string(),
+            "code":"workspace_not_found","recovery":"reload_catalog"});
+    }
+    if let Some(removed) = error.downcast_ref::<WorkspaceRemoved>() {
+        return serde_json::json!({"type":"error","message":removed.to_string(),
+            "code":"workspace_removed","recovery":"reopen_workspace"});
+    }
+    if let Some(invalid) = error.downcast_ref::<InvalidWorkspaceName>() {
+        return serde_json::json!({"type":"error","message":invalid.to_string(),
+            "code":"invalid_workspace_name","recovery":"choose_another_name"});
+    }
+    if let Some(blocked) = error.downcast_ref::<WorkspaceRemoveBlocked>() {
+        return serde_json::json!({"type":"error","message":blocked.to_string(),
+            "code":"workspace_remove_blocked","recovery":"stop_workspace_work",
+            "blockers":blocked.0});
+    }
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),
             "code":"needs_rebind","recovery":"rebind_workspace"});
@@ -490,6 +541,37 @@ mod failure_tests {
             Failure::RateLimit.recovery(),
             Recovery::WaitThenRetryManually
         );
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+    use crate::workspaces::{InvalidName, RemoveBlocker, RemoveBlockerKind};
+    use serde_json::json;
+
+    #[test]
+    fn workspace_errors_carry_codes_and_the_blockers() {
+        let missing = error_envelope(WorkspaceNotFound("workspace_x".into()).into());
+        assert_eq!(missing["code"], "workspace_not_found");
+        assert_eq!(missing["recovery"], "reload_catalog");
+        let removed = error_envelope(WorkspaceRemoved("workspace_x".into()).into());
+        assert_eq!(removed["code"], "workspace_removed");
+        let invalid = error_envelope(InvalidWorkspaceName(InvalidName::TooLong).into());
+        assert_eq!(invalid["code"], "invalid_workspace_name");
+        assert_eq!(invalid["message"], InvalidName::TooLong.to_string());
+        let blocker = RemoveBlocker {
+            kind: RemoveBlockerKind::ServiceRunning,
+            id: "web".into(),
+            label: "Service web".into(),
+        };
+        let blocked = error_envelope(WorkspaceRemoveBlocked(vec![blocker]).into());
+        assert_eq!(blocked["code"], "workspace_remove_blocked");
+        assert_eq!(
+            blocked["blockers"],
+            json!([{"kind": "service_running", "id": "web", "label": "Service web"}])
+        );
+        assert!(blocked["message"].as_str().unwrap().contains("Service web"));
     }
 }
 

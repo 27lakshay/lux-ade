@@ -42,6 +42,7 @@ export {
 } from './call.js'
 export { isOperation, operationIdOperations, operations, type Operation, type Tier } from '@ade/contracts'
 export { formatReviewFeedback, type ReviewAnchor, type ReviewFeedback } from './review.js'
+export { workspaceRemoveBlockers, type WorkspaceRemoveBlocker, type WorkspaceRemoveBlockerKind } from './workspaces.js'
 export {
   decodeDailyUseFeedFrame,
   decodeDailyUseRequest,
@@ -76,11 +77,30 @@ const HANDSHAKE_TIMEOUT_MS = 5_000
 export interface Workspace {
   id: string
   root: string
+  /** The name ADE shows; `workspace.rename` changes it, never the folder. */
   name: string
   terminal_id: string
+  /**
+   * The workspace's other terminals: extra shells, service terminals and
+   * script runs. The SDK's catalog parser always sets it; it is optional only
+   * so hand-built fixtures stay valid.
+   */
+  extra_terminals?: string[]
   repository_id: string | null
   needs_rebind: boolean
   worktree_lifecycle_needs_rebind: boolean
+}
+
+/**
+ * A Git repository in the catalog: the project its workspaces
+ * (`Workspace.repository_id`) belong to. A plain folder has none.
+ */
+export interface CatalogRepository {
+  id: string
+  /** The Git common directory. */
+  root: string
+  /** The checkout folder's name, such as `app` for `/src/app/.git`. */
+  name: string
 }
 
 export interface Conversation {
@@ -94,6 +114,11 @@ export interface Conversation {
 }
 
 export interface Catalog {
+  /**
+   * The repositories the listed workspaces use. The SDK's catalog parser
+   * always sets it; it is optional only so hand-built fixtures stay valid.
+   */
+  repositories?: CatalogRepository[]
   workspaces: Workspace[]
   conversations: Conversation[]
 }
@@ -149,11 +174,14 @@ function parseWorkspace(value: unknown): Workspace | null {
     typeof source.worktree_lifecycle_needs_rebind !== 'boolean'
   )
     return null
+  const extraTerminals = source.extra_terminals ?? []
+  if (!Array.isArray(extraTerminals) || !extraTerminals.every((id) => requiredString(id) !== null)) return null
   return {
     id: fields[0],
     root: fields[1],
     name: fields[2],
     terminal_id: fields[3],
+    extra_terminals: extraTerminals as string[],
     repository_id: repositoryId ?? null,
     needs_rebind: source.needs_rebind === true,
     worktree_lifecycle_needs_rebind: source.worktree_lifecycle_needs_rebind === true,
@@ -180,13 +208,26 @@ function parseConversation(value: unknown): Conversation | null {
   }
 }
 
-function parseCatalog(value: unknown): Catalog | null {
+function parseRepository(value: unknown): CatalogRepository | null {
+  const fields = stringFields(value, ['id', 'root', 'name'])
+  return fields ? { id: fields[0], root: fields[1], name: fields[2] } : null
+}
+
+/** A catalog as the daemon sends it, or null when it is malformed. */
+export function parseCatalog(value: unknown): Catalog | null {
   const source = record(value)
   if (!source || !Array.isArray(source.workspaces) || !Array.isArray(source.conversations)) return null
+  const listed = source.repositories ?? []
+  if (!Array.isArray(listed)) return null
+  const repositories = listed.map(parseRepository)
   const workspaces = source.workspaces.map(parseWorkspace)
   const conversations = source.conversations.map(parseConversation)
-  if (workspaces.includes(null) || conversations.includes(null)) return null
-  return { workspaces: workspaces as Workspace[], conversations: conversations as Conversation[] }
+  if (repositories.includes(null) || workspaces.includes(null) || conversations.includes(null)) return null
+  return {
+    repositories: repositories as CatalogRepository[],
+    workspaces: workspaces as Workspace[],
+    conversations: conversations as Conversation[],
+  }
 }
 
 function parseFrame(line: Buffer): Record<string, unknown> | null {
@@ -272,6 +313,23 @@ export class AdeClient {
 
   getCatalog(): Promise<DailyUseResponse<'catalog.get'>> {
     return this.command<'catalog.get'>({ op: 'catalog.get' })
+  }
+
+  /** Change the name ADE shows for a workspace; its folder and branch are unchanged. */
+  renameWorkspace(workspaceId: string, name: string): Promise<DailyUseResponse<'workspace.rename'>> {
+    return this.call('workspace.rename', { workspace_id: workspaceId, name })
+  }
+
+  /**
+   * Remove a workspace from ADE without touching its files. Pass the same
+   * `operationId` to retry a lost reply. A refusal is a `DaemonRequestError`
+   * with code `workspace_remove_blocked`; `workspaceRemoveBlockers` reads what blocks it.
+   */
+  removeWorkspace(workspaceId: string, operationId?: string): Promise<DailyUseResponse<'workspace.remove'>> {
+    return this.call('workspace.remove', {
+      workspace_id: workspaceId,
+      ...(operationId !== undefined ? { operation_id: operationId } : {}),
+    })
   }
 
   getConversation(

@@ -164,6 +164,11 @@ fn catalog_get_round_trips() {
     let frame = CatalogFrame {
         tag: CatalogTag::Tag,
         catalog: Catalogue {
+            repositories: vec![crate::model::CatalogRepository {
+                id: "repo_1".into(),
+                root: "/tmp/project/.git".into(),
+                name: "project".into(),
+            }],
             workspaces: vec![workspace],
             conversations: vec![conversation()],
             windows: Vec::new(),

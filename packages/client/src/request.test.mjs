@@ -38,3 +38,19 @@ test('the control lane socket sits beside the profile socket', async () => {
   for (const op of ['agent.send', 'conversation.get', 'session.subscribe'])
     assert.equal(controlOperations.has(op), false, op)
 })
+
+test('an error frame keeps its other fields, and a removal refusal lists its blockers', async () => {
+  const { workspaceRemoveBlockers } = await import('../dist/workspaces.js')
+  const blockers = [
+    { kind: 'conversation_running', id: 'conversation_1', label: 'Conversation "Fix"' },
+    { kind: 'service_running', id: 'web', label: 'Service web' },
+  ]
+  const refused = new DaemonRequestError('workspace_remove_blocked', 'm', 'unknown', true, 'stop_workspace_work', {
+    blockers: [...blockers, { kind: 'broken' }],
+  })
+  assert.deepEqual(workspaceRemoveBlockers(refused), blockers)
+  assert.deepEqual(workspaceRemoveBlockers(new DaemonRequestError('needs_rebind', 'm', 'unknown', true)), [])
+  assert.deepEqual(workspaceRemoveBlockers(new Error('m')), [])
+  assert.deepEqual(new DaemonRequestError('timeout', 'm').details, {})
+  assert.equal(daemonRefusalCodes.includes('workspace_remove_blocked'), true)
+})

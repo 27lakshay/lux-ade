@@ -14,6 +14,7 @@ pub mod transcript;
 pub mod scripts;
 pub mod services;
 pub mod terminal_launch;
+pub mod workspaces;
 pub mod worktrees;
 
 pub mod diagnostics;

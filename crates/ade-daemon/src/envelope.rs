@@ -34,7 +34,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 /// The effect commands the envelope records.
-pub const OPERATIONS: [&str; 21] = [
+pub const OPERATIONS: [&str; 22] = [
     "conversation.create",
     "queue.pause",
     "agent.cancel",
@@ -56,6 +56,7 @@ pub const OPERATIONS: [&str; 21] = [
     "script.stop",
     "script.retire",
     "runtime.prepare_restart",
+    "workspace.remove",
 ];
 
 /// Commands that stop existing work. When the receipt store refuses writes

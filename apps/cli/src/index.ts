@@ -64,6 +64,7 @@ const usageFooter = `
 Command results are JSON on stdout, except terminal attach streams raw terminal output.
 Errors are JSON on stderr: {"type":"error","code","message"}, plus "recovery"
 when the daemon names one and "delivery" for a request that reached the socket.
+A workspace_remove_blocked error also lists "blockers": [{"kind","id","label"}].
 "code" is the daemon's own code, kept as sent. Exit codes:
   2  usage, invalid_request             3  unavailable
   4  incompatible                        5  timeout
@@ -74,6 +75,8 @@ when the daemon names one and "delivery" for a request that reached the socket.
   14 host_resource_conflict              15 host_resources_unavailable
   16 lifecycle_command_failed, lifecycle_unavailable, lifecycle_invalid_output
   17 restored_send_held                  18 conversation_deleted
+  19 workspace_not_found, workspace_removed
+  20 invalid_workspace_name              21 workspace_remove_blocked
 Commands that change state without their own --request-id take the global
 --operation-id ID. Without it the CLI generates one, and an error names it as
 "operation_id". Retry a lost reply only with that ID and the same command and
@@ -379,6 +382,7 @@ async function main(): Promise<void> {
         code,
         message,
         ...(daemon?.recovery ? { recovery: daemon.recovery } : {}),
+        ...(Array.isArray(daemon?.details.blockers) ? { blockers: daemon.details.blockers } : {}),
         ...(daemon ? { delivery: daemon.delivery } : {}),
         ...(daemon && usedOperationId() ? { operation_id: usedOperationId() } : {}),
       })}\n`,
@@ -415,6 +419,10 @@ const exitCodes: Record<ErrorCode | KnownDaemonErrorCode, number> = {
   lifecycle_outcome_unknown: 9,
   restored_send_held: 17,
   conversation_deleted: 18,
+  workspace_not_found: 19,
+  workspace_removed: 19,
+  invalid_workspace_name: 20,
+  workspace_remove_blocked: 21,
 }
 
 void main()

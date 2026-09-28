@@ -266,8 +266,23 @@ pub struct WindowRecord {
     pub width: f32,
     pub height: f32,
 }
+/// A Git repository as the catalog lists it, so a client can group the
+/// workspaces that share it into one project. Plain folders have none: their
+/// workspace's `repository_id` is null.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct CatalogRepository {
+    pub id: String,
+    /// The Git common directory, as `RepositoryRecord::root` holds it.
+    pub root: String,
+    /// The display name: the top-level checkout folder's name (see
+    /// `crate::workspaces::project_name`).
+    pub name: String,
+}
 #[derive(Serialize, Deserialize, Clone, Debug, Default, JsonSchema)]
 pub struct Catalogue {
+    /// The repositories of the listed workspaces, in registration order.
+    #[serde(default)]
+    pub repositories: Vec<CatalogRepository>,
     pub workspaces: Vec<WorkspaceRecord>,
     pub conversations: Vec<Conversation>,
     #[schemars(with = "Vec<Value>")]

@@ -4,7 +4,9 @@ use ade_core::contract::workspaces::{
     CatalogFrame, CatalogGetRequest, RepositoryAck, RepositoryRebindCatalog, RepositoryRebindEntry,
     RepositoryRebindListRequest, RepositoryRebindRequest, WorkspaceAck, WorkspaceOpenRequest,
     WorkspaceRebindCatalog, WorkspaceRebindListRequest, WorkspaceRebindRequest,
+    WorkspaceRenameRequest,
 };
+use ade_core::workspaces::{RemoveBlocker, RemoveBlockerKind};
 
 #[derive(PartialEq, Eq)]
 pub(super) struct SelectedBinding {
@@ -120,6 +122,17 @@ impl Sessions {
                     workspace: self.open_workspace(non_empty("path", &open.path)?)?,
                 })
             }
+            "workspace.rename" => {
+                let rename: WorkspaceRenameRequest = decode(request)?;
+                let id = non_empty("workspace_id", &rename.workspace_id)?;
+                let mut d = self.data.lock().unwrap();
+                let workspace = d.store.rename_workspace(id, &rename.name)?;
+                self.catalog_changed(&mut d)?;
+                reply(&WorkspaceAck {
+                    tag: Default::default(),
+                    workspace,
+                })
+            }
             "repository.rebind" => {
                 ensure!(
                     !self.worktrees.has_pending_rebind()?,
@@ -213,6 +226,79 @@ impl Sessions {
     }
     pub fn ensure_workspace_bound(&self, id: &str) -> Result<()> {
         self.data.lock().unwrap().store.ensure_workspace_bound(id)
+    }
+    /// Whether the workspace was removed from ADE; an unknown ID is an error.
+    pub fn workspace_removed(&self, id: &str) -> Result<bool> {
+        self.data.lock().unwrap().store.workspace_removed(id)
+    }
+    /// The durable half of `workspace.remove`: refuses while `blockers` (the
+    /// caller's runtime observations) or the store's own blockers stand,
+    /// disconnects the workspace's idle Agents, then records the removal and
+    /// publishes the catalog. Returns false when it was already removed.
+    /// Terminals are the caller's to stop; afterwards it calls
+    /// [`Self::retire_removed_terminals`].
+    pub fn remove_workspace(
+        self: &Arc<Self>,
+        id: &str,
+        operation_id: &str,
+        mut blockers: Vec<RemoveBlocker>,
+    ) -> Result<bool> {
+        let agents = {
+            let d = self.data.lock().unwrap();
+            if d.store.workspace_removed(id)? {
+                return Ok(false);
+            }
+            blockers.extend(d.store.workspace_remove_blockers(id)?);
+            if !blockers.is_empty() {
+                return Err(ade_core::error::WorkspaceRemoveBlocked(blockers).into());
+            }
+            self.workspace_agents(&d, id)?
+        };
+        // An idle Agent keeps a provider process and a worktree lease; the
+        // removal must not leave either behind.
+        for conversation in agents {
+            self.disconnect(&conversation)?;
+        }
+        let mut d = self.data.lock().unwrap();
+        let restarted = self.workspace_agents(&d, id)?;
+        if let Some(conversation) = restarted.first() {
+            let title = d.store.conversation(conversation)?.title;
+            return Err(ade_core::error::WorkspaceRemoveBlocked(vec![RemoveBlocker {
+                kind: RemoveBlockerKind::ConversationRunning,
+                id: conversation.clone(),
+                label: format!("Conversation \"{title}\""),
+            }])
+            .into());
+        }
+        let removed = d.store.remove_workspace(id, operation_id)?;
+        self.catalog_changed(&mut d)?;
+        Ok(removed)
+    }
+    /// The Conversations of `workspace` with a connected Agent.
+    fn workspace_agents(&self, d: &Data, workspace: &str) -> Result<Vec<String>> {
+        let mut agents = Vec::new();
+        for id in d.agents.keys() {
+            // A deleted Conversation's Agent is not this workspace's to stop.
+            if d.store
+                .conversation(id)
+                .is_ok_and(|conversation| conversation.workspace_id == workspace)
+            {
+                agents.push(id.clone());
+            }
+        }
+        agents.sort();
+        Ok(agents)
+    }
+    /// Retires a removed workspace's terminals from its record, once, and
+    /// releases the worktree leases its script runs held. Returns the record
+    /// as it now stands; the caller releases the runtime state of every
+    /// terminal it no longer lists.
+    pub fn retire_removed_terminals(&self, id: &str) -> Result<WorkspaceRecord> {
+        let mut d = self.data.lock().unwrap();
+        for terminal in d.store.retire_removed_terminals(id)? {
+            d.terminal_leases.remove(&terminal);
+        }
+        d.store.workspace(id)
     }
     pub fn has_pending_rebind(&self) -> Result<bool> {
         if self.worktrees.has_pending_rebind()? {

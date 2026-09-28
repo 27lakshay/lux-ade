@@ -1069,3 +1069,148 @@ fn killed_migration_rolls_back_and_next_start_preserves_saved_data() {
         "saved queued prompt"
     );
 }
+#[test]
+fn a_renamed_workspace_keeps_its_name_across_reopen_and_rejects_bad_names() {
+    let db = Database::new();
+    let store = db.open();
+    let workspace = store
+        .workspace_open(&test_root(&new_id("rename")), None)
+        .unwrap();
+    let renamed = store
+        .rename_workspace(&workspace.id, "  Payments API  ")
+        .unwrap();
+    assert_eq!(renamed.name, "Payments API");
+    assert_eq!(renamed.root, workspace.root);
+    for bad in ["   ", &"x".repeat(101), "two\nlines"] {
+        let error = store.rename_workspace(&workspace.id, bad).unwrap_err();
+        assert_eq!(
+            ade_core::error::error_envelope(error)["code"],
+            "invalid_workspace_name"
+        );
+    }
+    let missing = store
+        .rename_workspace("workspace_missing", "Name")
+        .unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(missing)["code"],
+        "workspace_not_found"
+    );
+    drop(store);
+    let store = db.open();
+    assert_eq!(store.workspace(&workspace.id).unwrap().name, "Payments API");
+    // Opening the folder again returns the stored name, not the folder's.
+    assert_eq!(
+        store.workspace_open(&workspace.root, None).unwrap().name,
+        "Payments API"
+    );
+}
+#[test]
+fn a_removed_workspace_leaves_the_catalog_and_returns_with_its_conversations() {
+    let db = Database::new();
+    let store = db.open();
+    let root = test_root(&new_id("remove"));
+    let workspace = store.workspace_open(&root, None).unwrap();
+    let mut busy = store.create_conversation(&workspace.id, "Busy").unwrap();
+    busy.status = "running".into();
+    store.commit_conversation(&busy, &[], &[]).unwrap();
+    let blocked = store.remove_workspace(&workspace.id, "op-1").unwrap_err();
+    let envelope = ade_core::error::error_envelope(blocked);
+    assert_eq!(envelope["code"], "workspace_remove_blocked");
+    assert_eq!(
+        envelope["blockers"][0]["kind"], "conversation_running",
+        "{envelope}"
+    );
+    assert!(!store.workspace_removed(&workspace.id).unwrap());
+
+    busy.status = "idle".into();
+    store.commit_conversation(&busy, &[], &[]).unwrap();
+    store.enqueue(&busy.id, "queued", "Later").unwrap();
+    assert!(store.remove_workspace(&workspace.id, "op-1").unwrap());
+    assert!(!store.remove_workspace(&workspace.id, "op-2").unwrap());
+    let catalog = store.catalog().unwrap();
+    assert!(catalog.workspaces.iter().all(|w| w.id != workspace.id));
+    assert!(catalog.conversations.iter().all(|c| c.id != busy.id));
+    // The Conversation still names a real workspace, and its queue waits.
+    assert_eq!(
+        store.conversation(&busy.id).unwrap().workspace_id,
+        workspace.id
+    );
+    assert!(store.queue_heads().unwrap().is_empty());
+    let refused = store.ensure_workspace_bound(&workspace.id).unwrap_err();
+    assert_eq!(
+        ade_core::error::error_envelope(refused)["code"],
+        "workspace_removed"
+    );
+
+    // Terminals retire once: the primary gets a fresh ID.
+    let extra = store.create_terminal(&workspace.id, None).unwrap();
+    let retired = store.retire_removed_terminals(&workspace.id).unwrap();
+    assert_eq!(retired, vec![workspace.terminal_id.clone(), extra]);
+    assert!(
+        store
+            .retire_removed_terminals(&workspace.id)
+            .unwrap()
+            .is_empty()
+    );
+    let record = store.workspace(&workspace.id).unwrap();
+    assert_ne!(record.terminal_id, workspace.terminal_id);
+    assert!(record.extra_terminals.is_empty());
+
+    // The removal survives a restart; reopening restores the same identity.
+    drop(store);
+    let store = db.open();
+    assert!(store.workspace_removed(&workspace.id).unwrap());
+    let reopened = store.workspace_open(&root, None).unwrap();
+    assert_eq!(reopened.id, workspace.id);
+    let catalog = store.catalog().unwrap();
+    assert!(catalog.workspaces.iter().any(|w| w.id == workspace.id));
+    assert!(catalog.conversations.iter().any(|c| c.id == busy.id));
+    assert_eq!(store.queue_heads().unwrap().len(), 1);
+}
+#[test]
+fn a_removed_workspace_whose_folder_is_gone_does_not_fence_the_profile() {
+    let db = Database::new();
+    let store = db.open();
+    let root = test_root(&new_id("gone"));
+    std::fs::create_dir_all(format!("{root}/.git")).unwrap();
+    let workspace = store
+        .workspace_open(&root, Some(&format!("{root}/.git")))
+        .unwrap();
+    assert!(store.remove_workspace(&workspace.id, "op").unwrap());
+    std::fs::remove_dir_all(&root).unwrap();
+    assert!(!store.has_pending_rebind().unwrap());
+    assert!(store.rebind_workspaces().unwrap().is_empty());
+    assert!(store.rebind_repositories().unwrap().is_empty());
+    assert!(store.catalog().unwrap().repositories.is_empty());
+    let other = store
+        .workspace_open(&test_root(&new_id("other")), None)
+        .unwrap();
+    assert!(!other.needs_rebind);
+}
+#[test]
+fn the_catalog_names_each_repository_after_its_checkout_folder() {
+    let db = Database::new();
+    let store = db.open();
+    // The on-disk layout `git worktree add` leaves: a main checkout whose
+    // `.git` is the common directory, and a linked tree pointing into it.
+    let project = new_id("project");
+    let main = test_root(&project);
+    let common = test_root(&format!("{project}/.git"));
+    let linked = test_root(&new_id("linked"));
+    let admin = test_root(&format!("{project}/.git/worktrees/linked"));
+    std::fs::write(format!("{admin}/commondir"), "../..\n").unwrap();
+    std::fs::write(format!("{linked}/.git"), format!("gitdir: {admin}\n")).unwrap();
+    let first = store.workspace_open(&main, Some(&common)).unwrap();
+    let second = store.workspace_open(&linked, Some(&common)).unwrap();
+    let folder = store
+        .workspace_open(&test_root(&new_id("folder")), None)
+        .unwrap();
+    let catalog = store.catalog().unwrap();
+    assert_eq!(catalog.repositories.len(), 1);
+    let repository = &catalog.repositories[0];
+    assert_eq!(repository.root, common);
+    assert_eq!(repository.name, project);
+    assert_eq!(first.repository_id.as_ref(), Some(&repository.id));
+    assert_eq!(second.repository_id.as_ref(), Some(&repository.id));
+    assert_eq!(folder.repository_id, None);
+}

@@ -787,6 +787,7 @@ impl Sessions {
             | "workspace.rebind.list"
             | "repository.rebind.list"
             | "workspace.open"
+            | "workspace.rename"
             | "repository.rebind"
             | "workspace.rebind" => self.workspace_command(request),
             "terminal.create" | "terminal.operation" => self.terminal_command(request),

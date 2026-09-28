@@ -4,6 +4,8 @@
 export const operations = {
   "catalog.get": { tier: "query", domain: "workspaces", request: "CatalogGetRequest", response: "CatalogFrame" },
   "workspace.open": { tier: "idempotent_command", domain: "workspaces", request: "WorkspaceOpenRequest", response: "WorkspaceAck" },
+  "workspace.rename": { tier: "idempotent_command", domain: "workspaces", request: "WorkspaceRenameRequest", response: "WorkspaceAck" },
+  "workspace.remove": { tier: "effect_command", domain: "workspaces", request: "WorkspaceRemoveRequest", response: "WorkspaceRemoved" },
   "workspace.rebind.list": { tier: "query", domain: "workspaces", request: "WorkspaceRebindListRequest", response: "WorkspaceRebindCatalog" },
   "workspace.rebind": { tier: "idempotent_command", domain: "workspaces", request: "WorkspaceRebindRequest", response: "WorkspaceAck" },
   "repository.rebind.list": { tier: "query", domain: "workspaces", request: "RepositoryRebindListRequest", response: "RepositoryRebindCatalog" },
@@ -287,6 +289,7 @@ export const operations = {
  * The SDK fills a fresh one when a caller leaves it out.
  */
 export const operationIdOperations = [
+  "workspace.remove",
   "conversation.create",
   "queue.pause",
   "conversation.steer",

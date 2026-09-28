@@ -557,7 +557,7 @@ impl Store {
         Ok(())
     }
     pub fn queue_heads(&self) -> Result<Vec<QueuedPrompt>> {
-        self.connection.prepare("SELECT q.id,q.conversation_id,q.text,q.status,q.attachments FROM queued_prompts q JOIN conversations c ON c.id=q.conversation_id WHERE q.status='queued' AND json_extract(c.data,'$.terminal_owner') IS NULL AND COALESCE(json_extract(c.data,'$.queue_paused'),0)=0 AND json_extract(c.data,'$.status') IN ('idle','ready','interrupted','error') AND q.rowid=(SELECT MIN(h.rowid) FROM queued_prompts h WHERE h.conversation_id=q.conversation_id AND h.status='queued') ORDER BY q.rowid LIMIT 16")?
+        self.connection.prepare("SELECT q.id,q.conversation_id,q.text,q.status,q.attachments FROM queued_prompts q JOIN conversations c ON c.id=q.conversation_id WHERE q.status='queued' AND c.workspace_id NOT IN (SELECT workspace_id FROM workspace_tombstones) AND json_extract(c.data,'$.terminal_owner') IS NULL AND COALESCE(json_extract(c.data,'$.queue_paused'),0)=0 AND json_extract(c.data,'$.status') IN ('idle','ready','interrupted','error') AND q.rowid=(SELECT MIN(h.rowid) FROM queued_prompts h WHERE h.conversation_id=q.conversation_id AND h.status='queued') ORDER BY q.rowid LIMIT 16")?
             .query_map([],|row| Ok(QueuedPrompt {id:row.get(0)?,conversation_id:row.get(1)?,text:row.get(2)?,status:row.get(3)?,attachments:attachment_row(row,4)?}))?
             .collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
