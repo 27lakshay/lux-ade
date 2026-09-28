@@ -37,3 +37,47 @@ test('a malformed repository or terminal list rejects the catalog', () => {
   assert.equal(parseCatalog({ repositories: {}, workspaces: [], conversations: [] }), null)
   assert.equal(parseCatalog({ workspaces: [workspace({ extra_terminals: [1] })], conversations: [] }), null)
 })
+
+const terminal = (fields = {}) => ({
+  id: 'terminal_1',
+  workspace_id: 'workspace_1',
+  kind: 'shell',
+  title: 'zsh',
+  status: 'running',
+  exit_code: null,
+  busy: true,
+  foreground: 'sleep',
+  primary: true,
+  service_id: null,
+  script_run_id: null,
+  conversation_id: null,
+  ...fields,
+})
+
+test('the catalog keeps terminal records, and an older daemon lists none', () => {
+  const catalog = parseCatalog({ workspaces: [workspace()], conversations: [], terminals: [terminal()] })
+  assert.deepEqual(catalog.terminals, [terminal()])
+  assert.deepEqual(parseCatalog({ workspaces: [workspace()], conversations: [] }).terminals, [])
+  const exited = parseCatalog({
+    workspaces: [workspace()],
+    conversations: [],
+    terminals: [{ id: 't', workspace_id: 'w', kind: 'script', title: 'build', status: 'exited', exit_code: 2 }],
+  }).terminals[0]
+  assert.equal(exited.exit_code, 2)
+  assert.equal(exited.busy, false)
+  assert.equal(exited.script_run_id, null)
+})
+
+test('a malformed terminal record rejects the catalog', () => {
+  for (const bad of [
+    terminal({ kind: 'pty' }),
+    terminal({ status: 'busy' }),
+    terminal({ exit_code: 'one' }),
+    terminal({ busy: 'yes' }),
+    terminal({ foreground: 3 }),
+    terminal({ title: undefined }),
+  ]) {
+    assert.equal(parseCatalog({ workspaces: [], conversations: [], terminals: [bad] }), null)
+  }
+  assert.equal(parseCatalog({ workspaces: [], conversations: [], terminals: {} }), null)
+})

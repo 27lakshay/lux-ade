@@ -173,7 +173,7 @@ impl Host {
     fn terminal(&self, data: &mut State, command: TerminalCommand) -> Result<Value> {
         match command {
             TerminalCommand::List => Ok(
-                json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics()})).collect::<Vec<_>>()}),
+                json!({"type":"terminals","terminals":data.terminals.values().map(|t|json!({"workspace":t.workspace,"metrics":t.runtime.metrics(),"activity":t.runtime.activity()})).collect::<Vec<_>>()}),
             ),
             TerminalCommand::Tail {
                 workspace_id,

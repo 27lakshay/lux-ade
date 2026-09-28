@@ -25,13 +25,93 @@ pub fn operations() -> Vec<OperationSpec> {
         OperationSpec::new::<TerminalRestartRequest, Ack>("terminal.restart", Tier::EffectCommand),
         OperationSpec::new::<TerminalStopRequest, Ack>("terminal.stop", Tier::EffectCommand),
         OperationSpec::new::<TerminalRetireRequest, Ack>("terminal.retire", Tier::EffectCommand),
+        // Closing stops the terminal's processes and removes its record: an
+        // effect across the runtime and the profile database, recorded by the
+        // daemon's envelope (`crates/ade-daemon/src/envelope.rs`).
+        OperationSpec::new::<TerminalCloseRequest, Ack>("terminal.close", Tier::EffectCommand),
     ]
 }
 
-/// Terminal stream frames bypass `session.subscribe`, so they are not feed
-/// frames. They have their own stream contract: [`stream_frames`].
+/// Feed frames. Terminal stream frames bypass `session.subscribe`; they have
+/// their own stream contract: [`stream_frames`].
 pub fn frames() -> Vec<FrameSpec> {
-    vec![]
+    vec![FrameSpec::new::<TerminalChanged>("terminal_changed")]
+}
+
+/// What a terminal runs. A `shell` is the workspace's primary shell or one
+/// added by `terminal.create`; the others run a managed program.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalKind {
+    Shell,
+    /// A workspace service's terminal (`service_id`).
+    Service,
+    /// A script run's terminal (`script_run_id`).
+    Script,
+    /// A Conversation handed to a terminal (`conversation_id`).
+    Conversation,
+}
+
+/// Whether a terminal's process runs.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalStatus {
+    /// No process has started yet; attaching starts the shell.
+    #[default]
+    NotStarted,
+    Running,
+    /// The process ended on its own; `exit_code` says how, when known.
+    Exited,
+    /// ADE stopped it, or the runtime that ran it is gone.
+    Stopped,
+}
+
+/// A terminal as the catalog lists it. It is owned by its workspace and
+/// stored by the daemon; `status`, `busy`, `foreground` and a title the
+/// program set follow the runtime and reach the feed as `terminal_changed`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct TerminalRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub kind: TerminalKind,
+    /// The title given at creation, else the title the program set, else
+    /// its command or the service or script name.
+    pub title: String,
+    pub status: TerminalStatus,
+    /// Set when `status` is `exited` and the process reported a code. A
+    /// process ended by a signal reports 128 plus the signal number.
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    /// A process other than the terminal's own program holds its foreground,
+    /// such as a command started from the shell. Closing asks first.
+    #[serde(default)]
+    pub busy: bool,
+    /// The busy foreground process's command name, such as `sleep`.
+    #[serde(default)]
+    pub foreground: Option<String>,
+    /// The workspace's first shell. Closing it gives the workspace a new one.
+    #[serde(default)]
+    pub primary: bool,
+    #[serde(default)]
+    pub service_id: Option<String>,
+    #[serde(default)]
+    pub script_run_id: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+}
+
+wire_tag!(TerminalChangedTag, "terminal_changed");
+
+/// The `terminal_changed` feed frame: a terminal's status, busy state or
+/// title changed. At most four per second per terminal. A terminal added or
+/// removed arrives as a `catalog` frame instead.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalChanged {
+    #[serde(rename = "type")]
+    pub tag: TerminalChangedTag,
+    pub terminal: TerminalRecord,
+    pub boot_id: String,
+    pub revision: u64,
 }
 
 /// Every frame a terminal attachment can receive. The runtime's terminal host
@@ -290,6 +370,42 @@ pub struct TerminalCreateRequest {
     #[serde(default, alias = "request_id", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub operation_id: Option<String>,
+    /// The terminal's title, 1 to 100 characters with no control characters.
+    /// Without one the title follows the program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Open a tab for the new terminal in a window's layout. Refused as
+    /// `unsupported` until daemon layouts exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<TerminalPlace>,
+}
+
+/// Where `terminal.create` opens the new terminal's tab: a window, and a pane
+/// in it (the focused pane when absent).
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct TerminalPlace {
+    pub window_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+}
+
+/// `terminal.close`: stop a terminal and remove it from its workspace.
+///
+/// A busy terminal (a command holds its foreground) is refused with
+/// `terminal_busy`, naming the command in `foreground`, unless `force` is
+/// true. The primary shell's workspace gets a new, not yet started primary
+/// shell. Service, script and Conversation terminals are closed through
+/// their own commands and are refused here.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct TerminalCloseRequest {
+    /// The caller's operation ID. The daemon keeps a receipt under it: a
+    /// retry with the same ID and payload returns the recorded outcome, and
+    /// the same ID with another payload is a conflict.
+    pub operation_id: String,
+    pub terminal_id: String,
+    /// Close even when busy, ending the running command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
 }
 
 /// `terminal.operation`: read the terminal a `terminal.create` receipt produced.
@@ -437,6 +553,28 @@ pub mod runtime {
         pub workspace: WorkspaceRecord,
         #[serde(default)]
         pub metrics: Value,
+        #[serde(default)]
+        pub activity: Activity,
+    }
+
+    /// What runs in a runtime terminal now (`ade_runtime::foreground`).
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+    pub struct Activity {
+        /// Another process group holds the PTY's foreground.
+        #[serde(default)]
+        pub busy: bool,
+        /// That group leader's command name.
+        #[serde(default)]
+        pub foreground: Option<String>,
+        /// The window title the program last set (OSC 0 or 2).
+        #[serde(default)]
+        pub title: Option<String>,
+        /// The terminal's own program's command name, such as `zsh`.
+        #[serde(default)]
+        pub program: Option<String>,
+        /// `terminal.stop` was asked of this incarnation.
+        #[serde(default)]
+        pub stop_requested: bool,
     }
 
     impl Terminal {
@@ -511,6 +649,8 @@ mod tests {
             &TerminalCreateRequest {
                 workspace_id: "workspace_1".into(),
                 operation_id: Some("create_1".into()),
+                title: None,
+                place: None,
             },
         );
         assert_eq!(
@@ -522,6 +662,11 @@ mod tests {
             &TerminalCreateRequest {
                 workspace_id: "workspace_1".into(),
                 operation_id: None,
+                title: Some("Build".into()),
+                place: Some(TerminalPlace {
+                    window_id: "window_1".into(),
+                    pane_id: None,
+                }),
             },
         );
         let older: TerminalCreateRequest =
@@ -615,6 +760,59 @@ mod tests {
         assert!(!valid(
             "TerminalStopRequest",
             &json!({"op": "terminal.stop", "operation_id": "o", "workspace_id": "w"})
+        ));
+    }
+
+    #[test]
+    fn terminal_close_and_records_round_trip() {
+        let wire = request(
+            "terminal.close",
+            &TerminalCloseRequest {
+                operation_id: "close_1".into(),
+                terminal_id: "terminal_1".into(),
+                force: Some(true),
+            },
+        );
+        assert_eq!(
+            wire,
+            json!({"op": "terminal.close", "operation_id": "close_1",
+                "terminal_id": "terminal_1", "force": true})
+        );
+        assert!(!valid(
+            "TerminalCloseRequest",
+            &json!({"op": "terminal.close", "terminal_id": "t"})
+        ));
+        assert_eq!(
+            response("terminal.close", &Ack::default()),
+            json!({"type": "ack"})
+        );
+        let record = TerminalRecord {
+            id: "terminal_1".into(),
+            workspace_id: "workspace_1".into(),
+            kind: TerminalKind::Shell,
+            title: "zsh".into(),
+            status: TerminalStatus::Exited,
+            exit_code: Some(3),
+            busy: false,
+            foreground: None,
+            primary: true,
+            service_id: None,
+            script_run_id: None,
+            conversation_id: None,
+        };
+        let wire = serde_json::to_value(&record).unwrap();
+        assert_eq!(wire["status"], "exited");
+        assert_eq!(wire["kind"], "shell");
+        assert!(valid("TerminalRecord", &wire));
+        let frame = TerminalChanged {
+            tag: TerminalChangedTag::Tag,
+            terminal: record,
+            boot_id: "boot_1".into(),
+            revision: 4,
+        };
+        assert!(valid(
+            "TerminalChanged",
+            &serde_json::to_value(frame).unwrap()
         ));
     }
 

@@ -23,7 +23,7 @@ impl Store {
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
         ensure!(
-            (0..=17).contains(&version),
+            (0..=18).contains(&version),
             "Unsupported database version {version}; preserve the database and use a compatible build"
         );
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -267,6 +267,25 @@ impl Store {
                 "INSERT OR IGNORE INTO schema_migrations VALUES(17,?1)",
                 [now_ms()],
             )?;
+            tx.commit()?;
+        }
+        // Provisional number (lane C, terminal records): the coordinator
+        // assigns the final schema version at merge.
+        if version < 18 {
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            super::terminal_records::migrate_terminal_records(&tx)?;
+            tx.execute_batch("PRAGMA user_version=18;")?;
+            tx.execute(
+                "INSERT OR IGNORE INTO schema_migrations VALUES(18,?1)",
+                [now_ms()],
+            )?;
+            tx.commit()?;
+        }
+        {
+            // Every terminal a workspace lists has a record, also one that
+            // code outside `terminal_records` added.
+            let tx = Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)?;
+            super::terminal_records::backfill(&tx)?;
             tx.commit()?;
         }
         ensure!(

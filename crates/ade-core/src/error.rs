@@ -96,6 +96,29 @@ fn remove_blocked_message(blockers: &[crate::workspaces::RemoveBlocker]) -> Stri
     )
 }
 
+/// `terminal.close` refused: a command holds the terminal's foreground. The
+/// error frame names it in `foreground`, so a client can ask before forcing.
+#[derive(Debug, thiserror::Error)]
+#[error("{}", terminal_busy_message(.foreground.as_deref()))]
+pub struct TerminalBusy {
+    pub terminal_id: String,
+    pub foreground: Option<String>,
+}
+
+fn terminal_busy_message(foreground: Option<&str>) -> String {
+    match foreground {
+        Some(command) => {
+            format!("{command} is running in this terminal; close it with force to stop it")
+        }
+        None => "A command is running in this terminal; close it with force to stop it".into(),
+    }
+}
+
+/// A request field this daemon does not support yet. The message names it.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct Unsupported(pub String);
+
 /// An effect whose outcome cannot be known, such as a Git command interrupted
 /// by a crash. The message is the operation's own account of what to inspect;
 /// the envelope types it `outcome_unknown`, so a client can tell it from a
@@ -463,6 +486,15 @@ pub fn error_envelope(error: anyhow::Error) -> serde_json::Value {
             "code":"workspace_remove_blocked","recovery":"stop_workspace_work",
             "blockers":blocked.0});
     }
+    if let Some(busy) = error.downcast_ref::<TerminalBusy>() {
+        return serde_json::json!({"type":"error","message":busy.to_string(),
+            "code":"terminal_busy","recovery":"confirm_close",
+            "terminal_id":busy.terminal_id,"foreground":busy.foreground});
+    }
+    if let Some(unsupported) = error.downcast_ref::<Unsupported>() {
+        return serde_json::json!({"type":"error","message":unsupported.to_string(),
+            "code":"unsupported","recovery":"omit_unsupported_field"});
+    }
     if error.downcast_ref::<NeedsRebind>().is_some() {
         return serde_json::json!({"type":"error","message":NeedsRebind.to_string(),
             "code":"needs_rebind","recovery":"rebind_workspace"});
@@ -572,6 +604,28 @@ mod workspace_tests {
             json!([{"kind": "service_running", "id": "web", "label": "Service web"}])
         );
         assert!(blocked["message"].as_str().unwrap().contains("Service web"));
+    }
+
+    #[test]
+    fn terminal_refusals_carry_their_codes_and_the_foreground_command() {
+        let busy = error_envelope(
+            TerminalBusy {
+                terminal_id: "terminal_1".into(),
+                foreground: Some("sleep".into()),
+            }
+            .into(),
+        );
+        assert_eq!(busy["code"], "terminal_busy");
+        assert_eq!(busy["foreground"], "sleep");
+        assert_eq!(busy["terminal_id"], "terminal_1");
+        assert!(
+            busy["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("sleep is running")
+        );
+        let unsupported = error_envelope(Unsupported("place is not supported".into()).into());
+        assert_eq!(unsupported["code"], "unsupported");
     }
 }
 

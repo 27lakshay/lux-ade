@@ -34,7 +34,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 /// The effect commands the envelope records.
-pub const OPERATIONS: [&str; 22] = [
+pub const OPERATIONS: [&str; 23] = [
     "conversation.create",
     "queue.pause",
     "agent.cancel",
@@ -44,6 +44,7 @@ pub const OPERATIONS: [&str; 22] = [
     "terminal.restart",
     "terminal.stop",
     "terminal.retire",
+    "terminal.close",
     "service.start",
     "service.stop",
     "service.remove",

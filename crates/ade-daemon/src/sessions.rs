@@ -239,8 +239,18 @@ impl Sessions {
                 let Some(hub) = weak.upgrade() else {
                     break;
                 };
-                if let Err(error) = hub.release_exited_script_leases() {
-                    eprintln!("Script lease monitor: {error}");
+                // One terminal list serves the script leases and the
+                // terminal records.
+                match hub.runtime.command(TerminalCommand::List) {
+                    Ok(catalogue) => {
+                        if let Err(error) = hub.release_exited_script_leases(&catalogue) {
+                            eprintln!("Script lease monitor: {error}");
+                        }
+                        if let Err(error) = hub.observe_terminals(&catalogue) {
+                            eprintln!("Terminal records: {error:#}");
+                        }
+                    }
+                    Err(error) => eprintln!("Script lease monitor: {error}"),
                 }
                 if let Err(error) = hub.reconcile_unresolved() {
                     eprintln!("Session lease reconciliation: {error}");
@@ -274,8 +284,7 @@ impl Sessions {
         sessions.wake_queue();
         Ok(sessions)
     }
-    fn release_exited_script_leases(&self) -> Result<()> {
-        let catalogue = self.runtime.command(TerminalCommand::List)?;
+    fn release_exited_script_leases(&self, catalogue: &Value) -> Result<()> {
         let exited = catalogue["terminals"]
             .as_array()
             .context("Invalid terminal catalogue")?

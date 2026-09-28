@@ -1,10 +1,22 @@
 //! `terminal.*` operations, terminal leases and view-terminal recovery.
 use super::*;
+use crate::store::terminal_records;
 use ade_core::contract::conversations::AckTag;
 use ade_core::contract::terminals::{
-    TerminalCreateRequest, TerminalCreated, TerminalOperation, TerminalOperationRequest,
-    TerminalOperationTag, runtime,
+    TerminalChanged, TerminalChangedTag, TerminalCreateRequest, TerminalCreated, TerminalOperation,
+    TerminalOperationRequest, TerminalOperationTag, TerminalRecord, runtime,
 };
+
+/// A title for `terminal.create`: trimmed, 1 to 100 characters, with no
+/// control characters.
+fn terminal_title(title: &str) -> Result<&str> {
+    let title = title.trim();
+    ensure!(
+        !title.is_empty() && title.chars().count() <= 100 && !title.chars().any(char::is_control),
+        "Invalid terminal title: use 1 to 100 characters without control characters"
+    );
+    Ok(title)
+}
 
 impl Sessions {
     pub(super) fn terminal_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
@@ -16,10 +28,22 @@ impl Sessions {
                     }
                 }
                 let create: TerminalCreateRequest = decode(request)?;
+                // TODO(lane A): open the new terminal's tab in `place` once
+                // daemon layouts merge (see `Store::create_terminal`).
+                if create.place.is_some() {
+                    return Err(ade_core::error::Unsupported(
+                        "terminal.create cannot place a tab yet: this daemon has no window layouts"
+                            .into(),
+                    )
+                    .into());
+                }
+                let title = create.title.as_deref().map(terminal_title).transpose()?;
                 let mut d = self.data.lock().unwrap();
-                let terminal = d
-                    .store
-                    .create_terminal(&create.workspace_id, create.operation_id.as_deref())?;
+                let terminal = d.store.create_terminal(
+                    &create.workspace_id,
+                    create.operation_id.as_deref(),
+                    title,
+                )?;
                 self.catalog_changed(&mut d)?;
                 reply(&TerminalCreated {
                     tag: AckTag::Tag,
@@ -52,6 +76,39 @@ impl Sessions {
             }
             _ => bail!("Unknown session operation"),
         }
+    }
+    /// A terminal's record, or `None` when no terminal has this ID.
+    pub fn terminal_record(&self, id: &str) -> Result<Option<TerminalRecord>> {
+        self.data.lock().unwrap().store.terminal(id)
+    }
+    /// Saves what the runtime's terminal list shows of every listed terminal
+    /// and publishes `terminal_changed` for each whose record changed. Runs
+    /// on the 250 ms tick, so a terminal changes at most four times a second.
+    pub(super) fn observe_terminals(&self, catalogue: &Value) -> Result<()> {
+        let listed: runtime::Terminals =
+            serde_json::from_value(catalogue.clone()).context("Invalid terminal catalogue")?;
+        let mut d = self.data.lock().unwrap();
+        for (workspace_id, terminal_id, previous) in d.store.terminal_states()? {
+            let entry = listed.terminals.iter().find(|entry| {
+                entry.workspace.id == workspace_id && entry.workspace.terminal_id == terminal_id
+            });
+            let live = terminal_records::observe(&previous, entry);
+            if live == previous {
+                continue;
+            }
+            if let Some(terminal) = d.store.save_terminal_state(&terminal_id, live)? {
+                self.publish(
+                    &mut d,
+                    serde_json::to_value(TerminalChanged {
+                        tag: TerminalChangedTag::Tag,
+                        terminal,
+                        boot_id: String::new(),
+                        revision: 0,
+                    })?,
+                );
+            }
+        }
+        Ok(())
     }
     pub fn terminal_reserved(&self, terminal: &str) -> Result<bool> {
         self.data.lock().unwrap().store.terminal_reserved(terminal)

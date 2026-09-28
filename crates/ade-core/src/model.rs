@@ -287,6 +287,9 @@ pub struct Catalogue {
     pub conversations: Vec<Conversation>,
     #[schemars(with = "Vec<Value>")]
     pub windows: Vec<WindowRecord>,
+    /// The listed workspaces' terminals, in creation order.
+    #[serde(default)]
+    pub terminals: Vec<crate::contract::terminals::TerminalRecord>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BeginTurn {

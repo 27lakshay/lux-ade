@@ -1,9 +1,21 @@
 import { call, dailyUseCommand, openTerminalConnection, type TerminalConnection, type TerminalFrame } from '@ade/client'
-import { catalog, CliError, effectOperationId, required, type CommandResult, type ErrorCode } from '../shared.js'
+import {
+  catalog,
+  CliError,
+  effectOperationId,
+  parseWords,
+  positionals,
+  required,
+  requestIdOption,
+  type CommandResult,
+  type ErrorCode,
+} from '../shared.js'
 
-export const terminalUsage = `  terminal list                         List workspace terminals
-  terminal create WORKSPACE_ID --request-id ID
-                                        Create another terminal; reuse ID after a lost reply
+export const terminalUsage = `  terminal list [WORKSPACE_ID]          List terminals: kind, title, status, exit code, busy and its command
+  terminal create WORKSPACE_ID --request-id ID [--title TITLE]
+                                        Create another shell; reuse ID after a lost reply
+  terminal close TERMINAL_ID [--force]  Stop a shell and remove it; refused as terminal_busy while
+                                        a command runs, unless --force
   terminal operation WORKSPACE_ID REQUEST_ID
                                         Inspect a terminal creation receipt
   terminal inspect WORKSPACE_ID TERMINAL_ID
@@ -282,34 +294,39 @@ export async function runTerminalCommand(
   rest: string[],
 ): Promise<CommandResult | undefined> {
   if (area === 'terminal' && action === 'list') {
-    if (rest.length) throw new CliError('usage', 'terminal list does not accept arguments.')
-    const all = (await catalog(socketPath)).workspaces
-    if (!Array.isArray(all)) throw new CliError('protocol', 'Daemon catalog has no workspaces.')
+    if (rest.length > 1) throw new CliError('usage', 'terminal list takes at most WORKSPACE_ID.')
+    const records = (await catalog(socketPath)).terminals
+    if (!Array.isArray(records)) throw new CliError('protocol', 'Daemon catalog has no terminals.')
     return {
       type: 'terminals',
-      terminals: all.flatMap((item) => {
-        if (!item || typeof item !== 'object') return []
-        const ids = [item.terminal_id, ...(Array.isArray(item.extra_terminals) ? item.extra_terminals : [])]
-        return ids.map((terminalId) => ({ workspace_id: item.id, terminal_id: terminalId }))
-      }),
+      // `terminal_id` repeats `id` for scripts written against the older list.
+      terminals: records
+        .filter((item) => item && typeof item === 'object' && (!rest[0] || item.workspace_id === rest[0]))
+        .map((item) => ({ ...item, terminal_id: item.id })),
     }
   }
   if (area === 'terminal' && action === 'create') {
-    if (
-      rest.length !== 3 ||
-      rest[1] !== '--request-id' ||
-      !rest[2] ||
-      rest[2].startsWith('--') ||
-      rest[2].length > 256
-    ) {
-      throw new CliError('usage', 'terminal create requires WORKSPACE_ID --request-id ID.')
-    }
+    const parsed = parseWords(rest, ['--request-id', '--title'], [], 'terminal create')
+    const [workspaceId] = positionals(parsed, 1, 'terminal create requires WORKSPACE_ID --request-id ID')
+    const requestId = requestIdOption(parsed, 'terminal create')
+    const title = parsed.options['--title']
     const response = await dailyUseCommand(socketPath, {
       op: 'terminal.create',
-      workspace_id: required(rest[0], 'WORKSPACE_ID'),
-      operation_id: rest[2],
+      workspace_id: workspaceId,
+      operation_id: requestId,
+      ...(title === undefined ? {} : { title }),
     })
-    return { ...response, request_id: rest[2] }
+    return { ...response, request_id: requestId }
+  }
+  if (area === 'terminal' && action === 'close') {
+    const parsed = parseWords(rest, [], ['--force'], 'terminal close')
+    const [terminalId] = positionals(parsed, 1, 'terminal close requires TERMINAL_ID')
+    return dailyUseCommand(socketPath, {
+      op: 'terminal.close',
+      operation_id: effectOperationId(),
+      terminal_id: terminalId,
+      ...(parsed.flags.has('--force') ? { force: true } : {}),
+    })
   }
   if (area === 'terminal' && action === 'operation') {
     if (rest.length !== 2) throw new CliError('usage', 'terminal operation requires WORKSPACE_ID REQUEST_ID.')

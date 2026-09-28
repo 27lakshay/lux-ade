@@ -529,6 +529,7 @@ mod tests {
                 worktree_lifecycle_needs_rebind: false,
             },
             metrics,
+            activity: Default::default(),
         }
     }
 

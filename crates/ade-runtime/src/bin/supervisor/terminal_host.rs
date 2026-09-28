@@ -156,6 +156,8 @@ struct State {
     /// attempt and keeps an escaped descendant attributed after a runtime
     /// crash (R006).
     descendants: Vec<(i32, u64)>,
+    /// The window title the program last set, for the terminal's record.
+    titles: ade_runtime::foreground::TitleScanner,
 }
 
 impl State {
@@ -319,6 +321,7 @@ impl State {
 
     fn append_terminal(&mut self, data: &[u8]) {
         self.screen.write(data);
+        self.titles.feed(data);
         self.flush_replies();
         let offset = self.bytes;
         self.bytes += data.len() as u64;
@@ -927,6 +930,7 @@ pub fn spawn_runtime(
         stop_requested: false,
         viewer_resyncs: 0,
         descendants: initial_descendants,
+        titles: Default::default(),
     }));
     let terminal_state = state.clone();
     let reader_tree = tree.clone();
@@ -1111,6 +1115,7 @@ impl Runtime {
             return Ok(());
         }
         if state.shell_running {
+            state.stop_requested = true;
             // A launched program: observe the tree before signalling so
             // descendants outside the group are killed too. The reader thread
             // then proves the tree stopped. When the tree is busy (the metrics
@@ -1146,6 +1151,33 @@ impl Runtime {
     }
     pub fn metrics(&self) -> Value {
         self.state.lock().unwrap().metrics()
+    }
+    /// What runs in the terminal now, for its record: whether another
+    /// process group holds the PTY's foreground (`tcgetpgrp` on the master)
+    /// and that group leader's name. See `ade_runtime::foreground`.
+    pub fn activity(&self) -> ade_core::runtime_protocol::terminal::Activity {
+        use ade_runtime::foreground::{busy, process_name};
+        let (running, pid, title, stop_requested) = {
+            let state = self.state.lock().unwrap();
+            (
+                state.shell_running,
+                state.shell_pid.map(|pid| pid as i32),
+                state.titles.title().map(str::to_owned),
+                state.stop_requested,
+            )
+        };
+        let mut activity = ade_core::runtime_protocol::terminal::Activity {
+            title,
+            stop_requested,
+            ..Default::default()
+        };
+        if running {
+            let group = self.master.lock().unwrap().process_group_leader();
+            activity.busy = busy(pid, group);
+            activity.program = pid.and_then(process_name);
+            activity.foreground = group.filter(|_| activity.busy).and_then(process_name);
+        }
+        activity
     }
     pub fn serve(
         &self,
@@ -1255,6 +1287,7 @@ mod tests {
             stop_requested: false,
             viewer_resyncs: 0,
             descendants: Vec::new(),
+            titles: Default::default(),
         };
         let release = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(500));
@@ -1301,6 +1334,7 @@ mod tests {
             stop_requested: false,
             viewer_resyncs: 0,
             descendants: Vec::new(),
+            titles: Default::default(),
         };
         state.append_terminal(b"\x1b[2J\x1b[HPINNED BEFORE RAW RING");
         let repaint = b"\x1b[2;1Hupdated row, pinned row remains".repeat(10000);
@@ -1361,6 +1395,7 @@ mod tests {
             stop_requested: false,
             viewer_resyncs: 0,
             descendants: Vec::new(),
+            titles: Default::default(),
         };
         let (tx, rx) = mpsc::sync_channel(1);
         let outbox = Arc::new(Outbox::default());

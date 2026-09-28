@@ -531,7 +531,7 @@ fn tabs_validate_ownership_and_restore_closed_views() {
     let db = Database::new();
     let store = db.open();
     let (workspace, conversation) = fixture(&store);
-    let extra = store.create_terminal(&workspace.id, None).unwrap();
+    let extra = store.create_terminal(&workspace.id, None, None).unwrap();
     let mut record = window(&workspace, &conversation, "tabs-window");
     record.tabs.initialized = true;
     let tab = TerminalTab {
@@ -1143,7 +1143,7 @@ fn a_removed_workspace_leaves_the_catalog_and_returns_with_its_conversations() {
     );
 
     // Terminals retire once: the primary gets a fresh ID.
-    let extra = store.create_terminal(&workspace.id, None).unwrap();
+    let extra = store.create_terminal(&workspace.id, None, None).unwrap();
     let retired = store.retire_removed_terminals(&workspace.id).unwrap();
     assert_eq!(retired, vec![workspace.terminal_id.clone(), extra]);
     assert!(

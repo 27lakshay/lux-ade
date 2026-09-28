@@ -273,13 +273,7 @@ impl Store {
             );
             removed = Some(service.config.secret_refs.clone());
             if let Some(terminal) = &service.terminal_id {
-                let mut w = self.workspace(workspace)?;
-                w.extra_terminals.retain(|id| id != terminal);
-                crate::store::forget_terminal_views(&tx, terminal)?;
-                tx.execute(
-                    "UPDATE workspaces SET data=?2 WHERE id=?1",
-                    params![workspace, serde_json::to_string(&w)?],
-                )?;
+                crate::store::terminal_records::remove(&tx, workspace, terminal)?;
             }
             ensure!(
                 service.revision == revision,
@@ -467,19 +461,26 @@ impl Store {
         if service.terminal_owner.is_some() {
             return Ok(service);
         }
-        let mut w = self.workspace(workspace)?;
+        let w = self.workspace(workspace)?;
         if service.terminal_id.is_none() {
             ensure!(
                 w.extra_terminals.len() < 32,
                 "Workspace terminal limit reached"
             );
             let id = crate::model::new_id("terminal");
-            w.extra_terminals.push(id.clone());
-            service.terminal_id = Some(id);
-            tx.execute(
-                "UPDATE workspaces SET data=?2 WHERE id=?1",
-                params![workspace, serde_json::to_string(&w)?],
+            crate::store::terminal_records::insert(
+                &tx,
+                &crate::store::terminal_records::Stored {
+                    service_id: Some(service.identity.clone()),
+                    label: Some(service.name.clone()),
+                    ..crate::store::terminal_records::Stored::new(
+                        &id,
+                        workspace,
+                        ade_core::contract::terminals::TerminalKind::Service,
+                    )
+                },
             )?;
+            service.terminal_id = Some(id);
         }
         service.terminal_owner = Some(crate::model::TerminalOwner {
             terminal_id: service.terminal_id.clone().unwrap(),

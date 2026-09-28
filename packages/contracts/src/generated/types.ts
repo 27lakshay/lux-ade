@@ -780,23 +780,29 @@ export type ContractDefinition =
   | Support
   | SwitchContinuity
   | TabTarget
+  | TerminalChanged
+  | TerminalCloseRequest
   | TerminalConversationFrame
   | TerminalCreateRequest
   | TerminalCreated
   | TerminalDescendant
   | TerminalDetachedFrame
   | TerminalErrorFrame
+  | TerminalKind
   | TerminalMetrics
   | TerminalMetricsFrame
   | TerminalOperation
   | TerminalOperationRequest
   | TerminalOutputFrame
   | TerminalOwner
+  | TerminalPlace
+  | TerminalRecord
   | TerminalRecovery
   | TerminalResizeFrame
   | TerminalRestartRequest
   | TerminalRetireRequest
   | TerminalSnapshotFrame
+  | TerminalStatus
   | TerminalStopRequest
   | TerminalViewportFrame
   | TerminalWarningFrame
@@ -1036,6 +1042,15 @@ export type CarryBlocker =
  * How a path differs from `HEAD` in the source tree.
  */
 export type CarryChange = ('added' | 'modified' | 'deleted' | 'type_changed' | 'untracked') | 'unmerged'
+/**
+ * What a terminal runs. A `shell` is the workspace's primary shell or one
+ * added by `terminal.create`; the others run a managed program.
+ */
+export type TerminalKind = 'shell' | 'service' | 'script' | 'conversation'
+/**
+ * Whether a terminal's process runs.
+ */
+export type TerminalStatus = 'running' | 'not_started' | 'exited' | 'stopped'
 export type CheckState = 'passed' | 'failed' | 'skipped'
 /**
  * The preset field a conflict concerns.
@@ -4309,6 +4324,10 @@ export interface Catalogue {
    * The repositories of the listed workspaces, in registration order.
    */
   repositories: CatalogRepository[]
+  /**
+   * The listed workspaces' terminals, in creation order.
+   */
+  terminals: TerminalRecord[]
   windows: unknown[]
   workspaces: WorkspaceRecord[]
   [k: string]: unknown
@@ -4362,6 +4381,44 @@ export interface CatalogRepository {
    * The Git common directory, as `RepositoryRecord::root` holds it.
    */
   root: string
+  [k: string]: unknown
+}
+/**
+ * A terminal as the catalog lists it. It is owned by its workspace and
+ * stored by the daemon; `status`, `busy`, `foreground` and a title the
+ * program set follow the runtime and reach the feed as `terminal_changed`.
+ */
+export interface TerminalRecord {
+  /**
+   * A process other than the terminal's own program holds its foreground,
+   * such as a command started from the shell. Closing asks first.
+   */
+  busy: boolean
+  conversation_id: string | null
+  /**
+   * Set when `status` is `exited` and the process reported a code. A
+   * process ended by a signal reports 128 plus the signal number.
+   */
+  exit_code: number | null
+  /**
+   * The busy foreground process's command name, such as `sleep`.
+   */
+  foreground: string | null
+  id: string
+  kind: TerminalKind
+  /**
+   * The workspace's first shell. Closing it gives the workspace a new one.
+   */
+  primary: boolean
+  script_run_id: string | null
+  service_id: string | null
+  status: TerminalStatus
+  /**
+   * The title given at creation, else the title the program set, else
+   * its command or the service or script name.
+   */
+  title: string
+  workspace_id: string
   [k: string]: unknown
 }
 export interface WorkspaceRecord {
@@ -12606,6 +12663,44 @@ export interface SkillRemoved {
   [k: string]: unknown
 }
 /**
+ * The `terminal_changed` feed frame: a terminal's status, busy state or
+ * title changed. At most four per second per terminal. A terminal added or
+ * removed arrives as a `catalog` frame instead.
+ */
+export interface TerminalChanged {
+  boot_id: string
+  revision: number
+  terminal: TerminalRecord
+  /**
+   * The `terminal_changed` type tag.
+   */
+  type: 'terminal_changed'
+  [k: string]: unknown
+}
+/**
+ * `terminal.close`: stop a terminal and remove it from its workspace.
+ *
+ * A busy terminal (a command holds its foreground) is refused with
+ * `terminal_busy`, naming the command in `foreground`, unless `force` is
+ * true. The primary shell's workspace gets a new, not yet started primary
+ * shell. Service, script and Conversation terminals are closed through
+ * their own commands and are refused here.
+ */
+export interface TerminalCloseRequest {
+  /**
+   * Close even when busy, ending the running command.
+   */
+  force?: boolean | null
+  op: 'terminal.close'
+  /**
+   * The caller's operation ID. The daemon keeps a receipt under it: a
+   * retry with the same ID and payload returns the recorded outcome, and
+   * the same ID with another payload is a conflict.
+   */
+  operation_id: string
+  terminal_id: string
+}
+/**
  * The runtime's simulated conversation (a prototype leftover), broadcast to
  * every attachment while `simulate` runs.
  */
@@ -12630,7 +12725,26 @@ export interface TerminalCreateRequest {
    * Absent or a string of 1 to 256 bytes; the daemon rejects `null`.
    */
   operation_id?: string
+  /**
+   * Open a tab for the new terminal in a window's layout. Refused as
+   * `unsupported` until daemon layouts exist.
+   */
+  place?: TerminalPlace | null
+  /**
+   * The terminal's title, 1 to 100 characters with no control characters.
+   * Without one the title follows the program.
+   */
+  title?: string | null
   workspace_id: string
+}
+/**
+ * Where `terminal.create` opens the new terminal's tab: a window, and a pane
+ * in it (the focused pane when absent).
+ */
+export interface TerminalPlace {
+  pane_id?: string | null
+  window_id: string
+  [k: string]: unknown
 }
 /**
  * The `terminal.create` reply.
@@ -13883,7 +13997,7 @@ export interface WorktreeSwitchRequest {
   target: string
 }
 
-export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
+export type Operation = "catalog.get" | "workspace.open" | "workspace.rename" | "workspace.remove" | "workspace.rebind.list" | "workspace.rebind" | "repository.rebind.list" | "repository.rebind" | "conversation.get" | "agent.send" | "agent.answer" | "conversation.create" | "draft.get" | "draft.save" | "draft.send.get" | "draft.send.prepare" | "draft.send.complete" | "draft.send.abort" | "draft.send.list" | "draft.send.acknowledge" | "queue.enqueue" | "queue.cancel" | "queue.pause" | "window.save" | "window.close" | "attachment.put" | "attachment.import" | "attachment.inspect" | "attachment.reclaim.preview" | "attachment.reclaim.apply" | "conversation.controls" | "conversation.steer" | "conversation.compact" | "conversation.rewind.preview" | "conversation.rewind" | "conversation.snooze" | "conversation.unsnooze" | "conversation.snooze.list" | "conversation.delete" | "draft.history.list" | "draft.history.restore" | "draft.stash.save" | "draft.stash.list" | "draft.stash.restore" | "draft.stash.drop" | "agent.cancel" | "agent.resume" | "agent.disconnect" | "agent.send_review" | "agent.child_transcript" | "agent.list" | "agent.account_inspect" | "provider.list" | "account.list" | "account.create" | "account.inspect" | "account.verify" | "account.disable" | "account.switch.preview" | "account.switch" | "account.switch.list" | "terminal.create" | "terminal.operation" | "terminal.restart" | "terminal.stop" | "terminal.retire" | "terminal.close" | "service.configure" | "service.list" | "service.inspect" | "service.start" | "service.stop" | "service.remove" | "service.health.sample" | "service.proxy.ensure" | "service.proxy.inspect" | "service.proxy.target" | "service.proxy.remap" | "service.proxy.retire" | "service.proxy.recovery.inspect" | "service.proxy.recovery.retry" | "service.proxy.recovery.reset" | "listener.list" | "review.status" | "review.diff" | "review.diff_page" | "review.hunk" | "review.stage" | "review.unstage" | "review.discard" | "review.commit" | "review.branch" | "review.stash" | "review.merge" | "review.fetch" | "review.pull" | "review.push" | "review.operation" | "review.operation.list" | "review.operation.acknowledge" | "review.feedback.search" | "worktree.repository" | "worktree.get" | "worktree.switch" | "worktree.adopt" | "worktree.remove" | "worktree.refresh" | "worktree.configure" | "worktree.operation" | "worktree.rebind" | "worktree.rebind.list" | "worktree.create" | "worktree.setup" | "worktree.cleanup.plan" | "worktree.cleanup" | "worktree.archived" | "worktree.carry.preview" | "worktree.carry" | "worktree.resources.apply" | "script.list" | "script.inspect" | "script.start" | "script.stop" | "script.retire" | "script.runs" | "file.list" | "file.search" | "file.preview" | "hello" | "runtime.status" | "runtime.prepare_restart" | "session.subscribe" | "browser.owner.get" | "browser.owner.register" | "browser.owner.unregister" | "browser.list" | "browser.inspect" | "browser.open" | "browser.navigate" | "browser.close" | "browser.operation" | "diagnostics.status" | "diagnostics.export" | "runtime.recovery" | "runtime.recovery.release" | "activity.list" | "activity.mark" | "notification.delivery.claim" | "notification.delivery.report" | "notification.delivery.list" | "notification.preferences.get" | "notification.preferences.set" | "mcp.server.list" | "mcp.server.inspect" | "mcp.server.add" | "mcp.server.update" | "mcp.server.remove" | "mcp.resolve" | "skill.install" | "skill.adopt" | "skill.remove" | "skill.place" | "skill.list" | "skill.inspect" | "skill.discover" | "plugin.list" | "plugin.inspect" | "plugin.install" | "plugin.uninstall" | "plugin.enable" | "plugin.disable" | "plugin.record.get" | "plugin.record.list" | "plugin.record.put" | "plugin.record.delete" | "plugin.setting.list" | "plugin.setting.set" | "plugin.command.invoke" | "plugin.host.status" | "plugin.host.restart" | "plugin.dev.enter" | "plugin.dev.leave" | "plugin.generation.list" | "orchestration.delegate" | "orchestration.children" | "orchestration.child.get" | "orchestration.child.send" | "orchestration.child.wait" | "orchestration.child.answer" | "orchestration.parent.send" | "orchestration.child.messages" | "orchestration.group.start" | "orchestration.groups" | "orchestration.group.get" | "orchestration.group.compare" | "history.search" | "history.list" | "history.index.status" | "history.index.rebuild" | "history.import.scan" | "history.import.session" | "resources.inspect" | "resources.claim.resolve" | "resources.registry.accept" | "resources.device.hold" | "resources.device.release" | "checkpoint.create" | "checkpoint.list" | "checkpoint.restore.preview" | "checkpoint.restore" | "checkpoint.delete" | "usage.summary" | "usage.turns" | "usage.limits" | "remote.host.list" | "remote.host.add" | "remote.host.remove" | "remote.host.probe" | "remote.host.pair" | "remote.host.revoke" | "remote.host.start" | "remote.host.install" | "retention.preview" | "retention.apply" | "retention.policy.get" | "retention.policy.set" | "browser.diagnostics.attach" | "browser.diagnostics.detach" | "browser.diagnostics.read" | "browser.recording.start" | "browser.recording.stop" | "browser.recording.get" | "browser.partition.list" | "browser.partition.create" | "browser.import.preview" | "browser.import.run" | "browser.import.get" | "browser.context.capture" | "browser.click" | "browser.type" | "browser.evaluate" | "browser.wait" | "browser.screenshot" | "repository.coverage" | "repository.clone" | "repository.publish.preview" | "repository.publish" | "hook.subscription.list" | "hook.delivery.list" | "hook.delivery.inspect" | "hook.delivery.retry" | "hook.delivery.abandon" | "provider.capabilities" | "provider.readiness" | "provider.quota" | "provider.registrations" | "preset.list" | "preset.get" | "preset.save" | "preset.delete" | "adapter.list" | "adapter.put" | "adapter.remove" | "adapter.probe" | "device.list" | "device.screenshot" | "device.boot" | "device.app.install" | "device.app.launch" | "device.input" | "placement.hosts" | "placement.check" | "placement.record" | "placement.resolve" | "placement.list" | "placement.release" | "command.list" | "command.invoke" | "context.capture" | "context.get" | "context.plan"
 
 export interface RequestByOperation {
   "catalog.get": CatalogGetRequest
@@ -13952,6 +14066,7 @@ export interface RequestByOperation {
   "terminal.restart": TerminalRestartRequest
   "terminal.stop": TerminalStopRequest
   "terminal.retire": TerminalRetireRequest
+  "terminal.close": TerminalCloseRequest
   "service.configure": ServiceConfigureRequest
   "service.list": ServiceListRequest
   "service.inspect": ServiceInspectRequest
@@ -14235,6 +14350,7 @@ export interface ResponseByOperation {
   "terminal.restart": Ack
   "terminal.stop": Ack
   "terminal.retire": Ack
+  "terminal.close": Ack
   "service.configure": ServiceReply
   "service.list": ServiceList
   "service.inspect": ServiceInspection
@@ -14451,6 +14567,6 @@ export interface ResponseByOperation {
   "context.plan": ContextPlan
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | ServiceChanged | ActivityChanged
+export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged
 
 export type TerminalStreamFrame = TerminalSnapshotFrame | TerminalOutputFrame | TerminalResizeFrame | TerminalViewportFrame | TerminalMetricsFrame | TerminalDetachedFrame | TerminalWarningFrame | TerminalErrorFrame | TerminalConversationFrame | Ack

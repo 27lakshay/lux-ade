@@ -367,6 +367,15 @@ export const envelopeCases: EnvelopeCase[] = [
     reconciles: true,
   },
   {
+    // Daemon-authority ticket 04: an idle running shell closes without force.
+    op: 'terminal.close',
+    setup: (ctx) => terminals(ctx, false),
+    request: (state: Terminals, altered) => ({ terminal_id: altered ? state.otherId : state.terminalId }),
+    observe: async (ctx, state: Terminals) =>
+      (await ctx.profile.call('catalog.get', {})).catalog.terminals.some((entry) => entry.id === state.terminalId),
+    reconciles: true,
+  },
+  {
     op: 'service.start',
     setup: (ctx) => services(ctx, false),
     request: (state: Services, altered) => ({ workspace_id: state.workspaceId, name: altered ? 'api' : 'web' }),

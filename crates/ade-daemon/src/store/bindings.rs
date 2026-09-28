@@ -603,6 +603,10 @@ impl Store {
                     " ORDER BY rowid"
                 ),
             )?,
+            terminals: super::terminal_records::visible(&tx)?
+                .iter()
+                .map(|terminal| terminal.record())
+                .collect(),
         };
         tx.commit()?;
         Ok(result)
@@ -747,6 +751,10 @@ impl Store {
             ],
         )?;
         write_binding(&tx, "workspace", &workspace.id, &workspace.root)?;
+        super::terminal_records::insert(
+            &tx,
+            &super::terminal_records::Stored::primary(&workspace.terminal_id, &workspace.id),
+        )?;
         // The lifecycle hook commits with the new workspace (F058).
         crate::hooks::enqueue(
             &tx,
@@ -876,29 +884,19 @@ impl Store {
             Some(1) => return Ok(Vec::new()),
             Some(_) => {}
         }
-        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        let workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
         let services: Vec<String> = self
             .services(id)?
             .into_iter()
             .filter_map(|service| service.terminal_id)
             .collect();
-        let mut retired = vec![std::mem::replace(
-            &mut workspace.terminal_id,
-            new_id("terminal"),
-        )];
-        workspace.extra_terminals.retain(|terminal| {
-            let keep = services.contains(terminal);
-            if !keep {
-                retired.push(terminal.clone());
-            }
-            keep
-        });
-        tx.execute(
-            "UPDATE workspaces SET terminal_id=?2,data=?3 WHERE id=?1",
-            params![id, workspace.terminal_id, encode(&workspace)?],
-        )?;
+        let retired: Vec<String> = std::iter::once(&workspace.terminal_id)
+            .chain(&workspace.extra_terminals)
+            .filter(|terminal| !services.contains(terminal))
+            .cloned()
+            .collect();
         for terminal in &retired {
-            forget_terminal_views(&tx, terminal)?;
+            super::terminal_records::remove(&tx, id, terminal)?;
         }
         tx.execute(
             "UPDATE workspace_tombstones SET terminals_retired=1 WHERE workspace_id=?1",

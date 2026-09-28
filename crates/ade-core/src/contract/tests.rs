@@ -172,6 +172,15 @@ fn catalog_get_round_trips() {
             workspaces: vec![workspace],
             conversations: vec![conversation()],
             windows: Vec::new(),
+            terminals: vec![
+                serde_json::from_value(json!({
+                    "id": "terminal_1", "workspace_id": "workspace_1", "kind": "shell",
+                    "title": "zsh", "status": "running", "exit_code": null, "busy": true,
+                    "foreground": "sleep", "primary": true, "service_id": null,
+                    "script_run_id": null, "conversation_id": null,
+                }))
+                .unwrap(),
+            ],
         },
         providers: crate::provider::descriptors().to_vec(),
         boot_id: "boot_1".into(),

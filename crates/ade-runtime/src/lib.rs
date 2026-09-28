@@ -8,6 +8,7 @@ pub mod capabilities;
 pub mod claude;
 pub mod codex;
 pub mod descendants;
+pub mod foreground;
 pub mod omp;
 pub mod opencode;
 pub mod provider;

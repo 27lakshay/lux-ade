@@ -80,7 +80,7 @@ pub const STORES: &[Store] = &[
     Store {
         path: "sessions.sqlite",
         kind: Kind::Sqlite,
-        schema: 17,
+        schema: 18,
         since: 2,
     },
     Store {
@@ -919,7 +919,7 @@ mod tests {
             "excluded":EXCLUDED,"coverage":coverage()})
     }
     fn core() -> Value {
-        json!({"path":"sessions.sqlite","kind":"sqlite","size":4096,"sha256":sha('a'),"schema":17})
+        json!({"path":"sessions.sqlite","kind":"sqlite","size":4096,"sha256":sha('a'),"schema":18})
     }
     fn plugins_db() -> Value {
         json!({"path":PLUGINS_DB,"kind":"sqlite","size":4096,"sha256":sha('b'),"schema":0})

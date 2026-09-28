@@ -23,7 +23,8 @@ use ade_core::contract::services::{
     ServiceProxyRetireRequest, ServiceProxyRetired, ServiceProxyTarget, ServiceProxyTargetRequest,
 };
 use ade_core::contract::terminals::{
-    TerminalRestartRequest, TerminalRetireRequest, TerminalStopRequest, runtime as terminal_runtime,
+    TerminalCloseRequest, TerminalKind, TerminalRestartRequest, TerminalRetireRequest,
+    TerminalStopRequest, runtime as terminal_runtime,
 };
 use ade_core::runtime_protocol::{
     AgentOp, Proxy, ProxyEnsure, ProxyRecoveryRetry, ProxyRoute, ProxyTarget,
@@ -1672,6 +1673,76 @@ impl Host {
         })?;
         Ok(serde_json::to_value(Ack::default())?)
     }
+    /// `terminal.close`: stop a shell and remove it from its workspace, in
+    /// one daemon rule every client shares (daemon-authority decision 5).
+    /// Busy is read from the runtime now, not from the record, which trails
+    /// it by up to one tick. The record is retired before the runtime's
+    /// storage, as `terminal.retire` does.
+    fn terminal_close(&self, request: &Value) -> anyhow::Result<Value> {
+        let close: TerminalCloseRequest = decode_terminal_request(request)?;
+        let record = self
+            .sessions
+            .terminal_record(&close.terminal_id)?
+            .ok_or_else(|| anyhow::anyhow!("Terminal {} does not exist", close.terminal_id))?;
+        anyhow::ensure!(
+            record.kind == TerminalKind::Shell,
+            match record.kind {
+                TerminalKind::Service => "Stop or remove its service to close a service terminal",
+                TerminalKind::Script => "Stop and retire its script run to close a script terminal",
+                _ => "Return the Conversation to the GUI to close its terminal",
+            }
+        );
+        let workspace = record.workspace_id.clone();
+        self.sessions.ensure_workspace_bound(&workspace)?;
+        let running = |terminals: &[terminal_runtime::Terminal]| {
+            terminals
+                .iter()
+                .find(|entry| {
+                    entry.workspace.id == workspace
+                        && entry.workspace.terminal_id == record.id
+                        && entry.shell_running()
+                })
+                .cloned()
+        };
+        if let Some(entry) = running(&self.runtime_terminals()?) {
+            if entry.activity.busy && close.force != Some(true) {
+                return Err(ade_core::error::TerminalBusy {
+                    terminal_id: record.id,
+                    foreground: entry.activity.foreground,
+                }
+                .into());
+            }
+            {
+                let _leases = self.leases.lock().unwrap();
+                self.runtime.command(terminal_runtime::Command::Stop {
+                    workspace_id: workspace.clone(),
+                    terminal_id: record.id.clone(),
+                })?;
+            }
+            // A shell gets a hang-up and two seconds before its whole tree
+            // is killed; then the runtime proves the tree stopped.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while running(&self.runtime_terminals()?).is_some() {
+                anyhow::ensure!(
+                    Instant::now() < deadline,
+                    "Terminal is still stopping; close it again with a new operation ID"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        {
+            let _leases = self.leases.lock().unwrap();
+            self.sessions.retire_terminal(&workspace, &record.id)?;
+            self.runtime.command(terminal_runtime::Command::Retire {
+                workspace_id: workspace,
+                terminal_id: record.id,
+            })?;
+        }
+        if let Err(error) = self.refresh_leases() {
+            eprintln!("Terminal leases were not refreshed after terminal.close: {error}");
+        }
+        Ok(serde_json::to_value(Ack::default())?)
+    }
     /// Routes one command to its handler.
     fn dispatch(&self, op: &str, request: &Value) -> anyhow::Result<Value> {
         if op == "service.proxy.ensure" || op == "service.proxy.remap" {
@@ -1692,6 +1763,8 @@ impl Host {
             self.terminal_lifecycle(request)
         } else if op == "terminal.restart" {
             self.terminal_restart(request)
+        } else if op == "terminal.close" {
+            self.terminal_close(request)
         } else if op == "workspace.remove" {
             self.workspace_remove(request)
         } else if matches!(
@@ -1739,6 +1812,12 @@ impl Host {
                         && entry.shell_running()
                 });
                 (listed && !running).then(ack).flatten()
+            }
+            // A closed terminal has no record.
+            "terminal.close" => {
+                let terminal_id = request["terminal_id"].as_str()?;
+                let record = self.sessions.terminal_record(terminal_id).ok()?;
+                record.is_none().then(ack).flatten()
             }
             "workspace.remove" => self.observe_workspace_remove(request),
             "queue.pause" | "agent.disconnect" => {

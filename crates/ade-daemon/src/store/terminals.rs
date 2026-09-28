@@ -1,5 +1,7 @@
+use super::terminal_records::{self as records, Stored};
 use super::*;
 use crate::receipts;
+use ade_core::contract::terminals::{TerminalKind, TerminalRecord};
 
 const TERMINAL_CREATE: &str = "terminal.create";
 const CREATION_CONFLICT: &str = "Terminal request ID conflicts with another workspace";
@@ -72,16 +74,18 @@ impl Store {
             c.provider_thread_id.is_some(),
             "Start the Conversation before transferring"
         );
-        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", &c.workspace_id)?;
+        let workspace: WorkspaceRecord = one(&tx, "workspaces", &c.workspace_id)?;
         ensure!(
             workspace.extra_terminals.len() < 32,
             "Workspace terminal limit reached"
         );
         let terminal_id = new_id("terminal");
-        workspace.extra_terminals.push(terminal_id.clone());
-        tx.execute(
-            "UPDATE workspaces SET data=?1 WHERE id=?2",
-            params![encode(&workspace)?, workspace.id],
+        records::insert(
+            &tx,
+            &Stored {
+                conversation_id: Some(c.id.clone()),
+                ..Stored::new(&terminal_id, &workspace.id, TerminalKind::Conversation)
+            },
         )?;
         c.terminal_owner = Some(TerminalOwner {
             terminal_id,
@@ -104,7 +108,7 @@ impl Store {
     pub fn register_script_run(&self, workspace_id: &str, run_id: &str) -> Result<()> {
         ade_core::scripts::run_name(run_id)?;
         let tx = self.transaction()?;
-        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", workspace_id)?;
+        let workspace: WorkspaceRecord = one(&tx, "workspaces", workspace_id)?;
         ensure!(
             workspace.extra_terminals.len() < 32,
             "Workspace terminal limit reached"
@@ -113,10 +117,13 @@ impl Store {
             !workspace.extra_terminals.iter().any(|id| id == run_id),
             "Script run already exists"
         );
-        workspace.extra_terminals.push(run_id.to_owned());
-        tx.execute(
-            "UPDATE workspaces SET data=?2 WHERE id=?1",
-            params![workspace_id, encode(&workspace)?],
+        records::insert(
+            &tx,
+            &Stored {
+                script_run_id: Some(run_id.into()),
+                label: Some(ade_core::scripts::run_name(run_id)?.into()),
+                ..Stored::new(run_id, workspace_id, TerminalKind::Script)
+            },
         )?;
         tx.commit()?;
         Ok(())
@@ -151,9 +158,15 @@ impl Store {
             None => legacy_creation(&self.connection, operation_id),
         }
     }
-    /// Adds a terminal to a workspace. With an operation ID, the receipt
+    /// Adds a shell to a workspace. With an operation ID, the receipt
     /// commits with the new terminal, and a retry returns the same terminal.
-    pub fn create_terminal(&self, id: &str, operation_id: Option<&str>) -> Result<String> {
+    /// A title is part of the receipt's payload.
+    pub fn create_terminal(
+        &self,
+        id: &str,
+        operation_id: Option<&str>,
+        title: Option<&str>,
+    ) -> Result<String> {
         // Immediate: a deferred read that later writes fails at once with
         // "database is locked" when another connection to this database
         // committed in between; taking the write lock first waits instead.
@@ -165,7 +178,12 @@ impl Store {
                 ensure!(workspace_id == id, CREATION_CONFLICT);
                 return Ok(terminal_id);
             }
-            let payload = json!({"workspace_id": id});
+            // Receipts from before titles keep their payload: the title
+            // joins it only when given.
+            let mut payload = json!({"workspace_id": id});
+            if let Some(title) = title {
+                payload["title"] = json!(title);
+            }
             match receipts::begin(&tx, operation_id, TERMINAL_CREATE, &payload, None, now)? {
                 receipts::Admission::New => {}
                 receipts::Admission::Replay(receipt) => {
@@ -180,17 +198,21 @@ impl Store {
                 }
             }
         }
-        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        let workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
         ensure!(
             workspace.extra_terminals.len() < 32,
             "Workspace terminal limit reached"
         );
         let terminal = new_id("terminal");
-        workspace.extra_terminals.push(terminal.clone());
-        tx.execute(
-            "UPDATE workspaces SET data=?1 WHERE id=?2",
-            params![encode(&workspace)?, id],
+        records::insert(
+            &tx,
+            &Stored {
+                name: title.map(str::to_owned),
+                ..Stored::new(&terminal, id, TerminalKind::Shell)
+            },
         )?;
+        // TODO(lane A): with `terminal.create`'s `place`, open a tab for this
+        // terminal in the named window's layout here, in this transaction.
         if let Some(operation_id) = operation_id {
             receipts::settle(
                 &tx,
@@ -203,28 +225,34 @@ impl Store {
         tx.commit()?;
         Ok(terminal)
     }
+    /// Removes a terminal from its workspace. A removed primary shell is
+    /// replaced by a new one. Removing an absent terminal changes nothing.
     pub fn retire_terminal(&self, id: &str, terminal: &str) -> Result<()> {
         let tx = self.transaction()?;
-        let mut workspace: WorkspaceRecord = one(&tx, "workspaces", id)?;
-        if workspace.terminal_id != terminal
-            && !workspace
-                .extra_terminals
-                .iter()
-                .any(|item| item == terminal)
-        {
-            return Ok(());
-        }
-        if workspace.terminal_id == terminal {
-            workspace.terminal_id = new_id("terminal");
-        } else {
-            workspace.extra_terminals.retain(|item| item != terminal);
-        }
-        tx.execute(
-            "UPDATE workspaces SET terminal_id=?2,data=?3 WHERE id=?1",
-            params![id, workspace.terminal_id, encode(&workspace)?],
-        )?;
-        forget_terminal_views(&tx, terminal)?;
+        let _: WorkspaceRecord = one(&tx, "workspaces", id)?;
+        records::remove(&tx, id, terminal)?;
         tx.commit()?;
         Ok(())
+    }
+    /// One terminal's record, or `None` when no terminal has this ID.
+    pub fn terminal(&self, id: &str) -> Result<Option<TerminalRecord>> {
+        Ok(records::load(&self.connection, id)?.map(|stored| stored.record()))
+    }
+    /// The last known live state of every listed terminal, keyed by
+    /// `(workspace_id, terminal_id)`.
+    pub(crate) fn terminal_states(&self) -> Result<Vec<(String, String, records::Live)>> {
+        Ok(records::visible(&self.connection)?
+            .into_iter()
+            .map(|stored| (stored.workspace_id, stored.id, stored.live))
+            .collect())
+    }
+    /// Saves what the runtime shows of a terminal. Returns its record when
+    /// that changed what the catalog lists.
+    pub(crate) fn save_terminal_state(
+        &self,
+        id: &str,
+        live: records::Live,
+    ) -> Result<Option<TerminalRecord>> {
+        records::save_live(&self.connection, id, live)
     }
 }

@@ -68,6 +68,7 @@ export const operations = {
   "terminal.restart": { tier: "effect_command", domain: "terminals", request: "TerminalRestartRequest", response: "Ack" },
   "terminal.stop": { tier: "effect_command", domain: "terminals", request: "TerminalStopRequest", response: "Ack" },
   "terminal.retire": { tier: "effect_command", domain: "terminals", request: "TerminalRetireRequest", response: "Ack" },
+  "terminal.close": { tier: "effect_command", domain: "terminals", request: "TerminalCloseRequest", response: "Ack" },
   "service.configure": { tier: "idempotent_command", domain: "services", request: "ServiceConfigureRequest", response: "ServiceReply" },
   "service.list": { tier: "query", domain: "services", request: "ServiceListRequest", response: "ServiceList" },
   "service.inspect": { tier: "query", domain: "services", request: "ServiceInspectRequest", response: "ServiceInspection" },
@@ -304,6 +305,7 @@ export const operationIdOperations = [
   "terminal.restart",
   "terminal.stop",
   "terminal.retire",
+  "terminal.close",
   "service.start",
   "service.stop",
   "service.remove",
@@ -374,6 +376,7 @@ export const frames = {
   "conversation_changed": { domain: "conversations", frame: "ConversationChanged" },
   "conversation_deleted": { domain: "conversations", frame: "ConversationDeletedFrame" },
   "conversation_reload": { domain: "conversations", frame: "ConversationReloadFrame" },
+  "terminal_changed": { domain: "terminals", frame: "TerminalChanged" },
   "service_changed": { domain: "services", frame: "ServiceChanged" },
   "activity_changed": { domain: "activity", frame: "ActivityChanged" },
 } as const

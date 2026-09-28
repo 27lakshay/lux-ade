@@ -4713,6 +4713,14 @@
           },
           "type": "array"
         },
+        "terminals": {
+          "default": [],
+          "description": "The listed workspaces' terminals, in creation order.",
+          "items": {
+            "$ref": "#/$defs/TerminalRecord"
+          },
+          "type": "array"
+        },
         "windows": {
           "items": true,
           "type": "array"
@@ -4728,7 +4736,8 @@
         "repositories",
         "workspaces",
         "conversations",
-        "windows"
+        "windows",
+        "terminals"
       ],
       "type": "object"
     },
@@ -25820,6 +25829,65 @@
         }
       ]
     },
+    "TerminalChanged": {
+      "description": "The `terminal_changed` feed frame: a terminal's status, busy state or\ntitle changed. At most four per second per terminal. A terminal added or\nremoved arrives as a `catalog` frame instead.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminal": {
+          "$ref": "#/$defs/TerminalRecord"
+        },
+        "type": {
+          "description": "The `terminal_changed` type tag.",
+          "enum": [
+            "terminal_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "terminal",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "TerminalCloseRequest": {
+      "additionalProperties": false,
+      "description": "`terminal.close`: stop a terminal and remove it from its workspace.\n\nA busy terminal (a command holds its foreground) is refused with\n`terminal_busy`, naming the command in `foreground`, unless `force` is\ntrue. The primary shell's workspace gets a new, not yet started primary\nshell. Service, script and Conversation terminals are closed through\ntheir own commands and are refused here.",
+      "properties": {
+        "force": {
+          "description": "Close even when busy, ending the running command.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "op": {
+          "const": "terminal.close"
+        },
+        "operation_id": {
+          "description": "The caller's operation ID. The daemon keeps a receipt under it: a\nretry with the same ID and payload returns the recorded outcome, and\nthe same ID with another payload is a conflict.",
+          "type": "string"
+        },
+        "terminal_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "operation_id",
+        "terminal_id"
+      ],
+      "type": "object"
+    },
     "TerminalConversationFrame": {
       "description": "The runtime's simulated conversation (a prototype leftover), broadcast to\nevery attachment while `simulate` runs.",
       "properties": {
@@ -25854,6 +25922,24 @@
         "operation_id": {
           "description": "Absent or a string of 1 to 256 bytes; the daemon rejects `null`.",
           "type": "string"
+        },
+        "place": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalPlace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Open a tab for the new terminal in a window's layout. Refused as\n`unsupported` until daemon layouts exist."
+        },
+        "title": {
+          "description": "The terminal's title, 1 to 100 characters with no control characters.\nWithout one the title follows the program.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "workspace_id": {
           "type": "string"
@@ -25967,6 +26053,32 @@
         "message"
       ],
       "type": "object"
+    },
+    "TerminalKind": {
+      "description": "What a terminal runs. A `shell` is the workspace's primary shell or one\nadded by `terminal.create`; the others run a managed program.",
+      "oneOf": [
+        {
+          "enum": [
+            "shell"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "service",
+          "description": "A workspace service's terminal (`service_id`).",
+          "type": "string"
+        },
+        {
+          "const": "script",
+          "description": "A script run's terminal (`script_run_id`).",
+          "type": "string"
+        },
+        {
+          "const": "conversation",
+          "description": "A Conversation handed to a terminal (`conversation_id`).",
+          "type": "string"
+        }
+      ]
     },
     "TerminalMetrics": {
       "properties": {
@@ -26239,6 +26351,109 @@
       ],
       "type": "object"
     },
+    "TerminalPlace": {
+      "description": "Where `terminal.create` opens the new terminal's tab: a window, and a pane\nin it (the focused pane when absent).",
+      "properties": {
+        "pane_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "window_id"
+      ],
+      "type": "object"
+    },
+    "TerminalRecord": {
+      "description": "A terminal as the catalog lists it. It is owned by its workspace and\nstored by the daemon; `status`, `busy`, `foreground` and a title the\nprogram set follow the runtime and reach the feed as `terminal_changed`.",
+      "properties": {
+        "busy": {
+          "default": false,
+          "description": "A process other than the terminal's own program holds its foreground,\nsuch as a command started from the shell. Closing asks first.",
+          "type": "boolean"
+        },
+        "conversation_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit_code": {
+          "default": null,
+          "description": "Set when `status` is `exited` and the process reported a code. A\nprocess ended by a signal reports 128 plus the signal number.",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "foreground": {
+          "default": null,
+          "description": "The busy foreground process's command name, such as `sleep`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/TerminalKind"
+        },
+        "primary": {
+          "default": false,
+          "description": "The workspace's first shell. Closing it gives the workspace a new one.",
+          "type": "boolean"
+        },
+        "script_run_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "service_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TerminalStatus"
+        },
+        "title": {
+          "description": "The title given at creation, else the title the program set, else\nits command or the service or script name.",
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "workspace_id",
+        "kind",
+        "title",
+        "status",
+        "exit_code",
+        "busy",
+        "foreground",
+        "primary",
+        "service_id",
+        "script_run_id",
+        "conversation_id"
+      ],
+      "type": "object"
+    },
     "TerminalRecovery": {
       "anyOf": [
         {
@@ -26453,6 +26668,32 @@
         "streaming"
       ],
       "type": "object"
+    },
+    "TerminalStatus": {
+      "description": "Whether a terminal's process runs.",
+      "oneOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "not_started",
+          "description": "No process has started yet; attaching starts the shell.",
+          "type": "string"
+        },
+        {
+          "const": "exited",
+          "description": "The process ended on its own; `exit_code` says how, when known.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "ADE stopped it, or the runtime that ran it is gone.",
+          "type": "string"
+        }
+      ]
     },
     "TerminalStopRequest": {
       "additionalProperties": false,
@@ -29287,6 +29528,11 @@
       "type": "conversation_reload"
     },
     {
+      "domain": "terminals",
+      "frame": "TerminalChanged",
+      "type": "terminal_changed"
+    },
+    {
       "domain": "services",
       "frame": "ServiceChanged",
       "type": "service_changed"
@@ -29757,6 +30003,13 @@
       "domain": "terminals",
       "name": "terminal.retire",
       "request": "TerminalRetireRequest",
+      "response": "Ack",
+      "tier": "effect_command"
+    },
+    {
+      "domain": "terminals",
+      "name": "terminal.close",
+      "request": "TerminalCloseRequest",
       "response": "Ack",
       "tier": "effect_command"
     },

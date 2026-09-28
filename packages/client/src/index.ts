@@ -113,6 +113,29 @@ export interface Conversation {
   account_context?: 'managed' | 'legacy_ambient'
 }
 
+/** What a terminal runs; see `TerminalRecord` in `@ade/contracts`. */
+export type TerminalKind = 'shell' | 'service' | 'script' | 'conversation'
+export type TerminalStatus = 'not_started' | 'running' | 'exited' | 'stopped'
+
+/**
+ * A terminal record, owned by its workspace. `busy` means a command holds the
+ * terminal's foreground, named by `foreground`; closing it asks first.
+ */
+export interface Terminal {
+  id: string
+  workspace_id: string
+  kind: TerminalKind
+  title: string
+  status: TerminalStatus
+  exit_code: number | null
+  busy: boolean
+  foreground: string | null
+  primary: boolean
+  service_id: string | null
+  script_run_id: string | null
+  conversation_id: string | null
+}
+
 export interface Catalog {
   /**
    * The repositories the listed workspaces use. The SDK's catalog parser
@@ -121,6 +144,11 @@ export interface Catalog {
   repositories?: CatalogRepository[]
   workspaces: Workspace[]
   conversations: Conversation[]
+  /**
+   * The workspaces' terminals, in creation order. The SDK's catalog parser
+   * always sets it; it is optional only so hand-built fixtures stay valid.
+   */
+  terminals?: Terminal[]
 }
 
 export type ConnectionStatus =
@@ -208,6 +236,46 @@ function parseConversation(value: unknown): Conversation | null {
   }
 }
 
+const terminalKinds: readonly string[] = ['shell', 'service', 'script', 'conversation']
+const terminalStatuses: readonly string[] = ['not_started', 'running', 'exited', 'stopped']
+
+function optionalString(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return null
+  return typeof value === 'string' ? value : undefined
+}
+
+function parseTerminal(value: unknown): Terminal | null {
+  const fields = stringFields(value, ['id', 'workspace_id'])
+  const source = record(value)
+  if (!fields || !source) return null
+  const { kind, title, status } = source
+  if (typeof kind !== 'string' || !terminalKinds.includes(kind)) return null
+  if (typeof status !== 'string' || !terminalStatuses.includes(status)) return null
+  if (typeof title !== 'string') return null
+  const exitCode = source.exit_code ?? null
+  if (exitCode !== null && !Number.isInteger(exitCode)) return null
+  for (const flag of [source.busy, source.primary]) {
+    if (flag !== undefined && typeof flag !== 'boolean') return null
+  }
+  const links = [source.foreground, source.service_id, source.script_run_id, source.conversation_id].map(optionalString)
+  if (links.includes(undefined)) return null
+  const [foreground, serviceId, scriptRunId, conversationId] = links as (string | null)[]
+  return {
+    id: fields[0],
+    workspace_id: fields[1],
+    kind: kind as TerminalKind,
+    title,
+    status: status as TerminalStatus,
+    exit_code: exitCode as number | null,
+    busy: source.busy === true,
+    foreground,
+    primary: source.primary === true,
+    service_id: serviceId,
+    script_run_id: scriptRunId,
+    conversation_id: conversationId,
+  }
+}
+
 function parseRepository(value: unknown): CatalogRepository | null {
   const fields = stringFields(value, ['id', 'root', 'name'])
   return fields ? { id: fields[0], root: fields[1], name: fields[2] } : null
@@ -218,15 +286,24 @@ export function parseCatalog(value: unknown): Catalog | null {
   const source = record(value)
   if (!source || !Array.isArray(source.workspaces) || !Array.isArray(source.conversations)) return null
   const listed = source.repositories ?? []
-  if (!Array.isArray(listed)) return null
+  const listedTerminals = source.terminals ?? []
+  if (!Array.isArray(listed) || !Array.isArray(listedTerminals)) return null
   const repositories = listed.map(parseRepository)
   const workspaces = source.workspaces.map(parseWorkspace)
   const conversations = source.conversations.map(parseConversation)
-  if (repositories.includes(null) || workspaces.includes(null) || conversations.includes(null)) return null
+  const terminals = listedTerminals.map(parseTerminal)
+  if (
+    repositories.includes(null) ||
+    workspaces.includes(null) ||
+    conversations.includes(null) ||
+    terminals.includes(null)
+  )
+    return null
   return {
     repositories: repositories as CatalogRepository[],
     workspaces: workspaces as Workspace[],
     conversations: conversations as Conversation[],
+    terminals: terminals as Terminal[],
   }
 }
 
@@ -293,10 +370,11 @@ export class AdeClient {
     }
   }
 
-  /** Catalog and conversation changes only. Reconnect starts with a new catalog snapshot. */
+  /** Catalog, conversation and terminal changes only. Reconnect starts with a new catalog snapshot. */
   subscribeDailyUseFeed(listener: (frame: DailyUseFeedFrame) => void): () => void {
     return this.subscribeFeed((frame) => {
-      if (frame.type === 'catalog' || frame.type === 'conversation_changed') listener(frame)
+      if (frame.type === 'catalog' || frame.type === 'conversation_changed' || frame.type === 'terminal_changed')
+        listener(frame)
     })
   }
 
@@ -535,6 +613,15 @@ export class AdeClient {
       const conversations = catalog.conversations.filter((item) => item.id !== conversation.id)
       conversations.push(conversation)
       this.publish({ revision, catalog: { ...catalog, conversations } })
+      return 'stream'
+    }
+    if (frame.type === 'terminal_changed') {
+      const terminal = parseTerminal(frame.terminal)
+      const catalog = this.state.catalog
+      if (!terminal || !catalog) return 'invalid'
+      // A terminal the catalog does not list was removed; its catalog frame came first.
+      const terminals = (catalog.terminals ?? []).map((item) => (item.id === terminal.id ? terminal : item))
+      this.publish({ revision, catalog: { ...catalog, terminals } })
       return 'stream'
     }
     // Other event families do not change this read-only summary projection.
