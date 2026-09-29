@@ -130,6 +130,7 @@ notifications, browser pages with their automation, capture and recording.
 | Integration | [08](issues/08-integration-audit.md) | Coordinator and a read-only reviewer | Whole tree | 06, 07 |
 | Browser tab records | [09](issues/09-browser-tab-records.md) | Later | — | 08 |
 | Thin main process | [10](issues/10-thin-main-process.md) | Coordinator | `apps/desktop/src/main` request checks, selection, keybindings | 07 |
+| Electron memory floor | [11](issues/11-electron-memory-floor.md) | Coordinator | desktop idle memory | 08 |
 
 ```mermaid
 flowchart LR

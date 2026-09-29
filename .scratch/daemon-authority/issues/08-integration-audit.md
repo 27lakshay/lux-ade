@@ -1,9 +1,9 @@
 # 08 — Integration audit
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator
 Blocked by: [06](06-lane-sdk-reliability.md), [07](07-desktop-switch-over.md)
 
 ## Build
@@ -32,3 +32,4 @@ Blocked by: [06](06-lane-sdk-reliability.md), [07](07-desktop-switch-over.md)
   and `progress.md`.
 
 ## Comments
+- 2026-09-29 — Done. Audit fixes `61abe7d`–`088b6c3`; full gate and 976 protocol specs pass. The benchmark holds 60 fps; memory isn't comparable with the old figure and moves to [11](11-electron-memory-floor.md). Evidence: `.scratch/ade-v1/evidence/daemon-authority.md`.

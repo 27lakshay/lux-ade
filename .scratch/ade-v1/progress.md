@@ -1313,3 +1313,15 @@ passes: 830 specs in 11.9 minutes at 2 workers, 14 skipped, no failures)
   after the retention window. F138 stays open for its display parts.
 
 **Newly accepted:** none. The register holds 79 accepted rows.
+
+
+**Daemon authority, closed at `088b6c3`** (the full protocol suite passes: 976 specs in 5.8
+minutes at 8 workers, 15 skipped, no failures; [evidence](evidence/daemon-authority.md))
+
+- The daemon owns every durable record, rule and multi-step operation. Windows, layouts,
+  terminals, settings and keybindings are drivable through the CLI alone, and the desktop only
+  presents them.
+- The store's migrations are squashed into one schema (D19); compatibility shims are gone.
+- The workspace-switch benchmark holds 60 fps with 24 streaming terminals. The idle memory floor
+  is open as daemon-authority ticket 11.
+- Browser tab records (ticket 09) are planned and deferred.
