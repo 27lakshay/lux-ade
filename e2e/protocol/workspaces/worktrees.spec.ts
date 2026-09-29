@@ -5,12 +5,13 @@
 // workspace from ADE, then the tree, and recovers a crash between the two.
 import { existsSync } from 'node:fs'
 import { mkdir, realpath, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createConnection, createServer, type Socket } from 'node:net'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { binaries } from '../fixtures/environment'
 import { subscribeFeed } from '../fixtures/feed'
-import { operationId } from '../worktrees/lifecycle'
+import { operationId, register } from '../worktrees/lifecycle'
 
 type ClientModule = typeof import('../../../packages/client/dist/index.js')
 
@@ -255,4 +256,126 @@ test('each step of a worktree operation is on the feed, and the SDK waits for th
   expect(steps[0]).toBe('running')
   expect(steps.at(-1)).toBe('succeeded')
   feed.stop()
+})
+
+/**
+ * A socket in front of the daemon's for the CLI. It counts the connections
+ * that send `workspace.create_worktree`, holds back the daemon's reply to the
+ * first until `release`, and watches the CLI's feed connection.
+ */
+async function sendCounter(target: string, path: string) {
+  const seen = { sends: 0, feedFrames: 0, feedClosed: false }
+  let release: (() => void) | null = null
+  const sockets = new Set<Socket>()
+  const server = createServer((client) => {
+    const daemon = createConnection({ path: target })
+    for (const socket of [client, daemon]) {
+      sockets.add(socket)
+      socket.on('error', () => {})
+    }
+    let kind: 'unknown' | 'feed' | 'send' = 'unknown'
+    let upstream = ''
+    // The daemon's bytes held back from this connection, while it is the held one.
+    let held: Buffer[] | null = null
+    let ended = false
+    client.on('data', (chunk: Buffer) => {
+      if (kind === 'unknown') {
+        upstream += chunk.toString('utf8')
+        if (upstream.includes('"op":"session.subscribe"')) kind = 'feed'
+        if (upstream.includes('"op":"workspace.create_worktree"')) {
+          kind = 'send'
+          seen.sends++
+          if (seen.sends === 1) {
+            held = []
+            release = () => {
+              client.write(Buffer.concat(held ?? []))
+              held = null
+              if (ended) client.end()
+            }
+          }
+        }
+      }
+      daemon.write(chunk)
+    })
+    daemon.on('data', (chunk: Buffer) => {
+      if (kind === 'feed') seen.feedFrames += chunk.toString('utf8').split('\n').length - 1
+      if (held) held.push(chunk)
+      else client.write(chunk)
+    })
+    daemon.on('end', () => {
+      ended = true
+      if (!held) client.end()
+    })
+    client.on('close', () => {
+      if (kind === 'feed') seen.feedClosed = true
+      daemon.destroy()
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(path, resolve))
+  return {
+    seen,
+    /** Delivers the held reply. */
+    release() {
+      release?.()
+    },
+    close() {
+      for (const socket of sockets) socket.destroy()
+      server.close()
+    },
+  }
+}
+
+test('the CLI waits for a worktree operation on the feed instead of sending it again', async ({ ade, profile }) => {
+  const repo = await ade.repo({ name: 'shop' })
+  const main = (await profile.call('workspace.open', { path: repo.path })).workspace
+  const started = join(ade.root, 'setup-started')
+  const release = join(ade.root, 'setup-release')
+  // The lifecycle takes the catalog's project ID once it registers the repository.
+  expect(await register(profile, repo)).toBe(main.project_id)
+  await profile.call('worktree.configure', {
+    project_id: main.project_id,
+    config: {
+      setup: [
+        {
+          name: 'wait',
+          command: ['/bin/sh', '-c', `: > '${started}'; while [ ! -f '${release}' ]; do sleep 0.05; done`],
+          timeout_seconds: 60,
+        },
+      ],
+    },
+  })
+  const socket = join(dirname(profile.socket), 'cli.sock')
+  const counter = await sendCounter(profile.socket, socket)
+  const id = operationId('create')
+  const run = profile.cli(
+    '--socket',
+    socket,
+    '--operation-id',
+    id,
+    'workspace',
+    'create-worktree',
+    main.project_id,
+    'Fed',
+    '--wait',
+  )
+
+  try {
+    // The CLI sent the command once and follows the feed while setup runs.
+    await expect.poll(() => existsSync(started) && counter.seen.feedFrames > 0, { timeout: 20_000 }).toBe(true)
+    await writeFile(release, '')
+    // The final state reached it on the feed: it stops following while the
+    // reply to its one send is still held back.
+    await expect.poll(() => counter.seen.feedClosed, { timeout: 20_000 }).toBe(true)
+    expect(counter.seen.sends).toBe(1)
+  } finally {
+    // Let the setup and the CLI finish even when an expectation failed.
+    await writeFile(release, '')
+    counter.release()
+  }
+
+  const created = await run
+  counter.close()
+  expect(created.code, created.stderr).toBe(0)
+  expect(created.json).toMatchObject({ operation_id: id, status: 'succeeded', project_id: main.project_id })
+  expect(counter.seen.sends).toBe(1)
 })

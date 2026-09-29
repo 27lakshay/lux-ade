@@ -1,5 +1,4 @@
-import { setTimeout as delay } from 'node:timers/promises'
-import { dailyUseCommand, type DailyUseResponse } from '@ade/client'
+import { AdeClient, dailyUseCommand, settleWorktreeOperation, type DailyUseResponse } from '@ade/client'
 import {
   catalog,
   CliError,
@@ -69,20 +68,43 @@ const WAIT_MS = 15 * 60_000
 type WorktreeOperation = DailyUseResponse<'workspace.create_worktree'>
 
 /**
- * Sends a workspace worktree operation and, with `--wait`, sends it again
- * under the same operation ID until it leaves `running`: a retry of the same
- * request returns its current state and never runs it twice.
+ * Sends a workspace worktree operation once. With `--wait`, it follows the
+ * profile's feed through the SDK until the operation leaves `running`; after
+ * a dropped connection the SDK sends it again under the same operation ID,
+ * which returns its current state and never runs it twice.
  */
-async function worktreeOperation(send: () => Promise<WorktreeOperation>, wait: boolean): Promise<WorktreeOperation> {
-  const deadline = Date.now() + WAIT_MS
-  let state = await send()
-  while (wait && state.status === 'running') {
-    if (Date.now() > deadline) throw new CliError('timeout', 'The worktree operation is still running; retry it later.')
-    await delay(250)
-    state = await send()
-  }
+async function worktreeOperation(
+  socketPath: string,
+  operationId: string,
+  send: () => Promise<WorktreeOperation>,
+  wait: boolean,
+): Promise<WorktreeOperation> {
+  const state = wait ? await followed(socketPath, operationId, send) : await send()
   if (state.status === 'failed') process.exitCode = 16
   return state
+}
+
+/** Waits on the feed for the operation's final state, for at most `WAIT_MS`. */
+async function followed(
+  socketPath: string,
+  operationId: string,
+  send: () => Promise<WorktreeOperation>,
+): Promise<WorktreeOperation> {
+  const client = new AdeClient(socketPath)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new CliError('timeout', 'The worktree operation is still running; retry it later.')),
+      WAIT_MS,
+    )
+  })
+  client.start()
+  try {
+    return await Promise.race([settleWorktreeOperation(client, operationId, send), timeout])
+  } finally {
+    clearTimeout(timer)
+    client.stop()
+  }
 }
 
 export async function runWorkspaceCommand(
@@ -97,6 +119,8 @@ export async function runWorkspaceCommand(
     const base = parsed.options['--base']
     const operationId = effectOperationId()
     return worktreeOperation(
+      socketPath,
+      operationId,
       () =>
         dailyUseCommand(socketPath, {
           op: 'workspace.create_worktree',
@@ -113,6 +137,8 @@ export async function runWorkspaceCommand(
     const [workspaceId] = positionals(parsed, 1, 'workspace delete-worktree requires WORKSPACE_ID')
     const operationId = effectOperationId()
     return worktreeOperation(
+      socketPath,
+      operationId,
       () =>
         dailyUseCommand(socketPath, {
           op: 'workspace.delete_worktree',
