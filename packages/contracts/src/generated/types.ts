@@ -897,6 +897,7 @@ export type ContractDefinition =
   | WorkspaceRenameRequest
   | WorkspaceWorktreeKind
   | WorkspaceWorktreeOperation
+  | WorkspaceWorktreeOperationChanged
   | WorkspaceWorktreeStatus
   | WorktreeAdoptRequest
   | WorktreeArchive
@@ -14361,6 +14362,23 @@ export interface WorkspaceWorktreeOperation {
   [k: string]: unknown
 }
 /**
+ * The `workspace_worktree_operation_changed` feed frame: a
+ * `workspace.create_worktree` or `workspace.delete_worktree` operation was
+ * admitted or took a step. A client waiting for one watches for its
+ * `operation_id` to leave `running`; after missing frames (a reconnect) it
+ * sends the command again under the same ID, whose reply is the state now.
+ */
+export interface WorkspaceWorktreeOperationChanged {
+  boot_id: string
+  operation: WorkspaceWorktreeOperation
+  revision: number
+  /**
+   * The `workspace_worktree_operation_changed` type tag.
+   */
+  type: 'workspace_worktree_operation_changed'
+  [k: string]: unknown
+}
+/**
  * `worktree.adopt`: take ADE removal authority over an existing linked tree.
  */
 export interface WorktreeAdoptRequest {
@@ -15580,6 +15598,6 @@ export interface ResponseByOperation {
   "settings.set": Settings
 }
 
-export type FeedFrame = CatalogFrame | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged | WindowChanged | LayoutChanged | LayoutRemoved | SettingsChanged
+export type FeedFrame = CatalogFrame | WorkspaceWorktreeOperationChanged | ConversationChanged | ConversationDeletedFrame | ConversationReloadFrame | TerminalChanged | ServiceChanged | ActivityChanged | WindowChanged | LayoutChanged | LayoutRemoved | SettingsChanged
 
 export type TerminalStreamFrame = TerminalSnapshotFrame | TerminalOutputFrame | TerminalResizeFrame | TerminalViewportFrame | TerminalMetricsFrame | TerminalDetachedFrame | TerminalWarningFrame | TerminalErrorFrame | TerminalConversationFrame | Ack

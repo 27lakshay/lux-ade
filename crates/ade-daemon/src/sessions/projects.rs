@@ -106,17 +106,19 @@ impl Sessions {
             .probe_worktree_operation(id, op, payload)
     }
 
+    /// Admits a workspace worktree operation; a new one is on the feed at once.
     pub fn admit_worktree_operation(
         &self,
         op: &str,
         payload: &Value,
         record: &crate::store::WorktreeOperationRecord,
     ) -> Result<crate::store::WorktreeAdmission> {
-        self.data
-            .lock()
-            .unwrap()
-            .store
-            .admit_worktree_operation(op, payload, record)
+        let mut d = self.data.lock().unwrap();
+        let admission = d.store.admit_worktree_operation(op, payload, record)?;
+        if matches!(admission, crate::store::WorktreeAdmission::New) {
+            self.worktree_operation_changed(&mut d, record);
+        }
+        Ok(admission)
     }
 
     pub fn worktree_operation(
@@ -136,15 +138,26 @@ impl Sessions {
             .running_worktree_operations()
     }
 
+    /// Stores the operation's next state and puts it on the feed.
     pub fn save_worktree_operation(
         &self,
         record: &mut crate::store::WorktreeOperationRecord,
     ) -> Result<()> {
-        self.data
-            .lock()
-            .unwrap()
-            .store
-            .save_worktree_operation(record)
+        let mut d = self.data.lock().unwrap();
+        d.store.save_worktree_operation(record)?;
+        self.worktree_operation_changed(&mut d, record);
+        Ok(())
+    }
+
+    fn worktree_operation_changed(
+        &self,
+        d: &mut Data,
+        record: &crate::store::WorktreeOperationRecord,
+    ) {
+        self.publish(
+            d,
+            json!({"type": "workspace_worktree_operation_changed", "operation": record.reply()}),
+        );
     }
 
     /// A Conversation as a reply or feed frame carries it.

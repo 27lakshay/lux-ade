@@ -6,8 +6,13 @@
 import { existsSync } from 'node:fs'
 import { mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { expect, test, type ScratchProfile } from '../fixtures'
+import { binaries } from '../fixtures/environment'
+import { subscribeFeed } from '../fixtures/feed'
 import { operationId } from '../worktrees/lifecycle'
+
+type ClientModule = typeof import('../../../packages/client/dist/index.js')
 
 async function catalog(profile: ScratchProfile) {
   return (await profile.call('catalog.get', {})).catalog
@@ -224,4 +229,30 @@ test('create_worktree with show_in shows the new workspace in that window once i
     }),
   )
   expect(gone).toMatchObject({ status: 'succeeded' })
+})
+
+test('each step of a worktree operation is on the feed, and the SDK waits for the last one there', async ({
+  ade,
+  profile,
+}) => {
+  const repo = await ade.repo({ name: 'shop' })
+  const main = (await profile.call('workspace.open', { path: repo.path })).workspace
+  const feed = await subscribeFeed(profile)
+  await feed.connected()
+  const id = operationId('create')
+  // The SDK helper, as Electron main uses it: one send, then the feed.
+  const sdk = (await import(pathToFileURL(binaries.client).href)) as ClientModule
+  let sends = 0
+  const state = await sdk.settleWorktreeOperation(feed.client, id, () => {
+    sends++
+    return profile.call('workspace.create_worktree', { operation_id: id, project_id: main.project_id, name: 'Fed' })
+  })
+  expect(state).toMatchObject({ operation_id: id, status: 'succeeded' })
+  expect(sends).toBe(1)
+  const steps = feed.frames
+    .filter((frame) => frame.type === 'workspace_worktree_operation_changed' && frame.operation.operation_id === id)
+    .map((frame) => (frame as { operation: { status: string } }).operation.status)
+  expect(steps[0]).toBe('running')
+  expect(steps.at(-1)).toBe('succeeded')
+  feed.stop()
 })

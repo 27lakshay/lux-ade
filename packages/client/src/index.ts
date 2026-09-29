@@ -60,11 +60,14 @@ export {
   type WindowView,
 } from './windows.js'
 export {
+  settleWorktreeOperation,
   workspaceRemoveBlockers,
   worktreeDeleteBlockers,
   type WorkspaceRemoveBlocker,
   type WorkspaceRemoveBlockerKind,
+  type WorkspaceWorktreeState,
   type WorktreeDeleteBlocker,
+  type WorktreeOperationFeed,
 } from './workspaces.js'
 export {
   decodeDailyUseFeedFrame,

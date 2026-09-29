@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { dailyUseCommand, workspaceRemoveBlockers, worktreeDeleteBlockers } from '@ade/client'
+import { dailyUseCommand, settleWorktreeOperation, workspaceRemoveBlockers, worktreeDeleteBlockers } from '@ade/client'
 import type { RemoveOutcome } from '../shared/bridge/workspaces'
 import { handle } from './ipc'
 import { getClient, getClientGeneration, getSocket, isSwitching } from './profile-connection'
@@ -8,11 +8,8 @@ import { recordOf } from './windows'
 import { blockerTexts } from './workspace-actions-core'
 
 // The navigator's workspace actions, each one daemon command: rename, remove from ADE, create a
-// worktree and delete one. Creating and deleting a worktree run on the daemon's worker; their
-// reply is the operation's state, and asking again under the same operation ID reads it.
-
-/** How often main reads a running worktree operation's state. */
-const POLL_MS = 500
+// worktree and delete one. Creating and deleting a worktree run on the daemon's worker; the SDK
+// waits for the operation's final state on the feed.
 
 /** The connected daemon; `still` throws if the profile changed since. */
 function connection(): { endpoint: string; still: () => void } {
@@ -33,15 +30,21 @@ type WorktreeCommand =
   | { op: 'workspace.create_worktree'; operation_id: string; project_id: string; name: string; show_in?: string }
   | { op: 'workspace.delete_worktree'; operation_id: string; workspace_id: string }
 
-/** Sends a worktree command, then reads its state under the same ID until it settles. */
-async function settled(command: WorktreeCommand) {
+/** How often main asks again while waiting, so a profile switch ends the wait. */
+const RECHECK_MS = 5_000
+
+/** Sends a worktree command and waits for its final state on the feed; a profile switch ends the wait. */
+function settled(command: WorktreeCommand) {
   const { endpoint, still } = connection()
-  for (;;) {
-    const state = await dailyUseCommand(endpoint, command)
-    if (state.status !== 'running') return state
-    await new Promise<void>((done) => setTimeout(done, POLL_MS))
-    still()
-  }
+  return settleWorktreeOperation(
+    getClient(),
+    command.operation_id,
+    async () => {
+      still()
+      return dailyUseCommand(endpoint, command)
+    },
+    { recheckMs: RECHECK_MS },
+  )
 }
 
 export function registerWorkspaceActionIpc(): void {

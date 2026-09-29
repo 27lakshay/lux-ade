@@ -393,6 +393,7 @@ export const operationIdOperations = [
 /** Each feed frame's `type` tag and the validator name for it. */
 export const frames = {
   "catalog": { domain: "workspaces", frame: "CatalogFrame" },
+  "workspace_worktree_operation_changed": { domain: "workspaces", frame: "WorkspaceWorktreeOperationChanged" },
   "conversation_changed": { domain: "conversations", frame: "ConversationChanged" },
   "conversation_deleted": { domain: "conversations", frame: "ConversationDeletedFrame" },
   "conversation_reload": { domain: "conversations", frame: "ConversationReloadFrame" },

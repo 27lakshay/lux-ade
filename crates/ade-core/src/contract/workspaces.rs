@@ -65,7 +65,10 @@ pub fn operations() -> Vec<OperationSpec> {
 }
 
 pub fn frames() -> Vec<FrameSpec> {
-    vec![FrameSpec::new::<CatalogFrame>("catalog")]
+    vec![
+        FrameSpec::new::<CatalogFrame>("catalog"),
+        FrameSpec::new::<WorkspaceWorktreeOperationChanged>("workspace_worktree_operation_changed"),
+    ]
 }
 
 /// `catalog.get`: read the profile's workspaces, conversations and windows.
@@ -232,6 +235,20 @@ pub struct WorkspaceWorktreeOperation {
     pub code: Option<String>,
 }
 
+/// The `workspace_worktree_operation_changed` feed frame: a
+/// `workspace.create_worktree` or `workspace.delete_worktree` operation was
+/// admitted or took a step. A client waiting for one watches for its
+/// `operation_id` to leave `running`; after missing frames (a reconnect) it
+/// sends the command again under the same ID, whose reply is the state now.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct WorkspaceWorktreeOperationChanged {
+    #[serde(rename = "type")]
+    pub tag: WorkspaceWorktreeOperationChangedTag,
+    pub operation: WorkspaceWorktreeOperation,
+    pub boot_id: String,
+    pub revision: u64,
+}
+
 /// `workspace.rebind.list`: restored workspaces and whether each needs a path.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
 pub struct WorkspaceRebindListRequest {}
@@ -259,6 +276,10 @@ wire_tag!(WorkspaceRemovedTag, "workspace_removed");
 wire_tag!(
     WorkspaceWorktreeOperationTag,
     "workspace_worktree_operation"
+);
+wire_tag!(
+    WorkspaceWorktreeOperationChangedTag,
+    "workspace_worktree_operation_changed"
 );
 wire_tag!(WorkspaceRebindCatalogTag, "workspace_rebind_catalog");
 wire_tag!(RepositoryRebindCatalogTag, "repository_rebind_catalog");

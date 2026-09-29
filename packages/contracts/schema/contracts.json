@@ -29911,6 +29911,36 @@
       ],
       "type": "object"
     },
+    "WorkspaceWorktreeOperationChanged": {
+      "description": "The `workspace_worktree_operation_changed` feed frame: a\n`workspace.create_worktree` or `workspace.delete_worktree` operation was\nadmitted or took a step. A client waiting for one watches for its\n`operation_id` to leave `running`; after missing frames (a reconnect) it\nsends the command again under the same ID, whose reply is the state now.",
+      "properties": {
+        "boot_id": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/WorkspaceWorktreeOperation"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "description": "The `workspace_worktree_operation_changed` type tag.",
+          "enum": [
+            "workspace_worktree_operation_changed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operation",
+        "boot_id",
+        "revision"
+      ],
+      "type": "object"
+    },
     "WorkspaceWorktreeStatus": {
       "description": "Where a workspace worktree operation stands.",
       "oneOf": [
@@ -31445,6 +31475,11 @@
       "domain": "workspaces",
       "frame": "CatalogFrame",
       "type": "catalog"
+    },
+    {
+      "domain": "workspaces",
+      "frame": "WorkspaceWorktreeOperationChanged",
+      "type": "workspace_worktree_operation_changed"
     },
     {
       "domain": "conversations",
