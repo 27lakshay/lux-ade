@@ -133,6 +133,13 @@ function daemonSend(entry: SendOwner, options?: RequestOptions): Promise<Pending
 
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
 
+/** A prompt still being prepared: its delivery is unconfirmed until the preparation settles. */
+const pending = (intent: SendIntent): SendPending => ({
+  type: 'send_pending',
+  request_id: intent.requestId,
+  text: intent.text,
+})
+
 export class SendPipeline<E extends SendEntry = SendEntry> {
   constructor(
     readonly journal: SendJournal,
@@ -403,6 +410,45 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
     return Object.assign(entry, extra) as E
   }
 
+  /**
+   * Sends a prompt from the entry's draft under `requestId`. The same request and text again
+   * continue the prompt the entry is delivering. Any other prompt is refused until that one
+   * resolves, and until the last sent draft has cleared.
+   */
+  async send(entry: E, requestId: string, text: string): Promise<SendResult> {
+    if (!validId(requestId) || typeof text !== 'string' || !text.trim()) throw new Error('Invalid prompt')
+    const current = entry.send
+    if (current) {
+      if (current.requestId !== requestId || current.text !== text)
+        throw new Error('Resolve the previous prompt before starting another')
+      return current.preparing ? pending(current) : this.dispatch(entry, current)
+    }
+    if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
+    return this.begin(entry, {
+      requestId,
+      text,
+      draftText: entry.draft.text,
+      revision: entry.draft.revision,
+      attachments: entry.draft.attachments,
+      state: 'pending',
+      preparing: true,
+      admitted: false,
+      inFlight: null,
+    })
+  }
+
+  /**
+   * Delivers the prompt awaiting confirmation again, under its own request ID. `requestId`, when
+   * given, must name that prompt.
+   */
+  async retry(entry: E, requestId?: string): Promise<SendResult> {
+    const current = entry.send
+    if (!current) throw new Error('No prompt is awaiting confirmation')
+    if (requestId !== undefined && requestId !== current.requestId)
+      throw new Error('A different prompt is awaiting confirmation')
+    return current.preparing ? pending(current) : this.dispatch(entry, current)
+  }
+
   /** The live path: `agent.send` just accepted the prompt, so complete its intent. */
   private async acceptedSend(
     entry: E,
@@ -470,7 +516,6 @@ export class SendPipeline<E extends SendEntry = SendEntry> {
    * then the draft is saved and the prompt dispatched. A draft that cannot be
    * saved drops the prompt again, so nothing was sent.
    */
-  // fallow-ignore-next-line unused-class-member
   async begin(entry: E, intent: SendIntent): Promise<SendResult> {
     await this.journal.upsert(journalRecord(entry, intent, false))
     entry.send = intent

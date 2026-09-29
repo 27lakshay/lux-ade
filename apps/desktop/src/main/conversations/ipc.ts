@@ -3,7 +3,7 @@ import { handle } from '../ipc'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { dailyUseCommand, type DailyUseRequest, type DailyUseResponse } from '@ade/client'
-import { SendJournal, type SendIntent } from '@ade/client/journals'
+import { SendJournal } from '@ade/client/journals'
 import {
   getClient,
   getClientGeneration,
@@ -17,13 +17,11 @@ import {
   setSwitching,
   type Profile,
 } from '../profile-connection'
-import type { DraftState, SendPending } from '../../shared/bridge/conversations'
+import type { DraftState } from '../../shared/bridge/conversations'
 import { conversationOperations, isAllowedOperation } from '../../shared/bridge/operations'
 import { validId } from '../validation'
 import {
-  beginSend,
   daemon,
-  dispatchSend,
   draftKey,
   drafts,
   flushDraft,
@@ -71,13 +69,6 @@ function draftState(entry: DraftEntry): DraftState {
     sent_text: entry.unclearedText,
     send_pending: pendingSend(entry),
   }
-}
-
-/** The reply for a prompt still being delivered. Called only while the entry holds a send. */
-function sendPending(entry: DraftEntry): SendPending {
-  const pending = pendingSend(entry)
-  if (!pending) throw new Error('No prompt is awaiting confirmation')
-  return { type: 'send_pending', ...pending }
 }
 
 export function registerConversationIpc(): void {
@@ -241,41 +232,13 @@ export function registerConversationIpc(): void {
       return result
     }
     if (op === 'agent.send' || op === 'agent.retry_send') {
-      // Review feedback is its own daemon command (`review.feedback.send`, main/review.ts), which
-      // builds the prompt and checks the anchors are current.
-      if (args.review_anchor !== undefined || args.review_feedback !== undefined)
-        throw new Error('Send review feedback with review.feedback.send')
+      // The SDK's send pipeline holds the rules: one prompt per window and Conversation at a time,
+      // and a retry names the prompt awaiting confirmation. Review feedback is its own daemon
+      // command (`review.feedback.send`, main/review.ts).
       const entry = await loadDraft(event.sender.id, endpoint, args.conversation_id)
-      if (op === 'agent.retry_send') {
-        if (!entry.send) throw new Error('No prompt is awaiting confirmation')
-        if (args.request_id !== undefined && args.request_id !== entry.send.requestId) {
-          throw new Error('A different prompt is awaiting confirmation')
-        }
-        if (entry.send.preparing) return sendPending(entry)
-        return await dispatchSend(entry, entry.send)
-      }
-      const text = args.text
-      if (!validId(args.request_id) || typeof text !== 'string' || !text.trim()) throw new Error('Invalid prompt')
-      if (entry.send) {
-        if (entry.send.requestId !== args.request_id || entry.send.text !== text) {
-          throw new Error('Resolve the previous prompt before starting another')
-        }
-        if (entry.send.preparing) return sendPending(entry)
-        return await dispatchSend(entry, entry.send)
-      }
-      if (entry.unclearedText) throw new Error('Finish clearing the previous sent draft before sending again')
-      const intent: SendIntent = {
-        requestId: args.request_id,
-        text,
-        draftText: entry.draft.text,
-        revision: entry.draft.revision,
-        attachments: entry.draft.attachments,
-        state: 'pending',
-        preparing: true,
-        admitted: false,
-        inFlight: null,
-      }
-      return await beginSend(entry, intent)
+      return op === 'agent.retry_send'
+        ? await pipeline().retry(entry, args.request_id as string | undefined)
+        : await pipeline().send(entry, args.request_id as string, args.text as string)
     }
     // The daemon checks the decision and answers against the pending request.
     if (!validId(args.request_id)) throw new Error('Invalid answer')

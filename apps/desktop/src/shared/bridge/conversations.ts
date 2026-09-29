@@ -33,7 +33,7 @@ export type DraftState = {
 }
 
 /** A prompt whose delivery is unconfirmed; retrying reuses its request ID. */
-export type SendPending = {
+type SendPending = {
   type: 'send_pending'
   request_id: string
   text: string
@@ -41,10 +41,10 @@ export type SendPending = {
 } & Partial<Omit<PendingSendState, 'request_id' | 'text'>>
 
 /** A prompt the daemon had already accepted, found and acknowledged by reconciliation. */
-export type SendReconciled = { type: 'ack'; request_id: string; reconciled: true }
+type SendReconciled = { type: 'ack'; request_id: string; reconciled: true }
 
 /** How `agent.send` and `agent.retry_send` end. */
-export type SendResult = DailyUseResponse<'agent.send'> | SendPending | SendReconciled
+type SendResult = DailyUseResponse<'agent.send'> | SendPending | SendReconciled
 
 /** Requests main answers itself (drafts and the send journal), not by forwarding one daemon call. */
 type LocalRequests = {

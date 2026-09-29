@@ -13,10 +13,10 @@ import {
   type DailyUseResponse,
   type RequestOptions,
 } from '@ade/client'
-import { SendPipeline, type SendEntry, type SendIntent, type SendJournal } from '@ade/client/journals'
+import { SendPipeline, type SendEntry, type SendJournal } from '@ade/client/journals'
 import { emit } from '../ipc'
 import { getClientGeneration, getSocket, journalProfileId } from '../profile-connection'
-import type { PendingSendState, SendResult } from '../../shared/bridge/conversations'
+import type { PendingSendState } from '../../shared/bridge/conversations'
 
 type Fields<O extends DailyUseOperation> = Omit<DailyUseRequest<O>, 'op'>
 
@@ -87,10 +87,6 @@ export function pipeline(): SendPipeline<DraftEntry> {
 export const flushDraft = (entry: DraftEntry): Promise<void> => pipeline().flush(entry)
 export const reconcileAcceptedSend = (entry: DraftEntry): Promise<void> => pipeline().reconcileAccepted(entry)
 export const unsafePending = (entries: DraftEntry[]): Promise<boolean> => pipeline().unsafePending(entries)
-/** Main's send results keep the bridge's shape; this checks the SDK's result against it. */
-export const dispatchSend = (entry: DraftEntry, intent: SendIntent): Promise<SendResult> =>
-  pipeline().dispatch(entry, intent)
-export const beginSend = (entry: DraftEntry, intent: SendIntent): Promise<SendResult> => pipeline().begin(entry, intent)
 
 /** The window's entry for a Conversation, loaded once from the daemon and the journal. */
 export async function loadDraft(senderId: number, endpoint: string, conversationId: string): Promise<DraftEntry> {

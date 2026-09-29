@@ -14,6 +14,7 @@ import {
   sendGitMutation,
   GitOperationBlocked,
   SendHeld,
+  SendPipeline,
   sendJournaled,
   socketProfileId,
 } from '../dist/journals.js'
@@ -153,4 +154,54 @@ test('a Git mutation that never reached the daemon leaves the journal, so it blo
     (error) => !(error instanceof GitOperationBlocked),
   )
   assert.equal(await git.pending('profile-a', 'workspace-a'), null)
+})
+
+/** A window's entry as `SendPipeline.open` makes it, with no daemon behind it. */
+function entry(directory, fields = {}) {
+  return {
+    endpoint: join(directory, 'no-daemon.sock'),
+    profileId: 'profile-a',
+    windowId: 'window-a',
+    conversationId: 'conversation-a',
+    draft: { text: 'draft', revision: 1, attachments: [] },
+    timer: null,
+    pending: Promise.resolve(),
+    savedRevision: 1,
+    error: '',
+    unclearedText: '',
+    send: null,
+    ...fields,
+  }
+}
+
+const preparing = {
+  requestId: 'request-a',
+  text: 'Fix the build',
+  draftText: 'Fix the build',
+  revision: 1,
+  attachments: [],
+  state: 'pending',
+  preparing: true,
+  admitted: false,
+  inFlight: null,
+}
+
+test('the send pipeline holds one prompt per window and Conversation, and a retry names it', async (t) => {
+  const directory = await scratch(t)
+  const pipeline = new SendPipeline((await openClientJournals(directory)).send)
+  await assert.rejects(pipeline.send(entry(directory), 'bad id!', 'text'), /Invalid prompt/)
+  await assert.rejects(pipeline.send(entry(directory), 'request-a', '   '), /Invalid prompt/)
+  await assert.rejects(pipeline.retry(entry(directory)), /No prompt is awaiting confirmation/)
+  const cleared = entry(directory, { unclearedText: 'sent before' })
+  await assert.rejects(pipeline.send(cleared, 'request-b', 'next'), /Finish clearing the previous sent draft/)
+
+  const busy = entry(directory, { send: { ...preparing } })
+  await assert.rejects(pipeline.send(busy, 'request-b', 'Fix the build'), /Resolve the previous prompt/)
+  await assert.rejects(pipeline.send(busy, 'request-a', 'Another prompt'), /Resolve the previous prompt/)
+  await assert.rejects(pipeline.retry(busy, 'request-b'), /A different prompt is awaiting confirmation/)
+  // The same prompt again, while it is still being prepared, is reported pending.
+  const pending = { type: 'send_pending', request_id: 'request-a', text: 'Fix the build' }
+  assert.deepEqual(await pipeline.send(busy, 'request-a', 'Fix the build'), pending)
+  assert.deepEqual(await pipeline.retry(busy), pending)
+  assert.deepEqual(await pipeline.retry(busy, 'request-a'), pending)
 })
