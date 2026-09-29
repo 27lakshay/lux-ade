@@ -13,7 +13,6 @@
     "build:backend": "node scripts/cargo.mjs build --locked -p ade-daemon -p ade-runtime --features ade-runtime/native-terminal --bins",
     "package:mac": "node scripts/package-macos.mjs",
     "typecheck": "pnpm --filter @ade/contracts typecheck && pnpm --filter @ade/client typecheck && pnpm --filter @ade/terminal typecheck && pnpm --filter @ade/plugin-host typecheck &&pnpm --filter @ade/cli typecheck && pnpm --filter @ade/desktop typecheck && tsc -p e2e/protocol/tsconfig.json",
-    "test:e2e": "pnpm build:backend && pnpm build && playwright test",
     "test:e2e:protocol": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:protocol:only",
     "test:e2e:protocol:only": "playwright test --config playwright.protocol.config.ts",
     "test:e2e:protocol:faults": "pnpm build:backend && pnpm build:sdk && pnpm --filter @ade/cli build && pnpm test:e2e:protocol:faults:only",

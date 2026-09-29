@@ -230,7 +230,7 @@ These are planned scripts, not commands available in the current checkout.
 | `pnpm lint` | Run configured JS lint and architectural import checks |
 | `pnpm format:check` | Validate formatting without rewriting files |
 | `pnpm deadcode` | Run pinned Fallow against declared workspace entry points |
-| `pnpm test:e2e` | Run deterministic full-stack scenarios |
+| `pnpm test:e2e:protocol` | Run deterministic headless backend scenarios |
 | `pnpm test:e2e:live` | Run explicitly configured real-provider scenarios |
 | `pnpm check` | Static checks, Rust compile/lint checks and deterministic E2E gates |
 | `pnpm package:mac` | Produce a desktop artifact with declared runtime resources |
