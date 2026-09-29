@@ -71,19 +71,12 @@ test('the Git journal holds one operation per workspace, with any CLI request ID
   assert.equal(await git.pending('profile-a', 'workspace-a'), null)
 })
 
-test('a version 1 Git journal keeps its active records and drops archived acknowledgements', async (t) => {
+test('a version 1 Git journal is refused and left in place', async (t) => {
   const directory = await scratch(t)
-  await writeFile(
-    join(directory, 'git-intents-v1.json'),
-    JSON.stringify({ version: 1, active: [gitIntent], archived: [{ intent: gitIntent }] }),
-  )
-  const { git } = await openClientJournals(directory)
-  assert.deepEqual(await git.pending('profile-a', 'workspace-a'), gitIntent)
-  await git.release('profile-a', 'workspace-a', gitIntent.request_id)
-  assert.deepEqual(JSON.parse(await readFile(join(directory, 'git-intents-v1.json'), 'utf8')), {
-    version: 2,
-    records: [],
-  })
+  const old = JSON.stringify({ version: 1, active: [gitIntent], archived: [{ intent: gitIntent }] })
+  await writeFile(join(directory, 'git-intents-v1.json'), old)
+  await assert.rejects(openClientJournals(directory), /Git recovery journal version 1 is not read by this build/)
+  assert.equal(await readFile(join(directory, 'git-intents-v1.json'), 'utf8'), old)
 })
 
 test('a corrupt journal file is refused and left for recovery', async (t) => {

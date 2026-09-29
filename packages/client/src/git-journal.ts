@@ -78,13 +78,7 @@ function key(intent: Pick<GitIntent, 'profile_id' | 'workspace_id'>): string {
   return JSON.stringify([intent.profile_id, intent.workspace_id])
 }
 
-/**
- * Version 2 holds `records`. Version 1 held `active` and `archived`. Active records
- * carry over, because one may still be unadmitted. Archived records were
- * acknowledgements that the daemon now keeps itself, so they are dropped: an
- * interrupted operation acknowledged only in version 1 shows once more, for the
- * person to acknowledge through the daemon.
- */
+/** Version 2 holds `records`. No other version is read before launch (decision D19). */
 const codec: OutboxCodec<GitIntent> = {
   version: 2,
   name: 'Git recovery journal',
@@ -94,12 +88,12 @@ const codec: OutboxCodec<GitIntent> = {
     if (!data || typeof data !== 'object' || Array.isArray(data))
       throw new Error('Git recovery journal is invalid; preserve it for recovery')
     const value = data as Record<string, unknown>
+    if (value.version !== 2)
+      throw new Error(
+        `Git recovery journal version ${String(value.version)} is not read by this build; check it holds no unsent operation, then delete it`,
+      )
     const fields = Object.keys(value).sort().join(',')
-    let records: unknown
-    if (value.version === 1 && fields === 'active,archived,version' && Array.isArray(value.archived))
-      records = value.active
-    else if (value.version === 2 && fields === 'records,version') records = value.records
-    else throw new Error('Git recovery journal is invalid; preserve it for recovery')
+    const records = fields === 'records,version' ? value.records : null
     if (!Array.isArray(records) || records.some((item) => !valid(item))) {
       throw new Error('Git recovery journal is invalid; preserve it for recovery')
     }
