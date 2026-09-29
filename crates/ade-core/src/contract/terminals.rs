@@ -366,13 +366,13 @@ pub struct TerminalConversationFrame {
 
 /// `terminal.create`: add another terminal to a workspace.
 ///
-/// `operation_id` is the caller-owned receipt ID; `request_id` is accepted as
-/// its older name. Without one, every call creates a new terminal.
+/// `operation_id` is the caller-owned receipt ID. Without one, every call
+/// creates a new terminal.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct TerminalCreateRequest {
     pub workspace_id: String,
     /// Absent or a string of 1 to 256 bytes; the daemon rejects `null`.
-    #[serde(default, alias = "request_id", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub operation_id: Option<String>,
     /// The terminal's title, 1 to 100 characters with no control characters.
@@ -415,11 +415,9 @@ pub struct TerminalCloseRequest {
 }
 
 /// `terminal.operation`: read the terminal a `terminal.create` receipt produced.
-/// `request_id` is accepted as the older name of `operation_id`.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct TerminalOperationRequest {
     pub workspace_id: String,
-    #[serde(alias = "request_id")]
     pub operation_id: String,
 }
 
@@ -470,14 +468,14 @@ pub struct TerminalCreated {
     pub terminal_id: String,
 }
 
-/// The `terminal.operation` reply. `request_id` echoes the requested
-/// operation ID under its older name.
+/// The `terminal.operation` reply. `operation_id` echoes the requested
+/// operation ID.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct TerminalOperation {
     #[serde(rename = "type")]
     pub tag: TerminalOperationTag,
     pub workspace_id: String,
-    pub request_id: String,
+    pub operation_id: String,
     pub terminal_id: String,
 }
 
@@ -673,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_create_round_trips_and_accepts_request_id() {
+    fn terminal_create_round_trips() {
         let wire = request(
             "terminal.create",
             &TerminalCreateRequest {
@@ -701,7 +699,10 @@ mod tests {
         );
         let older: TerminalCreateRequest =
             serde_json::from_value(json!({"workspace_id": "w", "request_id": "r"})).unwrap();
-        assert_eq!(older.operation_id.as_deref(), Some("r"));
+        assert!(
+            older.operation_id.is_none(),
+            "request_id is not an operation ID"
+        );
         let wire = response(
             "terminal.create",
             &TerminalCreated {
@@ -721,22 +722,25 @@ mod tests {
                 operation_id: "create_1".into(),
             },
         );
-        let older: TerminalOperationRequest =
-            serde_json::from_value(json!({"workspace_id": "w", "request_id": "r"})).unwrap();
-        assert_eq!(older.operation_id, "r");
+        assert!(
+            serde_json::from_value::<TerminalOperationRequest>(
+                json!({"workspace_id": "w", "request_id": "r"})
+            )
+            .is_err()
+        );
         let wire = response(
             "terminal.operation",
             &TerminalOperation {
                 tag: TerminalOperationTag::Tag,
                 workspace_id: "workspace_1".into(),
-                request_id: "create_1".into(),
+                operation_id: "create_1".into(),
                 terminal_id: "terminal_1".into(),
             },
         );
         assert_eq!(
             wire,
             json!({"type": "terminal_operation", "workspace_id": "workspace_1",
-                "request_id": "create_1", "terminal_id": "terminal_1"})
+                "operation_id": "create_1", "terminal_id": "terminal_1"})
         );
     }
 

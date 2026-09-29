@@ -159,12 +159,11 @@ pub struct BrowserInspectRequest {
 }
 
 /// `browser.open`: open a tab. `operation_id` is the caller-owned operation
-/// ID; the daemon still accepts it as `request_id`.
+/// ID.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct BrowserOpenRequest {
     pub profile_id: String,
     pub owner_id: String,
-    #[serde(alias = "request_id")]
     pub operation_id: String,
     /// An `http://` or `https://` URL of at most 8192 bytes.
     pub url: String,
@@ -180,7 +179,6 @@ pub struct BrowserOpenRequest {
 pub struct BrowserNavigateRequest {
     pub profile_id: String,
     pub owner_id: String,
-    #[serde(alias = "request_id")]
     pub operation_id: String,
     pub tab_id: String,
     pub url: String,
@@ -191,7 +189,6 @@ pub struct BrowserNavigateRequest {
 pub struct BrowserCloseRequest {
     pub profile_id: String,
     pub owner_id: String,
-    #[serde(alias = "request_id")]
     pub operation_id: String,
     pub tab_id: String,
 }
@@ -202,7 +199,6 @@ pub struct BrowserOperationRequest {
     /// Defaults to this daemon's browser profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
-    #[serde(alias = "request_id")]
     pub operation_id: String,
 }
 
@@ -344,7 +340,7 @@ pub struct BrowserMutation {
     pub tag: BrowserMutationTag,
     pub profile_id: String,
     pub owner_id: String,
-    pub request_id: String,
+    pub operation_id: String,
     pub payload_fingerprint: String,
     pub op: String,
     pub tab_id: String,
@@ -371,7 +367,7 @@ pub struct BrowserOperation {
     pub tag: BrowserOperationTag,
     pub profile_id: String,
     pub owner_id: String,
-    pub request_id: String,
+    pub operation_id: String,
     pub payload_fingerprint: String,
     pub state: BrowserOperationState,
     /// The mutation's operation; only the owner's receipt carries it.
@@ -1076,7 +1072,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_mutations_accept_operation_id_and_legacy_request_id() {
+    fn browser_mutations_carry_operation_id() {
         let open: BrowserOpenRequest = request(
             "browser.open",
             json!({"profile_id": "fixed", "owner_id": "owner_1", "operation_id": "op_1",
@@ -1093,19 +1089,17 @@ mod tests {
             json!({"profile_id": "fixed", "owner_id": "owner_1", "operation_id": "op_3",
                 "tab_id": "tab_1"}),
         );
-        let legacy: BrowserCloseRequest = serde_json::from_value(json!({"op": "browser.close",
-            "profile_id": "fixed", "owner_id": "owner_1", "request_id": "op_3", "tab_id": "tab_1"}))
-        .unwrap();
-        assert_eq!(legacy.operation_id, "op_3");
-        let lookup: BrowserOperationRequest =
-            serde_json::from_value(json!({"op": "browser.operation", "request_id": "op_3"}))
-                .unwrap();
-        assert_eq!(lookup.operation_id, "op_3");
+        assert!(
+            serde_json::from_value::<BrowserCloseRequest>(json!({"op": "browser.close",
+                "profile_id": "fixed", "owner_id": "owner_1", "request_id": "op_3",
+                "tab_id": "tab_1"}))
+            .is_err()
+        );
         request::<BrowserOperationRequest>("browser.operation", json!({"operation_id": "op_3"}));
         response::<BrowserMutation>(
             "browser.open",
             json!({"type": "browser_mutation", "profile_id": "fixed", "owner_id": "owner_1",
-                "request_id": "op_1", "payload_fingerprint": "a".repeat(64), "op": "browser.open",
+                "operation_id": "op_1", "payload_fingerprint": "a".repeat(64), "op": "browser.open",
                 "tab_id": "tab_1"}),
         );
     }
@@ -1116,26 +1110,26 @@ mod tests {
         let local: BrowserOperation = response(
             "browser.operation",
             json!({"type": "browser_operation", "profile_id": "fixed", "owner_id": "owner_1",
-                "request_id": "op_1", "payload_fingerprint": fingerprint, "state": "accepted",
+                "operation_id": "op_1", "payload_fingerprint": fingerprint, "state": "accepted",
                 "result": null}),
         );
         assert_eq!(local.result, Some(Value::Null));
         let pending: BrowserOperation = response(
             "browser.operation",
             json!({"type": "browser_operation", "profile_id": "fixed", "owner_id": "owner_1",
-                "request_id": "op_1", "payload_fingerprint": fingerprint, "state": "unknown",
+                "operation_id": "op_1", "payload_fingerprint": fingerprint, "state": "unknown",
                 "op": "browser.close"}),
         );
         assert!(pending.result.is_none());
         response::<BrowserOperation>(
             "browser.operation",
             json!({"type": "browser_operation", "profile_id": "fixed", "owner_id": "owner_1",
-                "request_id": "op_1", "payload_fingerprint": fingerprint, "state": "completed",
+                "operation_id": "op_1", "payload_fingerprint": fingerprint, "state": "completed",
                 "result": {"type": "error", "code": "conflict", "message": "Busy"}}),
         );
         assert!(
             !validator("BrowserOperation").is_valid(&json!({"type": "browser_operation",
-            "profile_id": "fixed", "owner_id": "owner_1", "request_id": "op_1",
+            "profile_id": "fixed", "owner_id": "owner_1", "operation_id": "op_1",
             "payload_fingerprint": fingerprint, "state": "done"}))
         );
     }

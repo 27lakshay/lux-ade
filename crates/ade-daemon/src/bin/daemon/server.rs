@@ -289,7 +289,7 @@ struct BrowserEffect<'a> {
     profile_id: &'a str,
     op: &'a str,
     owner_id: String,
-    request_id: String,
+    operation_id: String,
     /// The exact tab; the owner's reply must name it. `None` for an open.
     tab_id: Option<String>,
     /// The fingerprinted payload; see `browser_payload`.
@@ -351,11 +351,12 @@ fn browser_replay(admission: anyhow::Result<Admission>) -> Option<Value> {
         Ok(Admission::New) => return None,
         Ok(Admission::Conflict) => browser_error(
             "conflict",
-            "Browser request ID has another target or payload",
+            "Browser operation ID has another target or payload",
         ),
-        Ok(Admission::Expired) => {
-            browser_error("conflict", "Browser request ID has expired; use a new one")
-        }
+        Ok(Admission::Expired) => browser_error(
+            "conflict",
+            "Browser operation ID has expired; use a new one",
+        ),
         Ok(Admission::Replay(receipt)) => match receipt.status {
             Status::Settled => receipt.result.unwrap_or(Value::Null),
             Status::Unknown => browser_error(
@@ -385,20 +386,20 @@ fn browser_id(value: &Value, field: &str) -> anyhow::Result<String> {
     Ok(id.to_owned())
 }
 
-/// Reads the operation ID from `operation_id`, or from its legacy name `request_id`.
-fn browser_request_id(value: &Value) -> anyhow::Result<String> {
+/// Reads and checks a browser mutation's `operation_id`.
+fn browser_operation_id(value: &Value) -> anyhow::Result<String> {
     let id = value
         .get("operation_id")
-        .or_else(|| value.get("request_id"))
+        .or_else(|| value.get("operation_id"))
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("Missing request_id"))?;
+        .ok_or_else(|| anyhow::anyhow!("Missing operation_id"))?;
     anyhow::ensure!(
         !id.is_empty()
             && id.len() <= 256
             && id
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
-        "Invalid request_id"
+        "Invalid operation_id"
     );
     Ok(id.to_owned())
 }
@@ -536,15 +537,15 @@ impl Host {
     }
 
     fn browser_operation(&self, request: &Value, profile_id: &str) -> Value {
-        if let Err(error) = browser_request_id(request) {
+        if let Err(error) = browser_operation_id(request) {
             return browser_error("invalid_request", &error.to_string());
         }
         let lookup: BrowserOperationRequest = match browser_decode(request) {
             Ok(lookup) => lookup,
             Err(error) => return error,
         };
-        let request_id = lookup.operation_id;
-        let receipt = browser_receipt(&self.browser_receipts.lock().unwrap(), &request_id);
+        let operation_id = lookup.operation_id;
+        let receipt = browser_receipt(&self.browser_receipts.lock().unwrap(), &operation_id);
         let local = receipt.map(|receipt| {
             let (state, result) = match receipt.status {
                 Status::Settled => (
@@ -560,7 +561,7 @@ impl Host {
                 tag: Default::default(),
                 profile_id: profile_id.to_owned(),
                 owner_id: receipt.owner_id(),
-                request_id: request_id.clone(),
+                operation_id: operation_id.clone(),
                 payload_fingerprint: receipt.fingerprint,
                 state,
                 op: None,
@@ -588,7 +589,7 @@ impl Host {
             Err(_) => return unavailable(),
         };
         let command = json!({"op":"browser.operation","profile_id":profile_id,
-            "owner_id":owner.owner_id,"request_id":request_id});
+            "owner_id":owner.owner_id,"operation_id":operation_id});
         if writeln!(stream, "{command}").is_err() {
             return unavailable();
         }
@@ -612,7 +613,7 @@ impl Host {
             || !owner_reply["type"].is_string()
             || owner_reply["profile_id"] != profile_id
             || owner_reply["owner_id"] != owner.owner_id
-            || owner_reply["request_id"] != request_id
+            || owner_reply["operation_id"] != operation_id
             || !self.owner_is_current(&owner)
         {
             return unavailable();
@@ -632,7 +633,7 @@ impl Host {
         let held = HeldReceipt {
             profile_id,
             owner_id: &local.owner_id,
-            request_id: &request_id,
+            operation_id: &operation_id,
             fingerprint,
         };
         let Some(result) = owner_settlement(&held, &owner.owner_id, &owner_reply) else {
@@ -640,13 +641,13 @@ impl Host {
         };
         // Only an unknown receipt may settle here; a concurrent settle wins.
         let connection = self.browser_receipts.lock().unwrap();
-        let unknown = browser_receipt(&connection, &request_id).is_some_and(|receipt| {
+        let unknown = browser_receipt(&connection, &operation_id).is_some_and(|receipt| {
             receipt.fingerprint == fingerprint && receipt.status == Status::Unknown
         });
         if !unknown
             || receipts::settle(
                 &connection,
-                &request_id,
+                &operation_id,
                 Status::Settled,
                 Some(result),
                 now_ms(),
@@ -668,7 +669,7 @@ impl Host {
         if let Err(error) = browser_id(request, "owner_id") {
             return browser_error("invalid_request", &error.to_string());
         }
-        if let Err(error) = browser_request_id(request) {
+        if let Err(error) = browser_operation_id(request) {
             return browser_error("invalid_request", &error.to_string());
         }
         let needs_tab = op != "browser.open";
@@ -690,7 +691,6 @@ impl Host {
             "profile_id",
             "owner_id",
             "operation_id",
-            "request_id",
             "diagnostic_id",
             if needs_tab { "tab_id" } else { "" },
             if needs_url { "url" } else { "" },
@@ -716,7 +716,7 @@ impl Host {
             _ => browser_decode::<BrowserCloseRequest>(request)
                 .map(|close| (close.owner_id, close.operation_id, Some(close.tab_id), None)),
         };
-        let (owner_id, request_id, tab_id, url) = match decoded {
+        let (owner_id, operation_id, tab_id, url) = match decoded {
             Ok(fields) => fields,
             Err(error) => return error,
         };
@@ -738,7 +738,7 @@ impl Host {
             profile_id,
             op,
             owner_id,
-            request_id,
+            operation_id,
             tab_id,
             payload,
             forward,
@@ -754,7 +754,7 @@ impl Host {
             profile_id,
             op,
             owner_id,
-            request_id,
+            operation_id,
             tab_id,
             payload,
             forward,
@@ -767,7 +767,7 @@ impl Host {
             let mut connection = self.browser_receipts.lock().unwrap();
             let probe = connection.transaction().map_err(anyhow::Error::from);
             let admission = probe.and_then(|probe| {
-                receipts::begin(&probe, &request_id, op, &payload, None, now_ms())
+                receipts::begin(&probe, &operation_id, op, &payload, None, now_ms())
             });
             if let Some(reply) = browser_replay(admission) {
                 return reply;
@@ -791,7 +791,7 @@ impl Host {
         };
         if let Some(reply) = browser_replay(receipts::begin(
             &admission,
-            &request_id,
+            &operation_id,
             op,
             &payload,
             None,
@@ -833,7 +833,7 @@ impl Host {
         };
         let dispatched = receipts::settle(
             &admission,
-            &request_id,
+            &operation_id,
             Status::Dispatched,
             Some(&json!({"owner_id": owner_id})),
             now_ms(),
@@ -843,7 +843,7 @@ impl Host {
         }
         drop(connection);
         let mut command = json!({"op":op,"profile_id":profile_id,"owner_id":owner_id,
-            "request_id":request_id,"payload_fingerprint":fingerprint});
+            "operation_id":operation_id,"payload_fingerprint":fingerprint});
         if let Some(tab_id) = &tab_id {
             command["tab_id"] = json!(tab_id);
         }
@@ -878,7 +878,7 @@ impl Host {
                         if value.is_object()
                             && value["profile_id"] == profile_id
                             && value["owner_id"] == owner_id
-                            && value["request_id"] == request_id
+                            && value["operation_id"] == operation_id
                             && value["payload_fingerprint"] == fingerprint
                             && value["type"].is_string()
                             && (value["type"] == "error"
@@ -912,7 +912,7 @@ impl Host {
         };
         let _ = receipts::settle(
             &self.browser_receipts.lock().unwrap(),
-            &request_id,
+            &operation_id,
             status,
             result,
             now_ms(),

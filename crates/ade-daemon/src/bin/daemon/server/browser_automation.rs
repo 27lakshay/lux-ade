@@ -204,7 +204,7 @@ pub(super) fn query_relay(op: &str, request: &Value) -> Result<QueryRelay, Value
 /// A checked click or type, ready for `Host::browser_effect`.
 struct EffectPlan {
     owner_id: String,
-    request_id: String,
+    operation_id: String,
     tab_id: String,
     payload: Value,
     forward: serde_json::Map<String, Value>,
@@ -213,14 +213,13 @@ struct EffectPlan {
 
 fn effect_plan(op: &str, profile_id: &str, request: &Value) -> Result<EffectPlan, Value> {
     let owner_id = browser_id(request, "owner_id").map_err(invalid)?;
-    let request_id = browser_request_id(request).map_err(invalid)?;
+    let operation_id = browser_operation_id(request).map_err(invalid)?;
     let tab_id = browser_id(request, "tab_id").map_err(invalid)?;
     let common = [
         "op",
         "profile_id",
         "owner_id",
         "operation_id",
-        "request_id",
         "diagnostic_id",
         "tab_id",
         "selector",
@@ -262,7 +261,7 @@ fn effect_plan(op: &str, profile_id: &str, request: &Value) -> Result<EffectPlan
     forward.insert("timeout_ms".into(), json!(ms));
     Ok(EffectPlan {
         owner_id,
-        request_id,
+        operation_id,
         tab_id,
         payload,
         forward,
@@ -291,7 +290,7 @@ impl Host {
             profile_id: &profile_id,
             op,
             owner_id: plan.owner_id,
-            request_id: plan.request_id,
+            operation_id: plan.operation_id,
             tab_id: Some(plan.tab_id),
             payload: plan.payload,
             forward: plan.forward,

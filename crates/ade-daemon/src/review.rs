@@ -150,8 +150,7 @@ pub fn feedback_anchors(feedback: &Value) -> Result<Vec<&Value>> {
 const INTERRUPTED: &str = "Daemon stopped during Git operation. Refresh and inspect Git history before retrying; this request will not run again.";
 
 /// Decodes a review request into its typed contract. An absent field keeps
-/// the `Missing or invalid <field>` wording of [`string`], and the operation ID
-/// keeps its older `request_id` name.
+/// the `Missing or invalid <field>` wording of [`string`].
 fn decode<T: DeserializeOwned>(request: &Value) -> Result<T> {
     T::deserialize(request).map_err(|error| {
         let text = error.to_string();
@@ -159,7 +158,6 @@ fn decode<T: DeserializeOwned>(request: &Value) -> Result<T> {
             .strip_prefix("missing field `")
             .and_then(|rest| rest.split('`').next())
         {
-            Some("operation_id") => anyhow!("Missing or invalid request_id"),
             Some("staged") => anyhow!("Invalid review side"),
             Some(field) => anyhow!("Missing or invalid {field}"),
             None => anyhow!("Invalid request: {text}"),
@@ -1343,9 +1341,9 @@ impl Review {
                         "Operation belongs to another workspace"
                     );
                 }
-                bail!("Request ID was used for different parameters")
+                bail!("Operation ID was used for different parameters")
             }
-            Admission::Expired => bail!("Request ID has expired; use a new request ID"),
+            Admission::Expired => bail!("Operation ID has expired; use a new operation ID"),
         }
     }
     /// Keeps the discard backup location in the receipt before the worktree changes.
@@ -1535,7 +1533,7 @@ impl Review {
         let op = string(request, "op")?;
         if op == "review.operation" {
             let lookup: ReviewOperationRequest = decode(request)?;
-            let id = text("request_id", &lookup.operation_id)?;
+            let id = text("operation_id", &lookup.operation_id)?;
             let receipt =
                 Self::stored(&self.db.lock().unwrap(), id)?.context("Unknown review operation")?;
             return Self::operation_reply(root, receipt);
@@ -1702,8 +1700,8 @@ impl Review {
             });
         }
         let mutation = Mutation::decode(request)?;
-        let id = text("request_id", mutation.id())?.to_owned();
-        ensure!(id.len() <= 256, "Request ID too long");
+        let id = text("operation_id", mutation.id())?.to_owned();
+        ensure!(id.len() <= 256, "Operation ID too long");
         let payload = mutation.payload()?;
         if let Some(known) = self.admit(root, &mutation, &payload, None)? {
             return Ok(known);

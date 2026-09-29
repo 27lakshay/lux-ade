@@ -22,10 +22,8 @@ impl Sessions {
     pub(super) fn terminal_command(self: &Arc<Self>, request: &Value) -> Result<Value> {
         match request["op"].as_str().unwrap_or("") {
             "terminal.create" => {
-                for key in ["operation_id", "request_id"] {
-                    if let Some(value) = request.get(key) {
-                        ensure!(value.is_string(), "Invalid terminal request ID");
-                    }
+                if let Some(value) = request.get("operation_id") {
+                    ensure!(value.is_string(), "Invalid terminal operation ID");
                 }
                 let create: TerminalCreateRequest = decode(request)?;
                 let title = create.title.as_deref().map(terminal_title).transpose()?;
@@ -45,12 +43,12 @@ impl Sessions {
             }
             "terminal.operation" => {
                 ensure!(
-                    request.get("operation_id").is_some() || request.get("request_id").is_some(),
-                    "Missing request_id"
+                    request.get("operation_id").is_some(),
+                    "Missing operation_id"
                 );
                 let lookup: TerminalOperationRequest = decode(request)?;
                 let workspace_id = non_empty("workspace_id", &lookup.workspace_id)?;
-                let operation_id = non_empty("request_id", &lookup.operation_id)?;
+                let operation_id = non_empty("operation_id", &lookup.operation_id)?;
                 let d = self.data.lock().unwrap();
                 let (owner, terminal_id) = d
                     .store
@@ -63,7 +61,7 @@ impl Sessions {
                 reply(&TerminalOperation {
                     tag: TerminalOperationTag::Tag,
                     workspace_id: owner,
-                    request_id: operation_id.to_owned(),
+                    operation_id: operation_id.to_owned(),
                     terminal_id,
                 })
             }

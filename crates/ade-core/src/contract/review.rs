@@ -2,7 +2,7 @@
 //! receipts, and saved review-note search.
 //!
 //! Git mutations are effect commands. Each carries a caller-owned
-//! `operation_id`; `request_id` is accepted as its older name.
+//! `operation_id`.
 use super::{FrameSpec, OperationSpec, Tier};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -238,7 +238,6 @@ pub struct ReviewDiffPageRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewHunkRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub path: String,
     #[serde(default)]
@@ -253,7 +252,6 @@ pub struct ReviewHunkRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewStageRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub path: String,
     pub revision: String,
@@ -263,7 +261,6 @@ pub struct ReviewStageRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewUnstageRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub path: String,
     pub revision: String,
@@ -273,7 +270,6 @@ pub struct ReviewUnstageRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewDiscardRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub path: String,
     pub revision: String,
@@ -285,7 +281,6 @@ pub struct ReviewDiscardRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewCommitRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub message: String,
     /// The status `index_token` the user reviewed.
@@ -297,7 +292,6 @@ pub struct ReviewCommitRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewBranchRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     /// The local branch name, checked with `git check-ref-format --branch`.
     pub name: String,
@@ -325,7 +319,6 @@ pub enum ReviewStashAction {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewStashRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub action: ReviewStashAction,
     /// The status `revision` the user reviewed; a changed tree fails as stale.
@@ -355,7 +348,6 @@ pub enum ReviewMergeAction {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewMergeRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     pub action: ReviewMergeAction,
     /// Merge only: a local branch, remote-tracking branch, tag or commit.
@@ -370,7 +362,6 @@ pub struct ReviewMergeRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewFetchRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     /// A configured remote name; the current branch's upstream remote, else
     /// `origin`, when absent. URLs are refused.
@@ -384,7 +375,6 @@ pub struct ReviewFetchRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewPullRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     /// The status `index_token` the user reviewed.
     pub index_token: String,
@@ -395,7 +385,6 @@ pub struct ReviewPullRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewPushRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
     /// Required when the branch has no upstream; must be a configured remote name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -409,7 +398,6 @@ pub struct ReviewPushRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewOperationRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
 }
 
@@ -428,7 +416,6 @@ pub struct ReviewOperationListRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ReviewOperationAcknowledgeRequest {
     pub workspace_id: String,
-    #[serde(rename = "operation_id", alias = "request_id")]
     pub operation_id: String,
 }
 
@@ -805,12 +792,16 @@ mod tests {
     }
 
     #[test]
-    fn request_id_still_names_the_operation() {
+    fn operation_id_names_the_operation() {
         let stage: ReviewStageRequest = serde_json::from_value(json!({"workspace_id": "w",
-            "request_id": "old", "path": "a", "revision": "r"}))
+            "operation_id": "op", "path": "a", "revision": "r"}))
         .unwrap();
-        assert_eq!(stage.operation_id, "old");
-        assert_eq!(serde_json::to_value(&stage).unwrap()["operation_id"], "old");
+        assert_eq!(serde_json::to_value(&stage).unwrap()["operation_id"], "op");
+        assert!(
+            serde_json::from_value::<ReviewStageRequest>(json!({"workspace_id": "w",
+                "request_id": "op", "path": "a", "revision": "r"}))
+            .is_err()
+        );
         let defaults: ReviewDiffRequest =
             serde_json::from_value(json!({"workspace_id": "w", "path": "a"})).unwrap();
         assert!(!defaults.staged);

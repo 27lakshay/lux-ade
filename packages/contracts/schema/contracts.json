@@ -3271,6 +3271,9 @@
         "op": {
           "type": "string"
         },
+        "operation_id": {
+          "type": "string"
+        },
         "owner_id": {
           "type": "string"
         },
@@ -3278,9 +3281,6 @@
           "type": "string"
         },
         "profile_id": {
-          "type": "string"
-        },
-        "request_id": {
           "type": "string"
         },
         "tab_id": {
@@ -3298,7 +3298,7 @@
         "type",
         "profile_id",
         "owner_id",
-        "request_id",
+        "operation_id",
         "payload_fingerprint",
         "op",
         "tab_id"
@@ -3440,7 +3440,7 @@
     },
     "BrowserOpenRequest": {
       "additionalProperties": false,
-      "description": "`browser.open`: open a tab. `operation_id` is the caller-owned operation\nID; the daemon still accepts it as `request_id`.",
+      "description": "`browser.open`: open a tab. `operation_id` is the caller-owned operation\nID.",
       "properties": {
         "op": {
           "const": "browser.open"
@@ -3485,6 +3485,9 @@
             "null"
           ]
         },
+        "operation_id": {
+          "type": "string"
+        },
         "owner_id": {
           "type": "string"
         },
@@ -3492,9 +3495,6 @@
           "type": "string"
         },
         "profile_id": {
-          "type": "string"
-        },
-        "request_id": {
           "type": "string"
         },
         "result": {
@@ -3515,7 +3515,7 @@
         "type",
         "profile_id",
         "owner_id",
-        "request_id",
+        "operation_id",
         "payload_fingerprint",
         "state"
       ],
@@ -27311,7 +27311,7 @@
     },
     "TerminalCreateRequest": {
       "additionalProperties": false,
-      "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID; `request_id` is accepted as\nits older name. Without one, every call creates a new terminal.",
+      "description": "`terminal.create`: add another terminal to a workspace.\n\n`operation_id` is the caller-owned receipt ID. Without one, every call\ncreates a new terminal.",
       "properties": {
         "op": {
           "const": "terminal.create"
@@ -27615,9 +27615,9 @@
       "type": "object"
     },
     "TerminalOperation": {
-      "description": "The `terminal.operation` reply. `request_id` echoes the requested\noperation ID under its older name.",
+      "description": "The `terminal.operation` reply. `operation_id` echoes the requested\noperation ID.",
       "properties": {
-        "request_id": {
+        "operation_id": {
           "type": "string"
         },
         "terminal_id": {
@@ -27637,14 +27637,14 @@
       "required": [
         "type",
         "workspace_id",
-        "request_id",
+        "operation_id",
         "terminal_id"
       ],
       "type": "object"
     },
     "TerminalOperationRequest": {
       "additionalProperties": false,
-      "description": "`terminal.operation`: read the terminal a `terminal.create` receipt produced.\n`request_id` is accepted as the older name of `operation_id`.",
+      "description": "`terminal.operation`: read the terminal a `terminal.create` receipt produced.",
       "properties": {
         "op": {
           "const": "terminal.operation"
@@ -30077,7 +30077,7 @@
           "const": "worktree.carry"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "paths": {
@@ -30212,7 +30212,7 @@
           "const": "worktree.cleanup"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "paths": {
@@ -30352,7 +30352,7 @@
           "const": "worktree.create"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "path": {
@@ -30704,7 +30704,7 @@
           "const": "worktree.operation"
         },
         "operation_id": {
-          "description": "The operation's ID; `request_id` is accepted as an alias.",
+          "description": "The operation's ID.",
           "type": "string"
         },
         "repository_id": {
@@ -30887,7 +30887,7 @@
           "const": "worktree.refresh"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "repository_id": {
@@ -30933,7 +30933,7 @@
           "const": "worktree.remove"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "path": {
@@ -31084,7 +31084,7 @@
           "const": "worktree.resources.apply"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "path": {
@@ -31110,7 +31110,7 @@
           "const": "worktree.setup"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "path": {
@@ -31190,7 +31190,7 @@
           "const": "worktree.switch"
         },
         "operation_id": {
-          "description": "Caller-owned operation ID; `request_id` is accepted as an alias.",
+          "description": "Caller-owned operation ID.",
           "type": "string"
         },
         "path": {

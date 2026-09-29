@@ -10,7 +10,7 @@ pub(crate) struct HeldReceipt<'a> {
     pub profile_id: &'a str,
     /// The owner that received the dispatch; it may since have been replaced.
     pub owner_id: &'a str,
-    pub request_id: &'a str,
+    pub operation_id: &'a str,
     pub fingerprint: &'a str,
 }
 
@@ -31,12 +31,12 @@ pub(crate) fn owner_settlement<'a>(
         && owner_reply["state"] == "completed"
         && owner_reply["profile_id"] == held.profile_id
         && owner_reply["owner_id"] == current_owner
-        && owner_reply["request_id"] == held.request_id
+        && owner_reply["operation_id"] == held.operation_id
         && owner_reply["payload_fingerprint"] == held.fingerprint;
     let names_receipt = result.is_object()
         && result["profile_id"] == held.profile_id
         && result["owner_id"] == held.owner_id
-        && result["request_id"] == held.request_id
+        && result["operation_id"] == held.operation_id
         && result["payload_fingerprint"] == held.fingerprint;
     let proven = match result["type"].as_str() {
         Some("browser_mutation") => result["tab_id"].as_str().is_some_and(valid_tab_id),
@@ -62,12 +62,12 @@ mod tests {
     const HELD: HeldReceipt<'static> = HeldReceipt {
         profile_id: "profile",
         owner_id: "owner-a",
-        request_id: "req-1",
+        operation_id: "req-1",
         fingerprint: "fp",
     };
 
     fn identity() -> Value {
-        json!({"profile_id":"profile","owner_id":"owner-a","request_id":"req-1","payload_fingerprint":"fp"})
+        json!({"profile_id":"profile","owner_id":"owner-a","operation_id":"req-1","payload_fingerprint":"fp"})
     }
 
     fn reply(current_owner: &str, state: &str, mut result: Value) -> Value {
@@ -77,7 +77,7 @@ mod tests {
             }
         }
         json!({"type":"browser_operation","profile_id":"profile","owner_id":current_owner,
-            "request_id":"req-1","payload_fingerprint":"fp","state":state,"result":result})
+            "operation_id":"req-1","payload_fingerprint":"fp","state":state,"result":result})
     }
 
     #[test]
@@ -138,7 +138,7 @@ mod tests {
         for (field, value) in [
             ("profile_id", "profile-2"),
             ("owner_id", "owner-z"),
-            ("request_id", "req-2"),
+            ("operation_id", "req-2"),
             ("payload_fingerprint", "fp-2"),
         ] {
             let mut result = mutation.clone();

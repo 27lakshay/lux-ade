@@ -1463,7 +1463,7 @@ export async function readBrowserOperation(
   const identity = {
     profile_id: receipt.profileId,
     owner_id: receipt.ownerId,
-    request_id: requestId,
+    operation_id: requestId,
     payload_fingerprint: receipt.fingerprint,
   }
   const evidence = receipt.evidence ? { evidence: receipt.evidence } : {}
@@ -1475,14 +1475,14 @@ export async function readBrowserOperation(
           op: receipt.op,
           ...identity,
           ...evidence,
-          message: 'Browser effect was not applied; use a new request ID to try again',
+          message: 'Browser effect was not applied; use a new operation ID to try again',
         }
       : receipt.tabId
         ? { type: 'browser_mutation', op: receipt.op, tab_id: receipt.tabId, ...identity, ...evidence }
         : null
   return {
     type: 'browser_operation',
-    request_id: requestId,
+    operation_id: requestId,
     state: receipt.status !== 'pending' && !running ? 'completed' : 'unknown',
     payload_fingerprint: receipt.fingerprint,
     op: receipt.op,
@@ -1757,7 +1757,7 @@ export async function mutateBrowserOwner(
         // A retry after a crash never re-runs the effect: settle it from the tabs.
         const known = await reconcileBrowserReceipt(browserProfileId, state, lease, previous, true)
         if (known.status === 'not_applied') {
-          throw new Error('not_applied: browser effect was not applied; use a new request ID to try again')
+          throw new Error('not_applied: browser effect was not applied; use a new operation ID to try again')
         }
         if (known.status !== 'completed' || !known.tabId) throw new Error('browser effect needs reconciliation')
         return { type: 'browser_mutation', op, tab_id: known.tabId }

@@ -3805,10 +3805,10 @@ export interface BrowserListRequest {
  */
 export interface BrowserMutation {
   op: string
+  operation_id: string
   owner_id: string
   payload_fingerprint: string
   profile_id: string
-  request_id: string
   tab_id: string
   /**
    * The `browser_mutation` type tag.
@@ -3829,7 +3829,7 @@ export interface BrowserNavigateRequest {
 }
 /**
  * `browser.open`: open a tab. `operation_id` is the caller-owned operation
- * ID; the daemon still accepts it as `request_id`.
+ * ID.
  */
 export interface BrowserOpenRequest {
   op: 'browser.open'
@@ -3855,10 +3855,10 @@ export interface BrowserOperation {
    * The mutation's operation; only the owner's receipt carries it.
    */
   op?: string | null
+  operation_id: string
   owner_id: string
   payload_fingerprint: string
   profile_id: string
-  request_id: string
   /**
    * The completed mutation's reply. The daemon's receipt sends `null`
    * before completion; the owner's omits it without a tab.
@@ -13473,8 +13473,8 @@ export interface TerminalConversationFrame {
 /**
  * `terminal.create`: add another terminal to a workspace.
  *
- * `operation_id` is the caller-owned receipt ID; `request_id` is accepted as
- * its older name. Without one, every call creates a new terminal.
+ * `operation_id` is the caller-owned receipt ID. Without one, every call
+ * creates a new terminal.
  */
 export interface TerminalCreateRequest {
   op: 'terminal.create'
@@ -13609,11 +13609,11 @@ export interface TerminalMetricsFrame {
   [k: string]: unknown
 }
 /**
- * The `terminal.operation` reply. `request_id` echoes the requested
- * operation ID under its older name.
+ * The `terminal.operation` reply. `operation_id` echoes the requested
+ * operation ID.
  */
 export interface TerminalOperation {
-  request_id: string
+  operation_id: string
   terminal_id: string
   /**
    * The `terminal_operation` type tag.
@@ -13624,7 +13624,6 @@ export interface TerminalOperation {
 }
 /**
  * `terminal.operation`: read the terminal a `terminal.create` receipt produced.
- * `request_id` is accepted as the older name of `operation_id`.
  */
 export interface TerminalOperationRequest {
   op: 'terminal.operation'
@@ -14444,7 +14443,7 @@ export interface WorktreeCarryRequest {
   expect_head?: string | null
   op: 'worktree.carry'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   /**
@@ -14501,7 +14500,7 @@ export interface WorktreeCleanupRequest {
   delete_branch?: BranchPolicy | null
   op: 'worktree.cleanup'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   /**
@@ -14580,7 +14579,7 @@ export interface WorktreeCreateRequest {
   name?: string | null
   op: 'worktree.create'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   /**
@@ -14739,7 +14738,7 @@ export interface WorktreeOperationReply {
 export interface WorktreeOperationRequest {
   op: 'worktree.operation'
   /**
-   * The operation's ID; `request_id` is accepted as an alias.
+   * The operation's ID.
    */
   operation_id: string
   repository_id: string
@@ -14790,7 +14789,7 @@ export interface WorktreeRebindRequest {
 export interface WorktreeRefreshRequest {
   op: 'worktree.refresh'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   repository_id: string
@@ -14811,7 +14810,7 @@ export interface WorktreeRemoveRequest {
   force?: boolean | null
   op: 'worktree.remove'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   path: string
@@ -14861,7 +14860,7 @@ export interface WorktreeRepositoryRequest {
 export interface WorktreeResourcesApplyRequest {
   op: 'worktree.resources.apply'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   path: string
@@ -14874,7 +14873,7 @@ export interface WorktreeResourcesApplyRequest {
 export interface WorktreeSetupRequest {
   op: 'worktree.setup'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   path: string
@@ -14916,7 +14915,7 @@ export interface WorktreeSwitchRequest {
   create?: boolean | null
   op: 'worktree.switch'
   /**
-   * Caller-owned operation ID; `request_id` is accepted as an alias.
+   * Caller-owned operation ID.
    */
   operation_id: string
   /**

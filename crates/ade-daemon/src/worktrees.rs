@@ -143,8 +143,6 @@ fn decode<T: DeserializeOwned>(request: &Value) -> Result<T> {
             .strip_prefix("missing field `")
             .and_then(|rest| rest.split('`').next())
         {
-            // `request_id` is the wording existing callers know for the operation ID.
-            Some("operation_id") => anyhow!("Missing or invalid request_id"),
             Some(field) => anyhow!("Missing or invalid {field}"),
             None => anyhow!(text),
         }
@@ -215,8 +213,8 @@ impl Effect {
             Self::Resources(request) => &request.operation_id,
         }
     }
-    /// The canonical payload the receipt fingerprints. `request_id` and
-    /// `operation_id` both decode to `operation_id`, which the fingerprint drops.
+    /// The canonical payload the receipt fingerprints; the fingerprint drops
+    /// `operation_id`.
     fn payload(&self) -> Result<Value> {
         Ok(match self {
             Self::Switch(request) => serde_json::to_value(request)?,
@@ -2124,7 +2122,7 @@ impl Worktrees {
         let effect = Effect::decode(op, request)?;
         let id = valid("repository_id", effect.repository_id())?;
         let operation_id = valid("operation_id", effect.operation_id())?;
-        ensure!(operation_id.len() <= 256, "Request ID too long");
+        ensure!(operation_id.len() <= 256, "Operation ID too long");
         let payload = effect.payload()?;
         let mut d = self.data.lock().unwrap();
         match probe(&d.db, operation_id, op, &payload)? {
@@ -2133,9 +2131,9 @@ impl Worktrees {
                 drop(d);
                 return self.snapshot(id);
             }
-            Admission::Conflict => bail!("Request ID was already used for different parameters"),
+            Admission::Conflict => bail!("Operation ID was already used for different parameters"),
             Admission::Expired => {
-                bail!("Request ID is past its 30-day receipt retention; use a new request ID")
+                bail!("Operation ID is past its 30-day receipt retention; use a new operation ID")
             }
         }
         let repo: Repository = read_json(&d.db, "repositories", id)?;
@@ -2343,7 +2341,7 @@ impl Worktrees {
             ensure!(
                 receipts::begin(&tx, &job.id, op, &payload, None, job.started_at)?
                     == Admission::New,
-                "Request ID was already used for different parameters"
+                "Operation ID was already used for different parameters"
             );
             put(&tx, LEDGER, &job.id, &job)?;
             receipts::settle(&tx, &job.id, Status::Dispatched, None, job.started_at)?;

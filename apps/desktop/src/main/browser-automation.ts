@@ -230,7 +230,7 @@ export function browserInputMutation(
     profileId,
     ownerId,
     op,
-    value.request_id,
+    value.operation_id,
     value.payload_fingerprint,
     value.tab_id,
     undefined,

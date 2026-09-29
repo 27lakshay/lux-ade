@@ -31,7 +31,7 @@ test('terminal create returns a receipt that a duplicate, a lookup and a daemon 
   expect(receipt.json).toMatchObject({
     type: 'terminal_operation',
     workspace_id: workspace.id,
-    request_id: 'create-once',
+    operation_id: 'create-once',
     terminal_id: terminalId,
   })
 
@@ -95,7 +95,7 @@ test('terminal create without an operation ID makes a new terminal each time, an
     () => null,
     (error: Error) => error.message,
   )
-  expect(refused).toMatch(/request ID/i)
+  expect(refused).toMatch(/operation ID/i)
   const catalog = await profile.call('catalog.get', {})
   expect(
     catalog.catalog.terminals

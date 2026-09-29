@@ -130,7 +130,7 @@ export class BrowserOwner {
         throw new Error('Unsupported browser operation')
       }
       if (value.op === 'browser.operation') {
-        const result = await readBrowserOperation(this.browserProfileId, this.profileId, value.request_id)
+        const result = await readBrowserOperation(this.browserProfileId, this.profileId, value.operation_id)
         return { ...identity, ...result }
       }
       if (value.op === 'browser.list' || value.op === 'browser.inspect') {
@@ -141,7 +141,7 @@ export class BrowserOwner {
         )
         return { ...identity, ...result }
       }
-      const mutation = { request_id: value.request_id, payload_fingerprint: value.payload_fingerprint }
+      const mutation = { operation_id: value.operation_id, payload_fingerprint: value.payload_fingerprint }
       try {
         const result =
           value.op === 'browser.click' || value.op === 'browser.type'
@@ -151,7 +151,7 @@ export class BrowserOwner {
                 this.profileId,
                 this.ownerId,
                 value.op,
-                value.request_id,
+                value.operation_id,
                 value.payload_fingerprint,
                 value.tab_id,
                 value.url,

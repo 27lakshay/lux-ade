@@ -19,7 +19,7 @@ import { createBackup, readManifest } from '../backup/helpers'
 const ENVELOPE = 'sessions.envelope.sqlite3'
 const BROWSER = 'browser-operations.sqlite3'
 
-type Command = Record<string, unknown> & { op: string; request_id?: string }
+type Command = Record<string, unknown> & { op: string; operation_id?: string }
 
 /** A browser owner on a private socket that answers each mutation as done and records it. */
 class Owner {
@@ -52,7 +52,7 @@ class Owner {
             type: 'browser_mutation',
             profile_id: command.profile_id,
             owner_id: command.owner_id,
-            request_id: command.request_id,
+            operation_id: command.operation_id,
             payload_fingerprint: command.payload_fingerprint,
             op: command.op,
             tab_id: 'tab-opened',
@@ -79,7 +79,7 @@ class Owner {
   }
 
   relayed(requestId: string): number {
-    return this.commands.filter((command) => command.request_id === requestId).length
+    return this.commands.filter((command) => command.operation_id === requestId).length
   }
 
   close(): void {

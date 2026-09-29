@@ -3,8 +3,7 @@
 //! operation receipts, archive records, rebind, carrying uncommitted changes
 //! between trees and ignored-resource rules.
 //!
-//! Effect commands carry `operation_id`; `request_id` is accepted as an alias
-//! for callers written before the rename. Replies describe exactly what the
+//! Effect commands carry `operation_id`. Replies describe exactly what the
 //! lifecycle daemon sends.
 use super::{FrameSpec, OperationSpec, Tier};
 use crate::worktrees::{Config, Hook, ResourceMode, ResourceRule};
@@ -108,8 +107,7 @@ pub struct WorktreeGetRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeSwitchRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
     /// A branch name, or the path of an existing linked tree.
     pub target: String,
@@ -152,8 +150,7 @@ pub enum BranchPolicy {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRemoveRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
     pub path: String,
     /// Branch policy; the daemon uses `keep` when it is absent. The daemon
@@ -172,8 +169,7 @@ pub struct WorktreeRemoveRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeRefreshRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
 }
 
@@ -255,8 +251,7 @@ impl From<WorktreeConfigInput> for Config {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCreateRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
     /// A workspace name; the branch is the configured prefix plus its slug.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,8 +290,7 @@ pub struct WorktreeFetchSource {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeSetupRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
     pub path: String,
 }
@@ -314,8 +308,7 @@ pub struct WorktreeCleanupPlanRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCleanupRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
     /// One to 32 tree paths, each from `worktree.cleanup.plan`.
     pub paths: Vec<String>,
@@ -334,8 +327,7 @@ pub struct WorktreeArchivedRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeOperationRequest {
     pub repository_id: String,
-    /// The operation's ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// The operation's ID.
     pub operation_id: String,
 }
 
@@ -361,8 +353,7 @@ pub struct WorktreeCarryPreviewRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeCarryRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
     pub source: String,
     pub target: String,
@@ -383,8 +374,7 @@ pub struct WorktreeCarryRequest {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct WorktreeResourcesApplyRequest {
     pub repository_id: String,
-    /// Caller-owned operation ID; `request_id` is accepted as an alias.
-    #[serde(alias = "request_id")]
+    /// Caller-owned operation ID.
     pub operation_id: String,
     pub path: String,
 }
@@ -970,7 +960,7 @@ mod tests {
     fn operation() -> Value {
         json!({"id": "op-1", "repository_id": "repository_1", "binding_generation": 0,
             "request": {"op": "worktree.switch", "repository_id": "repository_1",
-                "target": "feature", "create": true, "request_id": "op-1"},
+                "target": "feature", "create": true, "operation_id": "op-1"},
             "worktree_path": "/tmp/repo-feature", "status": "failed",
             "result": {"exit_code": 1, "elapsed_ms": 3, "value": {"path": null, "git_exit_code": 1}},
             "error": "Git command failed", "code": "lifecycle_command_failed",
@@ -998,10 +988,10 @@ mod tests {
     }
 
     #[test]
-    fn effect_requests_accept_request_id_and_emit_operation_id() {
+    fn effect_requests_carry_operation_id() {
         let switch: WorktreeSwitchRequest = request(
             "worktree.switch",
-            json!({"op": "worktree.switch", "repository_id": "r", "request_id": "k",
+            json!({"op": "worktree.switch", "repository_id": "r", "operation_id": "k",
                 "target": "feature", "base": "main", "create": true}),
         );
         assert_eq!(switch.operation_id, "k");
@@ -1013,18 +1003,18 @@ mod tests {
         assert!(switch.base.is_none() && switch.create.is_none());
         let remove: WorktreeRemoveRequest = request(
             "worktree.remove",
-            json!({"repository_id": "r", "request_id": "k", "path": "/tmp/t",
+            json!({"repository_id": "r", "operation_id": "k", "path": "/tmp/t",
                 "delete_branch": "merged"}),
         );
         assert_eq!(remove.delete_branch.as_deref(), Some("merged"));
         let refresh: WorktreeRefreshRequest = request(
             "worktree.refresh",
-            json!({"repository_id": "r", "request_id": "k"}),
+            json!({"repository_id": "r", "operation_id": "k"}),
         );
         assert_eq!(refresh.operation_id, "k");
         let lookup: WorktreeOperationRequest = request(
             "worktree.operation",
-            json!({"repository_id": "r", "request_id": "k"}),
+            json!({"repository_id": "r", "operation_id": "k"}),
         );
         assert_eq!(lookup.operation_id, "k");
     }
@@ -1126,7 +1116,7 @@ mod tests {
     fn lifecycle_requests_round_trip() {
         let create: WorktreeCreateRequest = request(
             "worktree.create",
-            json!({"repository_id": "r", "request_id": "k", "name": "Login page",
+            json!({"repository_id": "r", "operation_id": "k", "name": "Login page",
                 "base": "main"}),
         );
         assert_eq!(create.operation_id, "k");
@@ -1197,7 +1187,7 @@ mod tests {
     fn carry_and_resource_requests_round_trip() {
         let carry: WorktreeCarryRequest = request(
             "worktree.carry",
-            json!({"repository_id": "r", "request_id": "k", "source": "/tmp/a",
+            json!({"repository_id": "r", "operation_id": "k", "source": "/tmp/a",
                 "target": "/tmp/b", "paths": ["src"], "clean_source": true}),
         );
         assert_eq!(carry.operation_id, "k");

@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { expect, test, type ScratchProfile } from '../fixtures'
 import { fixedBrowserProfile } from '../fixtures/browser-owner'
 
-type Command = Record<string, unknown> & { op: string; request_id?: string }
+type Command = Record<string, unknown> & { op: string; operation_id?: string }
 
 /** A browser owner that answers each mutation as done, or holds it unanswered while `holding`. */
 class Owner {
@@ -57,7 +57,7 @@ class Owner {
   }
 
   relayed(op: string, requestId: string): number {
-    return this.commands.filter((command) => command.op === op && command.request_id === requestId).length
+    return this.commands.filter((command) => command.op === op && command.operation_id === requestId).length
   }
 
   close(): void {
@@ -77,14 +77,14 @@ class Owner {
       if (command.op === 'browser.operation') {
         // The owner proves an interrupted mutation from its tabs.
         const done = this.commands.find(
-          (earlier) => earlier.request_id === command.request_id && earlier.op !== command.op,
+          (earlier) => earlier.operation_id === command.operation_id && earlier.op !== command.op,
         )
         peer.end(
           `${JSON.stringify({
             type: 'browser_operation',
             profile_id: this.profileId,
             owner_id: this.ownerId,
-            request_id: command.request_id,
+            operation_id: command.operation_id,
             payload_fingerprint: done?.payload_fingerprint,
             state: 'completed',
             result: done && this.mutation(done),
@@ -103,7 +103,7 @@ class Owner {
       type: 'browser_mutation',
       profile_id: command.profile_id,
       owner_id: command.owner_id,
-      request_id: command.request_id,
+      operation_id: command.operation_id,
       payload_fingerprint: command.payload_fingerprint,
       op: command.op,
       tab_id: command.tab_id ?? 'tab-opened',

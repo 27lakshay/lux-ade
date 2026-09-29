@@ -646,7 +646,6 @@ pub struct BrowserContextCapture {
 pub struct BrowserClickRequest {
     pub profile_id: String,
     pub owner_id: String,
-    #[serde(alias = "request_id")]
     pub operation_id: String,
     pub tab_id: String,
     /// A CSS selector of 1 to 1024 characters without control characters.
@@ -668,7 +667,6 @@ pub struct BrowserClickRequest {
 pub struct BrowserTypeRequest {
     pub profile_id: String,
     pub owner_id: String,
-    #[serde(alias = "request_id")]
     pub operation_id: String,
     pub tab_id: String,
     /// A CSS selector of 1 to 1024 characters without control characters.
@@ -1046,7 +1044,7 @@ mod tests {
         response::<crate::contract::daemon::BrowserMutation>(
             "browser.click",
             json!({"type": "browser_mutation", "profile_id": "p", "owner_id": "o",
-                "request_id": "op-1", "payload_fingerprint": "f", "op": "browser.click",
+                "operation_id": "op-1", "payload_fingerprint": "f", "op": "browser.click",
                 "tab_id": "t"}),
         );
         response::<BrowserEvaluation>(
