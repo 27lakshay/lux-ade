@@ -1,0 +1,1162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ADE Architecture, As Built</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Inter:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
+    <style>
+      :root {
+        --paper: #fdfcf8;
+        --ink: #1e1e1e;
+        --muted: #6b6b6b;
+        --faint: #c9c6bd;
+        --panel: #ffffff;
+        --line: #e6e2d8;
+        --client: #a5d8ff;
+        --sdk: #b2f2bb;
+        --daemon: #ffd8a8;
+        --runtime: #d0bfff;
+        --store: #ffec99;
+        --ext: #e9ecef;
+        --remote: #96f2d7;
+        --missing: #e03131;
+        --hl: #e8590c;
+        --hl-soft: rgba(232, 89, 12, 0.12);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --paper: #191917;
+          --ink: #ecebe6;
+          --muted: #a3a29c;
+          --faint: #4a4944;
+          --panel: #222220;
+          --line: #34332f;
+          --client: #1c4f7a;
+          --sdk: #1f5a2c;
+          --daemon: #7a4a14;
+          --runtime: #45307a;
+          --store: #6b5a12;
+          --ext: #3a3b3d;
+          --remote: #115e4c;
+          --missing: #ff6b6b;
+          --hl: #ff922b;
+          --hl-soft: rgba(255, 146, 43, 0.16);
+        }
+      }
+      :root[data-theme='dark'] {
+        --paper: #191917;
+        --ink: #ecebe6;
+        --muted: #a3a29c;
+        --faint: #4a4944;
+        --panel: #222220;
+        --line: #34332f;
+        --client: #1c4f7a;
+        --sdk: #1f5a2c;
+        --daemon: #7a4a14;
+        --runtime: #45307a;
+        --store: #6b5a12;
+        --ext: #3a3b3d;
+        --remote: #115e4c;
+        --missing: #ff6b6b;
+        --hl: #ff922b;
+        --hl-soft: rgba(255, 146, 43, 0.16);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+      }
+      body {
+        font-family: Inter, system-ui, sans-serif;
+        font-size: 14px;
+      }
+      header {
+        padding: 18px 20px 6px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        align-items: baseline;
+      }
+      h1 {
+        font-family: Kalam, cursive;
+        font-size: 30px;
+        margin: 0;
+        font-weight: 700;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 16px;
+        padding: 8px 16px 24px;
+      }
+      @media (max-width: 1100px) {
+        .layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      .canvas {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--paper);
+      }
+      svg#diagram {
+        display: block;
+        width: 100%;
+        min-width: 900px;
+        height: auto;
+        font-family: Kalam, cursive;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+        align-self: start;
+        position: sticky;
+        top: 12px;
+      }
+      .panel h2 {
+        font-family: Kalam, cursive;
+        font-size: 22px;
+        margin: 0 0 8px;
+      }
+      .flows {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+      .flows button,
+      .nav button {
+        font: inherit;
+        border: 1.5px solid var(--ink);
+        background: transparent;
+        color: var(--ink);
+        border-radius: 8px;
+        padding: 5px 10px;
+        cursor: pointer;
+      }
+      .flows button[aria-pressed='true'] {
+        background: var(--hl);
+        border-color: var(--hl);
+        color: #fff;
+      }
+      .nav {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin: 4px 0 10px;
+      }
+      .nav span {
+        color: var(--muted);
+        margin-left: auto;
+      }
+      ol.steps {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: s;
+      }
+      ol.steps li {
+        counter-increment: s;
+        padding: 8px 8px 8px 38px;
+        position: relative;
+        border-radius: 8px;
+        cursor: pointer;
+        line-height: 1.4;
+      }
+      ol.steps li::before {
+        content: counter(s);
+        position: absolute;
+        left: 8px;
+        top: 8px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 1.5px solid var(--muted);
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      ol.steps li.done::before {
+        border-color: var(--hl);
+        color: var(--hl);
+      }
+      ol.steps li.current {
+        background: var(--hl-soft);
+      }
+      ol.steps li.current::before {
+        background: var(--hl);
+        border-color: var(--hl);
+        color: #fff;
+      }
+      ol.steps li code {
+        font-size: 12px;
+      }
+      .legend {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px dashed var(--faint);
+        color: var(--muted);
+        font-size: 12.5px;
+        line-height: 1.6;
+      }
+      .legend b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      /* diagram states */
+      .edge,
+      .node {
+        transition: opacity 0.25s;
+      }
+      svg.focus .edge:not(.on),
+      svg.focus .node:not(.on) {
+        opacity: 0.22;
+      }
+      .edge.current path {
+        stroke: var(--hl) !important;
+        stroke-width: 2.6 !important;
+        stroke-dasharray: 7 6;
+        animation: flow 0.6s linear infinite;
+      }
+      .edge.done path {
+        stroke: var(--hl) !important;
+      }
+      .node.current .shape path:first-of-type {
+      }
+      .node.current .halo {
+        opacity: 1;
+      }
+      .halo {
+        opacity: 0;
+        transition: opacity 0.25s;
+      }
+      .badge {
+        font-family: Inter, sans-serif;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      @keyframes flow {
+        to {
+          stroke-dashoffset: -26;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .edge.current path {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>ADE: what is actually built</h1>
+      <p>Branch <code>main</code> at <code>cdbc254</code>. Pick a flow to follow the data, step by step.</p>
+    </header>
+    <div class="layout">
+      <div class="canvas">
+        <svg id="diagram" viewBox="0 0 1500 1010" role="img" aria-label="ADE architecture diagram"></svg>
+      </div>
+      <aside class="panel">
+        <h2>Data flows</h2>
+        <div class="flows" id="flows"></div>
+        <div class="nav">
+          <button id="prev" aria-label="Previous step">← Prev</button>
+          <button id="next" aria-label="Next step">Next →</button>
+          <button id="play" aria-label="Play all steps">▶ Play</button>
+          <span id="count"></span>
+        </div>
+        <ol class="steps" id="steps"></ol>
+        <div class="legend">
+          <b>Colours:</b> blue clients · green SDK · orange daemon · purple runtime · yellow storage · teal remote.<br />
+          <b>Red dashed</b> boxes are in the architecture document but not built.<br />
+          <b>Dashed frames</b> mark what runs once per active profile and what is shared by the whole host.
+        </div>
+      </aside>
+    </div>
+    <script>
+      const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
+      // Boxes. Coordinates are in the 1500 x 1010 viewBox.
+      const nodes = [
+        {
+          id: 'renderer',
+          x: 40,
+          y: 40,
+          w: 250,
+          h: 115,
+          fill: '--client',
+          title: 'Electron renderer',
+          lines: ['React UI + xterm.js', 'talks only through', 'window.adeHost (IPC)'],
+        },
+        {
+          id: 'main',
+          x: 330,
+          y: 40,
+          w: 260,
+          h: 115,
+          fill: '--client',
+          title: 'Electron main',
+          lines: ['windows, browser tabs', 'outbox file for sends', 'holds the SDK client'],
+        },
+        {
+          id: 'cli',
+          x: 630,
+          y: 40,
+          w: 220,
+          h: 115,
+          fill: '--client',
+          title: 'ade CLI',
+          lines: ['same SDK,', 'same operations'],
+        },
+        {
+          id: 'agents',
+          x: 890,
+          y: 40,
+          w: 240,
+          h: 115,
+          fill: '--client',
+          title: 'Agents & scripts',
+          lines: ['call the same', 'command API'],
+        },
+        {
+          id: 'contracts',
+          x: 1190,
+          y: 40,
+          w: 280,
+          h: 115,
+          fill: '--ext',
+          title: '@ade/contracts',
+          lines: ['generated from Rust types', '(Schemars): JSON Schema,', 'TS types, Ajv validators'],
+        },
+        {
+          id: 'sdk',
+          x: 40,
+          y: 200,
+          w: 1090,
+          h: 95,
+          fill: '--sdk',
+          title: '@ade/client SDK',
+          lines: [
+            'requests with operation_id · outbox (sends, Git ops) · sync reducer (revision + boot_id) · terminal client',
+          ],
+        },
+        {
+          id: 'launcher',
+          x: 1190,
+          y: 200,
+          w: 280,
+          h: 95,
+          fill: '--ext',
+          title: 'Profile launcher',
+          lines: ['discovers, starts and', 'stops profile daemons'],
+        },
+
+        {
+          id: 'daemon',
+          x: 40,
+          y: 385,
+          w: 560,
+          h: 250,
+          fill: '--daemon',
+          title: 'ade-daemon',
+          lines: [
+            'admission: query / idempotent / effect',
+            'receipts: daemon fingerprint, kept 30 days',
+            'session state behind one lock',
+            'live feed: revision + boot_id; gap → snapshot',
+            'history + FTS5 search, retention, backup',
+            'control.sock: cancel · stop · health',
+          ],
+        },
+        {
+          id: 'stores',
+          x: 640,
+          y: 385,
+          w: 240,
+          h: 150,
+          fill: '--store',
+          title: 'Profile SQLite',
+          lines: ['sessions.sqlite (main)', 'review · plugins · envelope', 'worktree lifecycle', '+ managed blobs'],
+        },
+        {
+          id: 'secrets',
+          x: 900,
+          y: 385,
+          w: 230,
+          h: 150,
+          fill: '--store',
+          title: 'SecretStore',
+          lines: ['macOS Keychain', '(production)', 'file backend (tests)'],
+        },
+        {
+          id: 'plugins',
+          x: 640,
+          y: 570,
+          w: 490,
+          h: 90,
+          fill: '--ext',
+          title: 'Backend plugin hosts',
+          lines: ['node host.mjs per activation, started lazily · JSON-RPC over stdio'],
+        },
+        {
+          id: 'runtime',
+          x: 40,
+          y: 690,
+          w: 560,
+          h: 160,
+          fill: '--runtime',
+          title: 'ade-runtime (supervisor)',
+          lines: [
+            'PTYs + native terminal state + replay spool',
+            'provider workers · services · scripts · ports',
+            'descendant tracking → quarantine',
+          ],
+        },
+        {
+          id: 'providers',
+          x: 640,
+          y: 700,
+          w: 490,
+          h: 150,
+          fill: '--runtime',
+          title: 'Provider bridges',
+          lines: ['Claude Code (Agent SDK bridge)', 'Codex (app-server over stdio)', 'Oh My Pi · OpenCode (bridges)'],
+        },
+        {
+          id: 'hostres',
+          x: 40,
+          y: 910,
+          w: 1090,
+          h: 70,
+          fill: '--store',
+          title: 'HostResources registry',
+          lines: [
+            'host-resources.sqlite3, shared by every profile: checkouts, ports, devices, keyed by inode, not path',
+          ],
+          inline: true,
+        },
+
+        {
+          id: 'remote',
+          x: 1190,
+          y: 385,
+          w: 280,
+          h: 170,
+          fill: '--remote',
+          title: 'Remote host',
+          lines: [
+            'same daemon + runtime',
+            'SSH bootstrap with a',
+            'pinned host key, pairing',
+            'never falls back to local',
+          ],
+        },
+        {
+          id: 'missing',
+          x: 1190,
+          y: 600,
+          w: 280,
+          h: 250,
+          missing: true,
+          title: 'Not built yet',
+          lines: [
+            '• durable change feed',
+            '  (clients re-snapshot',
+            '  after a restart)',
+            '• MCP gateway (F131)',
+            '• fresh renderer for a',
+            '  frozen UI plugin',
+            '• memory budget (D16)',
+          ],
+        },
+      ]
+
+      // Arrows: points in order; both: arrowheads at both ends.
+      const edges = [
+        {
+          id: 'r-m',
+          pts: [
+            [290, 97],
+            [330, 97],
+          ],
+          both: true,
+          label: 'IPC',
+          lx: 310,
+          ly: 82,
+        },
+        {
+          id: 'm-sdk',
+          pts: [
+            [460, 155],
+            [460, 200],
+          ],
+          both: true,
+        },
+        {
+          id: 'cli-sdk',
+          pts: [
+            [740, 155],
+            [740, 200],
+          ],
+          both: true,
+        },
+        {
+          id: 'ag-sdk',
+          pts: [
+            [1010, 155],
+            [1010, 200],
+          ],
+          both: true,
+        },
+        {
+          id: 'con-sdk',
+          pts: [
+            [1190, 140],
+            [1130, 215],
+          ],
+          dashed: true,
+          label: 'types',
+          lx: 1175,
+          ly: 190,
+        },
+        {
+          id: 'sdk-la',
+          pts: [
+            [1130, 250],
+            [1190, 250],
+          ],
+          label: 'start',
+          lx: 1160,
+          ly: 238,
+        },
+        {
+          id: 'la-d',
+          pts: [
+            [1330, 295],
+            [1330, 330],
+            [560, 330],
+            [560, 385],
+          ],
+          label: 'spawns',
+          lx: 900,
+          ly: 322,
+        },
+        {
+          id: 'sdk-d',
+          pts: [
+            [150, 295],
+            [150, 385],
+          ],
+          both: true,
+          label: 'requests · feed',
+          lx: 150,
+          ly: 350,
+        },
+        {
+          id: 'sdk-t',
+          pts: [
+            [330, 295],
+            [330, 385],
+          ],
+          both: true,
+          label: 'terminal bytes',
+          lx: 330,
+          ly: 350,
+        },
+        {
+          id: 'sdk-c',
+          pts: [
+            [480, 295],
+            [480, 385],
+          ],
+          label: 'control.sock',
+          lx: 480,
+          ly: 350,
+        },
+        {
+          id: 'sdk-rem',
+          pts: [
+            [1100, 295],
+            [1300, 385],
+          ],
+          both: true,
+          label: 'direct / SSH',
+          lx: 1215,
+          ly: 330,
+        },
+        {
+          id: 'd-st',
+          pts: [
+            [600, 450],
+            [640, 450],
+          ],
+          both: true,
+        },
+        {
+          id: 'd-sec',
+          pts: [
+            [600, 552],
+            [1015, 552],
+            [1015, 535],
+          ],
+        },
+        {
+          id: 'd-pl',
+          pts: [
+            [600, 615],
+            [640, 615],
+          ],
+          both: true,
+        },
+        {
+          id: 'd-rt',
+          pts: [
+            [380, 635],
+            [380, 690],
+          ],
+          label: 'commands',
+          lx: 440,
+          ly: 662,
+        },
+        {
+          id: 'rt-d',
+          pts: [
+            [220, 690],
+            [220, 635],
+          ],
+          label: 'events · output',
+          lx: 140,
+          ly: 662,
+        },
+        {
+          id: 'rt-pr',
+          pts: [
+            [600, 750],
+            [640, 750],
+          ],
+        },
+        {
+          id: 'pr-rt',
+          pts: [
+            [640, 800],
+            [600, 800],
+          ],
+        },
+        {
+          id: 'd-hr',
+          pts: [
+            [600, 595],
+            [620, 595],
+            [620, 910],
+          ],
+          label: 'claims',
+          lx: 664,
+          ly: 899,
+        },
+      ]
+
+      const flows = [
+        {
+          name: 'Send a prompt',
+          steps: [
+            [
+              'renderer',
+              'You press send. The renderer calls <code>window.adeHost</code>; it never opens a socket itself.',
+            ],
+            ['r-m', 'The call crosses IPC to Electron main.'],
+            [
+              'main',
+              'Main writes the send to its outbox file with a fresh <code>operation_id</code> <i>before</i> sending it.',
+            ],
+            ['m-sdk', 'The SDK validates the request against the generated contract.'],
+            ['sdk-d', 'The request goes to the profile daemon over its Unix socket, as one JSON line.'],
+            [
+              'daemon',
+              'Admission: the daemon fingerprints the payload. The same ID and payload returns the known result; the same ID with another payload is a conflict.',
+            ],
+            [
+              'd-st',
+              'Intent and receipt commit in one transaction. The SDK acknowledges the send, and main drops it from the outbox.',
+            ],
+            [
+              'd-rt',
+              'The daemon dispatches the turn to the runtime, stamped with the runtime incarnation and attempt generation.',
+            ],
+            [
+              'rt-pr',
+              'A provider worker drives the bridge: the Claude Agent SDK, Codex app-server, Oh My Pi or OpenCode.',
+            ],
+            ['pr-rt', 'Native events stream back: text, tool calls, approvals, usage.'],
+            ['rt-d', 'The runtime forwards them. Old-generation callbacks are ignored.'],
+            ['d-st', 'The daemon stores normalized messages, with native provenance.'],
+            [
+              'sdk-d',
+              'The daemon publishes <code>conversation_changed</code>, stamped with a revision and <code>boot_id</code>.',
+            ],
+            [
+              'm-sdk',
+              'The SDK sync reducer merges it. A revision gap or a new boot triggers a fresh snapshot instead.',
+            ],
+            ['r-m', 'The renderer draws the new state.'],
+          ],
+        },
+        {
+          name: 'Terminal',
+          steps: [
+            ['renderer', 'You type in xterm.js.'],
+            ['r-m', 'The keystrokes go over IPC to main.'],
+            ['main', 'Main holds one terminal attachment per view, on its own daemon connection.'],
+            [
+              'sdk-t',
+              'The attachment subscribes with <code>xterm-replay-v1</code>: a snapshot plus the byte offset it covers.',
+            ],
+            [
+              'd-rt',
+              'Input goes to the runtime, fenced by the stream incarnation. Only the viewport owner can resize.',
+            ],
+            ['runtime', 'The PTY output feeds a native terminal state and a bounded replay spool.'],
+            ['rt-d', 'The bytes flow back with offsets.'],
+            [
+              'sdk-t',
+              'A lagging viewer gets a <code>resync: true</code> snapshot mid-stream. An output gap closes the attachment, so the renderer never shows broken output.',
+            ],
+            [
+              'renderer',
+              'xterm.js applies the snapshot as a reset plus replay. Terminal bytes never enter React state.',
+            ],
+          ],
+        },
+        {
+          name: 'Crash & restart',
+          steps: [
+            ['daemon', 'The daemon is killed. The runtime keeps running work within its spool budget.'],
+            ['la-d', 'A new daemon starts, with a new <code>boot_id</code>.'],
+            [
+              'd-st',
+              'Receipts left open settle: never dispatched becomes "not applied"; dispatched is observed, or becomes <b>unknown</b>. Nothing is run again.',
+            ],
+            ['d-rt', 'Leases are reconciled against the runtime before any new work is admitted.'],
+            [
+              'runtime',
+              'If the runtime died too, the ordered rules classify each attempt as quarantined, unknown or settled from PIDs, start stamps and process groups. Nothing is replayed automatically.',
+            ],
+            ['d-hr', 'Claims whose owner was lost are quarantined, never silently released.'],
+            ['sdk-d', 'Clients see the new <code>boot_id</code> and fetch a fresh snapshot.'],
+            [
+              'missing',
+              'A durable change feed would let clients catch up from a position instead. It is not built yet.',
+            ],
+          ],
+        },
+        {
+          name: 'Create a worktree',
+          steps: [
+            ['cli', '<code>ade worktree create</code>, with an <code>operation_id</code>.'],
+            ['cli-sdk', 'The SDK builds and validates the effect request.'],
+            ['sdk-d', 'The request goes to the daemon.'],
+            ['daemon', 'Admission records the receipt as accepted.'],
+            [
+              'd-hr',
+              'The daemon reserves the unborn path in HostResources by parent inode plus name. Another profile claiming the same checkout collides here.',
+            ],
+            ['daemon', 'It commits "dispatched", then runs <code>git worktree add</code>.'],
+            ['d-hr', "The claim is bound to the new directory's filesystem identity."],
+            ['d-st', 'The receipt settles in the worktree lifecycle store. A retry returns this result.'],
+          ],
+        },
+        {
+          name: 'Stop under load',
+          steps: [
+            ['agents', 'An agent or the CLI asks to cancel while the daemon is flooded.'],
+            [
+              'sdk-c',
+              'Cancel, stop, health and shutdown use the reserved per-profile <code>control.sock</code>, so ordinary traffic cannot block them.',
+            ],
+            [
+              'd-rt',
+              'The daemon sends the cancel to the runtime, fenced by incarnation, so it cannot hit a newer turn.',
+            ],
+            [
+              'runtime',
+              'The runtime escalates from TERM to KILL across the process tree. A descendant that escapes keeps the attempt quarantined.',
+            ],
+            ['rt-d', '"Cancel accepted", "execution stopped" and "conversation idle" come back as separate facts.'],
+          ],
+        },
+        {
+          name: 'Plugin command',
+          steps: [
+            ['cli', '<code>ade plugin command invoke …</code>'],
+            ['cli-sdk', 'The SDK sends <code>plugin.command.invoke</code>.'],
+            ['sdk-d', 'The request goes to the daemon.'],
+            [
+              'd-pl',
+              'The daemon starts the plugin host lazily (one per activation generation) and calls it over JSON-RPC on stdio, holding no lock.',
+            ],
+            [
+              'plugins',
+              'A crash leaves the core running; the host restarts with bounded backoff. Effectful hooks run after commit, with effect IDs.',
+            ],
+          ],
+        },
+        {
+          name: 'Remote host',
+          steps: [
+            ['cli', '<code>ade remote</code> adds a host with its SSH target and pinned host-key fingerprint.'],
+            [
+              'daemon',
+              'The daemon runs <code>ssh</code> with a one-line known-hosts file, strict checking, and no agent forwarding.',
+            ],
+            ['d-sec', 'The pairing token lives in the SecretStore. The database keeps only a reference.'],
+            ['sdk-rem', "The client talks to the remote host's own daemon and runtime, through the same contracts."],
+            [
+              'remote',
+              'If the connection drops, remote status becomes unknown. Work is never moved to the local machine.',
+            ],
+          ],
+        },
+      ]
+
+      const svg = document.getElementById('diagram')
+      const NS = 'http://www.w3.org/2000/svg'
+      const el = (tag, attrs = {}, parent) => {
+        const e = document.createElementNS(NS, tag)
+        for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v)
+        if (parent) parent.appendChild(e)
+        return e
+      }
+
+      function seedFor(id) {
+        let h = 7
+        for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 2147483647
+        return h || 1
+      }
+
+      function draw() {
+        svg.innerHTML = ''
+        const rc = rough.svg(svg)
+        const ink = css('--ink'),
+          muted = css('--muted'),
+          faint = css('--faint')
+
+        // frames
+        const frames = [
+          { x: 20, y: 340, w: 1130, h: 525, label: 'once per active profile' },
+          { x: 20, y: 880, w: 1130, h: 115, label: 'shared by the whole host' },
+        ]
+        for (const f of frames) {
+          const g = el('g', {}, svg)
+          g.appendChild(
+            rc.rectangle(f.x, f.y, f.w, f.h, {
+              stroke: faint,
+              strokeWidth: 1.4,
+              roughness: 1.2,
+              strokeLineDash: [10, 8],
+              seed: seedFor(f.label),
+            }),
+          )
+          el(
+            'text',
+            { x: f.x + f.w - 12, y: f.y + 20, 'text-anchor': 'end', fill: muted, 'font-size': 17 },
+            g,
+          ).textContent = f.label
+        }
+
+        // edges first, so boxes sit on top of line ends
+        for (const e of edges) {
+          const g = el('g', { class: 'edge', 'data-id': e.id }, svg)
+          const opts = {
+            stroke: ink,
+            strokeWidth: 1.5,
+            roughness: 1.1,
+            seed: seedFor(e.id),
+            strokeLineDash: e.dashed ? [6, 6] : undefined,
+          }
+          g.appendChild(e.pts.length === 2 ? rc.line(...e.pts[0], ...e.pts[1], opts) : rc.linearPath(e.pts, opts))
+          const head = (to, from) => {
+            const a = Math.atan2(to[1] - from[1], to[0] - from[0]),
+              s = 11
+            const p1 = [to[0] - s * Math.cos(a - 0.45), to[1] - s * Math.sin(a - 0.45)]
+            const p2 = [to[0] - s * Math.cos(a + 0.45), to[1] - s * Math.sin(a + 0.45)]
+            g.appendChild(rc.linearPath([p1, to, p2], { ...opts, strokeLineDash: undefined, seed: opts.seed + 3 }))
+          }
+          const n = e.pts.length
+          head(e.pts[n - 1], e.pts[n - 2])
+          if (e.both) head(e.pts[0], e.pts[1])
+          if (e.label) {
+            const t = el(
+              'text',
+              {
+                x: e.lx,
+                y: e.ly,
+                'text-anchor': 'middle',
+                'font-size': 15,
+                fill: ink,
+                'paint-order': 'stroke',
+                stroke: css('--paper'),
+                'stroke-width': 5,
+                'stroke-linejoin': 'round',
+              },
+              g,
+            )
+            t.textContent = e.label
+          }
+          const badge = el('g', { class: 'badge-g', style: 'display:none' }, g)
+          el('circle', { r: 12, fill: css('--hl') }, badge)
+          el('text', { class: 'badge', 'text-anchor': 'middle', dy: 4, fill: '#fff' }, badge)
+        }
+
+        for (const n of nodes) {
+          const g = el('g', { class: 'node', 'data-id': n.id }, svg)
+          el(
+            'rect',
+            {
+              class: 'halo',
+              x: n.x - 6,
+              y: n.y - 6,
+              width: n.w + 12,
+              height: n.h + 12,
+              rx: 14,
+              fill: 'none',
+              stroke: css('--hl'),
+              'stroke-width': 3,
+            },
+            g,
+          )
+          const shape = el('g', { class: 'shape' }, g)
+          if (n.missing) {
+            shape.appendChild(
+              rc.rectangle(n.x, n.y, n.w, n.h, {
+                stroke: css('--missing'),
+                strokeWidth: 1.8,
+                roughness: 1.3,
+                strokeLineDash: [8, 7],
+                seed: seedFor(n.id),
+              }),
+            )
+          } else {
+            shape.appendChild(
+              rc.rectangle(n.x, n.y, n.w, n.h, {
+                stroke: ink,
+                strokeWidth: 1.6,
+                roughness: 1.2,
+                fill: css(n.fill),
+                fillStyle: 'hachure',
+                hachureGap: 7,
+                fillWeight: 1.2,
+                hachureAngle: -41,
+                seed: seedFor(n.id),
+              }),
+            )
+          }
+          const titleColor = n.missing ? css('--missing') : ink
+          el(
+            'text',
+            {
+              x: n.x + 14,
+              y: n.y + 30,
+              'font-size': 22,
+              'font-weight': 700,
+              fill: titleColor,
+              'paint-order': 'stroke',
+              stroke: css('--paper'),
+              'stroke-width': 4,
+              'stroke-linejoin': 'round',
+            },
+            g,
+          ).textContent = n.title
+          n.lines.forEach((line, i) => {
+            el(
+              'text',
+              {
+                x: n.x + 14,
+                y: n.y + 56 + i * 21,
+                'font-size': 16,
+                fill: ink,
+                'paint-order': 'stroke',
+                stroke: css('--paper'),
+                'stroke-width': 4,
+                'stroke-linejoin': 'round',
+              },
+              g,
+            ).textContent = line
+          })
+        }
+        applyState()
+      }
+
+      // ----- flow state -----
+      let flowIndex = -1,
+        stepIndex = -1,
+        timer = null
+      const flowsEl = document.getElementById('flows'),
+        stepsEl = document.getElementById('steps'),
+        countEl = document.getElementById('count')
+
+      function midpoint(pts) {
+        // point halfway along the polyline
+        let total = 0
+        const segs = []
+        for (let i = 1; i < pts.length; i++) {
+          const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+          segs.push(d)
+          total += d
+        }
+        let half = total / 2
+        for (let i = 0; i < segs.length; i++) {
+          if (half <= segs[i]) {
+            const t = half / segs[i]
+            return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t]
+          }
+          half -= segs[i]
+        }
+        return pts[0]
+      }
+
+      function applyState() {
+        const flow = flows[flowIndex]
+        svg.classList.toggle('focus', !!flow)
+        svg.querySelectorAll('.edge, .node').forEach((g) => {
+          g.classList.remove('on', 'current', 'done')
+        })
+        svg.querySelectorAll('.badge-g').forEach((b) => {
+          b.style.display = 'none'
+        })
+        if (!flow) return
+        const numbers = {}
+        flow.steps.forEach(([id], i) => {
+          ;(numbers[id] ||= []).push(i + 1)
+        })
+        flow.steps.forEach(([id], i) => {
+          const g = svg.querySelector(`[data-id="${id}"]`)
+          if (!g) return
+          g.classList.add('on')
+          if (i < stepIndex) g.classList.add('done')
+          if (i === stepIndex) g.classList.add('current')
+        })
+        // badges on edges: the step numbers that use them
+        for (const [id, nums] of Object.entries(numbers)) {
+          const e = edges.find((x) => x.id === id)
+          if (!e) continue
+          const g = svg.querySelector(`.edge[data-id="${id}"] .badge-g`)
+          const [x, y] = midpoint(e.pts)
+          const bx = e.label && Math.abs(e.lx - x) < 60 && Math.abs(e.ly - y) < 20 ? x + 0 : x
+          const by = e.label && Math.abs(e.lx - x) < 60 && Math.abs(e.ly - y) < 20 ? y - 26 : y
+          g.setAttribute('transform', `translate(${bx},${by})`)
+          const shown = nums.filter((n) => n - 1 <= Math.max(stepIndex, 0) || stepIndex < 0)
+          const label = (shown.length ? shown : [nums[0]]).slice(-2).join('·')
+          g.querySelector('text').textContent = label
+          g.querySelector('circle').setAttribute('r', label.length > 2 ? 17 : 12)
+          g.style.display = ''
+        }
+        ;[...stepsEl.children].forEach((li, i) => {
+          li.classList.toggle('current', i === stepIndex)
+          li.classList.toggle('done', i < stepIndex)
+        })
+        countEl.textContent =
+          stepIndex >= 0 ? `step ${stepIndex + 1} of ${flow.steps.length}` : `${flow.steps.length} steps`
+        const cur = stepsEl.children[stepIndex]
+        if (cur) cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+
+      function selectFlow(i) {
+        stop()
+        flowIndex = i
+        stepIndex = 0
+        ;[...flowsEl.children].forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)))
+        stepsEl.innerHTML = ''
+        flows[i].steps.forEach(([, text], j) => {
+          const li = document.createElement('li')
+          li.innerHTML = text
+          li.addEventListener('click', () => {
+            stop()
+            stepIndex = j
+            applyState()
+          })
+          stepsEl.appendChild(li)
+        })
+        try {
+          localStorage.setItem('ade-arch-flow', String(i))
+        } catch {}
+        applyState()
+      }
+      function step(d) {
+        if (flowIndex < 0) return
+        stepIndex = Math.max(0, Math.min(flows[flowIndex].steps.length - 1, stepIndex + d))
+        applyState()
+      }
+      function stop() {
+        clearInterval(timer)
+        timer = null
+        document.getElementById('play').textContent = '▶ Play'
+      }
+      function play() {
+        if (timer) return stop()
+        if (flowIndex < 0) selectFlow(0)
+        if (stepIndex >= flows[flowIndex].steps.length - 1) stepIndex = -1
+        document.getElementById('play').textContent = '❚❚ Pause'
+        const tick = () => {
+          if (stepIndex >= flows[flowIndex].steps.length - 1) return stop()
+          step(1)
+        }
+        tick()
+        timer = setInterval(tick, 1800)
+      }
+
+      flows.forEach((f, i) => {
+        const b = document.createElement('button')
+        b.textContent = f.name
+        b.setAttribute('aria-pressed', 'false')
+        b.addEventListener('click', () => selectFlow(i))
+        flowsEl.appendChild(b)
+      })
+      document.getElementById('prev').addEventListener('click', () => {
+        stop()
+        step(-1)
+      })
+      document.getElementById('next').addEventListener('click', () => {
+        stop()
+        step(1)
+      })
+      document.getElementById('play').addEventListener('click', play)
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight') {
+          stop()
+          step(1)
+        }
+        if (e.key === 'ArrowLeft') {
+          stop()
+          step(-1)
+        }
+      })
+      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw)
+
+      document.fonts.ready.then(() => {
+        draw()
+        let saved = 0
+        try {
+          saved = Number(localStorage.getItem('ade-arch-flow') ?? 0) || 0
+        } catch {}
+        selectFlow(Math.min(saved, flows.length - 1))
+      })
+    </script>
+  </body>
+</html>
