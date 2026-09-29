@@ -1,9 +1,9 @@
 # 06 — Lane E: client reliability in the SDK
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator (lane agent)
 Blocked by: [01](01-phase-0-foundation.md)
 
 The daemon cannot know about a request it never received, so journals of not-yet-admitted
@@ -33,3 +33,4 @@ them. Move them into `packages/client`, which already has the outbox.
 - Evidence in `.scratch/ade-v1/evidence/lane-e-sdk.md`.
 
 ## Comments
+- 2026-09-29 — Done: journals in `@ade/client/journals`, CLI uses them (`9010dde`, `0337943`); lock and ID fixes (`ea9c40a`–`a7e4fe6`). Evidence: `.scratch/ade-v1/evidence/lane-e-sdk.md`.

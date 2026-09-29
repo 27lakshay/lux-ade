@@ -1,9 +1,9 @@
 # 03 — Lane B: catalog and workspace operations
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator (lane agent)
 Blocked by: [01](01-phase-0-foundation.md)
 
 Give the catalog the flat model's fields and turn the desktop's chained workspace calls into
@@ -62,3 +62,4 @@ number when merging.
 - Evidence in `.scratch/ade-v1/evidence/lane-b-catalog.md`.
 
 ## Comments
+- 2026-09-29 — Done: projects, workspace kind/branch/default/ade_owned, `workspace.create_worktree`/`delete_worktree`, attention/unread/mark_seen, `review.feedback.send`, settings (`ab162f0`–`2d42071`); review fixes: busy repository waits, per-operation failure, re-checked blockers, kept news sequence, overlong prompt refusal (`26cfa90`–`f3291f0`). Evidence: `.scratch/ade-v1/evidence/lane-b-catalog.md`.

@@ -1,9 +1,9 @@
 # 05 — Lane D: real terminals in the desktop
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator (lane agent)
 Blocked by: [01](01-phase-0-foundation.md)
 
 Coordinator's lane, in `apps/desktop`, while lanes A–C build. It works on today's local layout
@@ -48,3 +48,4 @@ store; ticket 07 moves the same data to the daemon.
   busy confirmation). Not done yet: the real-terminal benchmark (deferred to ticket 08 so it
   does not compete with the lanes' builds). Known gap until ticket 07: Reset layout drops
   terminal tabs without stopping their terminals.
+- 2026-09-29 — Done: busy confirmation and placement via lanes C and A (`882f12d`, ticket 07); canvas release (`1fdb779`). Closed.

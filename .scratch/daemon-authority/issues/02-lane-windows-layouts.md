@@ -1,9 +1,9 @@
 # 02 — Lane A: windows and layouts in the daemon
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator (lane agent)
 Blocked by: [01](01-phase-0-foundation.md)
 
 Move windows, layouts, panes and tabs into the daemon, so any client can read and drive what a
@@ -75,3 +75,4 @@ number when merging.
 - Evidence in `.scratch/ade-v1/evidence/lane-a-layouts.md`.
 
 ## Comments
+- 2026-09-29 — Done: layout core, windows and layouts in the daemon, feed frames, CLI (`0eb446a`–`b6b1d04`); review fixes: `tab.close`/`pane.close` effect commands, explicit toggle state, last-tab counted across windows, layout revisions on windows (`80991fd`, `3f6bc41`). Evidence: `.scratch/ade-v1/evidence/lane-a-layouts.md`.

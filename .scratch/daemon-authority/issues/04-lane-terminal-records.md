@@ -1,9 +1,9 @@
 # 04 — Lane C: terminals as records
 
-Status: open
+Status: closed
 Type: task
 Label: wayfinder:task
-Assignee: none
+Assignee: coordinator (lane agent)
 Blocked by: [01](01-phase-0-foundation.md)
 
 Today a workspace carries `terminal_id` and a flat `extra_terminals` list; a client cannot tell
@@ -45,3 +45,4 @@ number when merging.
 - Evidence in `.scratch/ade-v1/evidence/lane-c-terminals.md`.
 
 ## Comments
+- 2026-09-29 — Done: terminal records, busy detection, `terminal.close`, `terminal_changed` (`0427bce`, `b048501`); review fixes: close under the lease lock, live state in memory, tolerant parsing (`86f7838`–`1a005e3`); placement and tab removal wired by lane A. Evidence: `.scratch/ade-v1/evidence/lane-c-terminals.md`.
